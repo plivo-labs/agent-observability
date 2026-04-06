@@ -1,0 +1,5 @@
+node_modules
+recordings
+data
+.env
+.git

@@ -1,0 +1,9 @@
+# deps
+node_modules/
+
+# env
+.env
+
+# artifacts
+recordings/
+data/

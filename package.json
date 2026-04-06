@@ -1,0 +1,15 @@
+{
+  "name": "agent-observability",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts"
+  },
+  "dependencies": {
+    "@livekit/protocol": "^1.45.1",
+    "hono": "^4.12.11",
+    "jose": "^6.2.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
