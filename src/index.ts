@@ -10,6 +10,7 @@ import { migrate } from "./migrate.js";
 import { verifyLivekitJwt } from "./auth.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
+import { newApiId, buildListResponse, buildErrorResponse } from "./response.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -37,7 +38,7 @@ app.post("/observability/recordings/v0", async (c) => {
   );
   if (!auth.valid) {
     console.error("Auth failed:", auth.error);
-    return c.json({ error: auth.error }, 401);
+    return c.json(buildErrorResponse("unauthorized", auth.error), 401);
   }
 
   const formData = await c.req.formData();
@@ -126,16 +127,18 @@ app.post("/observability/recordings/v0", async (c) => {
     console.error(`Failed to save session room_id=${sessionId}: ${(e as Error).message}`);
   }
 
-  return c.json({ status: "ok" });
+  return c.json({ api_id: newApiId(), message: "session report received" });
 });
 
 // ── REST API for the dashboard UI ───────────────────────────────────────────
 
 app.get("/api/sessions", async (c) => {
-  const page = Math.max(1, Number(c.req.query("page")) || 1);
-  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 50));
-  const offset = (page - 1) * limit;
+  const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 20));
+  const offset = Math.max(0, Number(c.req.query("offset")) || 0);
   const accountId = c.req.query("account_id") || null;
+
+  const extraParams: Record<string, string> = {};
+  if (accountId) extraParams.account_id = accountId;
 
   let countResult;
   let rows;
@@ -161,12 +164,7 @@ app.get("/api/sessions", async (c) => {
     `;
   }
 
-  return c.json({
-    data: rows,
-    total: countResult.total,
-    page,
-    limit,
-  });
+  return c.json(buildListResponse(rows, limit, offset, countResult.total, "/api/sessions", extraParams));
 });
 
 app.get("/api/sessions/:id", async (c) => {
@@ -181,7 +179,7 @@ app.get("/api/sessions/:id", async (c) => {
   `;
 
   if (rows.length === 0) {
-    return c.json({ error: "Session not found" }, 404);
+    return c.json(buildErrorResponse("not_found", "Session not found"), 404);
   }
 
   const row = rows[0];
@@ -190,6 +188,7 @@ app.get("/api/sessions/:id", async (c) => {
 
   row.chat_history = chatHistory;
   row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count);
+  row.api_id = newApiId();
 
   return c.json(row);
 });

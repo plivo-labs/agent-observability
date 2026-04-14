@@ -133,9 +133,16 @@ export interface ChatItem {
   metrics?: Record<string, number>
 }
 
-export interface PaginatedResponse<T> {
-  data: T[]
-  total: number
-  page: number
+export interface PlivoMeta {
   limit: number
+  offset: number
+  total_count: number
+  next: string | null
+  previous: string | null
+}
+
+export interface PlivoListResponse<T> {
+  api_id: string
+  meta: PlivoMeta
+  objects: T[]
 }

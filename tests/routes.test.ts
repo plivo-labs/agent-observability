@@ -80,7 +80,9 @@ describe("POST /observability/recordings/v0", () => {
     );
     expect(res.status).toBe(401);
     const body = await res.json();
-    expect(body.error).toContain("Missing or invalid Authorization header");
+    expect(body.api_id).toBeDefined();
+    expect(body.error.code).toBe("unauthorized");
+    expect(body.error.message).toContain("Missing or invalid Authorization header");
   });
 
   test("rejects request with invalid JWT", async () => {
@@ -117,7 +119,8 @@ describe("POST /observability/recordings/v0", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.status).toBe("ok");
+    expect(body.api_id).toBeDefined();
+    expect(body.message).toBe("session report received");
 
     // Verify insertSession was called with parsed data
     expect(mockInsertSession).toHaveBeenCalledTimes(1);
@@ -207,13 +210,16 @@ describe("GET /api/sessions", () => {
         { id: 2, session_id: "sess-2", turn_count: 5, created_at: "2025-01-02" },
       ]);
 
-    const res = await server.fetch(makeRequest("/api/sessions?page=1&limit=10"));
+    const res = await server.fetch(makeRequest("/api/sessions?limit=10&offset=0"));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.total).toBe(2);
-    expect(body.data).toHaveLength(2);
-    expect(body.page).toBe(1);
-    expect(body.limit).toBe(10);
+    expect(body.api_id).toBeDefined();
+    expect(body.meta.total_count).toBe(2);
+    expect(body.objects).toHaveLength(2);
+    expect(body.meta.limit).toBe(10);
+    expect(body.meta.offset).toBe(0);
+    expect(body.meta.next).toBeNull();
+    expect(body.meta.previous).toBeNull();
   });
 
   test("applies default pagination", async () => {
@@ -224,11 +230,11 @@ describe("GET /api/sessions", () => {
     const res = await server.fetch(makeRequest("/api/sessions"));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.page).toBe(1);
-    expect(body.limit).toBe(50);
+    expect(body.meta.offset).toBe(0);
+    expect(body.meta.limit).toBe(20);
   });
 
-  test("clamps limit to 100", async () => {
+  test("clamps limit to 20", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
@@ -236,18 +242,30 @@ describe("GET /api/sessions", () => {
     const res = await server.fetch(makeRequest("/api/sessions?limit=999"));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.limit).toBe(100);
+    expect(body.meta.limit).toBe(20);
   });
 
-  test("clamps page minimum to 1", async () => {
+  test("clamps offset minimum to 0", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
 
-    const res = await server.fetch(makeRequest("/api/sessions?page=-5"));
+    const res = await server.fetch(makeRequest("/api/sessions?offset=-5"));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.page).toBe(1);
+    expect(body.meta.offset).toBe(0);
+  });
+
+  test("includes next/previous pagination links", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 30 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(makeRequest("/api/sessions?limit=10&offset=10"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.next).toContain("offset=20");
+    expect(body.meta.previous).toContain("offset=0");
   });
 });
 
@@ -276,6 +294,7 @@ describe("GET /api/sessions/:id", () => {
     const res = await server.fetch(makeRequest("/api/sessions/sess-1"));
     expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.api_id).toBeDefined();
     expect(body.session_id).toBe("sess-1");
     expect(body.chat_history).toBeInstanceOf(Array);
     // session_metrics is now computed inline
@@ -308,7 +327,9 @@ describe("GET /api/sessions/:id", () => {
     const res = await server.fetch(makeRequest("/api/sessions/not-found"));
     expect(res.status).toBe(404);
     const body = await res.json();
-    expect(body.error).toBe("Session not found");
+    expect(body.api_id).toBeDefined();
+    expect(body.error.code).toBe("not_found");
+    expect(body.error.message).toBe("Session not found");
   });
 });
 

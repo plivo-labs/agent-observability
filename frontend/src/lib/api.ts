@@ -1,4 +1,4 @@
-import type { AgentSessionRow, PaginatedResponse } from './types'
+import type { AgentSessionRow, PlivoListResponse } from './types'
 
 const BASE = '/api'
 
@@ -11,10 +11,10 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  listSessions: (page = 1, limit = 50, accountId?: string) => {
-    const params = new URLSearchParams({ page: String(page), limit: String(limit) })
+  listSessions: (limit = 20, offset = 0, accountId?: string) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     if (accountId) params.set('account_id', accountId)
-    return fetchJson<PaginatedResponse<AgentSessionRow>>(`/sessions?${params}`)
+    return fetchJson<PlivoListResponse<AgentSessionRow>>(`/sessions?${params}`)
   },
 
   getSession: (id: string) =>

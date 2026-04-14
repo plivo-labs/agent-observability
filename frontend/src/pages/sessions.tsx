@@ -9,9 +9,31 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
 import { api } from '@/lib/api'
 import { formatDate, formatDuration } from '@/lib/format'
 import type { AgentSessionRow } from '@/lib/types'
+
+/** Build page numbers with ellipsis for large page counts. */
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages: (number | 'ellipsis')[] = [1]
+  if (current > 3) pages.push('ellipsis')
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
+  for (let i = start; i <= end; i++) pages.push(i)
+  if (current < total - 2) pages.push('ellipsis')
+  pages.push(total)
+  return pages
+}
 
 const stateVariant = (state: string) => {
   switch (state) {
@@ -29,20 +51,20 @@ export const SessionsPage = () => {
   const [sessions, setSessions] = useState<AgentSessionRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
-  const limit = 50
+  const [offset, setOffset] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const limit = 20
 
   useEffect(() => {
     setLoading(true)
-    api.listSessions(page, limit)
+    api.listSessions(limit, offset)
       .then((res) => {
-        setSessions(res.data)
-        setTotal(res.total)
+        setSessions(res.objects)
+        setTotalCount(res.meta.total_count)
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [page])
+  }, [offset])
 
   if (loading) {
     return (
@@ -63,13 +85,14 @@ export const SessionsPage = () => {
     )
   }
 
-  const totalPages = Math.ceil(total / limit)
+  const totalPages = Math.ceil(totalCount / limit)
+  const currentPage = Math.floor(offset / limit) + 1
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-h2-600 font-semibold">Sessions</h1>
-        <span className="text-s-400 text-muted-foreground">{total} total</span>
+        <span className="text-s-400 text-muted-foreground">{totalCount} total</span>
       </div>
 
       <div className="rounded-lg border">
@@ -129,25 +152,46 @@ export const SessionsPage = () => {
         </Table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 mt-4">
-          <button
-            className="px-3 py-1 rounded border text-s-400 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </button>
+      {totalCount > 0 && (
+        <div className="flex items-center justify-between mt-4">
           <span className="text-s-400 text-muted-foreground">
-            Page {page} of {totalPages}
+            Showing {offset + 1}–{Math.min(offset + limit, totalCount)} of {totalCount}
           </span>
-          <button
-            className="px-3 py-1 rounded border text-s-400 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </button>
+          {totalPages > 1 && (
+            <Pagination>
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    onClick={(e) => { e.preventDefault(); setOffset((o) => Math.max(0, o - limit)) }}
+                    className={offset <= 0 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                  />
+                </PaginationItem>
+                {getPageNumbers(currentPage, totalPages).map((p, i) =>
+                  p === 'ellipsis' ? (
+                    <PaginationItem key={`e-${i}`}>
+                      <PaginationEllipsis />
+                    </PaginationItem>
+                  ) : (
+                    <PaginationItem key={p}>
+                      <PaginationLink
+                        isActive={p === currentPage}
+                        onClick={(e) => { e.preventDefault(); setOffset((p as number - 1) * limit) }}
+                        className="cursor-pointer"
+                      >
+                        {p}
+                      </PaginationLink>
+                    </PaginationItem>
+                  )
+                )}
+                <PaginationItem>
+                  <PaginationNext
+                    onClick={(e) => { e.preventDefault(); setOffset((o) => o + limit) }}
+                    className={offset + limit >= totalCount ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          )}
         </div>
       )}
     </div>
