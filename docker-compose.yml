@@ -24,6 +24,7 @@ services:
       DATABASE_URL: postgres://observability:observability@postgres:5432/agent_observability
       AUTO_MIGRATE: "true"
       PORT: "9090"
+      NODE_ENV: "production"
     depends_on:
       postgres:
         condition: service_healthy

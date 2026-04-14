@@ -2,6 +2,9 @@
   "name": "agent-observability",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
+    "dev:frontend": "cd frontend && bun run dev",
+    "build:frontend": "cd frontend && bun install && bun run build",
+    "start": "NODE_ENV=production bun run src/index.ts",
     "test": "bun test"
   },
   "dependencies": {

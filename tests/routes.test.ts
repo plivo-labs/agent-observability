@@ -4,6 +4,7 @@ import * as jose from "jose";
 // ── Mock side-effectful modules before importing the app ────────────────────
 
 const mockInsertSession = mock(() => Promise.resolve());
+const mockSql = mock((..._args: any[]) => Promise.resolve([]));
 
 mock.module("../src/config.js", () => ({
   config: {
@@ -19,7 +20,7 @@ mock.module("../src/config.js", () => ({
 }));
 
 mock.module("../src/db.js", () => ({
-  sql: {},
+  sql: mockSql,
   insertSession: mockInsertSession,
 }));
 
@@ -126,7 +127,8 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.hasLlm).toBe(true);
     expect(call.hasTts).toBe(true);
     expect(call.chatHistory).toHaveLength(2);
-    expect(call.sessionMetrics).toHaveLength(2);
+    expect(call.sessionMetrics.per_turn).toHaveLength(2);
+    expect(call.sessionMetrics.usage).toBeNull();
   });
 
   test("handles request with no chat history", async () => {
@@ -189,3 +191,125 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.chatHistory).toEqual([]);
   });
 });
+
+// ── Dashboard API: GET /api/sessions ────────────────────────────────────────
+
+describe("GET /api/sessions", () => {
+  beforeEach(() => {
+    mockSql.mockReset();
+  });
+
+  test("returns paginated sessions list", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 2 }])
+      .mockResolvedValueOnce([
+        { id: 1, session_id: "sess-1", turn_count: 3, created_at: "2025-01-01" },
+        { id: 2, session_id: "sess-2", turn_count: 5, created_at: "2025-01-02" },
+      ]);
+
+    const res = await server.fetch(makeRequest("/api/sessions?page=1&limit=10"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.total).toBe(2);
+    expect(body.data).toHaveLength(2);
+    expect(body.page).toBe(1);
+    expect(body.limit).toBe(10);
+  });
+
+  test("applies default pagination", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(makeRequest("/api/sessions"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.page).toBe(1);
+    expect(body.limit).toBe(50);
+  });
+
+  test("clamps limit to 100", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(makeRequest("/api/sessions?limit=999"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.limit).toBe(100);
+  });
+
+  test("clamps page minimum to 1", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(makeRequest("/api/sessions?page=-5"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.page).toBe(1);
+  });
+});
+
+// ── Dashboard API: GET /api/sessions/:id ────────────────────────────────────
+
+describe("GET /api/sessions/:id", () => {
+  beforeEach(() => {
+    mockSql.mockReset();
+  });
+
+  test("returns session detail with computed metrics", async () => {
+    const chatHistory = [
+      { id: "u1", type: "message", role: "user", content: "hi", metrics: { transcription_delay: 0.1 } },
+      { id: "a1", type: "message", role: "assistant", content: "hello", metrics: { llm_node_ttft: 0.3, tts_node_ttfb: 0.05 } },
+    ];
+    mockSql.mockResolvedValueOnce([
+      {
+        id: 1,
+        session_id: "sess-1",
+        turn_count: 1,
+        chat_history: JSON.stringify(chatHistory),
+        session_metrics: JSON.stringify({ per_turn: [], usage: null }),
+      },
+    ]);
+
+    const res = await server.fetch(makeRequest("/api/sessions/sess-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.session_id).toBe("sess-1");
+    expect(body.chat_history).toBeInstanceOf(Array);
+    // session_metrics is now computed inline
+    expect(body.session_metrics).toBeDefined();
+    expect(body.session_metrics.turns).toHaveLength(1);
+    expect(body.session_metrics.turns[0].llm_ttft_ms).toBe(300);
+    expect(body.session_metrics.summary.total_turns).toBe(1);
+  });
+
+  test("handles already-parsed JSONB fields", async () => {
+    mockSql.mockResolvedValueOnce([
+      {
+        id: 1,
+        session_id: "sess-2",
+        turn_count: 0,
+        chat_history: [{ id: "m1" }],
+        session_metrics: { per_turn: [], usage: null },
+      },
+    ]);
+
+    const res = await server.fetch(makeRequest("/api/sessions/sess-2"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.chat_history).toBeInstanceOf(Array);
+  });
+
+  test("returns 404 for non-existent session", async () => {
+    mockSql.mockResolvedValueOnce([]);
+
+    const res = await server.fetch(makeRequest("/api/sessions/not-found"));
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Session not found");
+  });
+});
+
+// Note: GET /api/sessions/:id/metrics endpoint was merged into GET /api/sessions/:id

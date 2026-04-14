@@ -1,6 +1,6 @@
 # Agent Observability
 
-Session report callback server for [agent-transport](https://github.com/plivo-labs/agent-transport). Receives session reports at the end of each voice agent call, verifies JWT authentication, and stores session data in Postgres.
+Session report callback server for [agent-transport](https://github.com/plivo-labs/agent-transport) with a built-in dashboard UI. Receives session reports at the end of each voice agent call, verifies JWT authentication, stores session data in Postgres, and provides a web dashboard for viewing session metrics.
 
 ## What it does
 
@@ -9,14 +9,29 @@ When a voice agent call ends, the agent-transport SDK uploads a session report c
 - **Audio recording** — OGG/Opus call recording (optional)
 - **Session metadata** — session ID, start time, duration
 
-This server receives that report, extracts session metrics, optionally uploads the audio to S3, and saves everything to Postgres.
+This server receives that report, extracts session metrics, optionally uploads the audio to S3, and saves everything to Postgres. The dashboard UI lets you browse sessions and view detailed performance metrics.
 
 ## Setup
 
 ```bash
 bun install
+cd frontend && bun install && cd ..
 cp .env.example .env  # fill in values
 ```
+
+### Development
+
+Run both the backend and frontend dev servers:
+
+```bash
+# Terminal 1: Backend (Hono server on :9090)
+bun run dev
+
+# Terminal 2: Frontend (Vite dev server on :5173, proxies /api to :9090)
+bun run dev:frontend
+```
+
+Open http://localhost:5173 for the dashboard.
 
 ### With Docker
 
@@ -24,11 +39,14 @@ cp .env.example .env  # fill in values
 docker compose up
 ```
 
-### Local (Postgres via Docker)
+### Production Build
 
 ```bash
-docker compose up postgres -d
-bun run dev
+# Build frontend assets
+bun run build:frontend
+
+# Start production server (serves both API and static files)
+bun run start
 ```
 
 ## Environment Variables
@@ -49,20 +67,24 @@ bun run dev
 
 ## Endpoints
 
+### Ingest
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
 | `POST` | `/observability/recordings/v0` | Session report callback (JWT authenticated) |
 
-## Agent-Transport Configuration
+### Dashboard API
 
-Set these in the agent process to enable session report upload:
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/sessions` | List sessions (paginated: `?page=1&limit=50`) |
+| `GET` | `/api/sessions/:id` | Session detail |
+| `GET` | `/api/sessions/:id/metrics` | Computed session metrics |
 
-```bash
-LIVEKIT_OBSERVABILITY_URL=https://your-server:9090
-LIVEKIT_API_KEY=your_key
-LIVEKIT_API_SECRET=your_secret
-```
+### Dashboard UI
+
+In production, the Vite-built frontend is served as static files from the same server. In development, the Vite dev server proxies API requests to the backend.
 
 ## Database
 
@@ -83,3 +105,13 @@ Sessions are stored in the `agent_transport_sessions` table:
 | `record_url` | TEXT | S3 URL for audio recording |
 
 Migrations run automatically when `AUTO_MIGRATE=true`.
+
+## Agent-Transport Configuration
+
+Set these in the agent process to enable session report upload:
+
+```bash
+LIVEKIT_OBSERVABILITY_URL=https://your-server:9090
+LIVEKIT_API_KEY=your_key
+LIVEKIT_API_SECRET=your_secret
+```

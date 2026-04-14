@@ -7,3 +7,7 @@ node_modules/
 # artifacts
 recordings/
 data/
+
+# frontend build
+frontend/dist/
+frontend/node_modules/

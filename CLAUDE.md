@@ -4,23 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this?
 
-Agent Observability is a Bun/Hono server that receives session report callbacks from agent-transport (Python and Node SDKs). It verifies LiveKit JWT auth, parses the multipart session report (protobuf header, chat history JSON, audio OGG), and stores session data in Postgres.
+Agent Observability is a Bun/Hono server that receives session report callbacks from agent-transport (Python and Node SDKs). It verifies LiveKit JWT auth, parses the multipart session report (protobuf header, chat history JSON, audio OGG), stores session data in Postgres, and serves a dashboard UI for viewing session metrics.
 
 ## Commands
 
 ```bash
-bun run dev              # Start dev server with hot reload (port 9090)
+bun run dev              # Start backend with hot reload (port 9090)
+bun run dev:frontend     # Start Vite dev server (port 5173, proxies /api to :9090)
+bun run build:frontend   # Build frontend for production
+bun run start            # Start production server (API + static files)
 docker compose up        # Start Postgres + app
 docker compose up postgres -d  # Postgres only for local dev
 ```
 
 ## Architecture
 
-- `src/index.ts` — Hono HTTP server. Health check at `/health`. Session report endpoint at `POST /observability/recordings/v0`.
+### Backend (`src/`)
+
+- `src/index.ts` — Hono HTTP server. Health check at `/health`. Session report at `POST /observability/recordings/v0`. Dashboard API at `/api/sessions*`. In production, serves frontend static files.
 - `src/config.ts` — Zod-validated env config. All env vars are read here.
 - `src/db.ts` — Bun SQL client (`bun:sql`). `insertSession()` writes to `agent_transport_sessions`.
+- `src/metrics.ts` — Transforms raw `chat_history` and `session_metrics` JSONB into structured `SessionMetrics` format with per-turn data and summary statistics.
 - `src/migrate.ts` — Raw SQL migration runner. Reads `migrations/*.sql`, tracks applied ones in `_migrations` table.
 - `src/s3.ts` — Optional S3 upload for audio recordings using Bun's built-in S3 client.
+
+### Frontend (`frontend/`)
+
+- Vite + React 19 + TypeScript + ShadCN UI + Tailwind CSS v4
+- `frontend/src/pages/sessions.tsx` — Sessions list page with table and pagination
+- `frontend/src/pages/session-detail.tsx` — Session detail with tabs (Session/Performance/Config)
+- `frontend/src/components/charts/` — Metric visualization: summary cards, latency percentiles, pipeline breakdown, latency over turns, token usage
+- `frontend/src/components/turn-transcript.tsx` — Conversation transcript view
+- `frontend/src/lib/api.ts` — API client for fetching session data
+- `frontend/src/lib/types.ts` — Shared TypeScript types
+- `frontend/src/lib/format.ts` — Formatting utilities (ms, duration, date)
+
+### Vite Backend Integration
+
+- **Dev**: Vite dev server on :5173 proxies `/api/*` to Hono on :9090
+- **Prod**: `vite build` outputs to `frontend/dist/`, Hono serves these as static files
 
 ## Session Report Flow
 
@@ -30,6 +52,12 @@ docker compose up postgres -d  # Postgres only for local dev
 4. Extracts session_id (from header's `roomId`), turn count, STT/LLM/TTS flags, per-turn metrics
 5. Optionally uploads audio to S3
 6. Saves to `agent_transport_sessions` table
+
+## Dashboard API
+
+- `GET /api/sessions?page=1&limit=50` — List sessions (paginated)
+- `GET /api/sessions/:id` — Session detail with chat_history
+- `GET /api/sessions/:id/metrics` — Computed session metrics (turns, summary)
 
 ## Migrations
 

@@ -1,0 +1,160 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-st1: hsl(var(--st1));
+  --color-st2: hsl(var(--st2));
+
+  --color-chart-1: hsl(225 100% 45%);
+  --color-chart-2: hsl(270 82% 51%);
+  --color-chart-3: hsl(149 89% 42%);
+  --color-chart-4: hsl(38 96% 50%);
+  --color-chart-5: hsl(0 100% 64%);
+
+  /* Typography scale — matches Neo design system */
+  --font-size-h1-600: 26px; --line-height-h1-600: 32px;
+  --font-size-h1-400: 26px; --line-height-h1-400: 32px;
+  --font-size-h2-600: 22px; --line-height-h2-600: 32px;
+  --font-size-h2-400: 22px; --line-height-h2-400: 32px;
+  --font-size-h3-600: 18px; --line-height-h3-600: 26px;
+  --font-size-h3-400: 18px; --line-height-h3-400: 26px;
+  --font-size-h4-600: 16px; --line-height-h4-600: 24px;
+  --font-size-h4-400: 16px; --line-height-h4-400: 24px;
+  --font-size-p-600: 14px; --line-height-p-600: 20px;
+  --font-size-p-500: 14px; --line-height-p-500: 20px;
+  --font-size-p-400: 14px; --line-height-p-400: 20px;
+  --font-size-s-600: 13px; --line-height-s-600: 18px;
+  --font-size-s-500: 13px; --line-height-s-500: 18px;
+  --font-size-s-400: 13px; --line-height-s-400: 18px;
+  --font-size-xs-600: 12px; --line-height-xs-600: 18px;
+  --font-size-xs-500: 12px; --line-height-xs-500: 18px;
+  --font-size-xs-400: 12px; --line-height-xs-400: 13px;
+  --font-size-xxs-400: 10px; --line-height-xxs-400: 13px;
+  --font-size-xxs-600: 10px; --line-height-xxs-600: 13px;
+
+  /* Additional color tokens — Neo parity */
+  --color-bg1: hsl(var(--bg1));
+  --color-bg2: hsl(var(--bg2));
+  --color-bg3: hsl(var(--bg3));
+  --color-hv1: hsl(var(--hv1));
+  --color-hv2: hsl(var(--hv2));
+  --color-hv3: hsl(var(--hv3));
+}
+
+/* Light theme */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 230 75% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 230 75% 9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 230 75% 9%;
+  --primary: 225 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 230 7% 92%;
+  --secondary-foreground: 230 75% 9%;
+  --muted: 230 7% 95%;
+  --muted-foreground: 230 7% 46%;
+  --accent: 230 7% 95%;
+  --accent-foreground: 230 75% 9%;
+  --destructive: 0 100% 64%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 149 89% 42%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 96% 50%;
+  --warning-foreground: 0 0% 100%;
+  --border: 214 20% 91%;
+  --input: 230 7% 84%;
+  --ring: 225 100% 45%;
+  --st1: 230 7% 90%;
+  --st2: 230 7% 84%;
+  --bg1: 210 20% 97%;
+  --bg2: 210 17% 98%;
+  --bg3: 240 5% 96%;
+  --hv1: 213 32% 95%;
+  --hv2: 220 9% 93%;
+  --hv3: 220 7% 91%;
+  --radius: 0.5rem;
+}
+
+/* Brand color variables */
+:root {
+  --primary-color: #0040E4;
+  --primary-color-1: #2461FF;
+  --primary-color-2: #628EFF;
+  --primary-color-3: #A1BBFF;
+  --primary-color-4: #E0E8FF;
+  --secondary-color: #8214F0;
+  --success-color: #0CC857;
+  --warning-color: #FAA005;
+  --danger-color: #FF4747;
+}
+
+/* Dark theme — matching console dark mode */
+.dark {
+  --background: 240 10% 4%;
+  --foreground: 0 0% 100%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 234 6% 65%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 100% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 173 81% 26%;
+  --success-foreground: 174 58% 91%;
+  --warning: 26 89% 37%;
+  --warning-foreground: 44 95% 92%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+  --st1: 210 5% 16%;
+  --st2: 220 4% 15%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+}

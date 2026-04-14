@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { parseChatHistory } from "../src/parse.js";
+import { parseChatHistory, normalizeKeys } from "../src/parse.js";
 
 describe("parseChatHistory", () => {
   test("returns defaults for null input", () => {
@@ -200,14 +200,157 @@ describe("parseChatHistory", () => {
     expect(result.metrics).toHaveLength(5); // all items with non-empty metrics
   });
 
-  // ── Preserves original items ───────────────────────────────────────────
+  // ── Wrapped format (report.to_dict()) ────────────────────────────────────
 
-  test("returns original items array unchanged", () => {
-    const items = [
-      { id: "1", type: "message", role: "user", content: "hello" },
-      { id: "2", type: "message", role: "assistant", content: "hi there" },
-    ];
-    const result = parseChatHistory({ items });
-    expect(result.chatItems).toEqual(items);
+  test("parses wrapped format with chat_history key", () => {
+    const result = parseChatHistory({
+      chat_history: {
+        items: [
+          { id: "u1", type: "message", role: "user" },
+          { id: "a1", type: "message", role: "assistant" },
+        ],
+      },
+      usage: [{ provider: "openai", model: "gpt-4", input_tokens: 100 }],
+    });
+    expect(result.chatItems).toHaveLength(2);
+    expect(result.turnCount).toBe(2);
+  });
+
+  // ── camelCase normalization (Node SDK) ──────────────────────────────────
+
+  test("normalizes camelCase keys to snake_case", () => {
+    const result = parseChatHistory({
+      items: [
+        {
+          id: "a1",
+          type: "message",
+          role: "assistant",
+          createdAt: 1776067486653,
+          metrics: {
+            llmNodeTtft: 1.23,
+            ttsNodeTtfb: 2.45,
+            startedSpeakingAt: 1776067489.112,
+            stoppedSpeakingAt: 1776067495.285,
+          },
+        },
+      ],
+    });
+    const item = result.chatItems[0];
+    expect(item.created_at).toBe(1776067486653);
+    expect(item.metrics.llm_node_ttft).toBe(1.23);
+    expect(item.metrics.tts_node_ttfb).toBe(2.45);
+    expect(item.metrics.started_speaking_at).toBe(1776067489.112);
+  });
+
+  test("detects LLM from camelCase llmNodeTtft", () => {
+    const result = parseChatHistory({
+      items: [
+        { type: "message", role: "assistant", metrics: { llmNodeTtft: 0.5 } },
+      ],
+    });
+    expect(result.hasLlm).toBe(true);
+  });
+
+  test("detects STT from camelCase transcriptionDelay", () => {
+    const result = parseChatHistory({
+      items: [
+        { type: "message", role: "user", metrics: { transcriptionDelay: 0.3 } },
+      ],
+    });
+    expect(result.hasStt).toBe(true);
+  });
+
+  test("normalizes nested camelCase in wrapped format", () => {
+    const result = parseChatHistory({
+      chatHistory: {
+        items: [
+          {
+            id: "u1",
+            type: "message",
+            role: "user",
+            transcriptConfidence: 0.98,
+            metrics: { endOfTurnDelay: 0.5 },
+          },
+        ],
+      },
+    });
+    const item = result.chatItems[0];
+    expect(item.transcript_confidence).toBe(0.98);
+    expect(item.metrics.end_of_turn_delay).toBe(0.5);
+  });
+
+  test("normalizes agent_handoff newAgentId", () => {
+    const result = parseChatHistory({
+      items: [
+        { type: "agent_handoff", newAgentId: "greeter", createdAt: 123 },
+      ],
+    });
+    expect(result.chatItems[0].new_agent_id).toBe("greeter");
+    expect(result.chatItems[0].created_at).toBe(123);
+  });
+
+  // ── snake_case passthrough (Python SDK) ─────────────────────────────────
+
+  test("preserves snake_case keys unchanged", () => {
+    const result = parseChatHistory({
+      items: [
+        {
+          id: "a1",
+          type: "message",
+          role: "assistant",
+          created_at: 1776050852.977898,
+          metrics: {
+            llm_node_ttft: 1.21,
+            tts_node_ttfb: 1.22,
+            llm_metadata: { model_name: "gpt-4.1", model_provider: "openai" },
+          },
+        },
+      ],
+    });
+    const item = result.chatItems[0];
+    expect(item.created_at).toBe(1776050852.977898);
+    expect(item.metrics.llm_node_ttft).toBe(1.21);
+    expect(item.metrics.llm_metadata.model_name).toBe("gpt-4.1");
+  });
+});
+
+// ── normalizeKeys ────────────────────────────────────────────────────────────
+
+describe("normalizeKeys", () => {
+  test("converts camelCase to snake_case", () => {
+    const result = normalizeKeys({ llmNodeTtft: 1.5, ttsNodeTtfb: 2.0 });
+    expect(result).toEqual({ llm_node_ttft: 1.5, tts_node_ttfb: 2.0 });
+  });
+
+  test("handles nested objects", () => {
+    const result = normalizeKeys({
+      llmMetadata: { modelName: "gpt-4", modelProvider: "openai" },
+    });
+    expect(result).toEqual({
+      llm_metadata: { model_name: "gpt-4", model_provider: "openai" },
+    });
+  });
+
+  test("handles arrays", () => {
+    const result = normalizeKeys([
+      { inputTokens: 100, outputTokens: 20 },
+      { charactersCount: 50 },
+    ]);
+    expect(result).toEqual([
+      { input_tokens: 100, output_tokens: 20 },
+      { characters_count: 50 },
+    ]);
+  });
+
+  test("passes through null and primitives", () => {
+    expect(normalizeKeys(null)).toBeNull();
+    expect(normalizeKeys(undefined)).toBeUndefined();
+    expect(normalizeKeys(42)).toBe(42);
+    expect(normalizeKeys("hello")).toBe("hello");
+  });
+
+  test("preserves snake_case keys unchanged", () => {
+    const input = { input_tokens: 100, model_name: "gpt-4" };
+    expect(normalizeKeys(input)).toEqual(input);
   });
 });
