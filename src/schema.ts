@@ -3,9 +3,9 @@ import { z } from "zod";
 export const envSchema = z.object({
   PORT: z.coerce.number().default(9090),
 
-  // LiveKit JWT verification
-  LIVEKIT_API_KEY: z.string().min(1, "LIVEKIT_API_KEY is required"),
-  LIVEKIT_API_SECRET: z.string().min(1, "LIVEKIT_API_SECRET is required"),
+  // Basic auth (optional — if both set, all routes require basic auth)
+  AGENT_OBSERVABILITY_USER: z.string().optional(),
+  AGENT_OBSERVABILITY_PASS: z.string().optional(),
 
   // Postgres
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
