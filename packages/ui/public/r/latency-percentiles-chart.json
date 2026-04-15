@@ -1,0 +1,24 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "latency-percentiles-chart",
+  "title": "Latency Percentiles Chart",
+  "description": "Avg/P95 bar chart for STT, LLM, TTS, turn decision latency",
+  "dependencies": [
+    "recharts"
+  ],
+  "registryDependencies": [
+    "observability-theme",
+    "observability-format",
+    "observability-types",
+    "observability-hooks",
+    "observability-chart-shared"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/latency-percentiles-chart/latency-percentiles-chart.tsx",
+      "content": "import { useMemo } from 'react'\nimport { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'\nimport { computeAvg, computePercentile, formatMs } from '@/lib/observability-format'\nimport type { SessionMetrics, TurnRecord } from '@/lib/observability-types'\nimport { usePerformance } from '@/lib/observability-hooks'\nimport { ChartCard } from '@/components/observability-chart-shared'\n\ninterface ChartEntry {\n  name: string\n  avg: number\n  p95: number\n}\n\nconst PercentilesTooltip = ({\n  active,\n  payload,\n}: {\n  active?: boolean\n  payload?: Array<{ payload: ChartEntry }>\n}) => {\n  if (!active || !payload?.length) return null\n  const d = payload[0].payload\n  return (\n    <div className=\"rounded-lg border bg-background p-3 text-s-400 shadow-md\">\n      <p className=\"font-medium mb-1\">{d.name}</p>\n      <div className=\"grid grid-cols-2 gap-x-4 gap-y-0.5\">\n        <span className=\"text-muted-foreground\">Avg</span>\n        <span>{formatMs(d.avg)}</span>\n        <span className=\"text-muted-foreground\">P95</span>\n        <span>{formatMs(d.p95)}</span>\n      </div>\n    </div>\n  )\n}\n\nconst METRIC_KEYS: { key: keyof TurnRecord; label: string }[] = [\n  { key: 'user_perceived_ms', label: 'User Perceived' },\n  { key: 'stt_delay_ms', label: 'STT Delay' },\n  { key: 'llm_ttft_ms', label: 'LLM TTFT' },\n  { key: 'tts_ttfb_ms', label: 'TTS TTFB' },\n  { key: 'turn_decision_ms', label: 'Turn Decision' },\n]\n\nexport const LatencyPercentilesChart = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {\n  const { metrics: hookMetrics } = usePerformance()\n  const metrics = metricsProp ?? hookMetrics\n\n  const chartData = useMemo(() => {\n    if (!metrics?.turns?.length) return []\n\n    return METRIC_KEYS.map((m) => {\n      const values = metrics.turns\n        .map((t) => t[m.key] as number | undefined)\n        .filter((v): v is number => v != null)\n      if (!values.length) return null\n      return {\n        name: m.label,\n        avg: computeAvg(values),\n        p95: computePercentile(values, 0.95),\n      }\n    }).filter((d): d is ChartEntry => d != null)\n  }, [metrics])\n\n  if (!chartData.length) return null\n\n  return (\n    <ChartCard\n      title=\"Latency Percentiles\"\n      legend={[\n        { color: 'hsl(var(--primary) / 0.4)', label: 'Avg' },\n        { color: 'hsl(var(--primary))', label: 'P95' },\n      ]}\n    >\n      <BarChart data={chartData} barCategoryGap=\"20%\">\n        <CartesianGrid strokeDasharray=\"3 3\" stroke=\"hsl(var(--st1))\" />\n        <XAxis\n          dataKey=\"name\"\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <YAxis\n          tickFormatter={(v: number) => formatMs(v)}\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <Tooltip content={<PercentilesTooltip />} cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />\n        <Bar dataKey=\"avg\" name=\"Avg\" fill=\"hsl(var(--primary) / 0.4)\" radius={[4, 4, 0, 0]} />\n        <Bar dataKey=\"p95\" name=\"P95\" fill=\"hsl(var(--primary))\" radius={[4, 4, 0, 0]} />\n      </BarChart>\n    </ChartCard>\n  )\n}\n",
+      "type": "registry:ui"
+    }
+  ],
+  "type": "registry:ui"
+}

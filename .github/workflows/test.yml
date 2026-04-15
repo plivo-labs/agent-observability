@@ -17,8 +17,16 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies
+      - name: Install server dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run tests
+      - name: Run server tests
+        run: bun test ./tests/
+
+      - name: Install UI dependencies
+        working-directory: packages/ui
+        run: bun install --frozen-lockfile
+
+      - name: Run UI tests
+        working-directory: packages/ui
         run: bun test

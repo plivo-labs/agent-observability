@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
@@ -21,6 +22,7 @@ const app = new Hono();
 
 app.use("*", requestId());
 app.use("*", logger());
+app.use("/api/*", cors());
 
 // ── Health check ────────────────────────────────────────────────────────────
 

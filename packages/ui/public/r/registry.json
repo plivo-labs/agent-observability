@@ -1,0 +1,543 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "agent-observability",
+  "homepage": "https://github.com/plivo-labs/agent-observability",
+  "items": [
+    {
+      "name": "observability-theme",
+      "type": "registry:theme",
+      "title": "Observability Theme",
+      "description": "CSS variables and typography scale for observability components",
+      "cssVars": {
+        "theme": {
+          "font-size-h1-600": "26px",
+          "line-height-h1-600": "32px",
+          "font-size-h1-400": "26px",
+          "line-height-h1-400": "32px",
+          "font-size-h2-600": "22px",
+          "line-height-h2-600": "32px",
+          "font-size-h2-400": "22px",
+          "line-height-h2-400": "32px",
+          "font-size-h3-600": "18px",
+          "line-height-h3-600": "26px",
+          "font-size-h3-400": "18px",
+          "line-height-h3-400": "26px",
+          "font-size-h4-600": "16px",
+          "line-height-h4-600": "24px",
+          "font-size-h4-400": "16px",
+          "line-height-h4-400": "24px",
+          "font-size-p-600": "14px",
+          "line-height-p-600": "20px",
+          "font-size-p-500": "14px",
+          "line-height-p-500": "20px",
+          "font-size-p-400": "14px",
+          "line-height-p-400": "20px",
+          "font-size-s-600": "13px",
+          "line-height-s-600": "18px",
+          "font-size-s-500": "13px",
+          "line-height-s-500": "18px",
+          "font-size-s-400": "13px",
+          "line-height-s-400": "18px",
+          "font-size-xs-600": "12px",
+          "line-height-xs-600": "18px",
+          "font-size-xs-500": "12px",
+          "line-height-xs-500": "18px",
+          "font-size-xs-400": "12px",
+          "line-height-xs-400": "13px",
+          "font-size-xxs-400": "10px",
+          "line-height-xxs-400": "13px",
+          "font-size-xxs-600": "10px",
+          "line-height-xxs-600": "13px",
+          "color-st1": "hsl(var(--st1))",
+          "color-st2": "hsl(var(--st2))",
+          "color-bg1": "hsl(var(--bg1))",
+          "color-bg2": "hsl(var(--bg2))",
+          "color-bg3": "hsl(var(--bg3))",
+          "color-hv1": "hsl(var(--hv1))",
+          "color-hv2": "hsl(var(--hv2))",
+          "color-hv3": "hsl(var(--hv3))"
+        },
+        "light": {
+          "st1": "230 7% 90%",
+          "st2": "230 7% 84%",
+          "bg1": "210 20% 97%",
+          "bg2": "210 17% 98%",
+          "bg3": "240 5% 96%",
+          "hv1": "213 32% 95%",
+          "hv2": "220 9% 93%",
+          "hv3": "220 7% 91%"
+        },
+        "dark": {
+          "st1": "210 5% 16%",
+          "st2": "220 4% 15%"
+        }
+      },
+      "files": []
+    },
+    {
+      "name": "observability-types",
+      "type": "registry:lib",
+      "title": "Observability Types",
+      "description": "TypeScript types: TurnRecord, SessionMetrics, AgentSessionRow, PlivoListResponse",
+      "files": [
+        {
+          "path": "registry/new-york/observability-types/types.ts",
+          "type": "registry:lib"
+        }
+      ]
+    },
+    {
+      "name": "observability-format",
+      "type": "registry:lib",
+      "title": "Format Utilities",
+      "description": "formatMs, formatDuration, formatDate, computeAvg, computePercentile",
+      "dependencies": [
+        "dayjs"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-format/format.ts",
+          "type": "registry:lib"
+        }
+      ]
+    },
+    {
+      "name": "observability-api",
+      "type": "registry:lib",
+      "title": "API Client",
+      "description": "createObservabilityApi(baseUrl) factory for fetching session data",
+      "registryDependencies": [
+        "observability-types"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-api/api.ts",
+          "type": "registry:lib"
+        }
+      ]
+    },
+    {
+      "name": "observability-provider",
+      "type": "registry:lib",
+      "title": "Observability Provider",
+      "description": "AgentObservabilityProvider context \u2014 wraps your app to provide API and session data",
+      "registryDependencies": [
+        "observability-api",
+        "observability-types"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-provider/provider.tsx",
+          "type": "registry:lib"
+        }
+      ]
+    },
+    {
+      "name": "observability-hooks",
+      "type": "registry:lib",
+      "title": "Observability Hooks",
+      "description": "useSessions, useSession, useTimeline, useTranscript, usePerformance",
+      "registryDependencies": [
+        "observability-types",
+        "observability-provider"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-hooks/hooks.ts",
+          "type": "registry:lib"
+        }
+      ]
+    },
+    {
+      "name": "observability-chart-shared",
+      "type": "registry:ui",
+      "title": "Chart Shared Utilities",
+      "description": "ChartCard, ChartTooltipShell, ChartLegendItem wrappers for recharts",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-chart-shared/chart-shared.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "metric-summary-cards",
+      "type": "registry:ui",
+      "title": "Metric Summary Cards",
+      "description": "6-stat card grid: turns, interruptions, tool calls, P95/avg latency, tokens",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/metric-summary-cards/metric-summary-cards.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "latency-percentiles-chart",
+      "type": "registry:ui",
+      "title": "Latency Percentiles Chart",
+      "description": "Avg/P95 bar chart for STT, LLM, TTS, turn decision latency",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks",
+        "observability-chart-shared"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/latency-percentiles-chart/latency-percentiles-chart.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "pipeline-breakdown-chart",
+      "type": "registry:ui",
+      "title": "Pipeline Breakdown Chart",
+      "description": "Stacked bar chart showing avg time in STT, LLM, TTS, and unaccounted",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks",
+        "observability-chart-shared"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/pipeline-breakdown-chart/pipeline-breakdown-chart.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "latency-over-turns-chart",
+      "type": "registry:ui",
+      "title": "Latency Over Turns Chart",
+      "description": "Line chart showing how latency changes throughout the conversation",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks",
+        "observability-chart-shared"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/latency-over-turns-chart/latency-over-turns-chart.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "token-usage-section",
+      "type": "registry:ui",
+      "title": "Token Usage Section",
+      "description": "Pie chart + stats: prompt/completion tokens, TTS characters, tokens/turn",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-types",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/token-usage-section/token-usage-section.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "talk-time-chart",
+      "type": "registry:ui",
+      "title": "Talk Time Chart",
+      "description": "Stacked bar chart comparing user vs agent speaking duration per turn",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks",
+        "observability-chart-shared"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/talk-time-chart/talk-time-chart.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "cache-efficiency-chart",
+      "type": "registry:ui",
+      "title": "Cache Efficiency Chart",
+      "description": "Area chart showing prompt cache hit ratio over turns",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-types",
+        "observability-hooks",
+        "observability-chart-shared"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/cache-efficiency-chart/cache-efficiency-chart.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "llm-throughput-chart",
+      "type": "registry:ui",
+      "title": "LLM Throughput Chart",
+      "description": "Line chart showing token generation speed (tok/s) per turn",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-types",
+        "observability-hooks",
+        "observability-chart-shared"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/llm-throughput-chart/llm-throughput-chart.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "session-header",
+      "type": "registry:ui",
+      "title": "Session Header",
+      "description": "Session metadata display: ID, capabilities, duration, dates, recording link",
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/session-header/session-header.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "turn-transcript",
+      "type": "registry:ui",
+      "title": "Turn Transcript",
+      "description": "Conversation transcript with per-turn latency pills and tool calls",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "badge",
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/turn-transcript/turn-transcript.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "session-timeline",
+      "type": "registry:block",
+      "title": "Session Timeline",
+      "description": "Audio waveform player + turn-by-turn trace visualization",
+      "dependencies": [
+        "lucide-react",
+        "wavesurfer.js"
+      ],
+      "registryDependencies": [
+        "observability-theme",
+        "observability-format",
+        "observability-types",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/session-timeline/session-timeline.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/session-timeline/recording-player.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/session-timeline/session-trace.tsx",
+          "type": "registry:component"
+        }
+      ]
+    },
+    {
+      "name": "sessions-page",
+      "type": "registry:block",
+      "title": "Sessions Page",
+      "description": "Paginated sessions list. Requires shadcn primitives: badge, table, pagination. Uses react-router.",
+      "files": [
+        {
+          "path": "registry/new-york/observability-types/types.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-types.ts"
+        },
+        {
+          "path": "registry/new-york/observability-format/format.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-api/api.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-api.ts"
+        },
+        {
+          "path": "registry/new-york/observability-provider/provider.tsx",
+          "type": "registry:lib",
+          "target": "lib/observability-provider.tsx"
+        },
+        {
+          "path": "registry/new-york/observability-hooks/hooks.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-hooks.ts"
+        },
+        {
+          "path": "registry/new-york/sessions-page/sessions-page.tsx",
+          "type": "registry:component"
+        }
+      ]
+    },
+    {
+      "name": "session-detail-page",
+      "type": "registry:block",
+      "title": "Session Detail Page",
+      "description": "Full session detail with Session and Performance tabs. Requires shadcn primitives: badge, scroll-area, separator, tabs. Uses react-router and lucide-react.",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-types/types.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-types.ts"
+        },
+        {
+          "path": "registry/new-york/observability-format/format.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-api/api.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-api.ts"
+        },
+        {
+          "path": "registry/new-york/observability-provider/provider.tsx",
+          "type": "registry:lib",
+          "target": "lib/observability-provider.tsx"
+        },
+        {
+          "path": "registry/new-york/observability-hooks/hooks.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-hooks.ts"
+        },
+        {
+          "path": "registry/new-york/observability-chart-shared/chart-shared.tsx",
+          "type": "registry:component",
+          "target": "components/observability-chart-shared.tsx"
+        },
+        {
+          "path": "registry/new-york/metric-summary-cards/metric-summary-cards.tsx",
+          "type": "registry:component",
+          "target": "components/metric-summary-cards.tsx"
+        },
+        {
+          "path": "registry/new-york/latency-percentiles-chart/latency-percentiles-chart.tsx",
+          "type": "registry:component",
+          "target": "components/latency-percentiles-chart.tsx"
+        },
+        {
+          "path": "registry/new-york/pipeline-breakdown-chart/pipeline-breakdown-chart.tsx",
+          "type": "registry:component",
+          "target": "components/pipeline-breakdown-chart.tsx"
+        },
+        {
+          "path": "registry/new-york/latency-over-turns-chart/latency-over-turns-chart.tsx",
+          "type": "registry:component",
+          "target": "components/latency-over-turns-chart.tsx"
+        },
+        {
+          "path": "registry/new-york/token-usage-section/token-usage-section.tsx",
+          "type": "registry:component",
+          "target": "components/token-usage-section.tsx"
+        },
+        {
+          "path": "registry/new-york/session-header/session-header.tsx",
+          "type": "registry:component",
+          "target": "components/session-header.tsx"
+        },
+        {
+          "path": "registry/new-york/turn-transcript/turn-transcript.tsx",
+          "type": "registry:component",
+          "target": "components/turn-transcript.tsx"
+        },
+        {
+          "path": "registry/new-york/session-timeline/session-timeline.tsx",
+          "type": "registry:component",
+          "target": "components/session-timeline/session-timeline.tsx"
+        },
+        {
+          "path": "registry/new-york/session-timeline/recording-player.tsx",
+          "type": "registry:component",
+          "target": "components/session-timeline/recording-player.tsx"
+        },
+        {
+          "path": "registry/new-york/session-timeline/session-trace.tsx",
+          "type": "registry:component",
+          "target": "components/session-timeline/session-trace.tsx"
+        },
+        {
+          "path": "registry/new-york/session-detail-page/session-detail-page.tsx",
+          "type": "registry:component"
+        }
+      ]
+    }
+  ]
+}

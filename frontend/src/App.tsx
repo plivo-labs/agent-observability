@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Link } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useParams, useNavigate } from 'react-router'
 import { Moon, Sun } from 'lucide-react'
-import { SessionsPage } from './pages/sessions'
-import { SessionDetailPage } from './pages/session-detail'
+import { AgentObservabilityProvider } from './lib/observability-provider'
+import { SessionsPage } from '@/components/sessions-page'
+import { SessionDetailPage } from '@/components/session-detail-page'
 
 const useDarkMode = () => {
   const [dark, setDark] = useState(() => {
@@ -15,7 +16,6 @@ const useDarkMode = () => {
     localStorage.setItem('darkMode', String(dark))
   }, [dark])
 
-  // Cmd+D / Ctrl+D shortcut (matches console behavior)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
@@ -53,14 +53,31 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
+function SessionsRoute() {
+  const navigate = useNavigate()
+  return <SessionsPage onSessionClick={(id) => navigate(`/sessions/${id}`)} />
+}
+
+function SessionDetailRoute() {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const navigate = useNavigate()
+  return (
+    <AgentObservabilityProvider baseUrl="/api" sessionId={sessionId}>
+      <SessionDetailPage onBack={() => navigate('/')} />
+    </AgentObservabilityProvider>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <Layout>
-        <Routes>
-          <Route path="/" element={<SessionsPage />} />
-          <Route path="/sessions/:sessionId" element={<SessionDetailPage />} />
-        </Routes>
+        <AgentObservabilityProvider baseUrl="/api">
+          <Routes>
+            <Route path="/" element={<SessionsRoute />} />
+            <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
+          </Routes>
+        </AgentObservabilityProvider>
       </Layout>
     </BrowserRouter>
   )

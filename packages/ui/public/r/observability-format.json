@@ -1,0 +1,17 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "observability-format",
+  "title": "Format Utilities",
+  "description": "formatMs, formatDuration, formatDate, computeAvg, computePercentile",
+  "dependencies": [
+    "dayjs"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/observability-format/format.ts",
+      "content": "// Formatting utilities for session metrics display\n\nimport dayjs from 'dayjs'\nimport relativeTime from 'dayjs/plugin/relativeTime'\n\ndayjs.extend(relativeTime)\n\nexport const formatMs = (ms: number): string => {\n  if (ms < 1) return '<1ms'\n  if (ms < 1000) return `${Math.round(ms)}ms`\n  return `${(ms / 1000).toFixed(2)}s`\n}\n\nexport const formatDuration = (ms: number | null): string => {\n  if (ms == null) return '—'\n  const seconds = Math.floor(ms / 1000)\n  const minutes = Math.floor(seconds / 60)\n  const hours = Math.floor(minutes / 60)\n  if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`\n  if (minutes > 0) return `${minutes}m ${seconds % 60}s`\n  return `${seconds}s`\n}\n\nexport const formatDate = (iso: string | null): string => {\n  if (!iso) return '—'\n  return dayjs(iso).format('MMM D, YYYY h:mm A')\n}\n\nexport const computeAvg = (values: number[]) => {\n  if (!values.length) return 0\n  return Math.round(values.reduce((a, b) => a + b, 0) / values.length)\n}\n\nexport const computePercentile = (values: number[], p: number) => {\n  if (!values.length) return 0\n  const sorted = [...values].sort((a, b) => a - b)\n  const idx = Math.min(Math.floor(sorted.length * p), sorted.length - 1)\n  return sorted[idx]\n}\n",
+      "type": "registry:lib"
+    }
+  ],
+  "type": "registry:lib"
+}

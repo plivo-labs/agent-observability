@@ -1,0 +1,361 @@
+{
+  "sessions": [
+    {
+      "id": 1,
+      "session_id": "sess_abc123def456",
+      "account_id": "acc_plivo_001",
+      "state": "ended",
+      "started_at": "2026-04-14T10:00:00Z",
+      "ended_at": "2026-04-14T10:03:45Z",
+      "duration_ms": 225000,
+      "turn_count": 8,
+      "has_stt": true,
+      "has_llm": true,
+      "has_tts": true,
+      "chat_history": null,
+      "record_url": "/mock-recording.ogg",
+      "created_at": "2026-04-14T10:00:00Z",
+      "session_metrics": {
+        "turns": [
+          {
+            "turn_number": 1,
+            "turn_id": "t1",
+            "user_text": "Hi, I need help with my account billing.",
+            "agent_text": "Hello! I'd be happy to help you with your billing. Could you tell me your account number?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:02Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:05Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:05.8Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:11Z",
+            "user_perceived_ms": 800,
+            "stt_delay_ms": 180,
+            "llm_ttft_ms": 320,
+            "tts_ttfb_ms": 150,
+            "turn_decision_ms": 45,
+            "llm_prompt_tokens": 245,
+            "llm_completion_tokens": 38,
+            "llm_total_tokens": 283,
+            "tts_characters": 92,
+            "stt_timestamp": 1744624805,
+            "llm_timestamp": 1744624805.2,
+            "tts_timestamp": 1744624805.5
+          },
+          {
+            "turn_number": 2,
+            "turn_id": "t2",
+            "user_text": "Sure, it's AC-9921.",
+            "agent_text": "Thank you. Let me pull up your account details.",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:12Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:14Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:14.6Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:18Z",
+            "user_perceived_ms": 600,
+            "stt_delay_ms": 150,
+            "llm_ttft_ms": 250,
+            "tts_ttfb_ms": 120,
+            "turn_decision_ms": 30,
+            "llm_prompt_tokens": 310,
+            "llm_completion_tokens": 22,
+            "llm_total_tokens": 332,
+            "tts_characters": 58,
+            "tool_calls": [
+              {
+                "name": "lookup_account",
+                "call_id": "tc1",
+                "arguments": {
+                  "account_id": "AC-9921"
+                },
+                "output": "{ \"name\": \"Acme Corp\", \"plan\": \"Enterprise\", \"balance\": 1250.00 }",
+                "is_error": false,
+                "turn_number": 2,
+                "timestamp": "2026-04-14T10:00:14.8Z"
+              }
+            ],
+            "stt_timestamp": 1744624814,
+            "llm_timestamp": 1744624814.2,
+            "tts_timestamp": 1744624814.4
+          },
+          {
+            "turn_number": 3,
+            "turn_id": "t3",
+            "user_text": "I see a charge I don't recognize from last week.",
+            "agent_text": "I can see your recent transactions. There's a $45.99 charge from April 7th labeled 'API Overage'. This was for exceeding your monthly API call limit. Would you like me to explain the details?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:20Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:24Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:24.9Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:34Z",
+            "user_perceived_ms": 900,
+            "stt_delay_ms": 200,
+            "llm_ttft_ms": 380,
+            "tts_ttfb_ms": 160,
+            "turn_decision_ms": 40,
+            "llm_prompt_tokens": 420,
+            "llm_completion_tokens": 65,
+            "llm_total_tokens": 485,
+            "tts_characters": 195,
+            "stt_timestamp": 1744624824,
+            "llm_timestamp": 1744624824.3,
+            "tts_timestamp": 1744624824.7
+          },
+          {
+            "turn_number": 4,
+            "turn_id": "t4",
+            "user_text": "Yes please, and can you waive it?",
+            "agent_text": "The API overage charge was triggered when your account made 112,000 API calls, exceeding the 100,000 monthly limit on your Enterprise plan. I can apply a one-time courtesy credit of $45.99 to your account. Shall I go ahead?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:36Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:39Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:40.1Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:52Z",
+            "user_perceived_ms": 1100,
+            "stt_delay_ms": 210,
+            "llm_ttft_ms": 480,
+            "tts_ttfb_ms": 180,
+            "turn_decision_ms": 55,
+            "llm_prompt_tokens": 560,
+            "llm_completion_tokens": 78,
+            "llm_total_tokens": 638,
+            "tts_characters": 238,
+            "stt_timestamp": 1744624839,
+            "llm_timestamp": 1744624839.3,
+            "tts_timestamp": 1744624839.8
+          },
+          {
+            "turn_number": 5,
+            "turn_id": "t5",
+            "user_text": "Yes, that would be great.",
+            "agent_text": "Done! I've applied a $45.99 credit to your account. You'll see it reflected within 24 hours.",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:54Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:56Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:56.5Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:02Z",
+            "user_perceived_ms": 500,
+            "stt_delay_ms": 120,
+            "llm_ttft_ms": 200,
+            "tts_ttfb_ms": 100,
+            "turn_decision_ms": 25,
+            "llm_prompt_tokens": 680,
+            "llm_completion_tokens": 35,
+            "llm_total_tokens": 715,
+            "tts_characters": 98,
+            "tool_calls": [
+              {
+                "name": "apply_credit",
+                "call_id": "tc2",
+                "arguments": {
+                  "account_id": "AC-9921",
+                  "amount": 45.99,
+                  "reason": "courtesy_waiver"
+                },
+                "output": "{ \"success\": true, \"credit_id\": \"CR-8834\" }",
+                "is_error": false,
+                "turn_number": 5,
+                "timestamp": "2026-04-14T10:00:56.3Z"
+              }
+            ],
+            "stt_timestamp": 1744624856,
+            "llm_timestamp": 1744624856.15,
+            "tts_timestamp": 1744624856.35
+          },
+          {
+            "turn_number": 6,
+            "turn_id": "t6",
+            "user_text": "Also, can I upgrade to avoid this in the future?",
+            "agent_text": "Absolutely! Your current Enterprise plan includes 100K API calls. The next tier, Enterprise Plus, includes 500K calls for an additional $120/month. Would you like me to upgrade your plan?",
+            "agent_first": false,
+            "interrupted": true,
+            "user_started_speaking_at": "2026-04-14T10:01:04Z",
+            "user_stopped_speaking_at": "2026-04-14T10:01:08Z",
+            "agent_started_speaking_at": "2026-04-14T10:01:08.7Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:19Z",
+            "user_perceived_ms": 700,
+            "stt_delay_ms": 160,
+            "llm_ttft_ms": 290,
+            "tts_ttfb_ms": 130,
+            "turn_decision_ms": 35,
+            "llm_prompt_tokens": 750,
+            "llm_completion_tokens": 62,
+            "llm_total_tokens": 812,
+            "tts_characters": 182,
+            "num_interruptions": 1,
+            "stt_timestamp": 1744624868,
+            "llm_timestamp": 1744624868.2,
+            "tts_timestamp": 1744624868.5
+          },
+          {
+            "turn_number": 7,
+            "turn_id": "t7",
+            "user_text": "Hmm, let me think about it. I'll discuss with my team.",
+            "agent_text": "No problem at all! Take your time. You can upgrade anytime through your dashboard or by calling us back. Is there anything else I can help with?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:01:21Z",
+            "user_stopped_speaking_at": "2026-04-14T10:01:26Z",
+            "agent_started_speaking_at": "2026-04-14T10:01:26.8Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:35Z",
+            "user_perceived_ms": 800,
+            "stt_delay_ms": 190,
+            "llm_ttft_ms": 310,
+            "tts_ttfb_ms": 140,
+            "turn_decision_ms": 40,
+            "llm_prompt_tokens": 850,
+            "llm_completion_tokens": 48,
+            "llm_total_tokens": 898,
+            "tts_characters": 145,
+            "stt_timestamp": 1744624886,
+            "llm_timestamp": 1744624886.25,
+            "tts_timestamp": 1744624886.55
+          },
+          {
+            "turn_number": 8,
+            "turn_id": "t8",
+            "user_text": "No, that's all. Thanks for your help!",
+            "agent_text": "You're welcome! Have a great day. Goodbye!",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:01:37Z",
+            "user_stopped_speaking_at": "2026-04-14T10:01:40Z",
+            "agent_started_speaking_at": "2026-04-14T10:01:40.4Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:44Z",
+            "user_perceived_ms": 400,
+            "stt_delay_ms": 100,
+            "llm_ttft_ms": 150,
+            "tts_ttfb_ms": 90,
+            "turn_decision_ms": 20,
+            "llm_prompt_tokens": 920,
+            "llm_completion_tokens": 18,
+            "llm_total_tokens": 938,
+            "tts_characters": 42,
+            "stt_timestamp": 1744624900,
+            "llm_timestamp": 1744624900.12,
+            "tts_timestamp": 1744624900.27
+          }
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_account",
+            "call_id": "tc1",
+            "arguments": {
+              "account_id": "AC-9921"
+            },
+            "output": "{ \"name\": \"Acme Corp\" }",
+            "is_error": false,
+            "turn_number": 2,
+            "timestamp": "2026-04-14T10:00:14.8Z"
+          },
+          {
+            "name": "apply_credit",
+            "call_id": "tc2",
+            "arguments": {
+              "account_id": "AC-9921",
+              "amount": 45.99
+            },
+            "output": "{ \"success\": true }",
+            "is_error": false,
+            "turn_number": 5,
+            "timestamp": "2026-04-14T10:00:56.3Z"
+          }
+        ],
+        "summary": {
+          "total_turns": 8,
+          "total_llm_tokens": 5101,
+          "total_llm_prompt_tokens": 4735,
+          "total_llm_completion_tokens": 366,
+          "total_tts_characters": 1050,
+          "total_tool_calls": 2,
+          "interruptions": 1,
+          "avg_user_perceived_ms": 725,
+          "p95_user_perceived_ms": 1100,
+          "latency": {
+            "user_perceived_ms": {
+              "p50": 750,
+              "p90": 1000,
+              "p95": 1100,
+              "avg": 725
+            },
+            "stt_delay_ms": {
+              "p50": 170,
+              "p90": 210,
+              "p95": 210,
+              "avg": 164
+            },
+            "llm_ttft_ms": {
+              "p50": 305,
+              "p90": 480,
+              "p95": 480,
+              "avg": 298
+            },
+            "tts_ttfb_ms": {
+              "p50": 135,
+              "p90": 180,
+              "p95": 180,
+              "avg": 134
+            }
+          },
+          "usage": {
+            "total_llm_tokens": 5101,
+            "total_llm_prompt_tokens": 4735,
+            "total_llm_completion_tokens": 366,
+            "total_llm_cached_tokens": 3200,
+            "total_tts_characters": 1050
+          },
+          "interruption": {
+            "total_interrupted_turns": 1,
+            "total_interruptions": 1,
+            "total_backchannels": 0
+          },
+          "providers": {
+            "stt_provider": "deepgram",
+            "stt_model": "nova-2",
+            "llm_provider": "openai",
+            "llm_model": "gpt-4o",
+            "tts_provider": "elevenlabs",
+            "tts_model": "eleven_turbo_v2"
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "session_id": "sess_xyz789ghi012",
+      "account_id": "acc_plivo_002",
+      "state": "ended",
+      "started_at": "2026-04-14T09:30:00Z",
+      "ended_at": "2026-04-14T09:31:20Z",
+      "duration_ms": 80000,
+      "turn_count": 3,
+      "has_stt": true,
+      "has_llm": true,
+      "has_tts": true,
+      "chat_history": null,
+      "record_url": null,
+      "created_at": "2026-04-14T09:30:00Z",
+      "session_metrics": null
+    },
+    {
+      "id": 3,
+      "session_id": "sess_mno345pqr678",
+      "account_id": "acc_plivo_001",
+      "state": "active",
+      "started_at": "2026-04-14T11:00:00Z",
+      "ended_at": "2026-04-14T11:05:30Z",
+      "duration_ms": 330000,
+      "turn_count": 12,
+      "has_stt": true,
+      "has_llm": true,
+      "has_tts": false,
+      "chat_history": null,
+      "record_url": null,
+      "created_at": "2026-04-14T11:00:00Z",
+      "session_metrics": null
+    }
+  ]
+}

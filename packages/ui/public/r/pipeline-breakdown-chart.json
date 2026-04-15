@@ -1,0 +1,24 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "pipeline-breakdown-chart",
+  "title": "Pipeline Breakdown Chart",
+  "description": "Stacked bar chart showing avg time in STT, LLM, TTS, and unaccounted",
+  "dependencies": [
+    "recharts"
+  ],
+  "registryDependencies": [
+    "observability-theme",
+    "observability-format",
+    "observability-types",
+    "observability-hooks",
+    "observability-chart-shared"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/pipeline-breakdown-chart/pipeline-breakdown-chart.tsx",
+      "content": "import { useMemo } from 'react'\nimport { Bar, BarChart, Legend, Tooltip, XAxis, YAxis } from 'recharts'\nimport { computeAvg, formatMs } from '@/lib/observability-format'\nimport type { SessionMetrics } from '@/lib/observability-types'\nimport { usePerformance } from '@/lib/observability-hooks'\nimport { ChartCard } from '@/components/observability-chart-shared'\n\nconst COLORS = {\n  stt: 'hsl(210 80% 55%)',\n  llm: 'hsl(270 60% 55%)',\n  tts: 'hsl(150 60% 45%)',\n  unaccounted: 'hsl(230 7% 78%)',\n}\n\ninterface BreakdownRow {\n  label: string\n  stt: number\n  llm: number\n  tts: number\n  unaccounted: number\n  total: number\n}\n\nconst PipelineTooltip = ({\n  active,\n  payload,\n}: {\n  active?: boolean\n  payload?: Array<{ payload: BreakdownRow }>\n}) => {\n  if (!active || !payload?.length) return null\n  const d = payload[0].payload\n  return (\n    <div className=\"rounded-lg border bg-background p-3 text-s-400 shadow-md\">\n      <p className=\"font-medium mb-1\">{d.label}</p>\n      <div className=\"grid grid-cols-2 gap-x-4 gap-y-0.5\">\n        <span style={{ color: COLORS.stt }}>STT</span>\n        <span>{formatMs(d.stt)}</span>\n        <span style={{ color: COLORS.llm }}>LLM</span>\n        <span>{formatMs(d.llm)}</span>\n        <span style={{ color: COLORS.tts }}>TTS</span>\n        <span>{formatMs(d.tts)}</span>\n        <span className=\"text-muted-foreground\">Other</span>\n        <span>{formatMs(d.unaccounted)}</span>\n        <span className=\"font-medium\">Total</span>\n        <span className=\"font-medium\">{formatMs(d.total)}</span>\n      </div>\n    </div>\n  )\n}\n\nexport const PipelineBreakdownChart = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {\n  const { metrics: hookMetrics } = usePerformance()\n  const metrics = metricsProp ?? hookMetrics\n\n  const chartData = useMemo(() => {\n    if (!metrics?.turns?.length) return []\n\n    const sttValues = metrics.turns.map((t) => t.stt_delay_ms).filter((v): v is number => v != null)\n    const llmValues = metrics.turns.map((t) => t.llm_ttft_ms).filter((v): v is number => v != null)\n    const ttsValues = metrics.turns.map((t) => t.tts_ttfb_ms).filter((v): v is number => v != null)\n    const totalValues = metrics.turns\n      .map((t) => t.user_perceived_ms)\n      .filter((v): v is number => v != null)\n\n    if (!totalValues.length) return []\n\n    const total = computeAvg(totalValues)\n    const stt = computeAvg(sttValues)\n    const llm = computeAvg(llmValues)\n    const tts = computeAvg(ttsValues)\n    const unaccounted = Math.max(0, total - stt - llm - tts)\n\n    return [{ label: 'Avg', stt, llm, tts, unaccounted, total }]\n  }, [metrics])\n\n  if (!chartData.length) return null\n\n  return (\n    <ChartCard\n      title=\"Pipeline Breakdown\"\n      subtitle=\"Where is time spent in the pipeline?\"\n      legend={[]}\n      chartHeight=\"h-48\"\n    >\n      <BarChart data={chartData} layout=\"vertical\" barCategoryGap=\"30%\">\n        <XAxis\n          type=\"number\"\n          tickFormatter={(v: number) => formatMs(v)}\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <YAxis\n          type=\"category\"\n          dataKey=\"label\"\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n          width={40}\n        />\n        <Tooltip content={<PipelineTooltip />} cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />\n        <Legend formatter={(value: string) => <span className=\"text-xs\">{value}</span>} />\n        <Bar dataKey=\"stt\" name=\"STT\" stackId=\"stack\" fill={COLORS.stt} radius={[0, 0, 0, 0]} />\n        <Bar dataKey=\"llm\" name=\"LLM\" stackId=\"stack\" fill={COLORS.llm} />\n        <Bar dataKey=\"tts\" name=\"TTS\" stackId=\"stack\" fill={COLORS.tts} />\n        <Bar\n          dataKey=\"unaccounted\"\n          name=\"Other\"\n          stackId=\"stack\"\n          fill={COLORS.unaccounted}\n          radius={[0, 4, 4, 0]}\n        />\n      </BarChart>\n    </ChartCard>\n  )\n}\n",
+      "type": "registry:ui"
+    }
+  ],
+  "type": "registry:ui"
+}

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@/lib/observability-types": ["./registry/new-york/observability-types/types.ts"],
+      "@/lib/observability-format": ["./registry/new-york/observability-format/format.ts"],
+      "@/lib/observability-api": ["./registry/new-york/observability-api/api.ts"],
+      "@/lib/observability-provider": ["./registry/new-york/observability-provider/provider.tsx"],
+      "@/lib/observability-hooks": ["./registry/new-york/observability-hooks/hooks.ts"],
+      "@/components/observability-chart-shared": ["./registry/new-york/observability-chart-shared/chart-shared.tsx"],
+      "@/components/*": ["./registry/new-york/*"]
+    }
+  },
+  "include": ["registry", "tests"]
+}
