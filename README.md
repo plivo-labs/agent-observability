@@ -78,13 +78,13 @@ The dashboard components are also available as a **shadcn registry** at [`packag
 
 ```bash
 # Install a component into your project
-npx @plivo-labs/agent-observability-ui@latest add metric-summary-cards
+npx agent-observability-ui@latest add metric-summary-cards
 
 # Install the full dashboard (pulls in everything)
-npx @plivo-labs/agent-observability-ui@latest add session-detail-page
+npx agent-observability-ui@latest add session-detail-page
 ```
 
-See the [full documentation](packages/ui/README.md) for usage, available components, hooks, and the preview app.
+See the [full documentation](packages/ui/README.md) for usage, available components, hooks, and the preview app. Releases are automated — see [Releasing](CLAUDE.md#releasing) for the publish flow.
 
 ### Preview App
 

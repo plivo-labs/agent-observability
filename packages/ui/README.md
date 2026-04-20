@@ -1,4 +1,4 @@
-# @plivo-labs/agent-observability-ui
+# agent-observability-ui
 
 shadcn registry for agent observability dashboard components. Components auto-connect to data via a provider and hooks — zero props needed by default. Consumers install individual components or the full dashboard via `npx shadcn add`.
 
@@ -47,14 +47,14 @@ cd packages/ui && npx serve public -p 3001
 
 ```bash
 # Individual components
-npx @plivo-labs/agent-observability-ui@latest add metric-summary-cards
-npx @plivo-labs/agent-observability-ui@latest add session-timeline
+npx agent-observability-ui@latest add metric-summary-cards
+npx agent-observability-ui@latest add session-timeline
 
 # Multiple at once
-npx @plivo-labs/agent-observability-ui@latest add session-timeline turn-transcript
+npx agent-observability-ui@latest add session-timeline turn-transcript
 
 # Full dashboard (installs all transitive dependencies)
-npx @plivo-labs/agent-observability-ui@latest add session-detail-page
+npx agent-observability-ui@latest add session-detail-page
 ```
 
 ### Local development
@@ -252,8 +252,14 @@ packages/ui/
 │   ├── session-timeline/            # Multi-file (3 files)
 │   ├── sessions-page/               # Page blocks
 │   └── session-detail-page/
-├── public/r/                        # Built registry JSON (gitignored)
+├── public/r/                        # Built registry JSON (committed; served via raw.githubusercontent.com)
 ├── tests/                           # Unit tests
 ├── preview/                         # Preview app
 └── package.json
 ```
+
+## Releasing
+
+Releases are automated via GitHub Actions. See the [Releasing section in the root CLAUDE.md](../../CLAUDE.md#releasing) for the full flow.
+
+TL;DR: bump `version` here → open PR → add label `release-ui-pkg` → merge to `main`. The `Publish UI Package` workflow publishes `bin/cli.mjs` to npm and cuts a `ui-v<version>` GitHub Release automatically.
