@@ -66,3 +66,19 @@ SQL files in `migrations/` folder, named `001_description.sql`, `002_description
 ## Environment Variables
 
 See `.env.example` for all variables. Required: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `DATABASE_URL`.
+
+## Releasing
+
+The UI package (`packages/ui/`, published as `agent-observability-ui`) publishes to npm via PR label — no manual tags or releases needed.
+
+1. Bump `version` in `packages/ui/package.json`.
+2. **Version bumps must be in a dedicated PR** — do not mix with feature changes.
+3. Add the `release-ui-pkg` label to the PR — this triggers the publish.
+4. Merge to `main`. `Tests` runs, then `Publish UI Package` picks up the merged commit, publishes `bin/cli.mjs` to npm, and creates a `ui-v<version>` GitHub Release with notes listing every PR merged since the previous `ui-v*` tag.
+
+> **Note:** The registry JSON under `packages/ui/public/r/` is served from git via `raw.githubusercontent.com` — it is **not** shipped in the npm tarball. If you add or change a registry item in `registry.json`, run `cd packages/ui && bun run build` and commit the regenerated `public/r/*.json` files in the same PR.
+
+### Prerequisites (one-time setup)
+
+- **npm:** `NPM_TOKEN` must be set as a repository Actions secret (an npm automation token with publish rights for `agent-observability-ui`).
+- **GitHub label:** Create `release-ui-pkg` in the repo.

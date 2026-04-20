@@ -10,15 +10,15 @@ const [command, ...args] = process.argv.slice(2)
 
 function printUsage() {
   console.log(`
-  Usage: npx @plivo-labs/agent-observability-ui <command> [options]
+  Usage: npx agent-observability-ui <command> [options]
 
   Commands:
     add <component...>   Install one or more components into your project
 
   Examples:
-    npx @plivo-labs/agent-observability-ui add metric-summary-cards
-    npx @plivo-labs/agent-observability-ui add session-detail-page
-    npx @plivo-labs/agent-observability-ui add session-timeline turn-transcript
+    npx agent-observability-ui add metric-summary-cards
+    npx agent-observability-ui add session-detail-page
+    npx agent-observability-ui add session-timeline turn-transcript
 
   Available components:
     observability-types          TypeScript types

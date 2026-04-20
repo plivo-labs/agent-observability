@@ -1,0 +1,108 @@
+name: Publish UI Package
+
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should-publish: ${{ steps.check.outputs.should-publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check for release label on merged PR
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should-publish=true" >> $GITHUB_OUTPUT
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
+              --jq 'if length > 0 then .[0].labels[].name else empty end' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "release-ui-pkg"; then
+              echo "should-publish=true" >> $GITHUB_OUTPUT
+            else
+              echo "should-publish=false" >> $GITHUB_OUTPUT
+              echo "No release-ui-pkg label found, skipping"
+            fi
+          fi
+          VERSION=$(node -p "require('./packages/ui/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing agent-observability-ui v$VERSION to npm"
+
+  publish:
+    needs: check
+    if: needs.check.outputs.should-publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        working-directory: packages/ui
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          npm publish
+
+  release:
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          TAG="ui-v${VERSION}"
+          PREV_TAG=$(git tag --list "ui-v*" --sort=-v:refname | head -1)
+          BASE=${PREV_TAG:-$(git rev-list --max-parents=0 HEAD)}
+          PR_NUMBERS=$(git log "$BASE"..HEAD --oneline | grep -oP '\(#\K[0-9]+(?=\))' | sort -u || true)
+          NOTES=""
+          for pr in $PR_NUMBERS; do
+            TITLE=$(gh pr view "$pr" --json title --jq '.title' 2>/dev/null || echo "")
+            AUTHOR=$(gh pr view "$pr" --json author --jq '.author.login' 2>/dev/null || echo "")
+            if [ -n "$TITLE" ]; then
+              NOTES+="- ${TITLE} (#${pr}) @${AUTHOR}"$'\n'
+            fi
+          done
+          if [ -z "$NOTES" ]; then
+            NOTES="Release UI v${VERSION}"
+          fi
+          if [ -n "$PREV_TAG" ]; then
+            NOTES+=$'\n'"**Full changelog**: ${PREV_TAG}...${TAG}"
+          fi
+          gh release create "$TAG" \
+            --target "$TARGET_SHA" \
+            --title "UI v${VERSION}" \
+            --notes "$NOTES"
