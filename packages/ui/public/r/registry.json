@@ -412,6 +412,14 @@
       "type": "registry:block",
       "title": "Sessions Page",
       "description": "Paginated sessions list. Requires shadcn primitives: badge, table, pagination. Uses react-router.",
+      "dependencies": [
+        "dayjs"
+      ],
+      "registryDependencies": [
+        "badge",
+        "table",
+        "pagination"
+      ],
       "files": [
         {
           "path": "registry/new-york/observability-types/types.ts",
@@ -450,7 +458,16 @@
       "title": "Session Detail Page",
       "description": "Full session detail with Session and Performance tabs. Requires shadcn primitives: badge, scroll-area, separator, tabs. Uses react-router and lucide-react.",
       "dependencies": [
-        "lucide-react"
+        "lucide-react",
+        "recharts",
+        "wavesurfer.js",
+        "dayjs"
+      ],
+      "registryDependencies": [
+        "badge",
+        "scroll-area",
+        "separator",
+        "tabs"
       ],
       "files": [
         {
