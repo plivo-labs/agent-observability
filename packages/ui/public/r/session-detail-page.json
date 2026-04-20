@@ -4,7 +4,16 @@
   "title": "Session Detail Page",
   "description": "Full session detail with Session and Performance tabs. Requires shadcn primitives: badge, scroll-area, separator, tabs. Uses react-router and lucide-react.",
   "dependencies": [
-    "lucide-react"
+    "lucide-react",
+    "recharts",
+    "wavesurfer.js",
+    "dayjs"
+  ],
+  "registryDependencies": [
+    "badge",
+    "scroll-area",
+    "separator",
+    "tabs"
   ],
   "files": [
     {

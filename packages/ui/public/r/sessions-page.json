@@ -3,6 +3,14 @@
   "name": "sessions-page",
   "title": "Sessions Page",
   "description": "Paginated sessions list. Requires shadcn primitives: badge, table, pagination. Uses react-router.",
+  "dependencies": [
+    "dayjs"
+  ],
+  "registryDependencies": [
+    "badge",
+    "table",
+    "pagination"
+  ],
   "files": [
     {
       "path": "registry/new-york/observability-types/types.ts",
