@@ -87,12 +87,16 @@ jobs:
           TAG="ui-v${VERSION}"
           PREV_TAG=$(git tag --list "ui-v*" --sort=-v:refname | head -1)
           BASE=${PREV_TAG:-$(git rev-list --max-parents=0 HEAD)}
-          PR_NUMBERS=$(git log "$BASE"..HEAD --oneline | grep -oP '\(#\K[0-9]+(?=\))' | sort -u || true)
+          PR_NUMBERS=$(git log "$BASE"..HEAD --pretty=%s \
+            | grep -oE '(\(#[0-9]+\)|Merge pull request #[0-9]+)' \
+            | grep -oE '[0-9]+' \
+            | sort -u)
           NOTES=""
           for pr in $PR_NUMBERS; do
-            TITLE=$(gh pr view "$pr" --json title --jq '.title' 2>/dev/null || echo "")
-            AUTHOR=$(gh pr view "$pr" --json author --jq '.author.login' 2>/dev/null || echo "")
-            if [ -n "$TITLE" ]; then
+            LABELS=$(gh pr view "$pr" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -qx "agent-observability-ui"; then
+              TITLE=$(gh pr view "$pr" --json title --jq '.title')
+              AUTHOR=$(gh pr view "$pr" --json author --jq '.author.login')
               NOTES+="- ${TITLE} (#${pr}) @${AUTHOR}"$'\n'
             fi
           done
