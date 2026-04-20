@@ -1,6 +1,6 @@
 {
   "name": "agent-observability-ui",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Agent observability dashboard components — shadcn registry with provider + hooks",
   "bin": {
     "agent-observability-ui": "bin/cli.mjs"
