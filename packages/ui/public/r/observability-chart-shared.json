@@ -1,0 +1,20 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "observability-chart-shared",
+  "title": "Chart Shared Utilities",
+  "description": "ChartCard, ChartTooltipShell, ChartLegendItem wrappers for recharts",
+  "dependencies": [
+    "recharts"
+  ],
+  "registryDependencies": [
+    "observability-theme"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/observability-chart-shared/chart-shared.tsx",
+      "content": "import { Fragment } from 'react'\nimport { ResponsiveContainer } from 'recharts'\n\ninterface TooltipRow {\n  label: string\n  value: string\n  color?: string\n}\n\nexport const ChartTooltipShell = ({\n  active,\n  label,\n  rows,\n}: {\n  active?: boolean\n  label?: string | number\n  rows: TooltipRow[]\n}) => {\n  if (!active || !rows.length) return null\n  return (\n    <div className=\"rounded-lg border bg-background p-3 text-s-400 shadow-md\">\n      <p className=\"font-medium mb-1\">Turn {label}</p>\n      <div className=\"grid grid-cols-2 gap-x-4 gap-y-0.5\">\n        {rows.map((r) => (\n          <Fragment key={r.label}>\n            <span\n              className=\"text-muted-foreground\"\n              style={r.color ? { color: r.color } : undefined}\n            >\n              {r.label}\n            </span>\n            <span>{r.value}</span>\n          </Fragment>\n        ))}\n      </div>\n    </div>\n  )\n}\n\nexport const ChartLegendItem = ({ color, label }: { color: string; label: string }) => {\n  return (\n    <span className=\"flex items-center gap-1.5\">\n      <span className=\"inline-block h-2.5 w-2.5 rounded-sm\" style={{ background: color }} />\n      {label}\n    </span>\n  )\n}\n\ninterface LegendEntry {\n  color: string\n  label: string\n}\n\nexport const ChartCard = ({\n  title,\n  subtitle,\n  legend,\n  chartHeight = 'h-64',\n  children,\n}: {\n  title: string\n  subtitle?: string\n  legend: LegendEntry[]\n  chartHeight?: string\n  children: React.ReactNode\n}) => {\n  return (\n    <div className=\"rounded-lg border p-5\">\n      <span className=\"text-p-400 font-medium\">{title}</span>\n      {subtitle && <p className=\"text-xs text-muted-foreground mt-0.5\">{subtitle}</p>}\n      <div className={`mt-3 ${chartHeight}`}>\n        <ResponsiveContainer width=\"100%\" height=\"100%\">\n          {children as React.ReactElement}\n        </ResponsiveContainer>\n      </div>\n      {legend.length > 0 && (\n        <div className=\"mt-2 flex items-center gap-4 text-xs text-muted-foreground\">\n          {legend.map((l) => (\n            <ChartLegendItem key={l.label} color={l.color} label={l.label} />\n          ))}\n        </div>\n      )}\n    </div>\n  )\n}\n",
+      "type": "registry:ui"
+    }
+  ],
+  "type": "registry:ui"
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "observability-provider",
+  "title": "Observability Provider",
+  "description": "AgentObservabilityProvider context — wraps your app to provide API and session data",
+  "registryDependencies": [
+    "observability-api",
+    "observability-types"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/observability-provider/provider.tsx",
+      "content": "import {\n  createContext,\n  useContext,\n  useEffect,\n  useMemo,\n  useState,\n  type ReactNode,\n} from 'react'\nimport { createObservabilityApi, type ObservabilityApi } from '@/lib/observability-api'\nimport type { AgentSessionRow } from '@/lib/observability-types'\n\ninterface ObservabilityContextValue {\n  api: ObservabilityApi\n  session: AgentSessionRow | null\n  sessionLoading: boolean\n  sessionError: string | null\n  highlightedTurn: number | null\n  setHighlightedTurn: (turn: number | null) => void\n}\n\nconst ObservabilityContext = createContext<ObservabilityContextValue | null>(null)\n\nexport function AgentObservabilityProvider({\n  baseUrl,\n  sessionId,\n  children,\n}: {\n  baseUrl: string\n  sessionId?: string\n  children: ReactNode\n}) {\n  const api = useMemo(() => createObservabilityApi(baseUrl), [baseUrl])\n  const [session, setSession] = useState<AgentSessionRow | null>(null)\n  const [sessionLoading, setSessionLoading] = useState(!!sessionId)\n  const [sessionError, setSessionError] = useState<string | null>(null)\n  const [highlightedTurn, setHighlightedTurn] = useState<number | null>(null)\n\n  useEffect(() => {\n    if (!sessionId) {\n      setSession(null)\n      setSessionLoading(false)\n      return\n    }\n    setSessionLoading(true)\n    setSessionError(null)\n    api\n      .getSession(sessionId)\n      .then(setSession)\n      .catch((e) => setSessionError(e.message))\n      .finally(() => setSessionLoading(false))\n  }, [api, sessionId])\n\n  const value = useMemo<ObservabilityContextValue>(\n    () => ({\n      api,\n      session,\n      sessionLoading,\n      sessionError,\n      highlightedTurn,\n      setHighlightedTurn,\n    }),\n    [api, session, sessionLoading, sessionError, highlightedTurn],\n  )\n\n  return (\n    <ObservabilityContext.Provider value={value}>\n      {children}\n    </ObservabilityContext.Provider>\n  )\n}\n\nexport function useObservabilityContext() {\n  const ctx = useContext(ObservabilityContext)\n  if (!ctx) {\n    throw new Error('useObservabilityContext must be used within AgentObservabilityProvider')\n  }\n  return ctx\n}\n",
+      "type": "registry:lib"
+    }
+  ],
+  "type": "registry:lib"
+}

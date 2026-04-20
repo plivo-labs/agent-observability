@@ -16,3 +16,7 @@ export const s3Enabled =
   !!config.S3_BUCKET &&
   !!config.S3_ACCESS_KEY_ID &&
   !!config.S3_SECRET_ACCESS_KEY;
+
+export const basicAuthEnabled =
+  !!config.AGENT_OBSERVABILITY_USER &&
+  !!config.AGENT_OBSERVABILITY_PASS;

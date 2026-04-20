@@ -1,0 +1,23 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "cache-efficiency-chart",
+  "title": "Cache Efficiency Chart",
+  "description": "Area chart showing prompt cache hit ratio over turns",
+  "dependencies": [
+    "recharts"
+  ],
+  "registryDependencies": [
+    "observability-theme",
+    "observability-types",
+    "observability-hooks",
+    "observability-chart-shared"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/cache-efficiency-chart/cache-efficiency-chart.tsx",
+      "content": "import { useMemo } from 'react'\nimport { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'\nimport type { SessionMetrics } from '@/lib/observability-types'\nimport { usePerformance } from '@/lib/observability-hooks'\nimport { ChartCard, ChartTooltipShell } from '@/components/observability-chart-shared'\n\ninterface ChartEntry {\n  turn: number\n  ratio?: number\n}\n\nconst CacheTooltip = ({\n  active,\n  payload,\n  label,\n}: {\n  active?: boolean\n  payload?: Array<{ value: number }>\n  label?: number\n}) => {\n  return (\n    <ChartTooltipShell\n      active={active}\n      label={label}\n      rows={payload?.length ? [{ label: 'Cache Hit', value: `${payload[0].value.toFixed(1)}%` }] : []}\n    />\n  )\n}\n\nexport const CacheEfficiencyChart = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {\n  const { metrics: hookMetrics } = usePerformance()\n  const metrics = metricsProp ?? hookMetrics\n\n  const chartData = useMemo<ChartEntry[]>(() => {\n    if (!metrics?.turns?.length) return []\n    return metrics.turns\n      .filter((t) => t.llm_cache_hit_ratio != null)\n      .map((t) => ({\n        turn: t.turn_number,\n        ratio: t.llm_cache_hit_ratio! * 100,\n      }))\n  }, [metrics])\n\n  if (!chartData.length) return null\n\n  return (\n    <ChartCard\n      title=\"Cache Efficiency\"\n      subtitle=\"Prompt cache hit ratio over turns\"\n      legend={[{ color: 'hsl(150 60% 45%)', label: 'Cache Hit %' }]}\n    >\n      <AreaChart data={chartData}>\n        <CartesianGrid strokeDasharray=\"3 3\" stroke=\"hsl(var(--st1))\" />\n        <XAxis\n          dataKey=\"turn\"\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <YAxis\n          domain={[0, 100]}\n          tickFormatter={(v: number) => `${v}%`}\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <Tooltip content={<CacheTooltip />} />\n        <Area\n          type=\"monotone\"\n          dataKey=\"ratio\"\n          name=\"Cache Hit %\"\n          stroke=\"hsl(150 60% 45%)\"\n          fill=\"hsl(150 60% 45% / 0.15)\"\n          strokeWidth={2}\n          connectNulls\n        />\n      </AreaChart>\n    </ChartCard>\n  )\n}\n",
+      "type": "registry:ui"
+    }
+  ],
+  "type": "registry:ui"
+}

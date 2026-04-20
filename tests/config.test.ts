@@ -3,12 +3,10 @@ import { envSchema } from "../src/schema.js";
 
 describe("envSchema", () => {
   const validEnv = {
-    LIVEKIT_API_KEY: "my-api-key",
-    LIVEKIT_API_SECRET: "my-api-secret",
     DATABASE_URL: "postgres://localhost:5432/test",
   };
 
-  test("accepts valid minimal config", () => {
+  test("accepts valid minimal config (no auth)", () => {
     const result = envSchema.safeParse(validEnv);
     expect(result.success).toBe(true);
     if (result.success) {
@@ -16,7 +14,27 @@ describe("envSchema", () => {
       expect(result.data.AUTO_MIGRATE).toBe(false);
       expect(result.data.S3_REGION).toBe("us-east-1");
       expect(result.data.S3_PREFIX).toBe("recordings");
+      expect(result.data.AGENT_OBSERVABILITY_USER).toBeUndefined();
+      expect(result.data.AGENT_OBSERVABILITY_PASS).toBeUndefined();
     }
+  });
+
+  test("accepts config with basic auth credentials", () => {
+    const result = envSchema.safeParse({
+      ...validEnv,
+      AGENT_OBSERVABILITY_USER: "admin",
+      AGENT_OBSERVABILITY_PASS: "secret",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.AGENT_OBSERVABILITY_USER).toBe("admin");
+      expect(result.data.AGENT_OBSERVABILITY_PASS).toBe("secret");
+    }
+  });
+
+  test("auth credentials are optional", () => {
+    const result = envSchema.safeParse(validEnv);
+    expect(result.success).toBe(true);
   });
 
   test("applies PORT default", () => {
@@ -59,26 +77,8 @@ describe("envSchema", () => {
     }
   });
 
-  test("fails when LIVEKIT_API_KEY is missing", () => {
-    const { LIVEKIT_API_KEY, ...rest } = validEnv;
-    const result = envSchema.safeParse(rest);
-    expect(result.success).toBe(false);
-  });
-
-  test("fails when LIVEKIT_API_SECRET is missing", () => {
-    const { LIVEKIT_API_SECRET, ...rest } = validEnv;
-    const result = envSchema.safeParse(rest);
-    expect(result.success).toBe(false);
-  });
-
   test("fails when DATABASE_URL is missing", () => {
-    const { DATABASE_URL, ...rest } = validEnv;
-    const result = envSchema.safeParse(rest);
-    expect(result.success).toBe(false);
-  });
-
-  test("fails when LIVEKIT_API_KEY is empty string", () => {
-    const result = envSchema.safeParse({ ...validEnv, LIVEKIT_API_KEY: "" });
+    const result = envSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 

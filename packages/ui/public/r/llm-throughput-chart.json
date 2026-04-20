@@ -1,0 +1,23 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "llm-throughput-chart",
+  "title": "LLM Throughput Chart",
+  "description": "Line chart showing token generation speed (tok/s) per turn",
+  "dependencies": [
+    "recharts"
+  ],
+  "registryDependencies": [
+    "observability-theme",
+    "observability-types",
+    "observability-hooks",
+    "observability-chart-shared"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/llm-throughput-chart/llm-throughput-chart.tsx",
+      "content": "import { useMemo } from 'react'\nimport { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts'\nimport type { SessionMetrics } from '@/lib/observability-types'\nimport { usePerformance } from '@/lib/observability-hooks'\nimport { ChartCard, ChartTooltipShell } from '@/components/observability-chart-shared'\n\ninterface ChartEntry {\n  turn: number\n  tps?: number\n}\n\nconst ThroughputTooltip = ({\n  active,\n  payload,\n  label,\n}: {\n  active?: boolean\n  payload?: Array<{ value: number }>\n  label?: number\n}) => {\n  return (\n    <ChartTooltipShell\n      active={active}\n      label={label}\n      rows={\n        payload?.length\n          ? [{ label: 'Throughput', value: `${payload[0].value.toFixed(1)} tok/s` }]\n          : []\n      }\n    />\n  )\n}\n\nexport const LlmThroughputChart = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {\n  const { metrics: hookMetrics } = usePerformance()\n  const metrics = metricsProp ?? hookMetrics\n\n  const chartData = useMemo<ChartEntry[]>(() => {\n    if (!metrics?.turns?.length) return []\n    return metrics.turns\n      .filter((t) => t.llm_tokens_per_second != null)\n      .map((t) => ({\n        turn: t.turn_number,\n        tps: t.llm_tokens_per_second,\n      }))\n  }, [metrics])\n\n  if (!chartData.length) return null\n\n  return (\n    <ChartCard\n      title=\"LLM Throughput\"\n      subtitle=\"Token generation speed per turn\"\n      legend={[{ color: 'hsl(var(--primary))', label: 'Tokens/sec' }]}\n    >\n      <LineChart data={chartData}>\n        <CartesianGrid strokeDasharray=\"3 3\" stroke=\"hsl(var(--st1))\" />\n        <XAxis\n          dataKey=\"turn\"\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <YAxis\n          tickFormatter={(v: number) => `${v} tok/s`}\n          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}\n          stroke=\"hsl(var(--st2))\"\n        />\n        <Tooltip content={<ThroughputTooltip />} />\n        <Line\n          type=\"monotone\"\n          dataKey=\"tps\"\n          name=\"tok/s\"\n          stroke=\"hsl(var(--primary))\"\n          dot={false}\n          strokeWidth={2}\n          connectNulls\n        />\n      </LineChart>\n    </ChartCard>\n  )\n}\n",
+      "type": "registry:ui"
+    }
+  ],
+  "type": "registry:ui"
+}

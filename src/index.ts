@@ -1,13 +1,13 @@
 import { Hono } from "hono";
+import { basicAuth } from "hono/basic-auth";
+import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
-import { MetricsRecordingHeader } from "@livekit/protocol";
-import { config, s3Enabled } from "./config.js";
+import { config, s3Enabled, basicAuthEnabled } from "./config.js";
 import { uploadRecording } from "./s3.js";
 import { sql, insertSession } from "./db.js";
 import { migrate } from "./migrate.js";
-import { verifyLivekitJwt } from "./auth.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse } from "./response.js";
@@ -21,6 +21,17 @@ const app = new Hono();
 
 app.use("*", requestId());
 app.use("*", logger());
+app.use("/api/*", cors());
+
+// Basic auth (all routes except /health, only when configured)
+if (basicAuthEnabled) {
+  const auth = basicAuth({
+    username: config.AGENT_OBSERVABILITY_USER!,
+    password: config.AGENT_OBSERVABILITY_PASS!,
+  });
+  app.use("/observability/*", auth);
+  app.use("/api/*", auth);
+}
 
 // ── Health check ────────────────────────────────────────────────────────────
 
@@ -31,15 +42,7 @@ app.get("/health", (c) => {
 // ── Session report endpoint ─────────────────────────────────────────────────
 
 app.post("/observability/recordings/v0", async (c) => {
-  const auth = await verifyLivekitJwt(
-    c.req.header("Authorization"),
-    config.LIVEKIT_API_KEY,
-    config.LIVEKIT_API_SECRET
-  );
-  if (!auth.valid) {
-    console.error("Auth failed:", auth.error);
-    return c.json(buildErrorResponse("unauthorized", auth.error), 401);
-  }
+  // Auth is handled by middleware above
 
   const formData = await c.req.formData();
 
@@ -47,19 +50,17 @@ app.post("/observability/recordings/v0", async (c) => {
   let startedAt: Date | null = null;
   let accountId: string | null = null;
 
-  // Decode protobuf header
+  // Decode JSON header
   const header = formData.get("header");
   if (header && header instanceof Blob) {
-    const bytes = await header.arrayBuffer();
     try {
-      const msg = MetricsRecordingHeader.fromBinary(new Uint8Array(bytes));
-      sessionId = msg.roomId;
-      const startSeconds = Number(msg.startTime?.seconds ?? 0n);
-      const startNanos = msg.startTime?.nanos ?? 0;
-      if (startSeconds > 0) {
-        startedAt = new Date((startSeconds + startNanos / 1e9) * 1000);
+      const json = JSON.parse(await header.text());
+      sessionId = json.session_id ?? "";
+      const startTime = json.start_time ?? 0;
+      if (startTime > 0) {
+        startedAt = new Date(startTime * 1000);
       }
-      accountId = msg.roomTags?.["account_id"] ?? null;
+      accountId = json.room_tags?.account_id ?? null;
     } catch {}
   }
 

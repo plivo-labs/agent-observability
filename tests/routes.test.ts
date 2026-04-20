@@ -1,22 +1,25 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
-import * as jose from "jose";
 
 // ── Mock side-effectful modules before importing the app ────────────────────
 
 const mockInsertSession = mock(() => Promise.resolve());
 const mockSql = mock((..._args: any[]) => Promise.resolve([]));
 
+const TEST_USER = "test-user";
+const TEST_PASS = "test-pass";
+
 mock.module("../src/config.js", () => ({
   config: {
     PORT: 9090,
-    LIVEKIT_API_KEY: "test-api-key",
-    LIVEKIT_API_SECRET: "test-secret-that-is-long-enough",
+    AGENT_OBSERVABILITY_USER: TEST_USER,
+    AGENT_OBSERVABILITY_PASS: TEST_PASS,
     AUTO_MIGRATE: false,
     DATABASE_URL: "postgres://localhost:5432/test",
     S3_REGION: "us-east-1",
     S3_PREFIX: "recordings",
   },
   s3Enabled: false,
+  basicAuthEnabled: true,
 }));
 
 mock.module("../src/db.js", () => ({
@@ -35,16 +38,8 @@ mock.module("../src/s3.js", () => ({
 // Import app after mocks are set up
 const { default: server } = await import("../src/index.js");
 
-const API_KEY = "test-api-key";
-const API_SECRET = "test-secret-that-is-long-enough";
-
-async function signJwt(): Promise<string> {
-  const secret = new TextEncoder().encode(API_SECRET);
-  return new jose.SignJWT({})
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuer(API_KEY)
-    .setExpirationTime(Math.floor(Date.now() / 1000) + 300)
-    .sign(secret);
+function basicAuthHeader(): string {
+  return `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASS}`).toString("base64")}`;
 }
 
 function makeRequest(path: string, init?: RequestInit): Request {
@@ -54,7 +49,7 @@ function makeRequest(path: string, init?: RequestInit): Request {
 // ── Health check ────────────────────────────────────────────────────────────
 
 describe("GET /health", () => {
-  test("returns status ok", async () => {
+  test("returns status ok without auth", async () => {
     const res = await server.fetch(makeRequest("/health"));
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -79,18 +74,14 @@ describe("POST /observability/recordings/v0", () => {
       })
     );
     expect(res.status).toBe(401);
-    const body = await res.json();
-    expect(body.api_id).toBeDefined();
-    expect(body.error.code).toBe("unauthorized");
-    expect(body.error.message).toContain("Missing or invalid Authorization header");
   });
 
-  test("rejects request with invalid JWT", async () => {
+  test("rejects request with wrong credentials", async () => {
     const form = new FormData();
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
         method: "POST",
-        headers: { Authorization: "Bearer invalid-token" },
+        headers: { Authorization: `Basic ${Buffer.from("wrong:creds").toString("base64")}` },
         body: form,
       })
     );
@@ -98,7 +89,6 @@ describe("POST /observability/recordings/v0", () => {
   });
 
   test("accepts valid request and calls insertSession", async () => {
-    const token = await signJwt();
     const chatHistory = JSON.stringify({
       items: [
         { id: "m1", type: "message", role: "user", metrics: { transcription_delay: 0.12 } },
@@ -112,7 +102,7 @@ describe("POST /observability/recordings/v0", () => {
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: basicAuthHeader() },
         body: form,
       })
     );
@@ -134,14 +124,39 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.sessionMetrics.usage).toBeNull();
   });
 
+  test("parses JSON header with session_id and account_id", async () => {
+    const headerJson = JSON.stringify({
+      session_id: "sess-123",
+      room_tags: { account_id: "acct-456" },
+      start_time: 1700000000,
+    });
+
+    const form = new FormData();
+    form.append("header", new Blob([headerJson], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = mockInsertSession.mock.calls[0][0] as any;
+    expect(call.sessionId).toBe("sess-123");
+    expect(call.accountId).toBe("acct-456");
+    expect(call.startedAt).toBeInstanceOf(Date);
+  });
+
   test("handles request with no chat history", async () => {
-    const token = await signJwt();
     const form = new FormData();
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: basicAuthHeader() },
         body: form,
       })
     );
@@ -159,13 +174,12 @@ describe("POST /observability/recordings/v0", () => {
   test("still returns ok when insertSession fails", async () => {
     mockInsertSession.mockImplementationOnce(() => Promise.reject(new Error("db down")));
 
-    const token = await signJwt();
     const form = new FormData();
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: basicAuthHeader() },
         body: form,
       })
     );
@@ -175,14 +189,13 @@ describe("POST /observability/recordings/v0", () => {
   });
 
   test("handles malformed chat history JSON gracefully", async () => {
-    const token = await signJwt();
     const form = new FormData();
     form.append("chat_history", new Blob(["not valid json"], { type: "application/json" }));
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: basicAuthHeader() },
         body: form,
       })
     );
@@ -202,6 +215,11 @@ describe("GET /api/sessions", () => {
     mockSql.mockReset();
   });
 
+  test("rejects request without auth", async () => {
+    const res = await server.fetch(makeRequest("/api/sessions"));
+    expect(res.status).toBe(401);
+  });
+
   test("returns paginated sessions list", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 2 }])
@@ -210,7 +228,11 @@ describe("GET /api/sessions", () => {
         { id: 2, session_id: "sess-2", turn_count: 5, created_at: "2025-01-02" },
       ]);
 
-    const res = await server.fetch(makeRequest("/api/sessions?limit=10&offset=0"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions?limit=10&offset=0", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.api_id).toBeDefined();
@@ -227,7 +249,11 @@ describe("GET /api/sessions", () => {
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
 
-    const res = await server.fetch(makeRequest("/api/sessions"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta.offset).toBe(0);
@@ -239,7 +265,11 @@ describe("GET /api/sessions", () => {
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
 
-    const res = await server.fetch(makeRequest("/api/sessions?limit=999"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions?limit=999", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta.limit).toBe(20);
@@ -250,7 +280,11 @@ describe("GET /api/sessions", () => {
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
 
-    const res = await server.fetch(makeRequest("/api/sessions?offset=-5"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions?offset=-5", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta.offset).toBe(0);
@@ -261,7 +295,11 @@ describe("GET /api/sessions", () => {
       .mockResolvedValueOnce([{ total: 30 }])
       .mockResolvedValueOnce([]);
 
-    const res = await server.fetch(makeRequest("/api/sessions?limit=10&offset=10"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions?limit=10&offset=10", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta.next).toContain("offset=20");
@@ -291,13 +329,16 @@ describe("GET /api/sessions/:id", () => {
       },
     ]);
 
-    const res = await server.fetch(makeRequest("/api/sessions/sess-1"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions/sess-1", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.api_id).toBeDefined();
     expect(body.session_id).toBe("sess-1");
     expect(body.chat_history).toBeInstanceOf(Array);
-    // session_metrics is now computed inline
     expect(body.session_metrics).toBeDefined();
     expect(body.session_metrics.turns).toHaveLength(1);
     expect(body.session_metrics.turns[0].llm_ttft_ms).toBe(300);
@@ -315,7 +356,11 @@ describe("GET /api/sessions/:id", () => {
       },
     ]);
 
-    const res = await server.fetch(makeRequest("/api/sessions/sess-2"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions/sess-2", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.chat_history).toBeInstanceOf(Array);
@@ -324,7 +369,11 @@ describe("GET /api/sessions/:id", () => {
   test("returns 404 for non-existent session", async () => {
     mockSql.mockResolvedValueOnce([]);
 
-    const res = await server.fetch(makeRequest("/api/sessions/not-found"));
+    const res = await server.fetch(
+      makeRequest("/api/sessions/not-found", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.api_id).toBeDefined();
@@ -332,5 +381,3 @@ describe("GET /api/sessions/:id", () => {
     expect(body.error.message).toBe("Session not found");
   });
 });
-
-// Note: GET /api/sessions/:id/metrics endpoint was merged into GET /api/sessions/:id
