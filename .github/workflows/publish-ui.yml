@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
   actions: read
+  pull-requests: read
 
 jobs:
   check:
@@ -33,7 +34,8 @@ jobs:
           else
             SHA="${{ github.event.workflow_run.head_sha }}"
             LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
-              --jq 'if length > 0 then .[0].labels[].name else empty end' 2>/dev/null || echo "")
+              --jq 'if length > 0 then .[0].labels[].name else empty end')
+            echo "Labels on merged PR: $LABELS"
             if echo "$LABELS" | grep -q "release-ui-pkg"; then
               echo "should-publish=true" >> $GITHUB_OUTPUT
             else
