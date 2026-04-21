@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "session-config",
+  "title": "Session Config",
+  "description": "Session options panel — pretty-printed JSON of AgentSession configuration captured for the call",
+  "dependencies": [
+    "lucide-react"
+  ],
+  "registryDependencies": [
+    "card",
+    "observability-hooks"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/session-config/session-config.tsx",
+      "content": "import { Settings2 } from 'lucide-react'\nimport { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'\nimport { useOptions } from '@/lib/observability-hooks'\n\nexport const SessionConfig = () => {\n  const options = useOptions()\n\n  if (options == null) {\n    return (\n      <Card>\n        <CardContent className=\"py-8 text-center text-sm text-muted-foreground\">\n          No options captured for this session.\n        </CardContent>\n      </Card>\n    )\n  }\n\n  return (\n    <Card>\n      <CardHeader>\n        <CardTitle className=\"flex items-center gap-2\">\n          <Settings2 size={14} className=\"text-muted-foreground\" />\n          Session options\n        </CardTitle>\n      </CardHeader>\n      <CardContent>\n        <pre className=\"overflow-auto rounded-md border bg-muted/30 p-3 text-xs font-mono leading-relaxed\">\n          {JSON.stringify(options, null, 2)}\n        </pre>\n      </CardContent>\n    </Card>\n  )\n}\n",
+      "type": "registry:ui"
+    }
+  ],
+  "type": "registry:ui"
+}

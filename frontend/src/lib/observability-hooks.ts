@@ -5,6 +5,7 @@ import type {
   ChatItem,
   MetricsSummary,
   PlivoMeta,
+  SessionEvent,
   SessionMetrics,
   TurnRecord,
 } from '@/lib/observability-types'
@@ -104,4 +105,18 @@ export function usePerformance() {
   const summary: MetricsSummary | null = metrics?.summary ?? null
 
   return { metrics, summary }
+}
+
+// ---------------------------------------------------------------------------
+// useEvents / useOptions — raw session report slices
+// ---------------------------------------------------------------------------
+
+export function useEvents(): SessionEvent[] | null {
+  const { session } = useObservabilityContext()
+  return session?.events ?? null
+}
+
+export function useOptions(): Record<string, unknown> | null {
+  const { session } = useObservabilityContext()
+  return session?.options ?? null
 }

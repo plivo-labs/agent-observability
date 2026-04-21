@@ -15,6 +15,7 @@ interface SessionInsert {
   hasTts: boolean;
   chatHistory: any;
   sessionMetrics: any;
+  rawReport: any;
   recordUrl: string | null;
 }
 
@@ -22,7 +23,7 @@ export async function insertSession(session: SessionInsert): Promise<void> {
   await sql`
     INSERT INTO agent_transport_sessions (
       session_id, account_id, started_at, ended_at, duration_ms, turn_count,
-      has_stt, has_llm, has_tts, chat_history, session_metrics, record_url
+      has_stt, has_llm, has_tts, chat_history, session_metrics, raw_report, record_url
     ) VALUES (
       ${session.sessionId},
       ${session.accountId},
@@ -33,8 +34,9 @@ export async function insertSession(session: SessionInsert): Promise<void> {
       ${session.hasStt},
       ${session.hasLlm},
       ${session.hasTts},
-      ${JSON.stringify(session.chatHistory)},
-      ${JSON.stringify(session.sessionMetrics)},
+      ${JSON.stringify(session.chatHistory)}::jsonb,
+      ${JSON.stringify(session.sessionMetrics)}::jsonb,
+      ${session.rawReport != null ? JSON.stringify(session.rawReport) : null}::jsonb,
       ${session.recordUrl}
     )
   `;
