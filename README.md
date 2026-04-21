@@ -17,7 +17,6 @@ This server receives that report, extracts session metrics, optionally uploads t
 
 - [Bun](https://bun.sh) runtime
 - Postgres database
-- LiveKit API key/secret (for JWT verification of agent-transport callbacks)
 
 ### Install
 
@@ -32,7 +31,7 @@ cd frontend && bun install && cd ..
 cd packages/ui && bun install && cd ..
 
 # Environment config
-cp .env.example .env  # fill in LIVEKIT_API_KEY, LIVEKIT_API_SECRET, DATABASE_URL
+cp .env.example .env  # set DATABASE_URL (required); AGENT_OBSERVABILITY_USER/PASS enable basic auth
 ```
 
 ### Development
@@ -100,9 +99,9 @@ bun run dev  # http://localhost:5174
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LIVEKIT_API_KEY` | Yes | Verifies JWT `iss` claim from agent-transport |
-| `LIVEKIT_API_SECRET` | Yes | HS256 secret for JWT verification |
 | `DATABASE_URL` | Yes | Postgres connection string |
+| `AGENT_OBSERVABILITY_USER` | No | Basic auth username — when set with `AGENT_OBSERVABILITY_PASS`, all routes except `/health` require basic auth |
+| `AGENT_OBSERVABILITY_PASS` | No | Basic auth password (see above) |
 | `AUTO_MIGRATE` | No | Run SQL migrations on startup (`true`/`false`, default: `false`) |
 | `PORT` | No | Server port (default: `9090`) |
 | `S3_BUCKET` | No | Enable S3 upload for audio recordings |
@@ -118,8 +117,8 @@ bun run dev  # http://localhost:5174
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/observability/recordings/v0` | Session report callback (JWT authenticated) |
+| `GET` | `/health` | Health check (always unauthenticated) |
+| `POST` | `/observability/recordings/v0` | Session report callback (basic auth when configured) |
 
 ### Dashboard API
 
@@ -158,9 +157,10 @@ Migrations run automatically when `AUTO_MIGRATE=true`.
 Set these in the agent process to enable session report upload:
 
 ```bash
-LIVEKIT_OBSERVABILITY_URL=https://your-server:9090
-LIVEKIT_API_KEY=your_key
-LIVEKIT_API_SECRET=your_secret
+AGENT_OBSERVABILITY_URL=https://your-server:9090
+# Optional — only needed if the server requires basic auth
+AGENT_OBSERVABILITY_USER=your_user
+AGENT_OBSERVABILITY_PASS=your_pass
 ```
 
 ## Project Structure

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this?
 
-Agent Observability is a Bun/Hono server that receives session report callbacks from agent-transport (Python and Node SDKs). It verifies LiveKit JWT auth, parses the multipart session report (protobuf header, chat history JSON, audio OGG), stores session data in Postgres, and serves a dashboard UI for viewing session metrics.
+Agent Observability is a Bun/Hono server that receives session report callbacks from agent-transport (Python and Node SDKs). It parses the multipart session report (JSON header, chat history JSON, audio OGG), stores session data in Postgres, and serves a dashboard UI for viewing session metrics. All routes except `/health` can be gated with optional HTTP basic auth (`AGENT_OBSERVABILITY_USER` / `AGENT_OBSERVABILITY_PASS`).
 
 ## Commands
 
@@ -46,18 +46,16 @@ docker compose up postgres -d  # Postgres only for local dev
 
 ## Session Report Flow
 
-1. Agent-transport SDK sends multipart POST to `/observability/recordings/v0` with JWT auth
-2. Server verifies JWT using `LIVEKIT_API_KEY` (issuer) and `LIVEKIT_API_SECRET` (HS256 secret)
-3. Parses: protobuf header (`@livekit/protocol` MetricsRecordingHeader), chat history (JSON), audio (OGG)
-4. Extracts session_id (from header's `roomId`), turn count, STT/LLM/TTS flags, per-turn metrics
-5. Optionally uploads audio to S3
-6. Saves to `agent_transport_sessions` table
+1. Agent-transport SDK sends multipart POST to `/observability/recordings/v0` — basic auth header is required only when `AGENT_OBSERVABILITY_USER`/`_PASS` are configured on the server
+2. Parses: JSON header (`session_id`, `start_time`, `room_tags.account_id`), chat history (JSON with per-turn metrics + usage), audio (OGG)
+3. Extracts turn count and STT/LLM/TTS flags from chat history items
+4. Optionally uploads audio to S3 (when `S3_BUCKET` and credentials are set)
+5. Saves to `agent_transport_sessions` table
 
 ## Dashboard API
 
-- `GET /api/sessions?page=1&limit=50` — List sessions (paginated)
-- `GET /api/sessions/:id` — Session detail with chat_history
-- `GET /api/sessions/:id/metrics` — Computed session metrics (turns, summary)
+- `GET /api/sessions?limit=20&offset=0` — List sessions (paginated; `limit` clamps to [1, 20], optional `account_id` filter). Returns `{ objects, meta: { total_count, limit, offset, next, previous } }`.
+- `GET /api/sessions/:id` — Session detail: includes `chat_history`, `session_metrics` (computed on the fly from raw data), `raw_report`, `events`, `options`.
 
 ## Migrations
 
@@ -65,7 +63,7 @@ SQL files in `migrations/` folder, named `001_description.sql`, `002_description
 
 ## Environment Variables
 
-See `.env.example` for all variables. Required: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `DATABASE_URL`.
+See `.env.example` for all variables. Only `DATABASE_URL` is required. Basic auth (`AGENT_OBSERVABILITY_USER`/`_PASS`) and S3 upload (`S3_BUCKET` + credentials) are both opt-in — both env vars in each group must be set to enable the feature.
 
 ## Releasing
 
