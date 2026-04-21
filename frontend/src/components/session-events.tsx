@@ -94,10 +94,10 @@ const EventRow = ({
       : formatAbsolute(event.created_at)
   return (
     <Collapsible className="group/event border-b last:border-b-0">
-      <CollapsibleTrigger className="flex w-full items-start gap-3 px-3 py-2 text-left text-sm hover:bg-muted/40 transition-colors data-[panel-open]:bg-muted/30">
+      <CollapsibleTrigger className="flex w-full items-start gap-3 px-3 py-2 text-left text-sm cursor-pointer hover:bg-muted/40 transition-colors data-[state=open]:bg-muted/30">
         <ChevronDown
           size={13}
-          className="mt-0.5 text-muted-foreground transition-transform group-data-[panel-open]/event:rotate-0 -rotate-90"
+          className="mt-0.5 text-muted-foreground transition-transform group-data-[state=open]/event:rotate-0 -rotate-90"
         />
         <span
           className={cn(
@@ -117,7 +117,7 @@ const EventRow = ({
           {summarize(event)}
         </span>
       </CollapsibleTrigger>
-      <CollapsibleContent className="overflow-hidden data-[ending-style]:animate-none data-[starting-style]:animate-none">
+      <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
         <pre
           className={cn(
             'overflow-auto bg-muted/20 px-3 pb-3 text-xs leading-relaxed',

@@ -9,6 +9,8 @@ import { TokenUsageSection } from '@/components/token-usage-section'
 import { SessionHeader } from '@/components/session-header'
 import { TurnTranscriptSection } from '@/components/turn-transcript'
 import { SessionTimeline } from '@/components/session-timeline/session-timeline'
+import { SessionEvents } from '@/components/session-events'
+import { SessionConfig } from '@/components/session-config'
 import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
 import mockData from './mock-data.json'
@@ -23,6 +25,8 @@ type View =
   | 'session-header'
   | 'session-timeline'
   | 'turn-transcript'
+  | 'session-events'
+  | 'session-config'
   | 'latency-percentiles'
   | 'pipeline-breakdown'
   | 'latency-over-turns'
@@ -42,6 +46,8 @@ const NAV: NavItem[] = [
   { key: 'session-header', label: 'Session Header', group: 'Components' },
   { key: 'session-timeline', label: 'Session Timeline', group: 'Components' },
   { key: 'turn-transcript', label: 'Turn Transcript', group: 'Components' },
+  { key: 'session-events', label: 'Session Events', group: 'Components' },
+  { key: 'session-config', label: 'Session Config', group: 'Components' },
   { key: 'latency-percentiles', label: 'Latency Percentiles', group: 'Charts' },
   { key: 'pipeline-breakdown', label: 'Pipeline Breakdown', group: 'Charts' },
   { key: 'latency-over-turns', label: 'Latency Over Turns', group: 'Charts' },
@@ -82,6 +88,12 @@ function AllComponents() {
       </ComponentSection>
       <ComponentSection title="Turn Transcript">
         <TurnTranscriptSection />
+      </ComponentSection>
+      <ComponentSection title="Session Events">
+        <SessionEvents />
+      </ComponentSection>
+      <ComponentSection title="Session Config">
+        <SessionConfig />
       </ComponentSection>
     </div>
   )
@@ -141,6 +153,8 @@ function SingleComponent({ view }: { view: View }) {
     'session-header': <SessionHeader />,
     'session-timeline': <SessionTimeline />,
     'turn-transcript': <TurnTranscriptSection />,
+    'session-events': <SessionEvents />,
+    'session-config': <SessionConfig />,
     'latency-percentiles': <LatencyPercentilesChart />,
     'pipeline-breakdown': <PipelineBreakdownChart />,
     'latency-over-turns': <LatencyOverTurnsChart />,
