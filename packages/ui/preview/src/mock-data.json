@@ -15,6 +15,436 @@
       "chat_history": null,
       "record_url": "/mock-recording.ogg",
       "created_at": "2026-04-14T10:00:00Z",
+      "events": [
+        {
+          "item": {
+            "id": "item_133fe72aa168",
+            "type": "agent_handoff",
+            "created_at": 1776766876.723159,
+            "new_agent_id": "assistant",
+            "old_agent_id": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766876.723268
+        },
+        {
+          "type": "speech_created",
+          "source": "say",
+          "created_at": 1776766876.729996,
+          "user_initiated": true
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "initializing",
+          "created_at": 1776766876.73503
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766878.727009
+        },
+        {
+          "item": {
+            "id": "item_e78e050c55e7",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Hello, how can I help you today?"
+            ],
+            "metrics": {
+              "tts_node_ttfb": 1.988434040977154,
+              "started_speaking_at": 1776766878.726472,
+              "stopped_speaking_at": 1776766880.6952472
+            },
+            "created_at": 1776766880.6955478,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766880.6956
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766880.6960819
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766882.0500581
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766882.931551,
+          "speaker_id": null,
+          "transcript": "Hello?"
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766882.497491
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": true,
+          "language": "en-US",
+          "created_at": 1776766883.5647922,
+          "speaker_id": null,
+          "transcript": "Hello?"
+        },
+        {
+          "type": "speech_created",
+          "source": "generate_reply",
+          "created_at": 1776766883.565509,
+          "user_initiated": true
+        },
+        {
+          "item": {
+            "id": "item_d15d01ba11df",
+            "hash": null,
+            "role": "user",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Hello?"
+            ],
+            "metrics": {
+              "stt_metadata": {
+                "model_name": "nova-3",
+                "model_provider": "Deepgram"
+              },
+              "end_of_turn_delay": 1.1048598289489746,
+              "started_speaking_at": 1776766882.050017,
+              "stopped_speaking_at": 1776766882.534431,
+              "transcription_delay": 1.030811071395874,
+              "on_user_turn_completed_delay": 1.2750038877129555e-05
+            },
+            "created_at": 1776766883.565365,
+            "interrupted": false,
+            "transcript_confidence": 0.720459
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766883.639675
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "thinking",
+          "old_state": "listening",
+          "created_at": 1776766883.639816
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "thinking",
+          "created_at": 1776766886.223701
+        },
+        {
+          "item": {
+            "id": "item_fac58dcc3789",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Hi there! How can I assist you today?"
+            ],
+            "metrics": {
+              "e2e_latency": 3.6889829635620117,
+              "llm_metadata": {
+                "model_name": "gpt-4.1",
+                "model_provider": "api.openai.com"
+              },
+              "tts_metadata": {
+                "model_name": "gpt-4o-mini-tts",
+                "model_provider": "api.openai.com"
+              },
+              "llm_node_ttft": 1.0157786249765195,
+              "tts_node_ttfb": 1.6394089999957941,
+              "started_speaking_at": 1776766886.223414,
+              "stopped_speaking_at": 1776766888.9351602
+            },
+            "created_at": 1776766883.640411,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766888.935339
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766888.935619
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766890.4099112
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766891.338607
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766900.068994
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766900.6830661,
+          "speaker_id": null,
+          "transcript": "Tell me"
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766900.9639869
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766901.692425,
+          "speaker_id": null,
+          "transcript": "Tell me a joke."
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": true,
+          "language": "en-US",
+          "created_at": 1776766901.799295,
+          "speaker_id": null,
+          "transcript": "Tell me a joke."
+        },
+        {
+          "type": "speech_created",
+          "source": "generate_reply",
+          "created_at": 1776766901.799968,
+          "user_initiated": true
+        },
+        {
+          "item": {
+            "id": "item_6dd51e38e298",
+            "hash": null,
+            "role": "user",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Tell me a joke."
+            ],
+            "metrics": {
+              "stt_metadata": {
+                "model_name": "nova-3",
+                "model_provider": "Deepgram"
+              },
+              "end_of_turn_delay": 0.8864099979400635,
+              "started_speaking_at": 1776766900.068924,
+              "stopped_speaking_at": 1776766900.95552,
+              "transcription_delay": 0.8442399501800537,
+              "on_user_turn_completed_delay": 1.2500095181167126e-06
+            },
+            "created_at": 1776766901.799873,
+            "interrupted": false,
+            "transcript_confidence": 0.9873047
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766901.842277
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "thinking",
+          "old_state": "listening",
+          "created_at": 1776766901.842409
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "thinking",
+          "created_at": 1776766904.030421
+        },
+        {
+          "item": {
+            "id": "item_288ea4dff9f2",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Sure! Why don't skeletons fight each other? Because they don't have the guts."
+            ],
+            "metrics": {
+              "e2e_latency": 3.0744500160217285,
+              "llm_metadata": {
+                "model_name": "gpt-4.1",
+                "model_provider": "api.openai.com"
+              },
+              "tts_metadata": {
+                "model_name": "gpt-4o-mini-tts",
+                "model_provider": "api.openai.com"
+              },
+              "llm_node_ttft": 1.067893291998189,
+              "tts_node_ttfb": 1.1588500420330092,
+              "started_speaking_at": 1776766904.02997,
+              "stopped_speaking_at": 1776766911.1549282
+            },
+            "created_at": 1776766901.842967,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766911.1550741
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766911.155314
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766915.089502
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766915.864362,
+          "speaker_id": null,
+          "transcript": "What is the"
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": true,
+          "language": "en-US",
+          "created_at": 1776766916.638467,
+          "speaker_id": null,
+          "transcript": "What is the computer?"
+        },
+        {
+          "type": "speech_created",
+          "source": "generate_reply",
+          "created_at": 1776766916.6393,
+          "user_initiated": true
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766916.0814679
+        },
+        {
+          "item": {
+            "id": "item_616bbf96917f",
+            "hash": null,
+            "role": "user",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "What is the computer?"
+            ],
+            "metrics": {
+              "stt_metadata": {
+                "model_name": "nova-3",
+                "model_provider": "Deepgram"
+              },
+              "end_of_turn_delay": 0.5958211421966553,
+              "started_speaking_at": 1776766915.0894222,
+              "stopped_speaking_at": 1776766916.1132338,
+              "transcription_delay": 0.5257611274719238,
+              "on_user_turn_completed_delay": 1.0420335456728935e-06
+            },
+            "created_at": 1776766916.6391711,
+            "interrupted": false,
+            "transcript_confidence": 0.95703125
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766916.709484
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "thinking",
+          "old_state": "listening",
+          "created_at": 1776766916.709627
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "thinking",
+          "created_at": 1776766919.391018
+        },
+        {
+          "item": {
+            "id": "item_3f0a9dbb3cbc",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "A computer is an electronic device that processes data and performs tasks according to instructions called programs. It can store, retrieve, and manage information, making it useful for everything from typing documents to browsing the internet, playing games, and much more. Is there something specific you want to know about computers?"
+            ],
+            "metrics": {
+              "e2e_latency": 3.2775461673736572,
+              "llm_metadata": {
+                "model_name": "gpt-4.1",
+                "model_provider": "api.openai.com"
+              },
+              "tts_metadata": {
+                "model_name": "gpt-4o-mini-tts",
+                "model_provider": "api.openai.com"
+              },
+              "llm_node_ttft": 0.8269912080140784,
+              "tts_node_ttfb": 1.9218713750015013,
+              "started_speaking_at": 1776766919.39078,
+              "stopped_speaking_at": 1776766939.8940759
+            },
+            "created_at": 1776766916.710127,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766939.8941839
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766939.894333
+        },
+        {
+          "type": "close",
+          "error": null,
+          "reason": "participant_disconnected",
+          "created_at": 1776766943.792744
+        }
+      ],
+      "options": {
+        "ivr_detection": false,
+        "max_tool_steps": 3,
+        "user_away_timeout": 15,
+        "aec_warmup_duration": 3,
+        "use_tts_aligned_transcript": null,
+        "min_consecutive_speech_delay": 0,
+        "session_close_transcript_timeout": 2
+      },
       "session_metrics": {
         "turns": [
           {
