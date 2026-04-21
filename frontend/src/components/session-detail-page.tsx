@@ -1,4 +1,4 @@
-import { AudioLines, BarChart3, ChevronRight } from 'lucide-react'
+import { Activity, AudioLines, BarChart3, ChevronRight, Settings2 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -11,6 +11,8 @@ import { TokenUsageSection } from '@/components/token-usage-section'
 import { TurnTranscriptSection } from '@/components/turn-transcript'
 import { SessionHeader } from '@/components/session-header'
 import { SessionTimeline } from '@/components/session-timeline/session-timeline'
+import { SessionConfig } from '@/components/session-config'
+import { SessionEvents } from '@/components/session-events'
 
 export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
   const { session, loading, error } = useSession()
@@ -36,6 +38,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
   const metrics = session.session_metrics
   const turnCount = metrics?.turns?.length ?? session.turn_count ?? 0
+  const eventCount = session.events?.length ?? 0
 
   return (
     <ScrollArea className="h-[calc(100vh-53px)]">
@@ -68,6 +71,14 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
               <BarChart3 size={13} />
               Performance
             </TabsTrigger>
+            <TabsTrigger value="events" className="gap-1.5">
+              <Activity size={13} />
+              Events{eventCount > 0 && ` (${eventCount})`}
+            </TabsTrigger>
+            <TabsTrigger value="config" className="gap-1.5">
+              <Settings2 size={13} />
+              Config
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="session" className="mt-4">
@@ -87,6 +98,14 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
               <LatencyOverTurnsChart />
               <TokenUsageSection />
             </div>
+          </TabsContent>
+
+          <TabsContent value="events" className="mt-4">
+            <SessionEvents />
+          </TabsContent>
+
+          <TabsContent value="config" className="mt-4">
+            <SessionConfig />
           </TabsContent>
 
         </Tabs>

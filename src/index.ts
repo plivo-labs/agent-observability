@@ -121,6 +121,7 @@ app.post("/observability/recordings/v0", async (c) => {
       hasTts,
       chatHistory: chatItems,
       sessionMetrics: { per_turn: metrics, usage: normalizeKeys(rawReport?.usage) ?? null },
+      rawReport: rawReport != null ? normalizeKeys(rawReport) : null,
       recordUrl,
     });
     console.log(`Session saved: room_id=${sessionId} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
@@ -173,7 +174,7 @@ app.get("/api/sessions/:id", async (c) => {
   const rows = await sql`
     SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
-           chat_history, session_metrics, record_url, created_at
+           chat_history, session_metrics, raw_report, record_url, created_at
     FROM agent_transport_sessions
     WHERE session_id = ${sessionId}
     LIMIT 1
@@ -186,9 +187,13 @@ app.get("/api/sessions/:id", async (c) => {
   const row = rows[0];
   const chatHistory = typeof row.chat_history === "string" ? JSON.parse(row.chat_history) : row.chat_history;
   const sessionMetrics = typeof row.session_metrics === "string" ? JSON.parse(row.session_metrics) : row.session_metrics;
+  const rawReport = typeof row.raw_report === "string" ? JSON.parse(row.raw_report) : row.raw_report;
 
   row.chat_history = chatHistory;
   row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count);
+  row.raw_report = rawReport;
+  row.events = rawReport?.events ?? null;
+  row.options = rawReport?.options ?? null;
   row.api_id = newApiId();
 
   return c.json(row);

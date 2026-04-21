@@ -120,8 +120,16 @@ export interface AgentSessionRow {
   has_tts: boolean
   chat_history: ChatItem[] | null
   session_metrics: SessionMetrics | null
+  events: SessionEvent[] | null
+  options: Record<string, unknown> | null
   record_url: string | null
   created_at: string
+}
+
+export interface SessionEvent {
+  type: string
+  created_at: number
+  [key: string]: unknown
 }
 
 export interface ChatItem {

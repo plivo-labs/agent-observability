@@ -378,6 +378,49 @@
       ]
     },
     {
+      "name": "session-events",
+      "type": "registry:ui",
+      "title": "Session Events",
+      "description": "Collapsible per-event timeline with light-tinted type badges and a relative/absolute time toggle",
+      "dependencies": [
+        "dayjs",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "badge",
+        "button",
+        "card",
+        "collapsible",
+        "observability-types",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/session-events/session-events.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "session-config",
+      "type": "registry:ui",
+      "title": "Session Config",
+      "description": "Session options panel — pretty-printed JSON of AgentSession configuration captured for the call",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "card",
+        "observability-hooks"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/session-config/session-config.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
       "name": "session-timeline",
       "type": "registry:block",
       "title": "Session Timeline",
@@ -456,7 +499,7 @@
       "name": "session-detail-page",
       "type": "registry:block",
       "title": "Session Detail Page",
-      "description": "Full session detail with Session and Performance tabs. Requires shadcn primitives: badge, scroll-area, separator, tabs. Uses react-router and lucide-react.",
+      "description": "Full session detail with Session, Performance, Events, and Config tabs. Requires shadcn primitives: badge, button, card, collapsible, scroll-area, separator, tabs. Uses react-router and lucide-react.",
       "dependencies": [
         "lucide-react",
         "recharts",
@@ -465,6 +508,9 @@
       ],
       "registryDependencies": [
         "badge",
+        "button",
+        "card",
+        "collapsible",
         "scroll-area",
         "separator",
         "tabs"
@@ -549,6 +595,16 @@
           "path": "registry/new-york/session-timeline/session-trace.tsx",
           "type": "registry:component",
           "target": "components/session-timeline/session-trace.tsx"
+        },
+        {
+          "path": "registry/new-york/session-events/session-events.tsx",
+          "type": "registry:component",
+          "target": "components/session-events.tsx"
+        },
+        {
+          "path": "registry/new-york/session-config/session-config.tsx",
+          "type": "registry:component",
+          "target": "components/session-config.tsx"
         },
         {
           "path": "registry/new-york/session-detail-page/session-detail-page.tsx",
