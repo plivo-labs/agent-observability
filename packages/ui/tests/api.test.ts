@@ -6,6 +6,7 @@ const mockSession = {
   session_id: 'sess_123',
   account_id: 'acc_001',
   state: 'ended',
+  transport: 'sip',
   started_at: '2026-04-14T10:00:00Z',
   ended_at: '2026-04-14T10:01:00Z',
   duration_ms: 60000,
@@ -57,10 +58,46 @@ describe('createObservabilityApi', () => {
 
   test('listSessions includes account_id when provided', async () => {
     const api = createObservabilityApi('https://example.com/api')
-    await api.listSessions(20, 0, 'acc_123')
+    await api.listSessions(20, 0, { accountId: 'acc_123' })
 
     const url = (fetch as any).mock.calls[0][0] as string
     expect(url).toContain('account_id=acc_123')
+  })
+
+  test('listSessions includes started_from/started_to when provided', async () => {
+    const api = createObservabilityApi('https://example.com/api')
+    await api.listSessions(20, 0, {
+      startedFrom: '2026-04-01T00:00:00.000Z',
+      startedTo: '2026-04-30T23:59:59.999Z',
+    })
+
+    const url = (fetch as any).mock.calls[0][0] as string
+    expect(url).toContain(`started_from=${encodeURIComponent('2026-04-01T00:00:00.000Z')}`)
+    expect(url).toContain(`started_to=${encodeURIComponent('2026-04-30T23:59:59.999Z')}`)
+  })
+
+  test('listSessions combines account_id with date range', async () => {
+    const api = createObservabilityApi('https://example.com/api')
+    await api.listSessions(20, 0, {
+      accountId: 'acc_123',
+      startedFrom: '2026-04-01T00:00:00.000Z',
+      startedTo: '2026-04-30T23:59:59.999Z',
+    })
+
+    const url = (fetch as any).mock.calls[0][0] as string
+    expect(url).toContain('account_id=acc_123')
+    expect(url).toContain('started_from=')
+    expect(url).toContain('started_to=')
+  })
+
+  test('listSessions omits filter params when filters object is empty', async () => {
+    const api = createObservabilityApi('https://example.com/api')
+    await api.listSessions(20, 0, {})
+
+    const url = (fetch as any).mock.calls[0][0] as string
+    expect(url).not.toContain('account_id=')
+    expect(url).not.toContain('started_from=')
+    expect(url).not.toContain('started_to=')
   })
 
   test('listSessions returns parsed response', async () => {
