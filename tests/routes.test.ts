@@ -3,7 +3,10 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 // ── Mock side-effectful modules before importing the app ────────────────────
 
 const mockInsertSession = mock(() => Promise.resolve());
-const mockSql = mock((..._args: any[]) => Promise.resolve([]));
+const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
+// Route `sql.unsafe(...)` through the same queue as `sql\`...\`` so the
+// existing `.mockResolvedValueOnce(...)` pattern works for both call styles.
+mockSql.unsafe = mockSql;
 
 const TEST_USER = "test-user";
 const TEST_PASS = "test-pass";
@@ -148,6 +151,57 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.sessionId).toBe("sess-123");
     expect(call.accountId).toBe("acct-456");
     expect(call.startedAt).toBeInstanceOf(Date);
+    expect(call.transport).toBeNull();
+  });
+
+  test("parses transport field from header", async () => {
+    const headerJson = JSON.stringify({
+      session_id: "sess-sip",
+      room_tags: { account_id: "acct-1" },
+      start_time: 1700000000,
+      transport: "sip",
+    });
+
+    const form = new FormData();
+    form.append("header", new Blob([headerJson], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = mockInsertSession.mock.calls[0][0] as any;
+    expect(call.transport).toBe("sip");
+  });
+
+  test("parses transport=audio_stream from header", async () => {
+    const headerJson = JSON.stringify({
+      session_id: "sess-as",
+      room_tags: {},
+      start_time: 0,
+      transport: "audio_stream",
+    });
+
+    const form = new FormData();
+    form.append("header", new Blob([headerJson], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = mockInsertSession.mock.calls[0][0] as any;
+    expect(call.transport).toBe("audio_stream");
   });
 
   test("handles request with no chat history", async () => {
@@ -303,6 +357,106 @@ describe("GET /api/sessions", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta.next).toContain("offset=20");
+    expect(body.meta.previous).toContain("offset=0");
+  });
+
+  test("passes account_id filter as a WHERE predicate", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?account_id=acct-xyz", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    // Count + rows = 2 SQL calls; both must include the WHERE clause and the param.
+    expect(mockSql).toHaveBeenCalledTimes(2);
+    const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    expect(countQuery).toContain("WHERE account_id =");
+    expect(countParams).toEqual(["acct-xyz"]);
+    const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
+    expect(rowsQuery).toContain("WHERE account_id =");
+    expect(rowsParams).toEqual(["acct-xyz", 20, 0]);
+  });
+
+  test("passes started_from/started_to filters as timestamp predicates", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const from = "2026-04-01T00:00:00.000Z";
+    const to = "2026-04-30T23:59:59.999Z";
+    const res = await server.fetch(
+      makeRequest(`/api/sessions?started_from=${encodeURIComponent(from)}&started_to=${encodeURIComponent(to)}`, {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    expect(mockSql).toHaveBeenCalledTimes(2);
+    const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    expect(countQuery).toContain("started_at >=");
+    expect(countQuery).toContain("started_at <=");
+    expect(countParams).toEqual([from, to]);
+  });
+
+  test("combines account_id + date range into a single WHERE clause", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const from = "2026-04-01T00:00:00.000Z";
+    const to = "2026-04-30T23:59:59.999Z";
+    const res = await server.fetch(
+      makeRequest(
+        `/api/sessions?account_id=acct-1&started_from=${encodeURIComponent(from)}&started_to=${encodeURIComponent(to)}`,
+        { headers: { Authorization: basicAuthHeader() } },
+      )
+    );
+    expect(res.status).toBe(200);
+
+    const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    // All three predicates present, joined with AND.
+    expect(countQuery).toMatch(/account_id = \$1.*AND.*started_at >= \$2.*AND.*started_at <= \$3/s);
+    expect(countParams).toEqual(["acct-1", from, to]);
+  });
+
+  test("omits WHERE clause entirely when no filters are active", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    expect(countQuery).not.toContain("WHERE");
+    expect(countParams).toEqual([]);
+  });
+
+  test("pagination links preserve active filters", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 30 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?limit=10&offset=10&account_id=acct-1&started_from=2026-04-01", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.next).toContain("account_id=acct-1");
+    expect(body.meta.next).toContain("started_from=2026-04-01");
+    expect(body.meta.next).toContain("offset=20");
+    expect(body.meta.previous).toContain("account_id=acct-1");
     expect(body.meta.previous).toContain("offset=0");
   });
 });

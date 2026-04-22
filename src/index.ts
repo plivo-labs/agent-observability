@@ -49,6 +49,7 @@ app.post("/observability/recordings/v0", async (c) => {
   let sessionId = "";
   let startedAt: Date | null = null;
   let accountId: string | null = null;
+  let transport: string | null = null;
 
   // Decode JSON header
   const header = formData.get("header");
@@ -61,6 +62,7 @@ app.post("/observability/recordings/v0", async (c) => {
         startedAt = new Date(startTime * 1000);
       }
       accountId = json.room_tags?.account_id ?? null;
+      transport = json.transport ?? null;
     } catch {}
   }
 
@@ -112,6 +114,7 @@ app.post("/observability/recordings/v0", async (c) => {
     await insertSession({
       sessionId,
       accountId,
+      transport,
       startedAt,
       endedAt,
       durationMs,
@@ -138,33 +141,44 @@ app.get("/api/sessions", async (c) => {
   const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
   const accountId = c.req.query("account_id") || null;
+  const startedFrom = c.req.query("started_from") || null;
+  const startedTo = c.req.query("started_to") || null;
 
   const extraParams: Record<string, string> = {};
   if (accountId) extraParams.account_id = accountId;
+  if (startedFrom) extraParams.started_from = startedFrom;
+  if (startedTo) extraParams.started_to = startedTo;
 
-  let countResult;
-  let rows;
-
+  const predicates: string[] = [];
+  const params: unknown[] = [];
   if (accountId) {
-    [countResult] = await sql`SELECT count(*)::int as total FROM agent_transport_sessions WHERE account_id = ${accountId}`;
-    rows = await sql`
-      SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
-             turn_count, has_stt, has_llm, has_tts, record_url, created_at
-      FROM agent_transport_sessions
-      WHERE account_id = ${accountId}
-      ORDER BY ended_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-  } else {
-    [countResult] = await sql`SELECT count(*)::int as total FROM agent_transport_sessions`;
-    rows = await sql`
-      SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
-             turn_count, has_stt, has_llm, has_tts, record_url, created_at
-      FROM agent_transport_sessions
-      ORDER BY ended_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
+    predicates.push(`account_id = $${params.length + 1}`);
+    params.push(accountId);
   }
+  if (startedFrom) {
+    predicates.push(`started_at >= $${params.length + 1}`);
+    params.push(startedFrom);
+  }
+  if (startedTo) {
+    predicates.push(`started_at <= $${params.length + 1}`);
+    params.push(startedTo);
+  }
+  const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
+
+  const [countResult] = await sql.unsafe(
+    `SELECT count(*)::int as total FROM agent_transport_sessions ${whereClause}`,
+    params,
+  );
+
+  const rows = await sql.unsafe(
+    `SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
+            turn_count, has_stt, has_llm, has_tts, record_url, created_at
+     FROM agent_transport_sessions
+     ${whereClause}
+     ORDER BY ended_at DESC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset],
+  );
 
   return c.json(buildListResponse(rows, limit, offset, countResult.total, "/api/sessions", extraParams));
 });
@@ -172,7 +186,7 @@ app.get("/api/sessions", async (c) => {
 app.get("/api/sessions/:id", async (c) => {
   const sessionId = c.req.param("id");
   const rows = await sql`
-    SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
+    SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
            chat_history, session_metrics, raw_report, record_url, created_at
     FROM agent_transport_sessions

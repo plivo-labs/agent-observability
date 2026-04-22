@@ -454,12 +454,16 @@
       "name": "sessions-page",
       "type": "registry:block",
       "title": "Sessions Page",
-      "description": "Paginated sessions list. Requires shadcn primitives: badge, table, pagination. Uses react-router.",
+      "description": "Paginated sessions list with filters (account, started-date range). Router-agnostic: navigation via onSessionClick callback. Requires shadcn primitives: badge, button, calendar, popover, table, pagination.",
       "dependencies": [
-        "dayjs"
+        "dayjs",
+        "lucide-react"
       ],
       "registryDependencies": [
         "badge",
+        "button",
+        "calendar",
+        "popover",
         "table",
         "pagination"
       ],

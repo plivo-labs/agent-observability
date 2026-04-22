@@ -106,11 +106,20 @@ export interface SessionMetrics {
   summary: MetricsSummary
 }
 
+export type Transport = 'sip' | 'audio_stream'
+
+export interface SessionsFilters {
+  accountId?: string
+  startedFrom?: string
+  startedTo?: string
+}
+
 export interface AgentSessionRow {
   id: number
   session_id: string
   account_id: string | null
   state: string
+  transport: Transport | null
   started_at: string | null
   ended_at: string
   duration_ms: number | null
