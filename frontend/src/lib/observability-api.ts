@@ -21,6 +21,9 @@ export function createObservabilityApi(baseUrl: string) {
       if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)
       if (filters?.startedTo) params.set('started_to', filters.startedTo)
+      if (filters?.transport && filters.transport.length) {
+        params.set('transport', filters.transport.join(','))
+      }
       return fetchJson<PlivoListResponse<AgentSessionRow>>(`/sessions?${params}`)
     },
 

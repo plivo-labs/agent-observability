@@ -88,6 +88,38 @@ function normalizeText(content: unknown): string {
   return "";
 }
 
+/**
+ * LiveKit emits function-call arguments as a JSON-encoded string (OpenAI
+ * convention). Parse into an object so the UI can iterate arg entries. On
+ * parse failure, keep the raw string wrapped as { _raw: "..." } so the
+ * renderer still shows something instead of treating the string as an object
+ * and iterating char-by-char.
+ */
+function parseToolArgs(raw: unknown): Record<string, unknown> {
+  if (raw == null) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === "object" && parsed != null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : { _raw: trimmed };
+    } catch {
+      return { _raw: trimmed };
+    }
+  }
+  return {};
+}
+
+function findCallById(list: ToolCallRecord[], callId: string): ToolCallRecord | undefined {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].call_id === callId) return list[i];
+  }
+  return undefined;
+}
+
 function computeAvg(values: number[]): number {
   if (!values.length) return 0;
   return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
@@ -214,10 +246,11 @@ export function buildSessionMetrics(
         currentUserMetrics = {};
         pendingToolCalls = [];
       } else if (item.type === "function_call" || item.type === "tool_call") {
+        const rawArgs = item.arguments ?? item.function?.arguments ?? {};
         const tc: ToolCallRecord = {
           name: item.name ?? item.function?.name ?? "unknown",
           call_id: item.call_id,
-          arguments: item.arguments ?? item.function?.arguments ?? {},
+          arguments: parseToolArgs(rawArgs),
           output: item.output,
           is_error: item.is_error,
           turn_number: turnNumber + 1,
@@ -226,20 +259,53 @@ export function buildSessionMetrics(
         pendingToolCalls.push(tc);
         allToolCalls.push(tc);
         totalToolCalls++;
+      } else if (item.type === "function_call_output" || item.type === "tool_call_output") {
+        // LiveKit emits function_call and function_call_output as separate chat
+        // items. Merge the output back into the matching call by call_id, or
+        // fall back to the most recent pending call if the id isn't present.
+        const callId = item.call_id;
+        const output = typeof item.output === "string" ? item.output : JSON.stringify(item.output);
+        const isError = item.is_error;
+        const target =
+          (callId && (findCallById(pendingToolCalls, callId) ?? findCallById(allToolCalls, callId)))
+          ?? pendingToolCalls[pendingToolCalls.length - 1]
+          ?? allToolCalls[allToolCalls.length - 1];
+        if (target) {
+          target.output = output;
+          if (isError != null) target.is_error = isError;
+        }
       }
     }
 
-    // Handle remaining user text without agent response
-    if (currentUserText != null && turnNumber === 0) {
+    // Flush state that wasn't closed off by an assistant message. Three cases
+    // we need to cover:
+    //   (a) user spoke at the very start and the agent never replied
+    //   (b) a conversation with prior turns ends with a final user message
+    //       that the agent never answered — caller hung up right after
+    //       speaking, or the agent's reply was cut off. Recording has the
+    //       audio; chat history has the user item; without this flush, the
+    //       UI drops it.
+    //   (c) agent called a tool (function_call) but the session ended before
+    //       a follow-up assistant message — orphan tool calls.
+    // Emit a "partial" turn so trailing user text and/or tool calls still
+    // appear in the transcript.
+    const hasOrphanToolCalls = pendingToolCalls.length > 0;
+    const hasDanglingUserText = currentUserText != null;
+    if (hasOrphanToolCalls || hasDanglingUserText) {
       turnNumber++;
       turns.push({
         turn_number: turnNumber,
-        turn_id: `turn-${turnNumber}`,
+        turn_id: `turn-${turnNumber}-partial`,
         user_text: currentUserText,
         agent_text: null,
         agent_first: false,
         interrupted: false,
+        user_started_speaking_at: toIso(currentUserMetrics.started_speaking_at),
+        user_stopped_speaking_at: toIso(currentUserMetrics.stopped_speaking_at),
+        turn_decision_ms: toMs(currentUserMetrics.end_of_turn_delay),
+        tool_calls: hasOrphanToolCalls ? [...pendingToolCalls] : undefined,
       });
+      pendingToolCalls = [];
     }
   }
 

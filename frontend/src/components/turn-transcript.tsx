@@ -44,7 +44,10 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
 
       {/* Content */}
       <div className="flex-1 pb-8 min-w-0">
-        {/* Turn badges row */}
+        {/* Turn badges row — only flags that aren't otherwise visible in the
+            layout below. Tool-call count was removed because each tool call
+            renders its own detailed card under the assistant message; the
+            badge at the top made it look like the user had called a tool. */}
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">
           {turn.interrupted && (
             <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
@@ -56,12 +59,6 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
             <Badge variant="outline" className="text-[10px] px-1.5 py-0">
               <Bot size={10} className="mr-0.5" />
               Agent initiated
-            </Badge>
-          )}
-          {turn.tool_calls && turn.tool_calls.length > 0 && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              <Code2 size={10} className="mr-0.5" />
-              {turn.tool_calls.length} tool call{turn.tool_calls.length > 1 ? 's' : ''}
             </Badge>
           )}
         </div>
@@ -78,28 +75,9 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
               </div>
             </div>
           )}
-          {turn.agent_text && (
-            <div className={`flex items-start gap-2 max-w-[85%] ${isChat ? 'self-end flex-row-reverse' : ''}`}>
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 mt-0.5">
-                <Bot size={11} className="text-primary" />
-              </div>
-              <div className={`rounded-lg px-3 py-2 bg-primary/10 ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
-                <span className="text-xs">{turn.agent_text}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Latency pills — agent response pipeline */}
-          {(turn.user_perceived_ms != null || turn.stt_delay_ms != null || turn.llm_ttft_ms != null || turn.tts_ttfb_ms != null) && (
-            <div className={`flex items-center gap-1 flex-wrap ${isChat ? 'justify-end mr-7' : ''}`}>
-              <LatencyPill label="Perceived" ms={turn.user_perceived_ms} />
-              <LatencyPill label="STT" ms={turn.stt_delay_ms} />
-              <LatencyPill label="LLM TTFT" ms={turn.llm_ttft_ms} />
-              <LatencyPill label="TTS" ms={turn.tts_ttfb_ms} />
-            </div>
-          )}
-
-          {/* Tool calls */}
+          {/* Tool calls — rendered BEFORE the agent message so the visual
+              order matches the causal order: user asked → agent called tool
+              → agent replied with the result. */}
           {turn.tool_calls?.map((tc, i) => (
             <div key={i} className={`rounded-lg border bg-muted/30 overflow-hidden w-fit max-w-[85%] ${isChat ? 'self-end mr-7' : ''}`}>
               <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b">
@@ -130,6 +108,27 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
               </div>
             </div>
           ))}
+
+          {turn.agent_text && (
+            <div className={`flex items-start gap-2 max-w-[85%] ${isChat ? 'self-end flex-row-reverse' : ''}`}>
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 mt-0.5">
+                <Bot size={11} className="text-primary" />
+              </div>
+              <div className={`rounded-lg px-3 py-2 bg-primary/10 ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
+                <span className="text-xs">{turn.agent_text}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Latency pills — agent response pipeline */}
+          {(turn.user_perceived_ms != null || turn.stt_delay_ms != null || turn.llm_ttft_ms != null || turn.tts_ttfb_ms != null) && (
+            <div className={`flex items-center gap-1 flex-wrap ${isChat ? 'justify-end mr-7' : ''}`}>
+              <LatencyPill label="Perceived" ms={turn.user_perceived_ms} />
+              <LatencyPill label="STT" ms={turn.stt_delay_ms} />
+              <LatencyPill label="LLM TTFT" ms={turn.llm_ttft_ms} />
+              <LatencyPill label="TTS" ms={turn.tts_ttfb_ms} />
+            </div>
+          )}
         </div>
 
         {/* Token stats for turn */}

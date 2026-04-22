@@ -8,6 +8,7 @@ import { SessionDetailPage } from '@/components/session-detail-page'
 import { EvalsPage } from '@/components/evals-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
   const [dark, setDark] = useState(() => {
@@ -132,6 +133,7 @@ export default function App() {
               <Route path="/evals" element={<EvalsRoute />} />
               <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
               <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AgentObservabilityProvider>
         </Layout>

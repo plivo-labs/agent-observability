@@ -110,6 +110,8 @@ export interface SessionsFilters {
   accountId?: string
   startedFrom?: string
   startedTo?: string
+  /** Multi-value — server accepts comma-separated list. */
+  transport?: string[]
 }
 
 export interface AgentSessionRow {

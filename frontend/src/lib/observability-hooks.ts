@@ -40,17 +40,19 @@ export function useSessions(
   const accountId = filters?.accountId
   const startedFrom = filters?.startedFrom
   const startedTo = filters?.startedTo
+  const transport = filters?.transport
+  const transportKey = (transport ?? []).slice().sort().join(',')
 
   useEffect(() => {
     setOffset(0)
-  }, [accountId, startedFrom, startedTo])
+  }, [accountId, startedFrom, startedTo, transportKey])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     api
-      .listSessions(limit, offset, { accountId, startedFrom, startedTo })
+      .listSessions(limit, offset, { accountId, startedFrom, startedTo, transport })
       .then((res) => {
         if (cancelled) return
         setSessions(res.objects)
@@ -65,7 +67,8 @@ export function useSessions(
     return () => {
       cancelled = true
     }
-  }, [api, limit, offset, accountId, startedFrom, startedTo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, limit, offset, accountId, startedFrom, startedTo, transportKey])
 
   return { sessions, meta, loading, error, offset, setOffset }
 }
