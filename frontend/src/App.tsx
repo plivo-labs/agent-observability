@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, NavLink, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Moon, Sun } from 'lucide-react'
+import { Activity, CheckCheck, List, Moon, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
@@ -38,39 +38,47 @@ const useDarkMode = () => {
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
 
-  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `text-s-500 px-3 py-1.5 rounded-md transition-colors ${
-      isActive
-        ? 'bg-accent text-foreground'
-        : 'text-muted-foreground hover:text-foreground hover:bg-accent/40'
-    }`
+  const tabClass = ({ isActive }: { isActive: boolean }) =>
+    `obs-tab${isActive ? ' active' : ''}`
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <Link to="/" className="text-h4-600 font-semibold text-foreground hover:text-primary transition-colors">
-            Agent Observability
-          </Link>
-          <nav className="flex items-center gap-1">
-            <NavLink to="/" end className={navLinkClass}>
-              Sessions
-            </NavLink>
-            <NavLink to="/evals" className={navLinkClass}>
-              Evals
-            </NavLink>
-          </nav>
+    <div className="obs-app">
+      <nav className="obs-nav">
+        <Link to="/" className="obs-nav-brand">
+          <span className="dot"><Activity size={13} strokeWidth={2} /></span>
+          Agent Observability
+        </Link>
+        <div className="obs-nav-tabs">
+          <NavLink to="/" end className={tabClass}>
+            <List size={14} /> Sessions
+          </NavLink>
+          <NavLink to="/evals" className={tabClass}>
+            <CheckCheck size={14} /> Evals
+          </NavLink>
         </div>
-        <button
-          type="button"
-          onClick={toggleDark}
-          className="flex h-8 w-8 items-center justify-center rounded-md border bg-background hover:bg-accent transition-colors"
-          title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          {dark ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-      </header>
-      <main>{children}</main>
+        <div className="obs-nav-spacer" />
+        <div className="obs-nav-right">
+          <button
+            type="button"
+            className="obs-iconbtn"
+            title="Refresh"
+            onClick={() => window.location.reload()}
+          >
+            <RefreshCw size={16} />
+          </button>
+          <button
+            type="button"
+            className="obs-iconbtn"
+            onClick={toggleDark}
+            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {dark ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
+      </nav>
+      <main className="obs-main">
+        <div className="obs-page">{children}</div>
+      </main>
     </div>
   )
 }
