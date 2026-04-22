@@ -149,23 +149,36 @@ app.get("/api/sessions", async (c) => {
   if (startedFrom) extraParams.started_from = startedFrom;
   if (startedTo) extraParams.started_to = startedTo;
 
-  const accountCond = accountId ? sql`AND account_id = ${accountId}` : sql``;
-  const fromCond = startedFrom ? sql`AND started_at >= ${startedFrom}` : sql``;
-  const toCond = startedTo ? sql`AND started_at <= ${startedTo}` : sql``;
+  const predicates: string[] = [];
+  const params: unknown[] = [];
+  if (accountId) {
+    predicates.push(`account_id = $${params.length + 1}`);
+    params.push(accountId);
+  }
+  if (startedFrom) {
+    predicates.push(`started_at >= $${params.length + 1}`);
+    params.push(startedFrom);
+  }
+  if (startedTo) {
+    predicates.push(`started_at <= $${params.length + 1}`);
+    params.push(startedTo);
+  }
+  const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
 
-  const [countResult] = await sql`
-    SELECT count(*)::int as total FROM agent_transport_sessions
-    WHERE 1=1 ${accountCond} ${fromCond} ${toCond}
-  `;
+  const [countResult] = await sql.unsafe(
+    `SELECT count(*)::int as total FROM agent_transport_sessions ${whereClause}`,
+    params,
+  );
 
-  const rows = await sql`
-    SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
-           turn_count, has_stt, has_llm, has_tts, record_url, created_at
-    FROM agent_transport_sessions
-    WHERE 1=1 ${accountCond} ${fromCond} ${toCond}
-    ORDER BY ended_at DESC
-    LIMIT ${limit} OFFSET ${offset}
-  `;
+  const rows = await sql.unsafe(
+    `SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
+            turn_count, has_stt, has_llm, has_tts, record_url, created_at
+     FROM agent_transport_sessions
+     ${whereClause}
+     ORDER BY ended_at DESC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset],
+  );
 
   return c.json(buildListResponse(rows, limit, offset, countResult.total, "/api/sessions", extraParams));
 });
