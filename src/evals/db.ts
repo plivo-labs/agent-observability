@@ -3,7 +3,6 @@ import type {
   EvalCase,
   EvalPayloadV0,
   CaseStatus,
-  JudgmentResult,
 } from "./schema.js";
 import { summarize } from "./summarize.js";
 export { summarize } from "./summarize.js";
@@ -184,4 +183,4 @@ function decodeCaseJsonb(row: any): any {
 }
 
 // Re-exports for convenience
-export type { EvalCase, CaseStatus, JudgmentResult };
+export type { EvalCase, CaseStatus };

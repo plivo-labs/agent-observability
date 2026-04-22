@@ -1,16 +1,18 @@
 import type { RunEvent } from "./types.js";
 
-export const MAX_CONTENT_CHARS = 10_000;
-export const MAX_EVENTS_PER_CASE = 500;
-
-/** Serialize LiveKit RunResult events into JSON-ready dicts. */
+/**
+ * Serialize LiveKit RunResult events into JSON-ready dicts.
+ *
+ * No length or count caps — the dashboard needs the full trace. Unknown event
+ * types are forwarded as `{ type, ...passthrough }` so future LiveKit event
+ * kinds land in the UI without a plugin release.
+ */
 export function serializeEvents(rawEvents: unknown[] | null | undefined): RunEvent[] {
   if (!rawEvents || rawEvents.length === 0) return [];
   const out: RunEvent[] = [];
   for (const ev of rawEvents) {
     const serialized = serializeEvent(ev);
     if (serialized) out.push(serialized);
-    if (out.length >= MAX_EVENTS_PER_CASE) break;
   }
   return out;
 }
@@ -30,7 +32,7 @@ function serializeEvent(ev: unknown): RunEvent | null {
       content: typeof content === "string" ? content : undefined,
       interrupted: Boolean(item.interrupted),
     };
-    return trimContent(msg);
+    return msg;
   }
 
   if (type === "function_call") {
@@ -59,7 +61,7 @@ function serializeEvent(ev: unknown): RunEvent | null {
       is_error: Boolean(item.is_error ?? item.isError),
       call_id: item.call_id ?? item.callId,
     };
-    return trimOutput(out);
+    return out;
   }
 
   if (type === "agent_handoff") {
@@ -74,6 +76,11 @@ function serializeEvent(ev: unknown): RunEvent | null {
     };
   }
 
+  // Unknown event type — pass through so the dashboard still renders it.
+  if (typeof type === "string") {
+    return { ...(ev as object), type } as unknown as RunEvent;
+  }
+
   return null;
 }
 
@@ -81,18 +88,4 @@ function className(obj: unknown): string | undefined {
   if (!obj) return undefined;
   const ctor = (obj as { constructor?: { name?: string } }).constructor;
   return ctor?.name;
-}
-
-function trimContent<T extends { content?: string }>(d: T): T {
-  if (typeof d.content === "string" && d.content.length > MAX_CONTENT_CHARS) {
-    d.content = d.content.slice(0, MAX_CONTENT_CHARS) + "…";
-  }
-  return d;
-}
-
-function trimOutput<T extends { output?: string }>(d: T): T {
-  if (typeof d.output === "string" && d.output.length > MAX_CONTENT_CHARS) {
-    d.output = d.output.slice(0, MAX_CONTENT_CHARS) + "…";
-  }
-  return d;
 }

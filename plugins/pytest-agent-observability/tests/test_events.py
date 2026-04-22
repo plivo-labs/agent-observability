@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pytest_agent_observability.events import serialize_events, MAX_EVENTS_PER_CASE
+from pytest_agent_observability.events import serialize_events
 
 
 # ── Fake LiveKit event shapes ──────────────────────────────────────────────
@@ -102,24 +102,32 @@ def test_agent_handoff_uses_class_names():
     assert out == [{"type": "agent_handoff", "from_agent": "FakeAgentA", "to_agent": "FakeAgentB"}]
 
 
-def test_unknown_event_type_is_skipped():
+def test_unknown_event_type_is_passed_through():
+    """Unknown event kinds should land in the payload as-is so the dashboard
+    can inspect their shape — no silent drops."""
+
     @dataclass
     class Weird:
         type: str = "zzz"
+        meta: str = "hello"
 
-    assert serialize_events([Weird()]) == []
+    out = serialize_events([Weird()])
+    assert len(out) == 1
+    assert out[0]["type"] == "zzz"
+    assert out[0]["meta"] == "hello"
 
 
-def test_events_cap_respected():
+def test_no_event_count_cap():
+    """Previously capped at 500; now all events survive."""
     events = [MessageEvent(item=FakeChatMsg(role="user", text_content=f"m{i}"))
-              for i in range(MAX_EVENTS_PER_CASE + 10)]
+              for i in range(800)]
     out = serialize_events(events)
-    assert len(out) == MAX_EVENTS_PER_CASE
+    assert len(out) == 800
 
 
-def test_long_content_truncated():
+def test_long_content_preserved():
+    """Previously truncated at 10_000 chars; now preserved verbatim."""
     long_content = "x" * 20_000
     ev = MessageEvent(item=FakeChatMsg(role="assistant", text_content=long_content))
     out = serialize_events([ev])
-    # Content capped at MAX_CONTENT_CHARS (10_000) + ellipsis.
-    assert len(out[0]["content"]) == 10_001
+    assert out[0]["content"] == long_content

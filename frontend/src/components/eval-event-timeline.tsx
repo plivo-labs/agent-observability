@@ -1,4 +1,4 @@
-import { ArrowRight, Wrench, User, Bot, FileCode2 } from 'lucide-react'
+import { ArrowRight, Wrench, User, Bot, FileCode2, HelpCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import type { RunEvent } from '@/lib/observability-types'
 
@@ -96,6 +96,26 @@ function HandoffBlock({
   )
 }
 
+function UnknownEventBlock({ event }: { event: Record<string, unknown> }) {
+  const { type, ...rest } = event
+  return (
+    <div className="rounded-md border border-dashed bg-muted/20 p-3">
+      <div className="flex items-center gap-2">
+        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs-500 uppercase tracking-wide text-muted-foreground">
+          {typeof type === 'string' ? type : 'event'}
+        </span>
+        <Badge variant="outline" className="text-xxs-400 ml-auto">
+          unknown
+        </Badge>
+      </div>
+      <pre className="mt-2 text-xs-400 font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap">
+        {JSON.stringify(rest, null, 2)}
+      </pre>
+    </div>
+  )
+}
+
 export function EvalEventTimeline({ events }: { events: RunEvent[] }) {
   if (events.length === 0) {
     return (
@@ -118,7 +138,12 @@ export function EvalEventTimeline({ events }: { events: RunEvent[] }) {
           case 'agent_handoff':
             return <HandoffBlock key={key} from={ev.from_agent} to={ev.to_agent} />
           default:
-            return null
+            return (
+              <UnknownEventBlock
+                key={key}
+                event={ev as unknown as Record<string, unknown>}
+              />
+            )
         }
       })}
     </div>

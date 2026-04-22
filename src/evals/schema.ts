@@ -1,61 +1,16 @@
 import { z } from "zod";
 
-// ── Event schemas (match LiveKit RunResult shapes, snake_case) ───────────────
-
-const chatMessageEventSchema = z.object({
-  type: z.literal("message"),
-  role: z.enum(["user", "assistant", "system", "developer"]).optional(),
-  content: z.string().optional(),
-  interrupted: z.boolean().optional(),
-}).passthrough();
-
-const functionCallEventSchema = z.object({
-  type: z.literal("function_call"),
-  name: z.string().optional(),
-  arguments: z.unknown().optional(),
-  call_id: z.string().optional(),
-}).passthrough();
-
-const functionCallOutputEventSchema = z.object({
-  type: z.literal("function_call_output"),
-  output: z.string().optional(),
-  is_error: z.boolean().optional(),
-  call_id: z.string().optional(),
-}).passthrough();
-
-const agentHandoffEventSchema = z.object({
-  type: z.literal("agent_handoff"),
-  from_agent: z.string().optional(),
-  to_agent: z.string().optional(),
-}).passthrough();
-
-export const runEventSchema = z.discriminatedUnion("type", [
-  chatMessageEventSchema,
-  functionCallEventSchema,
-  functionCallOutputEventSchema,
-  agentHandoffEventSchema,
-]);
-
-export type RunEvent = z.infer<typeof runEventSchema>;
-
-// ── Judgment ────────────────────────────────────────────────────────────────
-
-export const judgmentResultSchema = z.object({
-  intent: z.string(),
-  verdict: z.enum(["pass", "fail", "maybe"]),
-  reasoning: z.string().optional().default(""),
-});
-export type JudgmentResult = z.infer<typeof judgmentResultSchema>;
-
-// ── Failure ─────────────────────────────────────────────────────────────────
-
-export const failureSchema = z.object({
-  kind: z.enum(["assertion", "error", "timeout", "judge_failed"]),
-  message: z.string().optional().default(""),
-  stack: z.string().optional(),
-  expected_event_index: z.number().int().nonnegative().optional(),
-});
-export type Failure = z.infer<typeof failureSchema>;
+// ── Observability-only validation philosophy ────────────────────────────────
+//
+// Event/judgment/failure bodies are developer inspection data. The server
+// stores them as JSONB and the dashboard introspects each entry at render
+// time — there's no server-side business logic that reads specific fields.
+// Validating them strictly would drop whole payloads the moment a new
+// LiveKit event kind ships, and it protects nothing downstream.
+//
+// So these shapes are `z.unknown()` / passthrough: store whatever the plugin
+// sent. The fields the server actually depends on (`run_id`, `case_id`,
+// `status`, timestamps — PKs + tally inputs) stay strictly typed below.
 
 // ── Case ────────────────────────────────────────────────────────────────────
 
@@ -71,9 +26,10 @@ export const evalCaseSchema = z.object({
   finished_at: z.number().nullable().optional(),
   duration_ms: z.number().int().nonnegative().nullable().optional(),
   user_input: z.string().nullable().optional(),
-  events: z.array(runEventSchema).default([]),
-  judgments: z.array(judgmentResultSchema).default([]),
-  failure: failureSchema.nullable().optional(),
+  // Inspection data — stored as-is, rendered by the UI per event.
+  events: z.array(z.unknown()).default([]),
+  judgments: z.array(z.unknown()).default([]),
+  failure: z.unknown().nullable().optional(),
 });
 export type EvalCase = z.infer<typeof evalCaseSchema>;
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { serializeEvents, MAX_EVENTS_PER_CASE, MAX_CONTENT_CHARS } from "../src/events.js";
+import { serializeEvents } from "../src/events.js";
 
 describe("serializeEvents", () => {
   test("null/empty input returns []", () => {
@@ -69,24 +69,28 @@ describe("serializeEvents", () => {
     ]);
   });
 
-  test("unknown event type skipped", () => {
-    expect(serializeEvents([{ type: "zzz" }])).toEqual([]);
+  test("unknown event type is passed through", () => {
+    // Unknown kinds should land in the payload verbatim so the dashboard
+    // can inspect their shape — no silent drops.
+    const out = serializeEvents([{ type: "zzz", meta: "hello" }]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ type: "zzz", meta: "hello" });
   });
 
-  test("events cap respected", () => {
-    const events = Array.from({ length: MAX_EVENTS_PER_CASE + 10 }, (_, i) => ({
+  test("no event-count cap", () => {
+    // Previously capped at 500; now all events survive.
+    const events = Array.from({ length: 800 }, (_, i) => ({
       type: "message",
       item: { role: "user", text_content: `m${i}` },
     }));
-    expect(serializeEvents(events)).toHaveLength(MAX_EVENTS_PER_CASE);
+    expect(serializeEvents(events)).toHaveLength(800);
   });
 
-  test("long content truncated", () => {
+  test("long content preserved", () => {
+    // Previously truncated at 10_000 chars; now preserved verbatim.
     const long = "x".repeat(20_000);
     const ev = { type: "message", item: { role: "assistant", text_content: long } };
     const out = serializeEvents([ev]);
-    const content = (out[0] as any).content as string;
-    expect(content.length).toBe(MAX_CONTENT_CHARS + 1); // + ellipsis
-    expect(content.endsWith("…")).toBe(true);
+    expect((out[0] as any).content).toBe(long);
   });
 });
