@@ -1,52 +1,21 @@
 import { useMemo } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Badge } from '@/components/ui/badge'
-import { DataTable } from '@/components/data-table/data-table'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
+import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/hooks/use-data-table'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import type { EvalRunRow } from '@/lib/observability-types'
+import { FrameworkPill, PassRate } from '@/components/obs-cells'
 
 const FRAMEWORK_OPTIONS = [
   { label: 'pytest', value: 'pytest' },
   { label: 'vitest', value: 'vitest' },
 ]
 
-function PassRateCell({ run }: { run: EvalRunRow }) {
-  const { total, passed, failed, errored, skipped } = run
-  const rate = total > 0 ? Math.round((passed / total) * 100) : 0
-  const anyFailed = failed > 0 || errored > 0
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        className={
-          anyFailed
-            ? 'text-destructive font-medium'
-            : rate === 100
-              ? 'text-emerald-600 dark:text-emerald-400 font-medium'
-              : 'text-s-400'
-        }
-      >
-        {rate}%
-      </span>
-      <span className="text-xs-400 text-muted-foreground whitespace-nowrap">
-        {passed}/{total}
-        {failed > 0 && <span className="text-destructive ml-1">· {failed} failed</span>}
-        {errored > 0 && <span className="text-destructive ml-1">· {errored} errored</span>}
-        {skipped > 0 && <span className="ml-1">· {skipped} skipped</span>}
-      </span>
-    </div>
-  )
-}
-
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
-  // URL-synced state — shared with the DataTable via nuqs. The column ids
-  // below (`framework`, `agent_id`, `account_id`) are the URL keys the table
-  // itself writes when users change filters; we just read them here to drive
-  // the server fetch.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
   const [framework] = useQueryState(
@@ -72,9 +41,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'run_id',
         accessorKey: 'run_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Run" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400">{row.original.run_id.slice(0, 8)}</span>
-        ),
+        cell: ({ row }) => <span className="mono">{row.original.run_id.slice(0, 8)}</span>,
         enableSorting: false,
         meta: { label: 'Run' },
       },
@@ -84,9 +51,9 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         header: ({ column }) => <DataTableColumnHeader column={column} label="Agent" />,
         cell: ({ row }) =>
           row.original.agent_id ? (
-            <span className="text-s-400">{row.original.agent_id}</span>
+            <span style={{ font: 'var(--text-p-500)' }}>{row.original.agent_id}</span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="muted">—</span>
           ),
         enableSorting: false,
         enableColumnFilter: true,
@@ -97,14 +64,10 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'framework',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Framework" />,
         cell: ({ row }) => (
-          <Badge variant="outline" className="text-xxs-400">
-            {row.original.framework}
-            {row.original.framework_version && (
-              <span className="ml-1 text-muted-foreground">
-                {row.original.framework_version}
-              </span>
-            )}
-          </Badge>
+          <FrameworkPill
+            name={row.original.framework}
+            version={row.original.framework_version}
+          />
         ),
         enableSorting: false,
         enableColumnFilter: true,
@@ -120,11 +83,11 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
         cell: ({ row }) =>
           row.original.account_id ? (
-            <span className="font-mono text-s-400 text-muted-foreground">
+            <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
               {row.original.account_id}
             </span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="muted">—</span>
           ),
         enableSorting: false,
         enableColumnFilter: true,
@@ -133,14 +96,20 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
       {
         id: 'pass_rate',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Pass rate" />,
-        cell: ({ row }) => <PassRateCell run={row.original} />,
+        cell: ({ row }) => (
+          <PassRate
+            passed={row.original.passed}
+            total={row.original.total}
+            failed={row.original.failed + row.original.errored}
+          />
+        ),
         enableSorting: false,
       },
       {
         id: 'total',
         accessorKey: 'total',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Cases" />,
-        cell: ({ row }) => <span className="text-s-400">{row.original.total}</span>,
+        cell: ({ row }) => <span className="tnum">{row.original.total}</span>,
         enableSorting: false,
         meta: { label: 'Cases' },
       },
@@ -149,7 +118,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
         cell: ({ row }) => (
-          <span className="text-s-400">{formatDuration(row.original.duration_ms)}</span>
+          <span className="mono tnum">{formatDuration(row.original.duration_ms)}</span>
         ),
         enableSorting: false,
         meta: { label: 'Duration' },
@@ -159,7 +128,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="text-s-400 text-muted-foreground whitespace-nowrap">
+          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
             {formatDate(row.original.started_at)}
           </span>
         ),
@@ -170,7 +139,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'commit',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Commit" />,
         cell: ({ row }) => (
-          <span className="font-mono text-xs-400 text-muted-foreground">
+          <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
             {row.original.ci?.git_sha ? String(row.original.ci.git_sha).slice(0, 7) : '—'}
           </span>
         ),
@@ -192,28 +161,43 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   })
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-h2-600 font-semibold">Evals</h1>
-        <span className="text-s-400 text-muted-foreground">{totalCount} total</span>
+    <>
+      <div className="obs-head">
+        <div>
+          <h1>Evals</h1>
+          <div className="sub">Test runs across your agents.</div>
+        </div>
+        <div className="total"><b>{totalCount}</b> total</div>
       </div>
 
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 mb-4 text-s-400 text-destructive">
+        <div
+          role="alert"
+          style={{
+            border: '1px solid #FECACA',
+            background: '#FEF2F2',
+            color: 'hsl(var(--destructive))',
+            padding: '10px 14px',
+            borderRadius: 8,
+            marginBottom: 12,
+            font: 'var(--text-s-400)',
+          }}
+        >
           Failed to load eval runs: {error}
         </div>
       )}
 
       {loading && (
-        <div className="mb-3 text-xs-400 text-muted-foreground">Loading…</div>
+        <div style={{ marginBottom: 10, font: 'var(--text-xs-400)', color: 'hsl(var(--tertiary))' }}>
+          Loading…
+        </div>
       )}
 
-      <DataTable
+      <ObsDataTable
         table={table}
+        toolbar={<DataTableToolbar table={table} />}
         onRowClick={(row) => onRunClick?.(row.original.run_id)}
-      >
-        <DataTableToolbar table={table} />
-      </DataTable>
-    </div>
+      />
+    </>
   )
 }

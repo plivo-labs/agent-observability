@@ -11,19 +11,17 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { DataTable } from '@/components/data-table/data-table'
+import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
-import { CaseStatusBadge } from '@/components/eval-status-badge'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { FrameworkPill, StatusChip } from '@/components/obs-cells'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
 import type { CaseStatus, EvalCaseRow } from '@/lib/observability-types'
@@ -35,25 +33,38 @@ const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
   { label: 'Skipped', value: 'skipped' },
 ]
 
-function SummaryCard({
+/**
+ * One of the five `.eval-stat` tiles on the run header. The pass-rate tile
+ * gets the `hero` treatment (red gradient) when the rate is below 100;
+ * passed/failed carry their own tint; errored/skipped go quiet when zero.
+ */
+function EvalStat({
   label,
   value,
-  tone = 'default',
+  suffix,
+  variant = 'default',
+  meterPct,
+  meterColor,
 }: {
   label: string
   value: string | number
-  tone?: 'default' | 'good' | 'bad' | 'warn'
+  suffix?: string
+  variant?: 'default' | 'hero' | 'passed' | 'failed' | 'zero'
+  meterPct?: number
+  meterColor?: string
 }) {
-  const toneCls = {
-    default: 'text-foreground',
-    good: 'text-emerald-600 dark:text-emerald-400',
-    bad: 'text-destructive',
-    warn: 'text-amber-600 dark:text-amber-400',
-  }[tone]
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="text-xs-500 text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`mt-1 text-h3-600 font-semibold ${toneCls}`}>{value}</div>
+    <div className={`eval-stat ${variant}`}>
+      <div className="hd">{label}</div>
+      <div className="val">
+        {value}
+        {suffix && <span className="suffix">{suffix}</span>}
+      </div>
+      {meterPct != null && (
+        <div className="eval-meter">
+          <i style={{ width: `${Math.max(0, Math.min(100, meterPct))}%`, background: meterColor }} />
+        </div>
+      )}
     </div>
   )
 }
@@ -65,9 +76,6 @@ export const EvalRunDetailPage = ({
 }: {
   runId: string
   onBack?: () => void
-  /** Optional. If provided, row clicks call this (useful when the consumer
-   * wants to navigate to a full page). If omitted, the component opens a
-   * local drawer instead and syncs the case via `?case=<id>`. */
   onCaseClick?: (caseId: string) => void
 }) => {
   const { run, loading, error } = useEvalRun(runId)
@@ -80,9 +88,7 @@ export const EvalRunDetailPage = ({
         id: 'name',
         accessorKey: 'name',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Name" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400">{row.original.name}</span>
-        ),
+        cell: ({ row }) => <span className="mono">{row.original.name}</span>,
         enableColumnFilter: true,
         meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
       },
@@ -91,7 +97,7 @@ export const EvalRunDetailPage = ({
         accessorKey: 'file',
         header: ({ column }) => <DataTableColumnHeader column={column} label="File" />,
         cell: ({ row }) => (
-          <span className="text-s-400 text-muted-foreground max-w-[240px] inline-block truncate">
+          <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
             {row.original.file ?? '—'}
           </span>
         ),
@@ -101,7 +107,7 @@ export const EvalRunDetailPage = ({
         id: 'status',
         accessorKey: 'status',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
-        cell: ({ row }) => <CaseStatusBadge status={row.original.status} />,
+        cell: ({ row }) => <StatusChip status={row.original.status} />,
         enableColumnFilter: true,
         meta: {
           label: 'Status',
@@ -117,9 +123,7 @@ export const EvalRunDetailPage = ({
         id: 'duration_ms',
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
-        cell: ({ row }) => (
-          <span className="text-s-400">{formatDuration(row.original.duration_ms)}</span>
-        ),
+        cell: ({ row }) => <span className="mono tnum">{formatDuration(row.original.duration_ms)}</span>,
         meta: { label: 'Duration' },
       },
       {
@@ -129,15 +133,17 @@ export const EvalRunDetailPage = ({
           const c = row.original
           const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
           const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
-          if (c.judgments.length === 0) return <span className="text-muted-foreground">—</span>
+          if (c.judgments.length === 0) return <span className="muted">—</span>
           return (
-            <span className="text-s-400">
-              {judgePass > 0 && (
-                <span className="text-emerald-600 dark:text-emerald-400">{judgePass} pass</span>
+            <span style={{ font: 'var(--text-s-400)' }}>
+              {judgePass > 0 && <span className="judg-pass">✓ {judgePass} pass</span>}
+              {judgePass > 0 && judgeFail > 0 && (
+                <span style={{ margin: '0 6px', color: 'hsl(var(--tertiary))' }}>·</span>
               )}
-              {judgePass > 0 && judgeFail > 0 && <span> · </span>}
               {judgeFail > 0 && (
-                <span className="text-destructive">{judgeFail} fail</span>
+                <span style={{ color: 'hsl(var(--destructive))', font: 'var(--text-xs-600)' }}>
+                  {judgeFail} fail
+                </span>
               )}
             </span>
           )
@@ -146,9 +152,7 @@ export const EvalRunDetailPage = ({
       {
         id: 'events',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Events" />,
-        cell: ({ row }) => (
-          <span className="text-s-400 text-muted-foreground">{row.original.events.length}</span>
-        ),
+        cell: ({ row }) => <span className="tnum muted">{row.original.events.length}</span>,
       },
     ],
     [],
@@ -169,92 +173,133 @@ export const EvalRunDetailPage = ({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-12 text-muted-foreground">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-          <span className="text-s-400">Loading eval run...</span>
-        </div>
+      <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))' }}>
+        Loading eval run…
       </div>
     )
   }
 
   if (error || !run) {
     return (
-      <div className="p-12 text-center text-destructive">
+      <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--destructive))' }}>
         <p>Failed to load eval run: {error ?? 'not found'}</p>
         {onBack && (
-          <Button variant="outline" onClick={onBack} className="mt-4">
-            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
-          </Button>
+          <button type="button" className="obs-back" onClick={onBack} style={{ marginTop: 16 }}>
+            <ArrowLeft size={14} /> Back
+          </button>
         )}
       </div>
     )
   }
 
   const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
+  const hasAnyFailure = run.failed > 0 || run.errored > 0
+  const passMeterColor = passRate === 100 ? '#10B981' : 'hsl(var(--destructive))'
 
   const handleRowClick = (caseId: string) => {
-    if (onCaseClick) {
-      onCaseClick(caseId)
-    } else {
-      void setOpenCaseId(caseId)
-    }
+    if (onCaseClick) onCaseClick(caseId)
+    else void setOpenCaseId(caseId)
   }
 
   return (
-    <div className="p-6">
+    <div style={{ position: 'relative' }}>
       {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="mb-4 inline-flex items-center gap-1 text-s-400 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to evals
+        <button type="button" className="obs-back" onClick={onBack}>
+          <ArrowLeft size={14} /> Back to evals
         </button>
       )}
 
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-        <div>
-          <h1 className="text-h2-600 font-semibold flex items-center gap-2">
-            {run.agent_id ?? <span className="text-muted-foreground">—</span>}
-            <Badge variant="outline" className="text-xxs-400">
-              {run.framework}
-              {run.framework_version && (
-                <span className="ml-1 text-muted-foreground">{run.framework_version}</span>
-              )}
-            </Badge>
-          </h1>
-          <div className="text-s-400 text-muted-foreground font-mono mt-1">{run.run_id}</div>
+      <div className="eval-head">
+        <div className="left">
+          <div className="title-row">
+            <h1>{run.agent_id ?? <span className="muted">—</span>}</h1>
+            <FrameworkPill name={run.framework} version={run.framework_version} />
+          </div>
+          <div className="id">{run.run_id}</div>
         </div>
-        <div className="text-right text-s-400 text-muted-foreground">
-          <div>Started {formatDate(run.started_at)}</div>
-          <div>Duration {formatDuration(run.duration_ms)}</div>
+        <div className="right">
+          <b>Started {formatDate(run.started_at)}</b>
+          <span>Duration {formatDuration(run.duration_ms)}</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-6">
-        <SummaryCard label="Pass rate" value={`${passRate}%`} tone={passRate === 100 ? 'good' : 'bad'} />
-        <SummaryCard label="Passed" value={run.passed} tone="good" />
-        <SummaryCard label="Failed" value={run.failed} tone={run.failed > 0 ? 'bad' : 'default'} />
-        <SummaryCard label="Errored" value={run.errored} tone={run.errored > 0 ? 'warn' : 'default'} />
-        <SummaryCard label="Skipped" value={run.skipped} />
+      <div className="eval-stats">
+        <EvalStat
+          label="Pass rate"
+          value={passRate}
+          suffix="%"
+          variant={hasAnyFailure ? 'hero' : 'passed'}
+          meterPct={passRate}
+          meterColor={passMeterColor}
+        />
+        <EvalStat
+          label="Passed"
+          value={run.passed}
+          variant="passed"
+          meterPct={run.total > 0 ? (run.passed / run.total) * 100 : 0}
+          meterColor="#10B981"
+        />
+        <EvalStat
+          label="Failed"
+          value={run.failed}
+          variant={run.failed > 0 ? 'failed' : 'zero'}
+          meterPct={run.total > 0 ? (run.failed / run.total) * 100 : 0}
+          meterColor="hsl(var(--destructive))"
+        />
+        <EvalStat
+          label="Errored"
+          value={run.errored}
+          variant={run.errored > 0 ? 'failed' : 'zero'}
+        />
+        <EvalStat label="Skipped" value={run.skipped} variant="zero" />
       </div>
 
       {run.ci && (
-        <div className="mt-6 rounded-lg border bg-card p-4 flex flex-wrap items-center gap-4">
-          <span className="text-xs-500 text-muted-foreground uppercase tracking-wide">CI</span>
+        <div
+          style={{
+            marginTop: 16,
+            background: '#fff',
+            border: '1px solid hsl(var(--border))',
+            borderRadius: 12,
+            padding: '12px 16px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 16,
+          }}
+        >
+          <span
+            style={{
+              font: 'var(--text-xs-600)',
+              color: 'hsl(var(--tertiary))',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
+            CI
+          </span>
           {run.ci.provider && (
-            <span className="text-s-400 capitalize">{String(run.ci.provider)}</span>
+            <span style={{ font: 'var(--text-s-400)', textTransform: 'capitalize' }}>
+              {String(run.ci.provider)}
+            </span>
           )}
           {run.ci.git_branch && (
-            <span className="inline-flex items-center gap-1 text-s-400">
-              <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: 'var(--text-s-400)' }}>
+              <GitBranch size={13} style={{ color: 'hsl(var(--tertiary))' }} />
               {String(run.ci.git_branch)}
             </span>
           )}
           {run.ci.git_sha && (
-            <span className="inline-flex items-center gap-1 text-s-400 font-mono">
-              <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                font: 'var(--text-s-400)',
+                fontFamily: 'var(--mono)',
+              }}
+            >
+              <GitCommit size={13} style={{ color: 'hsl(var(--tertiary))' }} />
               {String(run.ci.git_sha).slice(0, 7)}
             </span>
           )}
@@ -263,29 +308,49 @@ export const EvalRunDetailPage = ({
               href={String(run.ci.run_url)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-s-400 text-primary hover:underline"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                font: 'var(--text-s-400)',
+                color: 'hsl(var(--link))',
+              }}
             >
-              View run <ExternalLink className="h-3 w-3" />
+              View run <ExternalLink size={12} />
             </a>
           )}
           {run.ci.commit_message && (
-            <span className="text-s-400 text-muted-foreground italic truncate max-w-[40ch]">
+            <span
+              style={{
+                font: 'var(--text-s-400)',
+                color: 'hsl(var(--secondary))',
+                fontStyle: 'italic',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: '40ch',
+              }}
+            >
               "{String(run.ci.commit_message)}"
             </span>
           )}
         </div>
       )}
 
-      <div className="mt-8">
-        <h2 className="text-h4-600 font-semibold mb-3">
-          Cases ({table.getFilteredRowModel().rows.length} of {run.cases.length})
+      <div style={{ marginTop: 24 }}>
+        <h2 style={{ font: 'var(--text-h4-600)', margin: '0 0 12px' }}>
+          Cases{' '}
+          <span style={{ color: 'hsl(var(--tertiary))', font: 'var(--text-s-400)' }}>
+            ({table.getFilteredRowModel().rows.length} of {run.cases.length})
+          </span>
         </h2>
-        <DataTable table={table} onRowClick={(row) => handleRowClick(row.original.case_id)}>
-          <DataTableToolbar table={table} />
-        </DataTable>
+        <ObsDataTable
+          table={table}
+          toolbar={<DataTableToolbar table={table} />}
+          onRowClick={(row) => handleRowClick(row.original.case_id)}
+        />
       </div>
 
-      {/* Drawer: only used when no external onCaseClick handler is provided. */}
       {!onCaseClick && (
         <Sheet
           open={!!openCaseId}

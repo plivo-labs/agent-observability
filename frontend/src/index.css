@@ -23,6 +23,7 @@
   --color-secondary-foreground: hsl(var(--secondary-foreground));
   --color-tertiary: hsl(var(--tertiary));
   --color-tertiary-foreground: hsl(var(--tertiary-foreground));
+  --color-link: hsl(var(--link));
   --color-muted: hsl(var(--muted));
   --color-muted-foreground: hsl(var(--muted-foreground));
   --color-accent: hsl(var(--accent));

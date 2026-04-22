@@ -3,8 +3,8 @@
  * class-driven — the styles live in `styles/observability.css`.
  */
 
-import { AudioLines, Phone, TriangleAlert } from 'lucide-react'
-import type { Transport } from '@/lib/observability-types'
+import { AudioLines, FlaskConical, Phone, TriangleAlert } from 'lucide-react'
+import type { CaseStatus, Transport } from '@/lib/observability-types'
 import { formatDuration } from '@/lib/observability-format'
 
 export function CapsChips({
@@ -63,4 +63,39 @@ export function TurnsBar({ turns, maxTurns }: { turns: number; maxTurns: number 
       <b style={{ fontWeight: 600 }}>{turns}</b>
     </span>
   )
+}
+
+/** Framework pill (evals list) — `flask-conical` icon + name + muted version. */
+export function FrameworkPill({
+  name, version,
+}: { name: string; version?: string | null }) {
+  return (
+    <span className="framework">
+      <FlaskConical size={12} /> {name}
+      {version && <span className="ver">{version}</span>}
+    </span>
+  )
+}
+
+/**
+ * Pass-rate meter: numeric label + fill bar + "N failed" chip when any
+ * case failed. Variant maps to design thresholds (95 / 70 / below).
+ */
+export function PassRate({
+  passed, total, failed,
+}: { passed: number; total: number; failed: number }) {
+  const pct = total > 0 ? Math.round((passed / total) * 100) : 0
+  const variant = pct >= 95 ? 'good' : pct >= 70 ? 'warn' : 'bad'
+  return (
+    <div className={`passrate ${variant}`}>
+      <span className="label">{pct}%</span>
+      <span className="meter"><i style={{ width: `${pct}%` }} /></span>
+      {failed > 0 && <span className="fail">{failed} failed</span>}
+    </div>
+  )
+}
+
+/** Eval case status chip — maps `.status-chip passed|failed|errored|skipped`. */
+export function StatusChip({ status }: { status: CaseStatus }) {
+  return <span className={`status-chip ${status}`}>{status}</span>
 }

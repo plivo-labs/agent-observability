@@ -38,7 +38,7 @@ export function DataTableToolbar<TData>({
       role="toolbar"
       aria-orientation="horizontal"
       className={cn(
-        "flex w-full items-start justify-between gap-2 p-1",
+        "flex w-full items-center justify-between gap-2",
         className,
       )}
       {...props}
@@ -50,9 +50,7 @@ export function DataTableToolbar<TData>({
         {isFiltered && (
           <Button
             aria-label="Reset filters"
-            variant="outline"
-            size="sm"
-            className="border-dashed"
+            variant="dashed"
             onClick={onReset}
           >
             <X />
