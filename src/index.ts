@@ -11,6 +11,7 @@ import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse } from "./response.js";
+import { registerEvalRoutes } from "./evals/routes.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -38,6 +39,10 @@ if (basicAuthEnabled) {
 app.get("/health", (c) => {
   return c.json({ status: "ok", s3Enabled });
 });
+
+// ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
+
+registerEvalRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 

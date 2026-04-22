@@ -1,0 +1,39 @@
+{
+  "name": "vitest-agent-observability",
+  "version": "0.1.0",
+  "description": "Vitest reporter that uploads LiveKit-agents eval results to agent-observability",
+  "keywords": ["vitest", "reporter", "livekit", "agents", "observability", "evals"],
+  "license": "MIT",
+  "author": "Plivo Labs",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./setup": {
+      "types": "./dist/setup.d.ts",
+      "import": "./dist/setup.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "vitest": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

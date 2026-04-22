@@ -161,3 +161,113 @@ export interface PlivoListResponse<T> {
   meta: PlivoMeta
   objects: T[]
 }
+
+// ── Eval payload types ──────────────────────────────────────────────────────
+
+export type CaseStatus = 'passed' | 'failed' | 'errored' | 'skipped'
+
+export type JudgmentVerdict = 'pass' | 'fail' | 'maybe'
+
+export interface JudgmentResult {
+  intent: string
+  verdict: JudgmentVerdict
+  reasoning: string
+}
+
+export type FailureKind = 'assertion' | 'error' | 'timeout' | 'judge_failed'
+
+export interface Failure {
+  kind: FailureKind
+  message?: string
+  stack?: string
+  expected_event_index?: number
+}
+
+export interface RunEventMessage {
+  type: 'message'
+  role?: string
+  content?: string
+  interrupted?: boolean
+}
+
+export interface RunEventFunctionCall {
+  type: 'function_call'
+  name?: string
+  arguments?: unknown
+  call_id?: string
+}
+
+export interface RunEventFunctionCallOutput {
+  type: 'function_call_output'
+  output?: string
+  is_error?: boolean
+  call_id?: string
+}
+
+export interface RunEventAgentHandoff {
+  type: 'agent_handoff'
+  from_agent?: string
+  to_agent?: string
+}
+
+export type RunEvent =
+  | RunEventMessage
+  | RunEventFunctionCall
+  | RunEventFunctionCallOutput
+  | RunEventAgentHandoff
+
+export interface CiMetadata {
+  provider?: string
+  run_url?: string
+  git_sha?: string
+  git_branch?: string
+  commit_message?: string
+  [k: string]: unknown
+}
+
+export interface EvalRunRow {
+  run_id: string
+  account_id: string | null
+  agent_id: string | null
+  framework: string
+  framework_version: string | null
+  sdk: string | null
+  sdk_version: string | null
+  started_at: string
+  finished_at: string
+  duration_ms: number | null
+  total: number
+  passed: number
+  failed: number
+  errored: number
+  skipped: number
+  ci: CiMetadata | null
+  created_at: string
+}
+
+export interface EvalCaseRow {
+  case_id: string
+  run_id: string
+  name: string
+  file: string | null
+  status: CaseStatus
+  duration_ms: number | null
+  user_input: string | null
+  events: RunEvent[]
+  judgments: JudgmentResult[]
+  failure: Failure | null
+  created_at: string
+}
+
+export interface EvalRunDetail extends EvalRunRow {
+  api_id?: string
+  cases: EvalCaseRow[]
+}
+
+export interface EvalsFilters {
+  agentId?: string
+  framework?: string
+  accountId?: string
+  startedFrom?: string
+  startedTo?: string
+}
