@@ -1,8 +1,18 @@
 """Serialize LiveKit RunResult events into the plain-dict form the server expects.
 
-No length or count caps — the dashboard needs the full trace. Unknown event
-types are forwarded as-is (shape: `{"type": "<whatever>", ...passthrough}`) so
-future LiveKit event kinds land in the UI without a plugin release.
+Philosophy: do the *minimum* transformation needed to make the event
+JSON-serializable, and pass everything else through untouched. No field
+hand-picking, no truncation, no silent drops of unknown event types.
+
+The only transforms we apply:
+ - Convert the event (and its nested `item`) from Pydantic / dataclass /
+   arbitrary-object form into a plain dict. All fields are preserved,
+   including `item.metrics`, timestamps, IDs, etc.
+ - For `function_call`, parse `arguments` from JSON string → dict as a
+   convenience (so the dashboard doesn't have to).
+ - For `agent_handoff`, replace the `old_agent` / `new_agent` object
+   references (which are full Agent instances — tools, context, not
+   JSON-friendly) with their class names.
 """
 
 from __future__ import annotations
@@ -13,110 +23,114 @@ from typing import Any, Iterable, Optional
 
 
 def serialize_events(run_events: Optional[Iterable[Any]]) -> list[dict]:
-    """Turn RunEvent dataclass instances into JSON-ready dicts.
+    """Turn RunEvent instances into JSON-ready dicts.
 
-    Returns an empty list when `run_events` is None/empty. Never raises — the
-    plugin must not break tests.
+    Never raises — the plugin must not break tests. Returns [] if
+    `run_events` is None or empty.
     """
     if not run_events:
         return []
     out: list[dict] = []
     for ev in run_events:
         try:
-            d = _serialize_event(ev)
+            out.append(_serialize_event(ev))
         except Exception:
-            d = None
-        if d is None:
-            continue
-        out.append(d)
+            # Last-resort: don't drop the event, just note we couldn't dump it.
+            out.append({
+                "type": str(getattr(ev, "type", "unknown")),
+                "_serialize_error": True,
+                "repr": str(ev),
+            })
     return out
 
 
-def _serialize_event(ev: Any) -> Optional[dict]:
-    ev_type = getattr(ev, "type", None)
+def _serialize_event(ev: Any) -> dict:
+    """Convert an event to a plain JSON-friendly dict, preserving all fields."""
+    ev_dict = _to_plain_dict(ev)
+    ev_type = ev_dict.get("type") or getattr(ev, "type", None)
+
+    # The event itself carries `item` for the known LiveKit types — ensure
+    # the item is a plain dict too (not a Pydantic model reference).
+    raw_item = getattr(ev, "item", None)
+    if raw_item is not None:
+        ev_dict["item"] = _to_plain_dict(raw_item)
+
+    # Lift commonly-accessed fields from `item` to the top level so existing
+    # consumers (dashboard timeline renderer) find them where they already
+    # look — `role`, `content`, `name`, `arguments`, etc. — WITHOUT stripping
+    # the nested `item` (which carries `metrics`, IDs, timestamps, …).
+    item = ev_dict.get("item") or {}
     if ev_type == "message":
-        item = getattr(ev, "item", None)
-        role = _attr(item, "role")
-        # LiveKit ChatMessage exposes text_content as a convenience property.
-        content = _attr(item, "text_content")
+        content = item.get("text_content")
         if content is None:
-            content = _attr(item, "content")
+            content = item.get("content")
             if isinstance(content, list):
                 content = "".join(str(c) for c in content)
-        return {
-            "type": "message",
-            "role": role,
-            "content": content,
-            "interrupted": bool(_attr(item, "interrupted", default=False)),
-        }
+        ev_dict.setdefault("role", item.get("role"))
+        ev_dict.setdefault("content", content)
+        ev_dict.setdefault("interrupted", bool(item.get("interrupted", False)))
+        # Propagate the metrics dict so the dashboard can render per-turn
+        # latency (llm_node_ttft, started_speaking_at, …) without digging
+        # into `item`.
+        if "metrics" in item:
+            ev_dict.setdefault("metrics", item.get("metrics"))
 
-    if ev_type == "function_call":
-        item = getattr(ev, "item", None)
-        raw_args = _attr(item, "arguments")
+    elif ev_type == "function_call":
+        raw_args = item.get("arguments")
         args = raw_args
         if isinstance(raw_args, str):
             try:
                 args = json.loads(raw_args)
             except Exception:
-                args = raw_args  # keep as string if not valid JSON
-        return {
-            "type": "function_call",
-            "name": _attr(item, "name"),
-            "arguments": args,
-            "call_id": _attr(item, "call_id") or _attr(item, "id"),
-        }
+                args = raw_args
+        ev_dict.setdefault("name", item.get("name"))
+        ev_dict.setdefault("arguments", args)
+        ev_dict.setdefault("call_id", item.get("call_id") or item.get("id"))
 
-    if ev_type == "function_call_output":
-        item = getattr(ev, "item", None)
-        return {
-            "type": "function_call_output",
-            "output": _attr(item, "output"),
-            "is_error": bool(_attr(item, "is_error", default=False)),
-            "call_id": _attr(item, "call_id"),
-        }
+    elif ev_type == "function_call_output":
+        ev_dict.setdefault("output", item.get("output"))
+        ev_dict.setdefault("is_error", bool(item.get("is_error", False)))
+        ev_dict.setdefault("call_id", item.get("call_id"))
 
-    if ev_type == "agent_handoff":
-        old_agent = _attr(ev, "old_agent")
-        new_agent = _attr(ev, "new_agent")
-        return {
-            "type": "agent_handoff",
-            "from_agent": _class_name(old_agent),
-            "to_agent": _class_name(new_agent),
-        }
+    elif ev_type == "agent_handoff":
+        # `old_agent` / `new_agent` are full Agent instances — replace them
+        # with class names for JSON safety; keep the original keys around too
+        # for reference but as strings.
+        ev_dict["from_agent"] = _class_name(getattr(ev, "old_agent", None))
+        ev_dict["to_agent"] = _class_name(getattr(ev, "new_agent", None))
+        ev_dict.pop("old_agent", None)
+        ev_dict.pop("new_agent", None)
 
-    # Unknown event type — pass the entire object through as a plain dict so
-    # the dashboard still has something to render. Uses dataclass/vars/__dict__
-    # to extract fields, falling back to str(ev).
-    if ev_type is not None:
-        return _to_plain_dict(ev)
-
-    return None
+    return ev_dict
 
 
-def _to_plain_dict(ev: Any) -> dict:
-    """Best-effort conversion of an unknown event object to a JSON-friendly dict."""
-    if dataclasses.is_dataclass(ev) and not isinstance(ev, type):
+def _to_plain_dict(obj: Any) -> dict:
+    """Best-effort conversion of an arbitrary object to a plain dict.
+
+    Tries Pydantic → dataclass → __dict__ → string fallback. Drops any
+    private attributes (leading underscore) and callable attributes.
+    """
+    if isinstance(obj, dict):
+        return dict(obj)
+    if hasattr(obj, "model_dump"):  # pydantic v2
         try:
-            return dataclasses.asdict(ev)
+            return obj.model_dump()
         except Exception:
             pass
-    if hasattr(ev, "model_dump"):  # pydantic v2
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         try:
-            return ev.model_dump()
+            return dataclasses.asdict(obj)
         except Exception:
             pass
-    if hasattr(ev, "__dict__"):
+    if hasattr(obj, "__dict__"):
         try:
-            return {k: v for k, v in vars(ev).items() if not k.startswith("_")}
+            return {
+                k: v for k, v in vars(obj).items()
+                if not k.startswith("_") and not callable(v)
+            }
         except Exception:
             pass
-    return {"type": str(getattr(ev, "type", "unknown")), "repr": str(ev)}
-
-
-def _attr(obj: Any, name: str, *, default: Any = None) -> Any:
-    if obj is None:
-        return default
-    return getattr(obj, name, default)
+    return {"repr": str(obj)}
 
 
 def _class_name(obj: Any) -> Optional[str]:

@@ -74,7 +74,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     url = config.getoption("agent_observability_url") or os.getenv("AGENT_OBSERVABILITY_URL")
     if not url:
-        return  # No-op when not configured.
+        return  # No-op when no server is configured.
 
     user = os.getenv("AGENT_OBSERVABILITY_USER")
     pw = os.getenv("AGENT_OBSERVABILITY_PASS")
@@ -138,8 +138,9 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         finished_at=time.time(),
     )
 
-    assert _state.upload_config is not None
     _state._last_run_id = _state.collector.run_id
+
+    assert _state.upload_config is not None  # guaranteed by pytest_configure
     _state._last_upload_ok = up.upload(
         payload, _state.upload_config, fallback_dir=_state.fallback_dir,
     )

@@ -1,19 +1,39 @@
+import { useMemo, useState } from 'react'
 import { ArrowLeft, ExternalLink, GitBranch, GitCommit } from 'lucide-react'
+import { parseAsString, useQueryState } from 'nuqs'
+import {
+  type ColumnDef,
+  type ColumnFiltersState,
+  getCoreRowModel,
+  getFacetedRowModel,
+  getFacetedUniqueValues,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { DataTable } from '@/components/data-table/data-table'
+import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
+import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { CaseStatusBadge } from '@/components/eval-status-badge'
+import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
-import { useState, useMemo } from 'react'
-import type { CaseStatus } from '@/lib/observability-types'
+import type { CaseStatus, EvalCaseRow } from '@/lib/observability-types'
+
+const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
+  { label: 'Passed', value: 'passed' },
+  { label: 'Failed', value: 'failed' },
+  { label: 'Errored', value: 'errored' },
+  { label: 'Skipped', value: 'skipped' },
+]
 
 function SummaryCard({
   label,
@@ -45,16 +65,107 @@ export const EvalRunDetailPage = ({
 }: {
   runId: string
   onBack?: () => void
+  /** Optional. If provided, row clicks call this (useful when the consumer
+   * wants to navigate to a full page). If omitted, the component opens a
+   * local drawer instead and syncs the case via `?case=<id>`. */
   onCaseClick?: (caseId: string) => void
 }) => {
   const { run, loading, error } = useEvalRun(runId)
-  const [statusFilter, setStatusFilter] = useState<CaseStatus | 'all'>('all')
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
+  const [openCaseId, setOpenCaseId] = useQueryState('case', parseAsString)
 
-  const filteredCases = useMemo(() => {
-    if (!run) return []
-    if (statusFilter === 'all') return run.cases
-    return run.cases.filter((c) => c.status === statusFilter)
-  }, [run, statusFilter])
+  const columns = useMemo<ColumnDef<EvalCaseRow>[]>(
+    () => [
+      {
+        id: 'name',
+        accessorKey: 'name',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Name" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400">{row.original.name}</span>
+        ),
+        enableColumnFilter: true,
+        meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
+      },
+      {
+        id: 'file',
+        accessorKey: 'file',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="File" />,
+        cell: ({ row }) => (
+          <span className="text-s-400 text-muted-foreground max-w-[240px] inline-block truncate">
+            {row.original.file ?? '—'}
+          </span>
+        ),
+        meta: { label: 'File' },
+      },
+      {
+        id: 'status',
+        accessorKey: 'status',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
+        cell: ({ row }) => <CaseStatusBadge status={row.original.status} />,
+        enableColumnFilter: true,
+        meta: {
+          label: 'Status',
+          variant: 'multiSelect',
+          options: STATUS_OPTIONS,
+        },
+        filterFn: (row, id, value) => {
+          if (!Array.isArray(value) || value.length === 0) return true
+          return value.includes(row.getValue(id))
+        },
+      },
+      {
+        id: 'duration_ms',
+        accessorKey: 'duration_ms',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
+        cell: ({ row }) => (
+          <span className="text-s-400">{formatDuration(row.original.duration_ms)}</span>
+        ),
+        meta: { label: 'Duration' },
+      },
+      {
+        id: 'judgments',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Judgments" />,
+        cell: ({ row }) => {
+          const c = row.original
+          const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
+          const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
+          if (c.judgments.length === 0) return <span className="text-muted-foreground">—</span>
+          return (
+            <span className="text-s-400">
+              {judgePass > 0 && (
+                <span className="text-emerald-600 dark:text-emerald-400">{judgePass} pass</span>
+              )}
+              {judgePass > 0 && judgeFail > 0 && <span> · </span>}
+              {judgeFail > 0 && (
+                <span className="text-destructive">{judgeFail} fail</span>
+              )}
+            </span>
+          )
+        },
+      },
+      {
+        id: 'events',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Events" />,
+        cell: ({ row }) => (
+          <span className="text-s-400 text-muted-foreground">{row.original.events.length}</span>
+        ),
+      },
+    ],
+    [],
+  )
+
+  const table = useReactTable({
+    data: run?.cases ?? [],
+    columns,
+    state: { columnFilters },
+    onColumnFiltersChange: setColumnFilters,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFacetedRowModel: getFacetedRowModel(),
+    getFacetedUniqueValues: getFacetedUniqueValues(),
+    getRowId: (row) => row.case_id,
+  })
 
   if (loading) {
     return (
@@ -81,6 +192,14 @@ export const EvalRunDetailPage = ({
   }
 
   const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
+
+  const handleRowClick = (caseId: string) => {
+    if (onCaseClick) {
+      onCaseClick(caseId)
+    } else {
+      void setOpenCaseId(caseId)
+    }
+  }
 
   return (
     <div className="p-6">
@@ -125,23 +244,23 @@ export const EvalRunDetailPage = ({
         <div className="mt-6 rounded-lg border bg-card p-4 flex flex-wrap items-center gap-4">
           <span className="text-xs-500 text-muted-foreground uppercase tracking-wide">CI</span>
           {run.ci.provider && (
-            <span className="text-s-400 capitalize">{run.ci.provider}</span>
+            <span className="text-s-400 capitalize">{String(run.ci.provider)}</span>
           )}
           {run.ci.git_branch && (
             <span className="inline-flex items-center gap-1 text-s-400">
               <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-              {run.ci.git_branch}
+              {String(run.ci.git_branch)}
             </span>
           )}
           {run.ci.git_sha && (
             <span className="inline-flex items-center gap-1 text-s-400 font-mono">
               <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
-              {run.ci.git_sha.slice(0, 7)}
+              {String(run.ci.git_sha).slice(0, 7)}
             </span>
           )}
           {run.ci.run_url && (
             <a
-              href={run.ci.run_url}
+              href={String(run.ci.run_url)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-s-400 text-primary hover:underline"
@@ -151,94 +270,43 @@ export const EvalRunDetailPage = ({
           )}
           {run.ci.commit_message && (
             <span className="text-s-400 text-muted-foreground italic truncate max-w-[40ch]">
-              "{run.ci.commit_message}"
+              "{String(run.ci.commit_message)}"
             </span>
           )}
         </div>
       )}
 
       <div className="mt-8">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-h4-600 font-semibold">Cases ({filteredCases.length})</h2>
-          <div className="flex gap-1">
-            {(['all', 'passed', 'failed', 'errored', 'skipped'] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className={`rounded-md border px-2.5 py-1 text-xs-500 transition-colors ${
-                  statusFilter === s
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground hover:bg-accent/40'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>File</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Judgments</TableHead>
-                <TableHead>Events</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredCases.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    No cases match the current filter.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredCases.map((c) => {
-                  const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
-                  const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
-                  return (
-                    <TableRow
-                      key={c.case_id}
-                      className="cursor-pointer hover:bg-accent/50"
-                      onClick={() => onCaseClick?.(c.case_id)}
-                    >
-                      <TableCell className="font-mono text-s-400">{c.name}</TableCell>
-                      <TableCell className="text-s-400 text-muted-foreground max-w-[240px] truncate">
-                        {c.file ?? '—'}
-                      </TableCell>
-                      <TableCell><CaseStatusBadge status={c.status} /></TableCell>
-                      <TableCell className="text-s-400">{formatDuration(c.duration_ms)}</TableCell>
-                      <TableCell className="text-s-400">
-                        {c.judgments.length === 0 ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : (
-                          <>
-                            {judgePass > 0 && (
-                              <span className="text-emerald-600 dark:text-emerald-400">{judgePass} pass</span>
-                            )}
-                            {judgePass > 0 && judgeFail > 0 && <span> · </span>}
-                            {judgeFail > 0 && (
-                              <span className="text-destructive">{judgeFail} fail</span>
-                            )}
-                          </>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-s-400 text-muted-foreground">
-                        {c.events.length}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <h2 className="text-h4-600 font-semibold mb-3">
+          Cases ({table.getFilteredRowModel().rows.length} of {run.cases.length})
+        </h2>
+        <DataTable table={table} onRowClick={(row) => handleRowClick(row.original.case_id)}>
+          <DataTableToolbar table={table} />
+        </DataTable>
       </div>
+
+      {/* Drawer: only used when no external onCaseClick handler is provided. */}
+      {!onCaseClick && (
+        <Sheet
+          open={!!openCaseId}
+          onOpenChange={(open) => {
+            if (!open) void setOpenCaseId(null)
+          }}
+        >
+          <SheetContent className="w-full sm:max-w-2xl md:max-w-3xl overflow-y-auto p-0">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Case detail</SheetTitle>
+            </SheetHeader>
+            {openCaseId && (
+              <EvalCaseDetailPage
+                runId={runId}
+                caseId={openCaseId}
+                onBack={() => void setOpenCaseId(null)}
+              />
+            )}
+          </SheetContent>
+        </Sheet>
+      )}
     </div>
   )
 }

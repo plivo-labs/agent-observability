@@ -1,6 +1,73 @@
-import { ArrowRight, Wrench, User, Bot, FileCode2, HelpCircle } from 'lucide-react'
+import { ArrowRight, Wrench, User, Bot, FileCode2, HelpCircle, Gauge } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { formatMs } from '@/lib/observability-format'
 import type { RunEvent } from '@/lib/observability-types'
+
+type Metrics = Record<string, number | string | null> | null | undefined
+
+/**
+ * Render per-turn metrics as small chips next to a message. Keys like
+ * `*_at` are timestamps and rendered as durations relative to the earliest
+ * timestamp in the metrics dict (the "speaking-for" window). Keys ending in
+ * `_ttft` / `_duration` are durations in seconds — format as ms. Other
+ * numeric keys pass through with a best-effort label.
+ */
+function MetricsChips({ metrics }: { metrics: Metrics }) {
+  if (!metrics || typeof metrics !== 'object') return null
+
+  const chips: Array<{ label: string; value: string }> = []
+
+  // Derive speaking duration from the two timestamp bookends if both present.
+  const start = metrics.started_speaking_at
+  const stop = metrics.stopped_speaking_at
+  if (typeof start === 'number' && typeof stop === 'number' && stop >= start) {
+    chips.push({ label: 'spoke', value: formatMs((stop - start) * 1000) })
+  }
+
+  for (const [key, value] of Object.entries(metrics)) {
+    if (key === 'started_speaking_at' || key === 'stopped_speaking_at') continue
+    if (value == null) continue
+    if (typeof value !== 'number') continue
+
+    if (key.endsWith('_ttft')) {
+      chips.push({ label: 'TTFT', value: formatMs(value * 1000) })
+    } else if (key.endsWith('_ttfb')) {
+      chips.push({ label: 'TTFB', value: formatMs(value * 1000) })
+    } else if (key.endsWith('_duration_ms')) {
+      chips.push({ label: prettyKey(key.replace(/_duration_ms$/, '')), value: formatMs(value) })
+    } else if (key.endsWith('_duration')) {
+      chips.push({ label: prettyKey(key.replace(/_duration$/, '')), value: formatMs(value * 1000) })
+    } else if (key.endsWith('_at')) {
+      // Remaining absolute timestamps aren't useful as inline chips.
+      continue
+    } else if (key.endsWith('_tokens') || key === 'total_tokens') {
+      chips.push({ label: prettyKey(key), value: String(value) })
+    } else {
+      chips.push({ label: prettyKey(key), value: String(value) })
+    }
+  }
+
+  if (chips.length === 0) return null
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <Gauge className="h-3 w-3 text-muted-foreground" />
+      {chips.map((c) => (
+        <span
+          key={`${c.label}-${c.value}`}
+          className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xxs-400 text-muted-foreground font-mono"
+        >
+          <span className="uppercase tracking-wide">{c.label}</span>
+          <span className="text-foreground">{c.value}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function prettyKey(key: string): string {
+  return key.replace(/_/g, ' ').replace(/\bllm\b|\bstt\b|\btts\b/gi, (s) => s.toUpperCase())
+}
 
 function FunctionCallBlock({
   name,
@@ -52,10 +119,12 @@ function MessageBlock({
   role,
   content,
   interrupted,
+  metrics,
 }: {
   role?: string
   content?: string
   interrupted?: boolean
+  metrics?: Metrics
 }) {
   const isAssistant = role === 'assistant'
   const Icon = isAssistant ? Bot : User
@@ -73,6 +142,7 @@ function MessageBlock({
         )}
       </div>
       <p className="mt-1 text-s-400 whitespace-pre-wrap">{content ?? ''}</p>
+      <MetricsChips metrics={metrics} />
     </div>
   )
 }
@@ -130,7 +200,15 @@ export function EvalEventTimeline({ events }: { events: RunEvent[] }) {
         const key = `${ev.type}-${i}`
         switch (ev.type) {
           case 'message':
-            return <MessageBlock key={key} role={ev.role} content={ev.content} interrupted={ev.interrupted} />
+            return (
+              <MessageBlock
+                key={key}
+                role={ev.role}
+                content={ev.content}
+                interrupted={ev.interrupted}
+                metrics={ev.metrics}
+              />
+            )
           case 'function_call':
             return <FunctionCallBlock key={key} name={ev.name} args={ev.arguments} />
           case 'function_call_output':

@@ -81,18 +81,21 @@ export function registerEvalRoutes(app: Hono) {
     const offset = Math.max(0, Number(c.req.query("offset")) || 0);
     const accountId = c.req.query("account_id") || null;
     const agentId = c.req.query("agent_id") || null;
-    const framework = c.req.query("framework") || null;
+    const frameworkRaw = c.req.query("framework");
+    const frameworks = frameworkRaw
+      ? frameworkRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : null;
     const startedFrom = c.req.query("started_from") || null;
     const startedTo = c.req.query("started_to") || null;
 
     const extraParams: Record<string, string> = {};
     if (accountId) extraParams.account_id = accountId;
     if (agentId) extraParams.agent_id = agentId;
-    if (framework) extraParams.framework = framework;
+    if (frameworks && frameworks.length) extraParams.framework = frameworks.join(",");
     if (startedFrom) extraParams.started_from = startedFrom;
     if (startedTo) extraParams.started_to = startedTo;
 
-    const opts = { limit, offset, accountId, agentId, framework, startedFrom, startedTo };
+    const opts = { limit, offset, accountId, agentId, frameworks, startedFrom, startedTo };
     const total = await countEvalRuns(opts);
     const rows = await listEvalRuns(opts);
 

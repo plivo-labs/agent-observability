@@ -188,6 +188,9 @@ export interface RunEventMessage {
   role?: string
   content?: string
   interrupted?: boolean
+  /** Per-turn metrics attached by LiveKit (e.g. llm_node_ttft, *_speaking_at).
+   * Shape is open — LiveKit may add keys; the UI renders numeric keys generically. */
+  metrics?: Record<string, number | string | null> | null
 }
 
 export interface RunEventFunctionCall {
@@ -266,7 +269,8 @@ export interface EvalRunDetail extends EvalRunRow {
 
 export interface EvalsFilters {
   agentId?: string
-  framework?: string
+  /** Multi-value — server accepts comma-separated list. */
+  framework?: string[]
   accountId?: string
   startedFrom?: string
   startedTo?: string

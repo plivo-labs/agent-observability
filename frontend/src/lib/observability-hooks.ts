@@ -166,17 +166,26 @@ export function useEvalRuns(
   const [offset, setOffset] = useState(initialOffset)
 
   const { agentId, framework, accountId, startedFrom, startedTo } = filters ?? {}
+  // Stable string key for the framework array so effect deps don't churn
+  // on new-but-equal-array identities every render.
+  const frameworkKey = (framework ?? []).slice().sort().join(',')
 
   useEffect(() => {
     setOffset(0)
-  }, [agentId, framework, accountId, startedFrom, startedTo])
+  }, [agentId, frameworkKey, accountId, startedFrom, startedTo])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     api
-      .listEvalRuns(limit, offset, { agentId, framework, accountId, startedFrom, startedTo })
+      .listEvalRuns(limit, offset, {
+        agentId,
+        framework: framework && framework.length ? framework : undefined,
+        accountId,
+        startedFrom,
+        startedTo,
+      })
       .then((res) => {
         if (cancelled) return
         setRuns(res.objects)
@@ -185,7 +194,8 @@ export function useEvalRuns(
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
-  }, [api, limit, offset, agentId, framework, accountId, startedFrom, startedTo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, limit, offset, agentId, frameworkKey, accountId, startedFrom, startedTo])
 
   return { runs, meta, loading, error, offset, setOffset }
 }

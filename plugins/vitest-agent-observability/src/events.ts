@@ -3,85 +3,105 @@ import type { RunEvent } from "./types.js";
 /**
  * Serialize LiveKit RunResult events into JSON-ready dicts.
  *
- * No length or count caps — the dashboard needs the full trace. Unknown event
- * types are forwarded as `{ type, ...passthrough }` so future LiveKit event
- * kinds land in the UI without a plugin release.
+ * Philosophy: do the *minimum* transformation needed to make the event
+ * JSON-serializable, and pass everything else through untouched. No field
+ * hand-picking, no truncation, no silent drops of unknown event types.
+ *
+ * The only transforms we apply:
+ *  - Convert the event (and its nested `item`) to a plain dict, preserving
+ *    every field — including `item.metrics`, timestamps, IDs, etc.
+ *  - For `function_call`, parse `arguments` from JSON string → object as a
+ *    convenience (so the dashboard doesn't have to).
+ *  - For `agent_handoff`, replace the `old_agent` / `new_agent` instance
+ *    references with their constructor names (full Agent objects aren't
+ *    JSON-friendly).
  */
 export function serializeEvents(rawEvents: unknown[] | null | undefined): RunEvent[] {
   if (!rawEvents || rawEvents.length === 0) return [];
   const out: RunEvent[] = [];
   for (const ev of rawEvents) {
-    const serialized = serializeEvent(ev);
-    if (serialized) out.push(serialized);
+    try {
+      out.push(serializeEvent(ev));
+    } catch {
+      out.push({
+        type: String((ev as any)?.type ?? "unknown"),
+        _serialize_error: true,
+        repr: String(ev),
+      } as unknown as RunEvent);
+    }
   }
   return out;
 }
 
-function serializeEvent(ev: unknown): RunEvent | null {
-  if (!ev || typeof ev !== "object") return null;
-  const type = (ev as { type?: string }).type;
+function serializeEvent(ev: unknown): RunEvent {
+  const ev_dict = toPlainDict(ev);
+  const type = (ev_dict as any).type ?? (ev as any)?.type;
+
+  const rawItem = (ev as any)?.item;
+  if (rawItem !== undefined) {
+    (ev_dict as any).item = toPlainDict(rawItem);
+  }
+  const item = (ev_dict as any).item ?? {};
 
   if (type === "message") {
-    const item = (ev as { item?: any }).item ?? {};
-    const role = item.role;
     let content = item.textContent ?? item.text_content ?? item.content;
     if (Array.isArray(content)) content = content.map(String).join("");
-    const msg: import("./types.js").RunEventMessage = {
-      type: "message",
-      role,
-      content: typeof content === "string" ? content : undefined,
-      interrupted: Boolean(item.interrupted),
-    };
-    return msg;
-  }
-
-  if (type === "function_call") {
-    const item = (ev as { item?: any }).item ?? {};
+    setDefault(ev_dict, "role", item.role);
+    setDefault(ev_dict, "content", typeof content === "string" ? content : undefined);
+    setDefault(ev_dict, "interrupted", Boolean(item.interrupted));
+    // Pass per-turn metrics through so the dashboard can render latency.
+    if ("metrics" in item) setDefault(ev_dict, "metrics", item.metrics);
+  } else if (type === "function_call") {
     let args: unknown = item.arguments;
     if (typeof args === "string") {
       try {
         args = JSON.parse(args);
       } catch {
-        // keep original string
+        /* keep original string */
       }
     }
-    return {
-      type: "function_call",
-      name: item.name,
-      arguments: args,
-      call_id: item.call_id ?? item.callId ?? item.id,
-    };
+    setDefault(ev_dict, "name", item.name);
+    setDefault(ev_dict, "arguments", args);
+    setDefault(ev_dict, "call_id", item.call_id ?? item.callId ?? item.id);
+  } else if (type === "function_call_output") {
+    setDefault(ev_dict, "output", item.output);
+    setDefault(ev_dict, "is_error", Boolean(item.is_error ?? item.isError));
+    setDefault(ev_dict, "call_id", item.call_id ?? item.callId);
+  } else if (type === "agent_handoff") {
+    const oldAgent =
+      (ev as any)?.old_agent ?? (ev as any)?.oldAgent;
+    const newAgent =
+      (ev as any)?.new_agent ?? (ev as any)?.newAgent;
+    (ev_dict as any).from_agent = className(oldAgent);
+    (ev_dict as any).to_agent = className(newAgent);
+    delete (ev_dict as any).old_agent;
+    delete (ev_dict as any).oldAgent;
+    delete (ev_dict as any).new_agent;
+    delete (ev_dict as any).newAgent;
   }
 
-  if (type === "function_call_output") {
-    const item = (ev as { item?: any }).item ?? {};
-    const out: import("./types.js").RunEventFunctionCallOutput = {
-      type: "function_call_output",
-      output: item.output,
-      is_error: Boolean(item.is_error ?? item.isError),
-      call_id: item.call_id ?? item.callId,
-    };
-    return out;
-  }
+  return ev_dict as unknown as RunEvent;
+}
 
-  if (type === "agent_handoff") {
-    const oldAgent = (ev as { old_agent?: any; oldAgent?: any }).old_agent
-      ?? (ev as { oldAgent?: any }).oldAgent;
-    const newAgent = (ev as { new_agent?: any; newAgent?: any }).new_agent
-      ?? (ev as { newAgent?: any }).newAgent;
-    return {
-      type: "agent_handoff",
-      from_agent: className(oldAgent),
-      to_agent: className(newAgent),
-    };
+/** Best-effort conversion of any object to a plain JSON-friendly dict. */
+function toPlainDict(obj: unknown): Record<string, unknown> {
+  if (obj == null || typeof obj !== "object") return {};
+  if (Array.isArray(obj)) return { ...obj };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith("_")) continue;
+    if (typeof v === "function") continue;
+    out[k] = v;
   }
+  return out;
+}
 
-  // Unknown event type — pass through so the dashboard still renders it.
-  if (typeof type === "string") {
-    return { ...(ev as object), type } as unknown as RunEvent;
-  }
-
-  return null;
+function setDefault(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  if (!(key in target)) target[key] = value;
 }
 
 function className(obj: unknown): string | undefined {

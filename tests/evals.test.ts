@@ -308,8 +308,22 @@ describe("GET /api/evals", () => {
     expect(res.status).toBe(200);
     const opts = mockListEvalRuns.mock.calls[0][0];
     expect(opts.agentId).toBe("support-bot");
-    expect(opts.framework).toBe("pytest");
+    expect(opts.frameworks).toEqual(["pytest"]);
     expect(opts.accountId).toBe("acct-1");
+  });
+
+  test("accepts multi-value framework filter (comma-separated)", async () => {
+    mockCountEvalRuns.mockResolvedValueOnce(0 as any);
+    mockListEvalRuns.mockResolvedValueOnce([] as any);
+
+    const res = await server.fetch(
+      makeRequest("/api/evals?framework=pytest,vitest", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const opts = mockListEvalRuns.mock.calls[0][0];
+    expect(opts.frameworks).toEqual(["pytest", "vitest"]);
   });
 
   test("pagination links preserve filters", async () => {

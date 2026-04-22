@@ -80,7 +80,8 @@ export interface ListEvalRunsOpts {
   offset: number;
   accountId?: string | null;
   agentId?: string | null;
-  framework?: string | null;
+  /** Multi-value — `framework IN (...)` when non-empty. */
+  frameworks?: string[] | null;
   startedFrom?: string | null;
   startedTo?: string | null;
 }
@@ -158,9 +159,12 @@ function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params
     predicates.push(`agent_id = $${params.length + 1}`);
     params.push(opts.agentId);
   }
-  if (opts.framework) {
-    predicates.push(`framework = $${params.length + 1}`);
-    params.push(opts.framework);
+  if (opts.frameworks && opts.frameworks.length > 0) {
+    const placeholders = opts.frameworks.map(
+      (_, i) => `$${params.length + i + 1}`,
+    );
+    predicates.push(`framework IN (${placeholders.join(", ")})`);
+    params.push(...opts.frameworks);
   }
   if (opts.startedFrom) {
     predicates.push(`started_at >= $${params.length + 1}`);

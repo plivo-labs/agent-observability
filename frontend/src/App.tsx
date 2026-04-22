@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, NavLink, useParams, useNavigate } from 'react-router'
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
 import { Moon, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionsPage } from '@/components/sessions-page'
@@ -97,11 +98,11 @@ function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
   if (!runId) return null
+  // No onCaseClick → EvalRunDetailPage opens a drawer (URL-synced via ?case=<id>).
   return (
     <EvalRunDetailPage
       runId={runId}
       onBack={() => navigate('/evals')}
-      onCaseClick={(caseId) => navigate(`/evals/${runId}/cases/${caseId}`)}
     />
   )
 }
@@ -122,17 +123,19 @@ function EvalCaseDetailRoute() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout>
-        <AgentObservabilityProvider baseUrl="/api">
-          <Routes>
-            <Route path="/" element={<SessionsRoute />} />
-            <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
-            <Route path="/evals" element={<EvalsRoute />} />
-            <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
-            <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
-          </Routes>
-        </AgentObservabilityProvider>
-      </Layout>
+      <NuqsAdapter>
+        <Layout>
+          <AgentObservabilityProvider baseUrl="/api">
+            <Routes>
+              <Route path="/" element={<SessionsRoute />} />
+              <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
+              <Route path="/evals" element={<EvalsRoute />} />
+              <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
+              <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
+            </Routes>
+          </AgentObservabilityProvider>
+        </Layout>
+      </NuqsAdapter>
     </BrowserRouter>
   )
 }

@@ -72,7 +72,42 @@ def test_empty_input_returns_empty_list():
 def test_message_event():
     ev = MessageEvent(item=FakeChatMsg(role="assistant", text_content="hi"))
     out = serialize_events([ev])
-    assert out == [{"type": "message", "role": "assistant", "content": "hi", "interrupted": False}]
+    assert len(out) == 1
+    # Convenience top-level fields for existing UI consumers.
+    assert out[0]["type"] == "message"
+    assert out[0]["role"] == "assistant"
+    assert out[0]["content"] == "hi"
+    assert out[0]["interrupted"] is False
+    # Full item is preserved under `item` — no fields stripped.
+    assert out[0]["item"]["role"] == "assistant"
+    assert out[0]["item"]["text_content"] == "hi"
+
+
+def test_message_event_preserves_metrics():
+    """LiveKit attaches per-turn metrics (ttft, timings) to ChatMessage.metrics.
+    The serializer must forward it both on `item.metrics` and at the top level."""
+
+    @dataclass
+    class ChatMsgWithMetrics:
+        role: str
+        text_content: str
+        interrupted: bool = False
+        metrics: dict = None  # type: ignore[assignment]
+
+    ev = MessageEvent(
+        item=ChatMsgWithMetrics(
+            role="assistant",
+            text_content="hi",
+            metrics={
+                "started_speaking_at": 1776850284.14,
+                "stopped_speaking_at": 1776850284.30,
+                "llm_node_ttft": 1.206,
+            },
+        )
+    )
+    out = serialize_events([ev])
+    assert out[0]["metrics"]["llm_node_ttft"] == 1.206
+    assert out[0]["item"]["metrics"]["started_speaking_at"] == 1776850284.14
 
 
 def test_function_call_parses_json_arguments():
@@ -93,13 +128,18 @@ def test_function_call_keeps_non_json_arguments_as_string():
 def test_function_call_output():
     ev = FunctionCallOutputEvent(item=FakeFnOutput(output="ok", is_error=False))
     out = serialize_events([ev])
-    assert out == [{"type": "function_call_output", "output": "ok", "is_error": False, "call_id": "c1"}]
+    assert out[0]["type"] == "function_call_output"
+    assert out[0]["output"] == "ok"
+    assert out[0]["is_error"] is False
+    assert out[0]["call_id"] == "c1"
 
 
 def test_agent_handoff_uses_class_names():
     ev = AgentHandoffEvent(item=object(), old_agent=FakeAgentA(), new_agent=FakeAgentB())
     out = serialize_events([ev])
-    assert out == [{"type": "agent_handoff", "from_agent": "FakeAgentA", "to_agent": "FakeAgentB"}]
+    assert out[0]["type"] == "agent_handoff"
+    assert out[0]["from_agent"] == "FakeAgentA"
+    assert out[0]["to_agent"] == "FakeAgentB"
 
 
 def test_unknown_event_type_is_passed_through():

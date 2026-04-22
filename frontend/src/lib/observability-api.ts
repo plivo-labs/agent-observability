@@ -30,7 +30,9 @@ export function createObservabilityApi(baseUrl: string) {
     listEvalRuns: (limit = 20, offset = 0, filters?: EvalsFilters) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
       if (filters?.agentId) params.set('agent_id', filters.agentId)
-      if (filters?.framework) params.set('framework', filters.framework)
+      if (filters?.framework && filters.framework.length) {
+        params.set('framework', filters.framework.join(','))
+      }
       if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)
       if (filters?.startedTo) params.set('started_to', filters.startedTo)

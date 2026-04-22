@@ -1,9 +1,61 @@
-import { ArrowLeft, AlertTriangle } from 'lucide-react'
+import { useMemo } from 'react'
+import { ArrowLeft, AlertTriangle, Gauge, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CaseStatusBadge, VerdictBadge } from '@/components/eval-status-badge'
 import { EvalEventTimeline } from '@/components/eval-event-timeline'
-import { formatDuration } from '@/lib/observability-format'
+import { formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
+import type { RunEvent } from '@/lib/observability-types'
+
+interface MetricsSummary {
+  turnsWithMetrics: number
+  avgTtftMs: number | null
+  maxTtftMs: number | null
+  totalSpeakingMs: number | null
+}
+
+function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
+  const ttfts: number[] = []
+  let speakingMs = 0
+  let turns = 0
+  for (const ev of events) {
+    if (ev.type !== 'message') continue
+    const metrics = (ev as { metrics?: Record<string, number | string | null> | null }).metrics
+    if (!metrics) continue
+    turns += 1
+    const ttft = metrics.llm_node_ttft
+    if (typeof ttft === 'number') ttfts.push(ttft * 1000)
+    const start = metrics.started_speaking_at
+    const stop = metrics.stopped_speaking_at
+    if (typeof start === 'number' && typeof stop === 'number' && stop >= start) {
+      speakingMs += (stop - start) * 1000
+    }
+  }
+  return {
+    turnsWithMetrics: turns,
+    avgTtftMs: ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null,
+    maxTtftMs: ttfts.length ? Math.max(...ttfts) : null,
+    totalSpeakingMs: speakingMs > 0 ? speakingMs : null,
+  }
+}
+
+function MetricChip({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string
+}) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-md border bg-card px-3 py-1.5">
+      <span className="text-muted-foreground">{icon}</span>
+      <span className="text-xs-500 uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-s-500 font-mono">{value}</span>
+    </div>
+  )
+}
 
 export const EvalCaseDetailPage = ({
   runId,
@@ -15,6 +67,10 @@ export const EvalCaseDetailPage = ({
   onBack?: () => void
 }) => {
   const { evalCase, loading, error } = useEvalCase(runId, caseId)
+  const summary = useMemo(
+    () => (evalCase ? computeCaseMetrics(evalCase.events) : null),
+    [evalCase],
+  )
 
   if (loading) {
     return (
@@ -73,6 +129,37 @@ export const EvalCaseDetailPage = ({
           </>
         )}
       </div>
+
+      {summary && summary.turnsWithMetrics > 0 && (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {summary.avgTtftMs != null && (
+            <MetricChip
+              icon={<Clock className="h-3.5 w-3.5" />}
+              label="Avg TTFT"
+              value={formatMs(summary.avgTtftMs)}
+            />
+          )}
+          {summary.maxTtftMs != null && summary.maxTtftMs !== summary.avgTtftMs && (
+            <MetricChip
+              icon={<Clock className="h-3.5 w-3.5" />}
+              label="Max TTFT"
+              value={formatMs(summary.maxTtftMs)}
+            />
+          )}
+          {summary.totalSpeakingMs != null && (
+            <MetricChip
+              icon={<Gauge className="h-3.5 w-3.5" />}
+              label="Agent spoke"
+              value={formatMs(summary.totalSpeakingMs)}
+            />
+          )}
+          <MetricChip
+            icon={<Gauge className="h-3.5 w-3.5" />}
+            label="Turns w/ metrics"
+            value={String(summary.turnsWithMetrics)}
+          />
+        </div>
+      )}
 
       {evalCase.user_input && (
         <div className="mt-6">

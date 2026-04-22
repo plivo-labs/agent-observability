@@ -12,9 +12,37 @@ describe("serializeEvents", () => {
       type: "message",
       item: { role: "assistant", text_content: "hi", interrupted: false },
     };
-    expect(serializeEvents([ev])).toEqual([
-      { type: "message", role: "assistant", content: "hi", interrupted: false },
-    ]);
+    const out = serializeEvents([ev]);
+    expect(out[0]).toMatchObject({
+      type: "message",
+      role: "assistant",
+      content: "hi",
+      interrupted: false,
+    });
+    // The full item is preserved, not stripped.
+    expect((out[0] as any).item).toMatchObject({
+      role: "assistant",
+      text_content: "hi",
+    });
+  });
+
+  test("message event preserves per-turn metrics", () => {
+    const ev = {
+      type: "message",
+      item: {
+        role: "assistant",
+        text_content: "hi",
+        interrupted: false,
+        metrics: {
+          started_speaking_at: 1776850284.14,
+          stopped_speaking_at: 1776850284.30,
+          llm_node_ttft: 1.206,
+        },
+      },
+    };
+    const out = serializeEvents([ev]);
+    expect((out[0] as any).metrics).toMatchObject({ llm_node_ttft: 1.206 });
+    expect((out[0] as any).item.metrics.started_speaking_at).toBe(1776850284.14);
   });
 
   test("message event with camelCase textContent", () => {
@@ -50,9 +78,13 @@ describe("serializeEvents", () => {
       type: "function_call_output",
       item: { output: "ok", is_error: false, call_id: "c1" },
     };
-    expect(serializeEvents([ev])).toEqual([
-      { type: "function_call_output", output: "ok", is_error: false, call_id: "c1" },
-    ]);
+    const out = serializeEvents([ev]);
+    expect(out[0]).toMatchObject({
+      type: "function_call_output",
+      output: "ok",
+      is_error: false,
+      call_id: "c1",
+    });
   });
 
   test("agent_handoff uses constructor names", () => {
@@ -64,9 +96,12 @@ describe("serializeEvents", () => {
       old_agent: new AgentA(),
       new_agent: new AgentB(),
     };
-    expect(serializeEvents([ev])).toEqual([
-      { type: "agent_handoff", from_agent: "AgentA", to_agent: "AgentB" },
-    ]);
+    const out = serializeEvents([ev]);
+    expect(out[0]).toMatchObject({
+      type: "agent_handoff",
+      from_agent: "AgentA",
+      to_agent: "AgentB",
+    });
   });
 
   test("unknown event type is passed through", () => {

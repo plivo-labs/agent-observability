@@ -242,9 +242,12 @@ def test_autocapture_via_session_run_wrapper(pytester: pytest.Pytester, monkeypa
     payload = json.loads(captured.read_text())
     case = payload["cases"][0]
     assert case["user_input"] == "ping"
-    assert case["events"] == [
-        {"type": "message", "role": "assistant", "content": "autocaptured hi", "interrupted": False},
-    ]
+    assert len(case["events"]) == 1
+    ev = case["events"][0]
+    assert ev["type"] == "message"
+    assert ev["role"] == "assistant"
+    assert ev["content"] == "autocaptured hi"
+    assert ev["interrupted"] is False
 
 
 def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch, tmp_path):
@@ -291,6 +294,9 @@ def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch,
     payload = json.loads(captured.read_text())
     case = payload["cases"][0]
     assert case["user_input"] == "hi there"
-    assert case["events"] == [
-        {"type": "message", "role": "assistant", "content": "hello", "interrupted": False},
-    ]
+    assert len(case["events"]) == 1
+    ev = case["events"][0]
+    assert ev["type"] == "message"
+    assert ev["role"] == "assistant"
+    assert ev["content"] == "hello"
+    assert ev["interrupted"] is False

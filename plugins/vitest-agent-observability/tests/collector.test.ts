@@ -40,9 +40,13 @@ describe("flushTaskMeta", () => {
     const task: any = {};
     flushTaskMeta({ task });
 
-    expect(task.meta.agentObs.events).toEqual([
-      { type: "message", role: "assistant", content: "hi", interrupted: false },
-    ]);
+    expect(task.meta.agentObs.events).toHaveLength(1);
+    expect(task.meta.agentObs.events[0]).toMatchObject({
+      type: "message",
+      role: "assistant",
+      content: "hi",
+      interrupted: false,
+    });
     expect(task.meta.agentObs.user_input).toBe("hello");
     expect(task.meta.agentObs.judgments[0].verdict).toBe("pass");
   });
