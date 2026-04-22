@@ -1,6 +1,7 @@
 import { flexRender, type Row, type Table as TanstackTable } from "@tanstack/react-table";
 import type * as React from "react";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Neo-styled DataTable — emits the `.obs-panel` / `.obs-toolbar` /
@@ -16,17 +17,28 @@ interface ObsDataTableProps<TData> extends React.ComponentProps<"div"> {
   /** Rendered inside `.obs-toolbar` above the table — filters, search, view menu. */
   toolbar?: React.ReactNode;
   onRowClick?: (row: Row<TData>) => void;
+  /** Total row count across all pages. Required when the table uses
+   *  manual pagination — tanstack's filteredRowModel only reflects the
+   *  current page's rows in that mode, so the footer count would be wrong. */
+  totalRowCount?: number;
+  /** Shows skeleton rows in the body when true. Prevents layout shift vs
+   *  an above-the-table "Loading…" banner. */
+  loading?: boolean;
 }
 
 export function ObsDataTable<TData>({
   table,
   toolbar,
   onRowClick,
+  totalRowCount,
+  loading,
   className,
   ...props
 }: ObsDataTableProps<TData>) {
   const rows = table.getRowModel().rows;
   const totalColumns = table.getAllLeafColumns().length;
+  const pageSize = table.getState().pagination.pageSize;
+  const showSkeletons = loading && rows.length === 0;
 
   return (
     <div className={cx("obs-panel", className)} {...props}>
@@ -46,7 +58,17 @@ export function ObsDataTable<TData>({
           ))}
         </thead>
         <tbody>
-          {rows.length === 0 ? (
+          {showSkeletons ? (
+            Array.from({ length: Math.min(pageSize, 8) }).map((_, i) => (
+              <tr key={`sk-${i}`} aria-hidden="true">
+                {table.getAllLeafColumns().map((col) => (
+                  <td key={col.id}>
+                    <Skeleton className="h-4 w-24" />
+                  </td>
+                ))}
+              </tr>
+            ))
+          ) : rows.length === 0 ? (
             <tr>
               <td colSpan={totalColumns} style={{ textAlign: "center", padding: "40px 0", color: "hsl(var(--tertiary))" }}>
                 No results.
@@ -77,7 +99,7 @@ export function ObsDataTable<TData>({
           )}
         </tbody>
       </table>
-      <ObsPaginate table={table} />
+      <ObsPaginate table={table} totalRowCount={totalRowCount} />
     </div>
   );
 }
@@ -86,11 +108,19 @@ export function ObsDataTable<TData>({
  * Matches the design's `.obs-paginate` footer: selection count on the left,
  * rows-per-page select + page indicator + chevron pager on the right.
  */
-function ObsPaginate<TData>({ table }: { table: TanstackTable<TData> }) {
+function ObsPaginate<TData>({
+  table,
+  totalRowCount,
+}: {
+  table: TanstackTable<TData>;
+  totalRowCount?: number;
+}) {
   const { pageIndex, pageSize } = table.getState().pagination;
   const pageCount = Math.max(1, table.getPageCount());
   const pageNum = pageIndex + 1;
-  const totalRows = table.getFilteredRowModel().rows.length;
+  // Prefer the caller-supplied total when provided (manual pagination). Fall
+  // back to the filtered model for client-side pagination.
+  const totalRows = totalRowCount ?? table.getFilteredRowModel().rows.length;
   const selectedRows = table.getFilteredSelectedRowModel().rows.length;
 
   return (

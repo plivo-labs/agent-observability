@@ -22,6 +22,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useSessions } from '@/lib/observability-hooks'
@@ -121,23 +122,21 @@ const inputClass =
 
 export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
   const [accountInput, setAccountInput] = useState('')
-  const [startedFrom, setStartedFrom] = useState<Date | undefined>(undefined)
-  const [startedTo, setStartedTo] = useState<Date | undefined>(undefined)
+  const [startedOn, setStartedOn] = useState<Date | undefined>(undefined)
   const debouncedAccount = useDebounce(accountInput, 300)
 
   const { sessions, meta, loading, error, offset, setOffset } = useSessions(20, 0, {
     accountId: debouncedAccount.trim() || undefined,
-    startedFrom: startedFrom ? startOfLocalDay(startedFrom).toISOString() : undefined,
-    startedTo: startedTo ? endOfLocalDay(startedTo).toISOString() : undefined,
+    startedFrom: startedOn ? startOfLocalDay(startedOn).toISOString() : undefined,
+    startedTo: startedOn ? endOfLocalDay(startedOn).toISOString() : undefined,
   })
 
   const limit = meta.limit || 20
   const totalCount = meta.total_count
-  const hasFilters = !!(accountInput || startedFrom || startedTo)
+  const hasFilters = !!(accountInput || startedOn)
   const clearFilters = () => {
     setAccountInput('')
-    setStartedFrom(undefined)
-    setStartedTo(undefined)
+    setStartedOn(undefined)
   }
 
   const totalPages = Math.ceil(totalCount / limit)
@@ -162,21 +161,11 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs-500 text-muted-foreground">Started from</label>
+          <label className="text-xs-500 text-muted-foreground">Started on</label>
           <DatePickerField
-            value={startedFrom}
-            onChange={setStartedFrom}
+            value={startedOn}
+            onChange={setStartedOn}
             placeholder="Pick a date"
-            disabled={(d) => !!(startedTo && d > endOfLocalDay(startedTo))}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs-500 text-muted-foreground">Started to</label>
-          <DatePickerField
-            value={startedTo}
-            onChange={setStartedTo}
-            placeholder="Pick a date"
-            disabled={(d) => !!(startedFrom && d < startOfLocalDay(startedFrom))}
           />
         </div>
         {hasFilters && (
@@ -187,14 +176,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         )}
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center p-12 text-muted-foreground">
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-            <span className="text-s-400">Loading sessions...</span>
-          </div>
-        </div>
-      ) : error ? (
+      {error ? (
         <div className="p-12 text-center text-destructive">
           <p>Failed to load sessions: {error}</p>
         </div>
@@ -215,7 +197,15 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sessions.length === 0 ? (
+                {loading && sessions.length === 0 ? (
+                  Array.from({ length: Math.min(limit, 8) }).map((_, i) => (
+                    <TableRow key={`sk-${i}`} aria-hidden="true">
+                      {Array.from({ length: 8 }).map((__, j) => (
+                        <TableCell key={j}><Skeleton className="h-4 w-24" /></TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : sessions.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                       No sessions found

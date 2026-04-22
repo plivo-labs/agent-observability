@@ -1,5 +1,6 @@
 import { Activity, AudioLines, BarChart3, Settings2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useSession } from '@/lib/observability-hooks'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
 import { LatencyPercentilesChart } from '@/components/latency-percentiles-chart'
@@ -17,8 +18,16 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
   if (loading) {
     return (
-      <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))' }}>
-        Loading session details…
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} aria-busy="true">
+        <Skeleton className="h-4 w-56" />
+        <Skeleton className="h-[120px] w-full rounded-xl" />
+        <div className="obs-metrics">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[76px] rounded-[10px]" />
+          ))}
+        </div>
+        <Skeleton className="h-9 w-80" />
+        <Skeleton className="h-[320px] w-full rounded-xl" />
       </div>
     )
   }
@@ -74,8 +83,10 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
         <TabsContent value="session" style={{ marginTop: 4 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <SessionTimeline />
-            <TurnTranscriptSection embedded />
+            <div className="rounded-lg border bg-card p-5">
+              <SessionTimeline />
+            </div>
+            <TurnTranscriptSection />
           </div>
         </TabsContent>
 

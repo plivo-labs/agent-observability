@@ -38,10 +38,10 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-const USER_WAVE_COLOR = '#94a3b8'
-const USER_PROGRESS_COLOR = '#64748b'
-const AGENT_WAVE_COLOR = 'hsl(270 60% 65%)'
-const AGENT_PROGRESS_COLOR = 'hsl(270 60% 45%)'
+const USER_WAVE_COLOR = 'hsl(var(--tertiary, 215 20% 65%))'
+const USER_PROGRESS_COLOR = 'hsl(var(--secondary, 215 19% 35%))'
+const AGENT_WAVE_COLOR = 'hsl(var(--accent-purple, 262 52% 42%) / 0.7)'
+const AGENT_PROGRESS_COLOR = 'hsl(var(--accent-purple, 262 52% 42%))'
 const CURSOR_COLOR = 'hsl(var(--primary))'
 
 const SHARED_WS_OPTIONS = {

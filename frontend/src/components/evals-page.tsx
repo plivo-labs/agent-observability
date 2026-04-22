@@ -174,8 +174,8 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         <div
           role="alert"
           style={{
-            border: '1px solid #FECACA',
-            background: '#FEF2F2',
+            border: '1px solid hsl(var(--destructive-border))',
+            background: 'hsl(var(--destructive-bg))',
             color: 'hsl(var(--destructive))',
             padding: '10px 14px',
             borderRadius: 8,
@@ -187,16 +187,12 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         </div>
       )}
 
-      {loading && (
-        <div style={{ marginBottom: 10, font: 'var(--text-xs-400)', color: 'hsl(var(--tertiary))' }}>
-          Loading…
-        </div>
-      )}
-
       <ObsDataTable
         table={table}
         toolbar={<DataTableToolbar table={table} />}
         onRowClick={(row) => onRunClick?.(row.original.run_id)}
+        totalRowCount={totalCount}
+        loading={loading}
       />
     </>
   )

@@ -54,17 +54,6 @@ export function DurationCell({ ms }: { ms: number | null }) {
   return <span className="mono tnum">{formatDuration(ms)}</span>
 }
 
-/** Turns count with an inline fill-bar proportional to `maxTurns`. */
-export function TurnsBar({ turns, maxTurns }: { turns: number; maxTurns: number }) {
-  const pct = maxTurns > 0 ? Math.min(100, (turns / maxTurns) * 100) : 0
-  return (
-    <span className="turns-cell">
-      <span className="bar"><i style={{ width: `${pct}%` }} /></span>
-      <b style={{ fontWeight: 600 }}>{turns}</b>
-    </span>
-  )
-}
-
 /** Framework pill (evals list) — `flask-conical` icon + name + muted version. */
 export function FrameworkPill({
   name, version,

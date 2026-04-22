@@ -1,6 +1,7 @@
 import { Activity, AudioLines, BarChart3, ChevronRight, Settings2 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useSession } from '@/lib/observability-hooks'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
@@ -19,12 +20,19 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-12 text-muted-foreground">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-          <span className="text-s-400">Loading session details...</span>
+      <ScrollArea className="h-[calc(100vh-53px)]">
+        <div className="flex flex-col gap-5 p-6" aria-busy="true">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-[120px] w-full rounded-xl" />
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-[76px] rounded-lg" />
+            ))}
+          </div>
+          <Skeleton className="h-9 w-80" />
+          <Skeleton className="h-[320px] w-full rounded-xl" />
         </div>
-      </div>
+      </ScrollArea>
     )
   }
 

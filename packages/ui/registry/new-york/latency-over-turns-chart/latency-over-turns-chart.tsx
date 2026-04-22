@@ -58,8 +58,8 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
       subtitle="How latency changes throughout the conversation"
       legend={[
         { color: 'hsl(var(--primary))', label: 'User Perceived' },
-        { color: 'hsl(270 60% 55%)', label: 'LLM TTFT' },
-        { color: 'hsl(150 60% 45%)', label: 'TTS TTFB' },
+        { color: 'hsl(var(--accent-purple, 262 52% 42%))', label: 'LLM TTFT' },
+        { color: 'hsl(var(--success, 162 94% 24%))', label: 'TTS TTFB' },
       ]}
     >
       <LineChart data={chartData}>
@@ -76,8 +76,8 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
         />
         <Tooltip content={<LatencyTooltip />} />
         <Line type="monotone" dataKey="perceived" name="User Perceived" stroke="hsl(var(--primary))" dot={false} strokeWidth={2} connectNulls />
-        <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(270 60% 55%)" dot={false} strokeWidth={2} connectNulls />
-        <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(150 60% 45%)" dot={false} strokeWidth={2} connectNulls />
+        <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(var(--accent-purple, 262 52% 42%))" dot={false} strokeWidth={2} connectNulls />
+        <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(var(--success, 162 94% 24%))" dot={false} strokeWidth={2} connectNulls />
       </LineChart>
     </ChartCard>
   )

@@ -220,7 +220,7 @@ export const TurnTranscriptSection = ({
     )
 
     if (embedded) return content
-    return <div className="rounded-lg border p-5">{content}</div>
+    return <div className="rounded-lg border bg-card p-5">{content}</div>
   }
 
   // Fallback to raw chat history

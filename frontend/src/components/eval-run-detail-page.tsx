@@ -17,6 +17,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
@@ -173,8 +174,14 @@ export const EvalRunDetailPage = ({
 
   if (loading) {
     return (
-      <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))' }}>
-        Loading eval run…
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} aria-busy="true">
+        <Skeleton className="h-8 w-64" />
+        <div className="eval-stats">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-[110px] rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-[300px] w-full rounded-xl" />
       </div>
     )
   }
@@ -194,7 +201,7 @@ export const EvalRunDetailPage = ({
 
   const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
   const hasAnyFailure = run.failed > 0 || run.errored > 0
-  const passMeterColor = passRate === 100 ? '#10B981' : 'hsl(var(--destructive))'
+  const passMeterColor = passRate === 100 ? 'hsl(var(--success))' : 'hsl(var(--destructive))'
 
   const handleRowClick = (caseId: string) => {
     if (onCaseClick) onCaseClick(caseId)
@@ -237,7 +244,7 @@ export const EvalRunDetailPage = ({
           value={run.passed}
           variant="passed"
           meterPct={run.total > 0 ? (run.passed / run.total) * 100 : 0}
-          meterColor="#10B981"
+          meterColor="hsl(var(--success))"
         />
         <EvalStat
           label="Failed"
@@ -258,7 +265,7 @@ export const EvalRunDetailPage = ({
         <div
           style={{
             marginTop: 16,
-            background: '#fff',
+            background: 'hsl(var(--card))',
             border: '1px solid hsl(var(--border))',
             borderRadius: 12,
             padding: '12px 16px',
@@ -358,7 +365,7 @@ export const EvalRunDetailPage = ({
             if (!open) void setOpenCaseId(null)
           }}
         >
-          <SheetContent className="w-full sm:max-w-2xl md:max-w-3xl overflow-y-auto p-0">
+          <SheetContent className="w-full sm:max-w-2xl md:max-w-3xl overflow-y-auto p-0" showCloseButton={false}>
             <SheetHeader className="sr-only">
               <SheetTitle>Case detail</SheetTitle>
             </SheetHeader>

@@ -247,7 +247,17 @@ export function useDataTable<TData>(props: UseDataTableProps<TData>) {
           Record<string, string | string[] | null>
         >((acc, filter) => {
           if (filterableColumns.find((column) => column.id === filter.id)) {
-            acc[filter.id] = filter.value as string | string[];
+            // Coerce to the shapes nuqs parsers accept. Single-date filters
+            // set a raw number (epoch ms); nuqs parseAsString serializes
+            // unpredictably for non-string inputs so stringify here.
+            const v = filter.value;
+            if (Array.isArray(v)) {
+              acc[filter.id] = v.map((item) => String(item ?? ""));
+            } else if (v == null) {
+              acc[filter.id] = null;
+            } else {
+              acc[filter.id] = String(v);
+            }
           }
           return acc;
         }, {});

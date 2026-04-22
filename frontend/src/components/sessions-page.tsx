@@ -8,7 +8,7 @@ import { useDataTable } from '@/hooks/use-data-table'
 import { formatDate } from '@/lib/observability-format'
 import { useSessions } from '@/lib/observability-hooks'
 import type { AgentSessionRow } from '@/lib/observability-types'
-import { CapsChips, DurationCell, TransportPill, TurnsBar } from '@/components/obs-cells'
+import { CapsChips, DurationCell, TransportPill } from '@/components/obs-cells'
 
 const TRANSPORT_OPTIONS = [
   { label: 'SIP', value: 'sip' },
@@ -25,23 +25,26 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     'transport',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
-  // Date-range filter emits [fromMs, toMs] as stringified epoch ms.
+  // Single-date filter emits the picked day's midnight (local) as an epoch-ms
+  // string. We expand it server-side into a 00:00 → next-midnight window so
+  // the query returns every session that started during that calendar day.
   const [startedAt] = useQueryState(
     'started_at',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
-  const startedFromIso = useMemo(() => {
+  const startedDay = useMemo(() => {
     const v = startedAt[0]
     if (!v) return undefined
     const d = new Date(Number(v))
-    return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+    return Number.isNaN(d.getTime()) ? undefined : d
   }, [startedAt])
+  const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
   const startedToIso = useMemo(() => {
-    const v = startedAt[1]
-    if (!v) return undefined
-    const d = new Date(Number(v))
-    return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
-  }, [startedAt])
+    if (!startedDay) return undefined
+    const end = new Date(startedDay)
+    end.setHours(23, 59, 59, 999)
+    return end.toISOString()
+  }, [startedDay])
 
   const { sessions, meta, loading, error } = useSessions(
     Math.min(perPage, 20),
@@ -52,13 +55,6 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
       startedTo: startedToIso,
       transport: transport.length ? transport : undefined,
     },
-  )
-
-  // Fill-bar width in the Turns cell is relative to the largest turn count
-  // on the current page.
-  const maxTurns = useMemo(
-    () => sessions.reduce((m, s) => Math.max(m, s.turn_count), 1),
-    [sessions],
   )
 
   const columns = useMemo<ColumnDef<AgentSessionRow>[]>(
@@ -113,7 +109,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         ),
         enableSorting: false,
         enableColumnFilter: true,
-        meta: { label: 'Started', variant: 'dateRange' },
+        meta: { label: 'Started', variant: 'date' },
       },
       {
         id: 'ended_at',
@@ -139,7 +135,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         id: 'turn_count',
         accessorKey: 'turn_count',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Turns" />,
-        cell: ({ row }) => <TurnsBar turns={row.original.turn_count} maxTurns={maxTurns} />,
+        cell: ({ row }) => <span className="tnum">{row.original.turn_count}</span>,
         enableSorting: false,
         meta: { label: 'Turns' },
       },
@@ -155,7 +151,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         ),
       },
     ],
-    [maxTurns],
+    [],
   )
 
   const totalCount = meta.total_count
@@ -183,8 +179,8 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         <div
           role="alert"
           style={{
-            border: '1px solid #FECACA',
-            background: '#FEF2F2',
+            border: '1px solid hsl(var(--destructive-border))',
+            background: 'hsl(var(--destructive-bg))',
             color: 'hsl(var(--destructive))',
             padding: '10px 14px',
             borderRadius: 8,
@@ -196,16 +192,12 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         </div>
       )}
 
-      {loading && (
-        <div style={{ marginBottom: 10, font: 'var(--text-xs-400)', color: 'hsl(var(--tertiary))' }}>
-          Loading…
-        </div>
-      )}
-
       <ObsDataTable
         table={table}
         toolbar={<DataTableToolbar table={table} />}
         onRowClick={(row) => onSessionClick?.(row.original.session_id)}
+        totalRowCount={totalCount}
+        loading={loading}
       />
     </>
   )

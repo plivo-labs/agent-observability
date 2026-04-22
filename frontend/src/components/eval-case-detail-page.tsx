@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { ArrowLeft, AlertTriangle, AudioWaveform, Clock, Repeat, X } from 'lucide-react'
 import { StatusChip } from '@/components/obs-cells'
 import { EvalEventTimeline } from '@/components/eval-event-timeline'
+import { Skeleton } from '@/components/ui/skeleton'
 import { formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
 import type { RunEvent } from '@/lib/observability-types'
@@ -72,8 +73,16 @@ export const EvalCaseDetailPage = ({
 
   if (loading) {
     return (
-      <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))' }}>
-        Loading case…
+      <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }} aria-busy="true">
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-4 w-64" />
+        <div className="drawer-stats">
+          <Skeleton className="h-[56px]" />
+          <Skeleton className="h-[56px]" />
+          <Skeleton className="h-[56px]" />
+        </div>
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-40 w-full" />
       </div>
     )
   }
@@ -166,8 +175,8 @@ export const EvalCaseDetailPage = ({
                   <div
                     key={`${j.intent}-${i}`}
                     style={{
-                      border: j.verdict === 'fail' ? '1px solid #FECACA' : '1px solid hsl(var(--border))',
-                      background: j.verdict === 'fail' ? '#FFF8F8' : 'transparent',
+                      border: j.verdict === 'fail' ? '1px solid hsl(var(--destructive-border))' : '1px solid hsl(var(--border))',
+                      background: j.verdict === 'fail' ? 'hsl(var(--destructive-bg) / 0.5)' : 'transparent',
                       borderRadius: 8,
                       padding: '10px 12px',
                     }}

@@ -615,7 +615,7 @@ export function SessionTrace({
   if (!processedTurns.length) return null
 
   return (
-    <div className={embedded ? '' : 'rounded-lg border p-5'}>
+    <div className={embedded ? '' : 'rounded-lg border bg-card p-5'}>
       {!hideHeader && (
         <div className="mb-3">
           <span className="text-[14px] font-medium">Session Trace</span>

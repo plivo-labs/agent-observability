@@ -464,6 +464,7 @@
         "button",
         "calendar",
         "popover",
+        "skeleton",
         "table",
         "pagination"
       ],
@@ -517,6 +518,7 @@
         "collapsible",
         "scroll-area",
         "separator",
+        "skeleton",
         "tabs"
       ],
       "files": [

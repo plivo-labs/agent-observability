@@ -89,6 +89,7 @@ function EventMessage({ event }: { event: SessionEvent }) {
 export const SessionEvents = () => {
   const events = useEvents()
   const [timeMode, setTimeMode] = useState<TimeMode>('relative')
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
 
   if (!events || events.length === 0) {
     return (
@@ -106,6 +107,15 @@ export const SessionEvents = () => {
     timeMode === 'relative'
       ? `${formatRelative(0)} → ${formatRelative(tEnd - t0)}`
       : `${formatAbsolute(t0)} → ${formatAbsolute(tEnd)}`
+
+  const toggle = (i: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
+  }
 
   return (
     <div className="events-card">
@@ -126,12 +136,29 @@ export const SessionEvents = () => {
           const relSec = event.created_at - t0
           const timeLabel = timeMode === 'relative' ? formatRelative(relSec) : formatAbsolute(event.created_at)
           const tagClass = EV_TAG_CLASS[event.type] ?? 'ev-tag-agent'
+          const isOpen = expanded.has(i)
           return (
-            <div key={i} className="ev-row">
-              <div className="caret"><ChevronRight size={14} /></div>
-              <div className="t">{timeLabel}</div>
-              <div><span className={`tag ${tagClass}`}>{event.type}</span></div>
-              <div className="msg"><EventMessage event={event} /></div>
+            <div key={i} className={`ev-row-wrap${isOpen ? ' open' : ''}`}>
+              <div
+                className="ev-row"
+                onClick={() => toggle(i)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    toggle(i)
+                  }
+                }}
+              >
+                <div className="caret"><ChevronRight size={14} /></div>
+                <div className="t">{timeLabel}</div>
+                <div><span className={`tag ${tagClass}`}>{event.type}</span></div>
+                <div className="msg"><EventMessage event={event} /></div>
+              </div>
+              {isOpen && (
+                <pre className="ev-detail">{JSON.stringify(event, null, 2)}</pre>
+              )}
             </div>
           )
         })}

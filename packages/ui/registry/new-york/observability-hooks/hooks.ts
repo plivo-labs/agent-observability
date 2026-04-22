@@ -37,6 +37,13 @@ export function useSessions(
   const startedFrom = filters?.startedFrom
   const startedTo = filters?.startedTo
 
+  // Sync offset when the caller passes a live initialOffset (e.g. from URL
+  // state). Callers who drive pagination via setOffset pass a stable 0 and
+  // this no-ops after mount.
+  useEffect(() => {
+    setOffset(initialOffset)
+  }, [initialOffset])
+
   useEffect(() => {
     setOffset(0)
   }, [accountId, startedFrom, startedTo])

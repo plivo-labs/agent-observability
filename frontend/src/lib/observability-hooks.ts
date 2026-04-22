@@ -21,31 +21,26 @@ import type {
 
 export function useSessions(
   limit = 20,
-  initialOffset = 0,
+  offset = 0,
   filters?: SessionsFilters,
 ) {
   const { api } = useObservabilityContext()
   const [sessions, setSessions] = useState<AgentSessionRow[]>([])
   const [meta, setMeta] = useState<PlivoMeta>({
     limit,
-    offset: initialOffset,
+    offset,
     total_count: 0,
     next: null,
     previous: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(initialOffset)
 
   const accountId = filters?.accountId
   const startedFrom = filters?.startedFrom
   const startedTo = filters?.startedTo
   const transport = filters?.transport
   const transportKey = (transport ?? []).slice().sort().join(',')
-
-  useEffect(() => {
-    setOffset(0)
-  }, [accountId, startedFrom, startedTo, transportKey])
 
   useEffect(() => {
     let cancelled = false
@@ -70,7 +65,7 @@ export function useSessions(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, limit, offset, accountId, startedFrom, startedTo, transportKey])
 
-  return { sessions, meta, loading, error, offset, setOffset }
+  return { sessions, meta, loading, error }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,30 +147,25 @@ export function useOptions(): Record<string, unknown> | null {
 
 export function useEvalRuns(
   limit = 20,
-  initialOffset = 0,
+  offset = 0,
   filters?: EvalsFilters,
 ) {
   const { api } = useObservabilityContext()
   const [runs, setRuns] = useState<EvalRunRow[]>([])
   const [meta, setMeta] = useState<PlivoMeta>({
     limit,
-    offset: initialOffset,
+    offset,
     total_count: 0,
     next: null,
     previous: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(initialOffset)
 
   const { agentId, framework, accountId, startedFrom, startedTo } = filters ?? {}
   // Stable string key for the framework array so effect deps don't churn
   // on new-but-equal-array identities every render.
   const frameworkKey = (framework ?? []).slice().sort().join(',')
-
-  useEffect(() => {
-    setOffset(0)
-  }, [agentId, frameworkKey, accountId, startedFrom, startedTo])
 
   useEffect(() => {
     let cancelled = false
@@ -200,7 +190,7 @@ export function useEvalRuns(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, limit, offset, agentId, frameworkKey, accountId, startedFrom, startedTo])
 
-  return { runs, meta, loading, error, offset, setOffset }
+  return { runs, meta, loading, error }
 }
 
 export function useEvalRun(runId: string | undefined) {
