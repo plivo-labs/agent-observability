@@ -101,11 +101,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 export interface Logger {
+  info?(msg: string): void;
   warn(msg: string): void;
   error(msg: string): void;
 }
 
 export const defaultLogger: Logger = {
+  info: (m) => console.log(`[agent-observability] ${m}`),
   warn: (m) => console.warn(`[agent-observability] ${m}`),
   error: (m) => console.error(`[agent-observability] ${m}`),
 };

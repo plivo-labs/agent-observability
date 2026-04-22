@@ -122,12 +122,14 @@ export default class AgentObservabilityReporter {
         finishedAt: Date.now() / 1000,
       });
 
-      await upload(payload, this.uploadConfig, {
-        fallbackDir:
-          this.opts.fallbackDir ??
-          path.join(".vitest-cache", "agent-observability"),
+      const fallbackDir =
+        this.opts.fallbackDir ??
+        path.join(".vitest-cache", "agent-observability");
+      const ok = await upload(payload, this.uploadConfig, {
+        fallbackDir,
         logger: this.logger,
       });
+      this.printSummary(payload.run.run_id, ok, fallbackDir);
     } finally {
       if (this.restoreJudge) {
         try { this.restoreJudge(); } catch { /* ignore */ }
@@ -137,6 +139,21 @@ export default class AgentObservabilityReporter {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /** Emit the run_id + dashboard URL alongside Vitest's final output. */
+  private printSummary(runId: string, ok: boolean, fallbackDir: string | null): void {
+    if (!this.uploadConfig || !this.logger.info) return;
+    if (ok) {
+      const baseUrl = this.uploadConfig.url.replace(/\/$/, "");
+      this.logger.info(`Run uploaded: ${runId}`);
+      this.logger.info(`View at:      ${baseUrl}/evals/${runId}`);
+    } else {
+      this.logger.warn(`Run upload failed: ${runId}`);
+      if (fallbackDir) {
+        this.logger.warn(`Payload saved: ${path.join(fallbackDir, `${runId}.json`)}`);
+      }
+    }
+  }
 
   private resolveConfig(opts: ReporterOptions): UploadConfig | null {
     if (opts.url) {

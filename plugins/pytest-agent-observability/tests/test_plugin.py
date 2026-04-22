@@ -109,6 +109,60 @@ def test_plugin_records_failure(pytester: pytest.Pytester, monkeypatch, tmp_path
     assert "one is not two" in case["failure"]["message"]
 
 
+def test_terminal_summary_prints_run_id_and_dashboard_url(
+    pytester: pytest.Pytester, monkeypatch
+):
+    """Successful upload should print run_id + clickable dashboard URL."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    pytester.makeconftest(
+        """
+        from pytest_agent_observability import uploader
+        def _stub(payload, config, *, fallback_dir=None):
+            return True
+        uploader.upload = _stub
+        """
+    )
+    pytester.makepyfile(
+        """
+        def test_one(): pass
+        """
+    )
+    result = pytester.runpytest("-p", "agent_observability", "-v")
+    result.assert_outcomes(passed=1)
+
+    stdout = result.stdout.str()
+    assert "agent-observability" in stdout
+    assert "Run uploaded:" in stdout
+    assert "View at:" in stdout
+    assert "http://stub:9090/evals/" in stdout
+
+
+def test_terminal_summary_reports_failure_and_fallback_path(
+    pytester: pytest.Pytester, monkeypatch
+):
+    """Failed upload should surface the run_id and where the payload landed locally."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    pytester.makeconftest(
+        """
+        from pytest_agent_observability import uploader
+        def _stub(payload, config, *, fallback_dir=None):
+            return False  # upload failed
+        uploader.upload = _stub
+        """
+    )
+    pytester.makepyfile(
+        """
+        def test_one(): pass
+        """
+    )
+    result = pytester.runpytest("-p", "agent_observability", "-v")
+    result.assert_outcomes(passed=1)
+
+    stdout = result.stdout.str()
+    assert "Run upload failed:" in stdout
+    assert "Payload saved:" in stdout
+
+
 def test_capture_without_plugin_is_safe(pytester: pytest.Pytester, monkeypatch):
     """capture() called in a test with no URL configured should not break."""
     monkeypatch.delenv("AGENT_OBSERVABILITY_URL", raising=False)

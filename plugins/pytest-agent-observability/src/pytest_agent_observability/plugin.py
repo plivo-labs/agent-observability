@@ -34,6 +34,10 @@ class _State:
     _judge_restorer: Optional[Any] = None
     _autocapture_restorer: Optional[Any] = None
     _test_tokens: dict = {}
+    # Populated by pytest_sessionfinish so pytest_terminal_summary can print the
+    # run_id (and clickable dashboard URL) alongside the normal pytest summary.
+    _last_run_id: Optional[str] = None
+    _last_upload_ok: bool = False
 
 
 _state = _State()
@@ -135,7 +139,29 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     )
 
     assert _state.upload_config is not None
-    up.upload(payload, _state.upload_config, fallback_dir=_state.fallback_dir)
+    _state._last_run_id = _state.collector.run_id
+    _state._last_upload_ok = up.upload(
+        payload, _state.upload_config, fallback_dir=_state.fallback_dir,
+    )
+
+
+def pytest_terminal_summary(
+    terminalreporter: Any, exitstatus: int, config: pytest.Config
+) -> None:
+    """Print the run_id (and dashboard URL) in pytest's summary block."""
+    run_id = _state._last_run_id
+    if not run_id:
+        return
+    terminalreporter.write_sep("=", "agent-observability")
+    if _state._last_upload_ok and _state.upload_config is not None:
+        base_url = _state.upload_config.url  # already rstrip('/')
+        terminalreporter.write_line(f"Run uploaded: {run_id}")
+        terminalreporter.write_line(f"View at:      {base_url}/evals/{run_id}")
+    else:
+        terminalreporter.write_line(f"Run upload failed: {run_id}")
+        if _state.fallback_dir is not None:
+            fallback_path = _state.fallback_dir / f"{run_id}.json"
+            terminalreporter.write_line(f"Payload saved: {fallback_path}")
 
 
 # ── Per-test hooks ──────────────────────────────────────────────────────────

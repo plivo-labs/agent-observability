@@ -137,6 +137,46 @@ describe("AgentObservabilityReporter", () => {
     expect(body.cases[0].failure.kind).toBe("judge_failed");
   });
 
+  test("prints run_id + dashboard URL on successful upload", async () => {
+    const infos: string[] = [];
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+    });
+    (reporter as any).logger = {
+      info: (m: string) => infos.push(m),
+      warn: () => {},
+      error: () => {},
+    };
+    await reporter.onInit({});
+    await reporter.onFinished([makeFile("a.test.ts", [makeTest("t1", { state: "pass" })])], []);
+
+    const runId = JSON.parse(fetchMock.mock.calls[0][1].body as string).run.run_id;
+    expect(infos).toContain(`Run uploaded: ${runId}`);
+    expect(infos).toContain(`View at:      http://stub:9090/evals/${runId}`);
+  });
+
+  test("prints fallback path on upload failure", async () => {
+    fetchMock.mockImplementation(async () => new Response(null, { status: 500 }));
+    const warns: string[] = [];
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: "/tmp/vitest-ao-fallback",
+      maxRetries: 1,
+    });
+    (reporter as any).logger = {
+      info: () => {},
+      warn: (m: string) => warns.push(m),
+      error: () => {},
+    };
+    await reporter.onInit({});
+    await reporter.onFinished([makeFile("a.test.ts", [makeTest("t1", { state: "pass" })])], []);
+
+    const runId = JSON.parse(fetchMock.mock.calls[0][1].body as string).run.run_id;
+    expect(warns).toContain(`Run upload failed: ${runId}`);
+    expect(warns).toContain(`Payload saved: /tmp/vitest-ao-fallback/${runId}.json`);
+  });
+
   test("walks nested suites", async () => {
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
