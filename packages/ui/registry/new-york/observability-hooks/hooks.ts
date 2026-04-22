@@ -7,6 +7,7 @@ import type {
   PlivoMeta,
   SessionEvent,
   SessionMetrics,
+  SessionsFilters,
   TurnRecord,
 } from '@/lib/observability-types'
 
@@ -17,7 +18,7 @@ import type {
 export function useSessions(
   limit = 20,
   initialOffset = 0,
-  accountId?: string,
+  filters?: SessionsFilters,
 ) {
   const { api } = useObservabilityContext()
   const [sessions, setSessions] = useState<AgentSessionRow[]>([])
@@ -32,18 +33,35 @@ export function useSessions(
   const [error, setError] = useState<string | null>(null)
   const [offset, setOffset] = useState(initialOffset)
 
+  const accountId = filters?.accountId
+  const startedFrom = filters?.startedFrom
+  const startedTo = filters?.startedTo
+
   useEffect(() => {
+    setOffset(0)
+  }, [accountId, startedFrom, startedTo])
+
+  useEffect(() => {
+    let cancelled = false
     setLoading(true)
     setError(null)
     api
-      .listSessions(limit, offset, accountId)
+      .listSessions(limit, offset, { accountId, startedFrom, startedTo })
       .then((res) => {
+        if (cancelled) return
         setSessions(res.objects)
         setMeta(res.meta)
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [api, limit, offset, accountId])
+      .catch((e) => {
+        if (!cancelled) setError(e.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, limit, offset, accountId, startedFrom, startedTo])
 
   return { sessions, meta, loading, error, offset, setOffset }
 }

@@ -49,6 +49,7 @@ app.post("/observability/recordings/v0", async (c) => {
   let sessionId = "";
   let startedAt: Date | null = null;
   let accountId: string | null = null;
+  let transport: string | null = null;
 
   // Decode JSON header
   const header = formData.get("header");
@@ -61,6 +62,7 @@ app.post("/observability/recordings/v0", async (c) => {
         startedAt = new Date(startTime * 1000);
       }
       accountId = json.room_tags?.account_id ?? null;
+      transport = json.transport ?? null;
     } catch {}
   }
 
@@ -112,6 +114,7 @@ app.post("/observability/recordings/v0", async (c) => {
     await insertSession({
       sessionId,
       accountId,
+      transport,
       startedAt,
       endedAt,
       durationMs,
@@ -138,33 +141,31 @@ app.get("/api/sessions", async (c) => {
   const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
   const accountId = c.req.query("account_id") || null;
+  const startedFrom = c.req.query("started_from") || null;
+  const startedTo = c.req.query("started_to") || null;
 
   const extraParams: Record<string, string> = {};
   if (accountId) extraParams.account_id = accountId;
+  if (startedFrom) extraParams.started_from = startedFrom;
+  if (startedTo) extraParams.started_to = startedTo;
 
-  let countResult;
-  let rows;
+  const accountCond = accountId ? sql`AND account_id = ${accountId}` : sql``;
+  const fromCond = startedFrom ? sql`AND started_at >= ${startedFrom}` : sql``;
+  const toCond = startedTo ? sql`AND started_at <= ${startedTo}` : sql``;
 
-  if (accountId) {
-    [countResult] = await sql`SELECT count(*)::int as total FROM agent_transport_sessions WHERE account_id = ${accountId}`;
-    rows = await sql`
-      SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
-             turn_count, has_stt, has_llm, has_tts, record_url, created_at
-      FROM agent_transport_sessions
-      WHERE account_id = ${accountId}
-      ORDER BY ended_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-  } else {
-    [countResult] = await sql`SELECT count(*)::int as total FROM agent_transport_sessions`;
-    rows = await sql`
-      SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
-             turn_count, has_stt, has_llm, has_tts, record_url, created_at
-      FROM agent_transport_sessions
-      ORDER BY ended_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-  }
+  const [countResult] = await sql`
+    SELECT count(*)::int as total FROM agent_transport_sessions
+    WHERE 1=1 ${accountCond} ${fromCond} ${toCond}
+  `;
+
+  const rows = await sql`
+    SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
+           turn_count, has_stt, has_llm, has_tts, record_url, created_at
+    FROM agent_transport_sessions
+    WHERE 1=1 ${accountCond} ${fromCond} ${toCond}
+    ORDER BY ended_at DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `;
 
   return c.json(buildListResponse(rows, limit, offset, countResult.total, "/api/sessions", extraParams));
 });
@@ -172,7 +173,7 @@ app.get("/api/sessions", async (c) => {
 app.get("/api/sessions/:id", async (c) => {
   const sessionId = c.req.param("id");
   const rows = await sql`
-    SELECT id, session_id, account_id, state, started_at, ended_at, duration_ms,
+    SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
            chat_history, session_metrics, raw_report, record_url, created_at
     FROM agent_transport_sessions
