@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   BrowserRouter,
   Navigate,
@@ -7,6 +7,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router'
+import type { HighlighterCore } from 'shiki'
 import { AgentObservabilityProvider } from '@/lib/observability-provider'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
 import { LatencyPercentilesChart } from '@/components/latency-percentiles-chart'
@@ -27,14 +28,34 @@ const SESSION_ID = mockData.sessions[0].session_id
 
 type Stage = 'centered' | 'left' | 'stretch'
 
+interface PropDef {
+  name: string
+  type: string
+  default?: string
+  required?: boolean
+  description: string
+}
+
 interface DocEntry {
   id: string
   label: string
-  group: 'Pages' | 'Components' | 'Charts'
+  group: 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
   pkg: string
   description: string
   stage?: Stage
-  render: () => React.ReactNode
+  /** Omit to skip the Preview section (use for context providers and other
+   *  non-rendering APIs). */
+  render?: () => React.ReactNode
+  /** Function signature line (hooks / utilities). Rendered as a code block
+   *  above the Parameters table. */
+  signature?: string
+  /** Prop documentation rendered as a table. Empty array means "no props".
+   *  Header is "Parameters" for hooks, "Props" otherwise. */
+  props?: PropDef[]
+  /** Return shape for hooks / utilities — rendered as a code block. */
+  returns?: string
+  /** Usage code snippet shown under the preview. */
+  usage?: string
 }
 
 function SessionsListPreview() {
@@ -59,6 +80,228 @@ function StretchWrap({ children }: { children: React.ReactNode }) {
 
 const ENTRIES: DocEntry[] = [
   {
+    id: 'observability-provider',
+    label: 'Agent Observability Provider',
+    group: 'Core',
+    pkg: 'observability-provider',
+    description:
+      'Context provider that every other component from this library expects. Install and mount it once, high in your tree — it creates the API client, resolves the current session, and shares the hooks that drive the rest of the UI. No visual output of its own.',
+    props: [
+      {
+        name: 'baseUrl',
+        type: 'string',
+        required: true,
+        description:
+          'Base URL of your Agent Observability API. In Vite dev, pair this with a /api proxy; in production, point it at the deployed service.',
+      },
+      {
+        name: 'sessionId',
+        type: 'string',
+        description:
+          'Optional session id the provider loads up-front. Downstream detail components (SessionHeader, SessionTimeline, TurnTranscriptSection, SessionEvents, SessionConfig, charts) read this through the context. Omit on list pages.',
+      },
+      {
+        name: 'children',
+        type: 'React.ReactNode',
+        required: true,
+        description: 'Your application tree.',
+      },
+    ],
+    usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { SessionDetailPage } from '@/components/session-detail-page'
+
+// Wrap the subtree that needs session data. Pass a sessionId when
+// rendering a single-session page; list pages can drop it.
+export function App({ sessionId }: { sessionId: string }) {
+  return (
+    <AgentObservabilityProvider
+      baseUrl="https://observability.example.com/api"
+      sessionId={sessionId}
+    >
+      <SessionDetailPage onBack={() => history.back()} />
+    </AgentObservabilityProvider>
+  )
+}`,
+  },
+
+  // ───── Hooks ─────────────────────────────────────────────────────────
+  {
+    id: 'use-sessions',
+    label: 'useSessions',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Paginated session list fetcher. Holds its own cursor — pass a stable initialOffset and drive pagination with setOffset. Refetches automatically whenever filters or offset change.',
+    signature:
+      'useSessions(limit?: number, initialOffset?: number, filters?: SessionsFilters): { sessions, meta, loading, error, offset, setOffset }',
+    props: [
+      {
+        name: 'limit',
+        type: 'number',
+        default: '20',
+        description: 'Page size. The server clamps to [1, 20].',
+      },
+      {
+        name: 'initialOffset',
+        type: 'number',
+        default: '0',
+        description:
+          'Starting offset. Syncs when the prop changes (so you can drive it from URL state) AND exposes setOffset for local pagination.',
+      },
+      {
+        name: 'filters',
+        type: 'SessionsFilters',
+        description:
+          'Optional filters: { accountId?, startedFrom?, startedTo? }. Offset auto-resets to 0 when any filter changes.',
+      },
+    ],
+    returns:
+      '{ sessions: AgentSessionRow[], meta: PlivoMeta, loading: boolean, error: string | null, offset: number, setOffset: (n: number) => void }',
+    usage: `import { useSessions } from '@/lib/observability-hooks'
+
+export function MyList() {
+  const { sessions, meta, loading, offset, setOffset } = useSessions(20, 0, {
+    accountId: 'acc_demo',
+  })
+  if (loading) return <Spinner />
+  return (
+    <>
+      {sessions.map((s) => (
+        <Row key={s.id} session={s} />
+      ))}
+      <Pagination
+        offset={offset}
+        limit={meta.limit}
+        total={meta.total_count}
+        onChange={setOffset}
+      />
+    </>
+  )
+}`,
+  },
+  {
+    id: 'use-session',
+    label: 'useSession',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Returns the single session loaded by the provider. Read-only convenience wrapper — the actual fetch is done by AgentObservabilityProvider when a sessionId is passed to it.',
+    signature: 'useSession(): { session, loading, error }',
+    props: [],
+    returns:
+      '{ session: AgentSessionRow | null, loading: boolean, error: string | null }',
+    usage: `import { useSession } from '@/lib/observability-hooks'
+
+function SessionTitle() {
+  const { session, loading, error } = useSession()
+  if (loading) return <span>Loading…</span>
+  if (error || !session) return <span>—</span>
+  return <h1>{session.session_id}</h1>
+}`,
+  },
+  {
+    id: 'use-timeline',
+    label: 'useTimeline',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Derives timeline-specific data from the current session: per-turn metrics, the recording URL, and the highlighted-turn state shared with the transcript.',
+    signature:
+      'useTimeline(): { metrics, recordUrl, sessionCreatedAt, highlightedTurn, setHighlightedTurn }',
+    props: [],
+    returns:
+      '{ metrics: SessionMetrics | null, recordUrl: string | null, sessionCreatedAt: string | undefined, highlightedTurn: number | null, setHighlightedTurn: (n: number | null) => void }',
+    usage: `import { useTimeline } from '@/lib/observability-hooks'
+
+function CustomTimeline() {
+  const { metrics, setHighlightedTurn } = useTimeline()
+  // Click a turn → both timeline AND transcript scroll into view
+  return metrics?.turns.map((t) => (
+    <button
+      key={t.turn_number}
+      onClick={() => setHighlightedTurn(t.turn_number)}
+    >
+      Turn {t.turn_number}
+    </button>
+  ))
+}`,
+  },
+  {
+    id: 'use-transcript',
+    label: 'useTranscript',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Returns the structured turns, the raw chat history, and the highlighted-turn state — the data the built-in TurnTranscriptSection consumes.',
+    signature:
+      'useTranscript(): { turns, chatHistory, metrics, highlightedTurn, setHighlightedTurn }',
+    props: [],
+    returns:
+      '{ turns: TurnRecord[], chatHistory: ChatItem[] | null, metrics: SessionMetrics | null, highlightedTurn: number | null, setHighlightedTurn: (n: number | null) => void }',
+    usage: `import { useTranscript } from '@/lib/observability-hooks'
+
+function TurnCount() {
+  const { turns } = useTranscript()
+  return <span>{turns.length} turns</span>
+}`,
+  },
+  {
+    id: 'use-performance',
+    label: 'usePerformance',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Extracts metrics + the MetricsSummary roll-up from the current session. Used by all the chart components to build their data series.',
+    signature: 'usePerformance(): { metrics, summary }',
+    props: [],
+    returns:
+      '{ metrics: SessionMetrics | null, summary: MetricsSummary | null }',
+    usage: `import { usePerformance } from '@/lib/observability-hooks'
+
+function ToolCallCount() {
+  const { summary } = usePerformance()
+  if (!summary) return null
+  return <span>{summary.total_tool_calls} tool calls</span>
+}`,
+  },
+  {
+    id: 'use-events',
+    label: 'useEvents',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Raw session events (function calls, agent_state_changed, speech_created, etc.) as captured by the SDK. Returns null if the provider has not loaded a session yet.',
+    signature: 'useEvents(): SessionEvent[] | null',
+    props: [],
+    returns: 'SessionEvent[] | null',
+    usage: `import { useEvents } from '@/lib/observability-hooks'
+
+function FunctionCallCount() {
+  const events = useEvents()
+  const n = events?.filter((e) => e.type === 'function_call').length ?? 0
+  return <span>{n} tool invocations</span>
+}`,
+  },
+  {
+    id: 'use-options',
+    label: 'useOptions',
+    group: 'Hooks',
+    pkg: 'observability-hooks',
+    description:
+      'Snapshot of the agent configuration captured with the session — model IDs, voice settings, tool list, runtime options. Returns null before load.',
+    signature: 'useOptions(): Record<string, unknown> | null',
+    props: [],
+    returns: 'Record<string, unknown> | null',
+    usage: `import { useOptions } from '@/lib/observability-hooks'
+
+function ModelBadge() {
+  const options = useOptions()
+  const model = (options as { llm?: { model?: string } } | null)?.llm?.model
+  return model ? <Badge>{String(model)}</Badge> : null
+}`,
+  },
+
+  {
     id: 'sessions-page',
     label: 'Sessions Page',
     group: 'Pages',
@@ -67,6 +310,26 @@ const ENTRIES: DocEntry[] = [
       'Tabular index of captured sessions. Monospace IDs, tabular-number duration, capability badges, row-hover navigation, and server-backed pagination.',
     stage: 'stretch',
     render: () => <SessionsListPreview />,
+    props: [
+      {
+        name: 'onSessionClick',
+        type: '(sessionId: string) => void',
+        description:
+          'Fires when a row is clicked. Wire it up to your router for navigation. Omit to render a non-interactive list.',
+      },
+    ],
+    usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { SessionsPage } from '@/components/sessions-page'
+import { useNavigate } from 'react-router'
+
+export function SessionsRoute() {
+  const navigate = useNavigate()
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <SessionsPage onSessionClick={(id) => navigate(\`/sessions/\${id}\`)} />
+    </AgentObservabilityProvider>
+  )
+}`,
   },
   {
     id: 'session-detail-page',
@@ -77,6 +340,30 @@ const ENTRIES: DocEntry[] = [
       'Full drill-in view for a single session. Combines the session header, a tabbed timeline / transcript / events / config / performance layout, and the recording player.',
     stage: 'stretch',
     render: () => <SessionDetailPreview />,
+    props: [
+      {
+        name: 'onBack',
+        type: '() => void',
+        description:
+          'Handler for the breadcrumb "Sessions" link at the top of the page. Omit to render without a back control.',
+      },
+    ],
+    usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { SessionDetailPage } from '@/components/session-detail-page'
+import { useNavigate, useParams } from 'react-router'
+
+export function SessionDetailRoute() {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const navigate = useNavigate()
+  return (
+    <AgentObservabilityProvider
+      baseUrl="https://observability.example.com/api"
+      sessionId={sessionId}
+    >
+      <SessionDetailPage onBack={() => navigate('/sessions')} />
+    </AgentObservabilityProvider>
+  )
+}`,
   },
 
   {
@@ -88,6 +375,21 @@ const ENTRIES: DocEntry[] = [
       'A row of compact metric tiles for the headline observability numbers — turn count, avg latency, token totals. Small, dense, and meant to sit above the fold on the session detail page.',
     stage: 'left',
     render: () => <MetricSummaryCards />,
+    props: [
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description:
+          'Override the metrics resolved from provider context. Useful when rendering ad-hoc aggregates or in stories. Defaults to the current session’s metrics.',
+      },
+    ],
+    usage: `import { MetricSummaryCards } from '@/components/metric-summary-cards'
+
+// Inside a provider tree — reads the current session via context
+<MetricSummaryCards />
+
+// Or pass your own metrics
+<MetricSummaryCards metrics={customMetrics} />`,
   },
   {
     id: 'session-header',
@@ -102,6 +404,21 @@ const ENTRIES: DocEntry[] = [
         <SessionHeader />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'session',
+        type: 'AgentSessionRow',
+        description:
+          'Override the session resolved from provider context. Handy when embedding the header in a list or custom page.',
+      },
+    ],
+    usage: `import { SessionHeader } from '@/components/session-header'
+
+// Context-driven (preferred)
+<SessionHeader />
+
+// With an explicit session row
+<SessionHeader session={mySession} />`,
   },
   {
     id: 'session-timeline',
@@ -116,6 +433,37 @@ const ENTRIES: DocEntry[] = [
         <SessionTimeline />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description: 'Override per-turn metrics resolved from provider context.',
+      },
+      {
+        name: 'recordUrl',
+        type: 'string | null',
+        description:
+          'Recording URL. Override only when your audio URL does not ship with the session detail response.',
+      },
+      {
+        name: 'onTurnClick',
+        type: '(turnNumber: number) => void',
+        description:
+          'Handler for clicks on individual turn chips. Defaults to the provider’s setHighlightedTurn (which scrolls the transcript).',
+      },
+      {
+        name: 'sessionCreatedAt',
+        type: 'string',
+        description:
+          'ISO timestamp used to align the recording playback cursor with turn timestamps. Defaults to the session’s created_at.',
+      },
+    ],
+    usage: `import { SessionTimeline } from '@/components/session-timeline/session-timeline'
+
+<SessionTimeline />
+
+// Custom turn-click handling (e.g. scroll a sibling panel)
+<SessionTimeline onTurnClick={(n) => focusTurn(n)} />`,
   },
   {
     id: 'turn-transcript',
@@ -130,6 +478,46 @@ const ENTRIES: DocEntry[] = [
         <TurnTranscriptSection />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'chatHistory',
+        type: 'ChatItem[] | null',
+        description:
+          'Override the raw chat history resolved from provider context. Falls back to structured turn data from metrics when omitted.',
+      },
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description: 'Override the per-turn metrics resolved from provider context.',
+      },
+      {
+        name: 'highlightedTurn',
+        type: 'number | null',
+        description:
+          'Scrolls the matching turn into view when set. The provider updates this when users click turn chips in the timeline.',
+      },
+      {
+        name: 'embedded',
+        type: 'boolean',
+        default: 'false',
+        description:
+          'Strips the outer card/header when embedding the transcript under another container (e.g. inside the session detail Session tab).',
+      },
+      {
+        name: 'alignment',
+        type: "'chat' | 'left'",
+        default: "'chat'",
+        description:
+          '"chat" pairs user/agent messages across the column; "left" stacks both sides on the left for a log-style view.',
+      },
+    ],
+    usage: `import { TurnTranscriptSection } from '@/components/turn-transcript'
+
+// Default — chat-paired, context-driven
+<TurnTranscriptSection />
+
+// Embedded under a parent card, left-aligned log view
+<TurnTranscriptSection embedded alignment="left" />`,
   },
   {
     id: 'session-events',
@@ -144,6 +532,32 @@ const ENTRIES: DocEntry[] = [
         <SessionEvents />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'typeBadgeClass',
+        type: 'Partial<Record<string, string>>',
+        description:
+          'Per-event-type Tailwind className overrides. Merged over the built-in defaults so you only need to specify the types you want to recolor.',
+      },
+      {
+        name: 'fallbackBadgeClass',
+        type: 'string',
+        default: "'bg-muted text-muted-foreground'",
+        description:
+          'Fallback className used when an event type has no mapping in the defaults or overrides.',
+      },
+    ],
+    usage: `import { SessionEvents } from '@/components/session-events'
+
+// Default badge palette
+<SessionEvents />
+
+// Recolor a specific event type
+<SessionEvents
+  typeBadgeClass={{
+    function_call: 'bg-orange-100 text-orange-800',
+  }}
+/>`,
   },
   {
     id: 'session-config',
@@ -158,6 +572,11 @@ const ENTRIES: DocEntry[] = [
         <SessionConfig />
       </StretchWrap>
     ),
+    props: [],
+    usage: `import { SessionConfig } from '@/components/session-config'
+
+// No props — reads the options blob from provider context
+;<SessionConfig />`,
   },
 
   {
@@ -173,6 +592,16 @@ const ENTRIES: DocEntry[] = [
         <LatencyPercentilesChart />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description: 'Override the metrics resolved from provider context.',
+      },
+    ],
+    usage: `import { LatencyPercentilesChart } from '@/components/latency-percentiles-chart'
+
+;<LatencyPercentilesChart />`,
   },
   {
     id: 'pipeline-breakdown',
@@ -187,6 +616,16 @@ const ENTRIES: DocEntry[] = [
         <PipelineBreakdownChart />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description: 'Override the metrics resolved from provider context.',
+      },
+    ],
+    usage: `import { PipelineBreakdownChart } from '@/components/pipeline-breakdown-chart'
+
+;<PipelineBreakdownChart />`,
   },
   {
     id: 'latency-over-turns',
@@ -201,6 +640,16 @@ const ENTRIES: DocEntry[] = [
         <LatencyOverTurnsChart />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description: 'Override the metrics resolved from provider context.',
+      },
+    ],
+    usage: `import { LatencyOverTurnsChart } from '@/components/latency-over-turns-chart'
+
+;<LatencyOverTurnsChart />`,
   },
   {
     id: 'token-usage',
@@ -215,10 +664,131 @@ const ENTRIES: DocEntry[] = [
         <TokenUsageSection />
       </StretchWrap>
     ),
+    props: [
+      {
+        name: 'metrics',
+        type: 'SessionMetrics | null',
+        description: 'Override the metrics resolved from provider context.',
+      },
+    ],
+    usage: `import { TokenUsageSection } from '@/components/token-usage-section'
+
+;<TokenUsageSection />`,
+  },
+
+  // ───── Utilities ─────────────────────────────────────────────────────
+  {
+    id: 'observability-chart-shared',
+    label: 'Chart Shared',
+    group: 'Utilities',
+    pkg: 'observability-chart-shared',
+    description:
+      'Layout primitives for building additional charts that match the look of the built-in ones. Exports a ChartCard wrapper (title / subtitle / recharts container / legend row), a ChartTooltipShell for custom recharts tooltips, and a ChartLegendItem color-swatch row.',
+    props: [
+      {
+        name: 'ChartCard.title',
+        type: 'string',
+        required: true,
+        description: 'Card title shown at the top-left.',
+      },
+      {
+        name: 'ChartCard.subtitle',
+        type: 'string',
+        description: 'Optional subtitle under the title.',
+      },
+      {
+        name: 'ChartCard.legend',
+        type: '{ color: string; label: string }[]',
+        required: true,
+        description:
+          'Legend entries. Pass an empty array to suppress the legend row.',
+      },
+      {
+        name: 'ChartCard.chartHeight',
+        type: 'string',
+        default: "'h-64'",
+        description: 'Tailwind height class applied to the ResponsiveContainer wrapper.',
+      },
+      {
+        name: 'ChartCard.children',
+        type: 'React.ReactElement',
+        required: true,
+        description: 'A single recharts element (e.g. <BarChart>, <LineChart>).',
+      },
+      {
+        name: 'ChartTooltipShell.active',
+        type: 'boolean',
+        description: 'Forwarded by recharts — the component renders nothing when false.',
+      },
+      {
+        name: 'ChartTooltipShell.label',
+        type: 'string | number',
+        description: 'Axis label for the hovered point (rendered as "Turn {label}").',
+      },
+      {
+        name: 'ChartTooltipShell.rows',
+        type: '{ label: string; value: string; color?: string }[]',
+        required: true,
+        description:
+          'Two-column key/value rows rendered inside the tooltip. Each row may override the label color.',
+      },
+      {
+        name: 'ChartLegendItem.color',
+        type: 'string',
+        required: true,
+        description: 'Any CSS color — used for the small square swatch.',
+      },
+      {
+        name: 'ChartLegendItem.label',
+        type: 'string',
+        required: true,
+        description: 'Legend text.',
+      },
+    ],
+    usage: `import { Bar, BarChart, Tooltip, XAxis, YAxis } from 'recharts'
+import {
+  ChartCard,
+  ChartTooltipShell,
+} from '@/components/observability-chart-shared'
+
+export function MyChart({ data }: { data: Row[] }) {
+  return (
+    <ChartCard
+      title="My metric"
+      subtitle="Per-turn trend"
+      legend={[{ color: 'hsl(var(--primary))', label: 'Value' }]}
+    >
+      <BarChart data={data}>
+        <XAxis dataKey="turn" />
+        <YAxis />
+        <Tooltip
+          content={({ active, label, payload }) => (
+            <ChartTooltipShell
+              active={active}
+              label={label}
+              rows={(payload ?? []).map((p) => ({
+                label: String(p.dataKey),
+                value: String(p.value),
+              }))}
+            />
+          )}
+        />
+        <Bar dataKey="value" fill="hsl(var(--primary))" />
+      </BarChart>
+    </ChartCard>
+  )
+}`,
   },
 ]
 
-const GROUPS: Array<DocEntry['group']> = ['Pages', 'Components', 'Charts']
+const GROUPS: Array<DocEntry['group']> = [
+  'Core',
+  'Hooks',
+  'Pages',
+  'Components',
+  'Charts',
+  'Utilities',
+]
 
 function PlivoLogo() {
   return (
@@ -298,11 +868,22 @@ function DocsSidebar({
 
 function InstallBlock({ pkg }: { pkg: string }) {
   const [tab, setTab] = useState<'pnpm' | 'npm' | 'yarn' | 'bun'>('npm')
+  const [copied, setCopied] = useState(false)
   const prefix: Record<typeof tab, string> = {
     pnpm: 'pnpm dlx',
     npm: 'npx',
     yarn: 'yarn dlx',
     bun: 'bunx --bun',
+  }
+  const command = `${prefix[tab]} agent-observability-ui@latest add ${pkg}`
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      /* clipboard unavailable */
+    }
   }
   return (
     <div className="install-block">
@@ -322,7 +903,151 @@ function InstallBlock({ pkg }: { pkg: string }) {
         <span className="prompt">$</span>
         <span className="cli">{prefix[tab]} agent-observability-ui@latest add </span>
         <span className="str">{pkg}</span>
+        <button
+          type="button"
+          className="copy"
+          onClick={copy}
+          aria-label="Copy install command"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
       </div>
+    </div>
+  )
+}
+
+// ─── Shiki syntax highlighter ──────────────────────────────────────────────
+// Uses shiki/core + explicit grammar imports so the bundle only pays for
+// tsx/ts + two themes (the default `shiki` entry registers every language).
+// Dual-theme mode emits CSS variables (--shiki-light/-dark); docs.css flips
+// them under .dark.
+
+let highlighterPromise: Promise<HighlighterCore> | null = null
+async function getHighlighter(): Promise<HighlighterCore> {
+  if (!highlighterPromise) {
+    highlighterPromise = (async () => {
+      const [{ createHighlighterCore }, { createOnigurumaEngine }] =
+        await Promise.all([
+          import('shiki/core'),
+          import('shiki/engine/oniguruma'),
+        ])
+      return createHighlighterCore({
+        themes: [
+          import('shiki/themes/github-light.mjs'),
+          import('shiki/themes/github-dark.mjs'),
+        ],
+        langs: [
+          import('shiki/langs/tsx.mjs'),
+          import('shiki/langs/typescript.mjs'),
+        ],
+        engine: createOnigurumaEngine(import('shiki/wasm')),
+      })
+    })()
+  }
+  return highlighterPromise
+}
+
+function CodeBlock({
+  code,
+  lang = 'tsx',
+  className,
+}: {
+  code: string
+  lang?: 'tsx' | 'ts'
+  className?: string
+}) {
+  const [html, setHtml] = useState<string>('')
+  useEffect(() => {
+    let cancelled = false
+    getHighlighter()
+      .then((h) => {
+        if (cancelled) return
+        setHtml(
+          h.codeToHtml(code, {
+            lang,
+            themes: { light: 'github-light', dark: 'github-dark' },
+            defaultColor: false,
+          }),
+        )
+      })
+      .catch(() => {
+        /* fall back to plain text */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [code, lang])
+
+  const cls = ['docs-code', className].filter(Boolean).join(' ')
+  if (!html) {
+    // Zero-shift placeholder while Shiki loads.
+    return (
+      <pre className={cls} aria-busy="true">
+        <code>{code}</code>
+      </pre>
+    )
+  }
+  return <div className={cls} dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function PropsTable({ props: defs }: { props: PropDef[] }) {
+  if (defs.length === 0) {
+    return <p className="docs-empty">This component accepts no props.</p>
+  }
+  return (
+    <div className="docs-props">
+      <table>
+        <thead>
+          <tr>
+            <th>Prop</th>
+            <th>Type</th>
+            <th>Default</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {defs.map((p) => (
+            <tr key={p.name}>
+              <td>
+                <code>{p.name}</code>
+                {p.required && <span className="req"> required</span>}
+              </td>
+              <td>
+                <code className="type">{p.type}</code>
+              </td>
+              <td>
+                {p.default ? (
+                  <code className="dflt">{p.default}</code>
+                ) : (
+                  <span className="dash">—</span>
+                )}
+              </td>
+              <td>{p.description}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function UsageBlock({ code, lang = 'tsx' }: { code: string; lang?: 'tsx' | 'ts' }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      /* noop — clipboard unavailable */
+    }
+  }
+  return (
+    <div className="docs-usage">
+      <button type="button" className="copy" onClick={copy} aria-label="Copy code">
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <CodeBlock code={code} lang={lang} />
     </div>
   )
 }
@@ -381,11 +1106,45 @@ function DocsPage() {
         <h1>{active.label}</h1>
         <p className="lede">{active.description}</p>
 
-        <div className="comp-sub">Preview</div>
-        <Preview stage={active.stage}>{active.render()}</Preview>
+        {active.render && (
+          <>
+            <div className="comp-sub">Preview</div>
+            <Preview stage={active.stage}>{active.render()}</Preview>
+          </>
+        )}
+
+        {active.signature && (
+          <>
+            <div className="comp-sub">Signature</div>
+            <CodeBlock code={active.signature} lang="ts" className="docs-signature" />
+          </>
+        )}
 
         <div className="comp-sub">Installation</div>
         <InstallBlock pkg={active.pkg} />
+
+        {active.usage && (
+          <>
+            <div className="comp-sub">Usage</div>
+            <UsageBlock code={active.usage} />
+          </>
+        )}
+
+        {active.props && (
+          <>
+            <div className="comp-sub">
+              {active.group === 'Hooks' ? 'Parameters' : 'Props'}
+            </div>
+            <PropsTable props={active.props} />
+          </>
+        )}
+
+        {active.returns && (
+          <>
+            <div className="comp-sub">Returns</div>
+            <CodeBlock code={active.returns} lang="ts" className="docs-signature" />
+          </>
+        )}
 
         <div className="docs-pager">
           <button
