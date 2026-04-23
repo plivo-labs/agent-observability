@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
+import { handleMockRequest, type MockData } from './src/lib/mock-handler'
 
 const reg = (...segments: string[]) =>
   resolve(__dirname, '../registry/new-york', ...segments)
@@ -13,37 +14,28 @@ function mockApiPlugin() {
   return {
     name: 'mock-api',
     configureServer(server: any) {
-      server.middlewares.use((req: any, res: any, next: any) => {
+      const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8')) as MockData
+      server.middlewares.use(async (req: any, res: any, next: any) => {
         if (!req.url?.startsWith('/api/')) return next()
-
-        const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8'))
-        res.setHeader('Content-Type', 'application/json')
-
-        if (req.url === '/api/sessions' || req.url?.startsWith('/api/sessions?')) {
-          res.end(JSON.stringify({
-            api_id: 'preview-mock',
-            meta: { limit: 20, offset: 0, total_count: mockData.sessions.length, next: null, previous: null },
-            objects: mockData.sessions,
-          }))
-        } else if (req.url?.match(/^\/api\/sessions\/[^?]+$/)) {
-          const id = req.url.split('/api/sessions/')[1]
-          const session = mockData.sessions.find((s: any) => s.session_id === id) ?? mockData.sessions[0]
-          res.end(JSON.stringify(session))
-        } else {
-          res.statusCode = 404
-          res.end(JSON.stringify({ error: 'Not found' }))
-        }
+        const url = new URL(req.url, 'http://localhost')
+        const response = handleMockRequest(url.pathname, url.search, mockData)
+        if (!response) return next()
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
       })
     },
   }
 }
 
 export default defineConfig({
+  base: '/agent-observability/',
   plugins: [react(), tailwindcss(), mockApiPlugin()],
   optimizeDeps: {
     include: ['recharts', 'dayjs', 'lucide-react', 'wavesurfer.js'],
   },
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: [
       // shadcn UI — local to preview
       { find: '@/components/ui', replacement: resolve(__dirname, 'src/components/ui') },
