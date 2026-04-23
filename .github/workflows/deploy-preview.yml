@@ -1,0 +1,58 @@
+name: Deploy Preview to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/ui/preview/**'
+      - 'packages/ui/registry/**'
+      - 'packages/ui/package.json'
+      - 'packages/ui/bun.lock'
+      - '.github/workflows/deploy-preview.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install UI package dependencies
+        working-directory: packages/ui
+        run: bun install --frozen-lockfile
+
+      - name: Install preview dependencies
+        working-directory: packages/ui/preview
+        run: bun install --frozen-lockfile
+
+      - name: Build preview
+        working-directory: packages/ui/preview
+        run: bun run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/ui/preview/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
