@@ -617,6 +617,153 @@
           "type": "registry:component"
         }
       ]
+    },
+    {
+      "name": "evals-page",
+      "type": "registry:block",
+      "title": "Evals Page",
+      "description": "Paginated eval runs list with filters (agent, account, started-date). Router-agnostic: navigation via onRunClick callback.",
+      "dependencies": [
+        "dayjs",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "badge",
+        "button",
+        "calendar",
+        "popover",
+        "skeleton",
+        "table",
+        "pagination"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-types/types.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-types.ts"
+        },
+        {
+          "path": "registry/new-york/observability-format/format.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-api/api.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-api.ts"
+        },
+        {
+          "path": "registry/new-york/observability-provider/provider.tsx",
+          "type": "registry:lib",
+          "target": "lib/observability-provider.tsx"
+        },
+        {
+          "path": "registry/new-york/observability-hooks/hooks.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-hooks.ts"
+        },
+        {
+          "path": "registry/new-york/evals-page/evals-page.tsx",
+          "type": "registry:component"
+        }
+      ]
+    },
+    {
+      "name": "eval-case-detail-page",
+      "type": "registry:block",
+      "title": "Eval Case Detail",
+      "description": "Single eval case detail — intended to render inside a Sheet drawer. Shows transcript, judgments, and failure block.",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "badge",
+        "button",
+        "card",
+        "collapsible",
+        "skeleton"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-types/types.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-types.ts"
+        },
+        {
+          "path": "registry/new-york/observability-format/format.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-api/api.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-api.ts"
+        },
+        {
+          "path": "registry/new-york/observability-provider/provider.tsx",
+          "type": "registry:lib",
+          "target": "lib/observability-provider.tsx"
+        },
+        {
+          "path": "registry/new-york/observability-hooks/hooks.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-hooks.ts"
+        },
+        {
+          "path": "registry/new-york/eval-case-detail-page/eval-case-detail-page.tsx",
+          "type": "registry:component"
+        }
+      ]
+    },
+    {
+      "name": "eval-run-detail-page",
+      "type": "registry:block",
+      "title": "Eval Run Detail Page",
+      "description": "Single eval run detail: pass-rate stats, CI metadata, cases table, and a case-detail drawer.",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "badge",
+        "button",
+        "card",
+        "collapsible",
+        "sheet",
+        "skeleton",
+        "table",
+        "eval-case-detail-page"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-types/types.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-types.ts"
+        },
+        {
+          "path": "registry/new-york/observability-format/format.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-api/api.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-api.ts"
+        },
+        {
+          "path": "registry/new-york/observability-provider/provider.tsx",
+          "type": "registry:lib",
+          "target": "lib/observability-provider.tsx"
+        },
+        {
+          "path": "registry/new-york/observability-hooks/hooks.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-hooks.ts"
+        },
+        {
+          "path": "registry/new-york/eval-run-detail-page/eval-run-detail-page.tsx",
+          "type": "registry:component"
+        }
+      ]
     }
   ]
 }

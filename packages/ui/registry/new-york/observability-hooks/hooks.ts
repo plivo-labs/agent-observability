@@ -3,6 +3,10 @@ import { useObservabilityContext } from '@/lib/observability-provider'
 import type {
   AgentSessionRow,
   ChatItem,
+  EvalCaseRow,
+  EvalRunDetail,
+  EvalRunRow,
+  EvalsFilters,
   MetricsSummary,
   PlivoMeta,
   SessionEvent,
@@ -144,4 +148,115 @@ export function useEvents(): SessionEvent[] | null {
 export function useOptions(): Record<string, unknown> | null {
   const { session } = useObservabilityContext()
   return session?.options ?? null
+}
+
+// ---------------------------------------------------------------------------
+// useEvalRuns / useEvalRun / useEvalCase — eval dashboard data
+// ---------------------------------------------------------------------------
+
+export function useEvalRuns(
+  limit = 20,
+  initialOffset = 0,
+  filters?: EvalsFilters,
+) {
+  const { api } = useObservabilityContext()
+  const [runs, setRuns] = useState<EvalRunRow[]>([])
+  const [meta, setMeta] = useState<PlivoMeta>({
+    limit,
+    offset: initialOffset,
+    total_count: 0,
+    next: null,
+    previous: null,
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [offset, setOffset] = useState(initialOffset)
+
+  const { agentId, framework, accountId, startedFrom, startedTo } = filters ?? {}
+  const frameworkKey = (framework ?? []).slice().sort().join(',')
+
+  useEffect(() => {
+    setOffset(initialOffset)
+  }, [initialOffset])
+
+  useEffect(() => {
+    setOffset(0)
+  }, [agentId, frameworkKey, accountId, startedFrom, startedTo])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .listEvalRuns(limit, offset, {
+        agentId,
+        framework: framework && framework.length ? framework : undefined,
+        accountId,
+        startedFrom,
+        startedTo,
+      })
+      .then((res) => {
+        if (cancelled) return
+        setRuns(res.objects)
+        setMeta(res.meta)
+      })
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, limit, offset, agentId, frameworkKey, accountId, startedFrom, startedTo])
+
+  return { runs, meta, loading, error, offset, setOffset }
+}
+
+export function useEvalRun(runId: string | undefined) {
+  const { api } = useObservabilityContext()
+  const [run, setRun] = useState<EvalRunDetail | null>(null)
+  const [loading, setLoading] = useState(!!runId)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!runId) {
+      setRun(null)
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .getEvalRun(runId)
+      .then((r) => !cancelled && setRun(r))
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, runId])
+
+  return { run, loading, error }
+}
+
+export function useEvalCase(runId: string | undefined, caseId: string | undefined) {
+  const { api } = useObservabilityContext()
+  const [evalCase, setEvalCase] = useState<EvalCaseRow | null>(null)
+  const [loading, setLoading] = useState(!!(runId && caseId))
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!runId || !caseId) {
+      setEvalCase(null)
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .getEvalCase(runId, caseId)
+      .then((c) => !cancelled && setEvalCase(c))
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, runId, caseId])
+
+  return { evalCase, loading, error }
 }

@@ -147,25 +147,37 @@ export function useOptions(): Record<string, unknown> | null {
 
 export function useEvalRuns(
   limit = 20,
-  offset = 0,
+  initialOffset = 0,
   filters?: EvalsFilters,
 ) {
   const { api } = useObservabilityContext()
   const [runs, setRuns] = useState<EvalRunRow[]>([])
   const [meta, setMeta] = useState<PlivoMeta>({
     limit,
-    offset,
+    offset: initialOffset,
     total_count: 0,
     next: null,
     previous: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [offset, setOffset] = useState(initialOffset)
 
   const { agentId, framework, accountId, startedFrom, startedTo } = filters ?? {}
   // Stable string key for the framework array so effect deps don't churn
   // on new-but-equal-array identities every render.
   const frameworkKey = (framework ?? []).slice().sort().join(',')
+
+  // Sync offset when the caller passes a live initialOffset (e.g. from URL
+  // state). Callers who drive pagination via setOffset pass a stable 0 and
+  // this no-ops after mount.
+  useEffect(() => {
+    setOffset(initialOffset)
+  }, [initialOffset])
+
+  useEffect(() => {
+    setOffset(0)
+  }, [agentId, frameworkKey, accountId, startedFrom, startedTo])
 
   useEffect(() => {
     let cancelled = false
@@ -190,7 +202,7 @@ export function useEvalRuns(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, limit, offset, agentId, frameworkKey, accountId, startedFrom, startedTo])
 
-  return { runs, meta, loading, error }
+  return { runs, meta, loading, error, offset, setOffset }
 }
 
 export function useEvalRun(runId: string | undefined) {
