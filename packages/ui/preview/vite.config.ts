@@ -29,6 +29,29 @@ function mockApiPlugin() {
           const id = req.url.split('/api/sessions/')[1]
           const session = mockData.sessions.find((s: any) => s.session_id === id) ?? mockData.sessions[0]
           res.end(JSON.stringify(session))
+        } else if (req.url === '/api/evals' || req.url?.startsWith('/api/evals?')) {
+          const runs = (mockData.evals ?? []).map((r: any) => {
+            const { cases: _cases, ...row } = r
+            return row
+          })
+          res.end(JSON.stringify({
+            api_id: 'preview-mock',
+            meta: { limit: 20, offset: 0, total_count: runs.length, next: null, previous: null },
+            objects: runs,
+          }))
+        } else if (req.url?.match(/^\/api\/evals\/[^/?]+\/cases\/[^?]+$/)) {
+          const m = req.url.match(/^\/api\/evals\/([^/?]+)\/cases\/([^?]+)$/)
+          const runId = m?.[1]
+          const caseId = m?.[2]
+          const run = (mockData.evals ?? []).find((r: any) => r.run_id === runId)
+          const c = run?.cases?.find((x: any) => x.case_id === caseId) ?? run?.cases?.[0]
+          if (!c) { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found' })); return }
+          res.end(JSON.stringify({ ...c, api_id: 'preview-mock' }))
+        } else if (req.url?.match(/^\/api\/evals\/[^/?]+$/)) {
+          const runId = req.url.split('/api/evals/')[1].split('?')[0]
+          const run = (mockData.evals ?? []).find((r: any) => r.run_id === runId) ?? (mockData.evals ?? [])[0]
+          if (!run) { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found' })); return }
+          res.end(JSON.stringify({ ...run, api_id: 'preview-mock' }))
         } else {
           res.statusCode = 404
           res.end(JSON.stringify({ error: 'Not found' }))
@@ -73,6 +96,9 @@ export default defineConfig({
       { find: '@/components/session-config', replacement: reg('session-config/session-config.tsx') },
       { find: '@/components/sessions-page', replacement: reg('sessions-page/sessions-page.tsx') },
       { find: '@/components/session-detail-page', replacement: reg('session-detail-page/session-detail-page.tsx') },
+      { find: '@/components/evals-page', replacement: reg('evals-page/evals-page.tsx') },
+      { find: '@/components/eval-run-detail-page', replacement: reg('eval-run-detail-page/eval-run-detail-page.tsx') },
+      { find: '@/components/eval-case-detail-page', replacement: reg('eval-case-detail-page/eval-case-detail-page.tsx') },
 
       // Fallback — regex so it doesn't outprioritize specific string matches
       { find: /^@\//, replacement: resolve(__dirname, 'src') + '/' },

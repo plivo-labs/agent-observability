@@ -13,14 +13,19 @@ import { SessionEvents } from '@/components/session-events'
 import { SessionConfig } from '@/components/session-config'
 import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
+import { EvalsPage } from '@/components/evals-page'
+import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
 import mockData from './mock-data.json'
 
 const SESSION_ID = mockData.sessions[0].session_id
+const EVAL_RUN_ID = (mockData as any).evals?.[0]?.run_id ?? 'run_pytest_2026_04_22'
 
 type View =
   | 'all'
   | 'sessions-page'
   | 'session-detail-page'
+  | 'evals-page'
+  | 'eval-run-detail-page'
   | 'metric-summary-cards'
   | 'session-header'
   | 'session-timeline'
@@ -42,6 +47,8 @@ const NAV: NavItem[] = [
   { key: 'all', label: 'All Components', group: 'Overview' },
   { key: 'sessions-page', label: 'Sessions List', group: 'Pages' },
   { key: 'session-detail-page', label: 'Session Detail', group: 'Pages' },
+  { key: 'evals-page', label: 'Evals List', group: 'Pages' },
+  { key: 'eval-run-detail-page', label: 'Eval Run Detail', group: 'Pages' },
   { key: 'metric-summary-cards', label: 'Metric Summary Cards', group: 'Components' },
   { key: 'session-header', label: 'Session Header', group: 'Components' },
   { key: 'session-timeline', label: 'Session Timeline', group: 'Components' },
@@ -138,12 +145,50 @@ function SessionDetailPreview() {
   )
 }
 
+function EvalsListRoute() {
+  const navigate = useNavigate()
+  return <EvalsPage onRunClick={(id) => navigate(`/evals/${id}`)} />
+}
+
+function EvalRunDetailRoute() {
+  const { runId } = useParams<{ runId: string }>()
+  const navigate = useNavigate()
+  if (!runId) return null
+  return <EvalRunDetailPage runId={runId} onBack={() => navigate('/evals')} />
+}
+
+function EvalsListPreview() {
+  return (
+    <MemoryRouter initialEntries={['/evals']}>
+      <Routes>
+        <Route path="/evals" element={<EvalsListRoute />} />
+        <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
+function EvalRunDetailPreview() {
+  return (
+    <MemoryRouter initialEntries={[`/evals/${EVAL_RUN_ID}`]}>
+      <Routes>
+        <Route path="/evals" element={<EvalsListRoute />} />
+        <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
 function SingleComponent({ view }: { view: View }) {
   switch (view) {
     case 'sessions-page':
       return <SessionsListPreview />
     case 'session-detail-page':
       return <SessionDetailPreview />
+    case 'evals-page':
+      return <EvalsListPreview />
+    case 'eval-run-detail-page':
+      return <EvalRunDetailPreview />
     default:
       break
   }
