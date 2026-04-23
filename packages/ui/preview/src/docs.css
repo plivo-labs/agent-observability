@@ -1,6 +1,8 @@
 /* Documentation-style shell for the Agent Observability component playground.
    Ported from the design handoff — docs-shell only; component internals unchanged. */
 
+@import url('https://fonts.googleapis.com/css2?family=Fragment+Mono&display=swap');
+
 .docs-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -56,7 +58,7 @@
   font-weight: 400;
 }
 .docs-topbar .version {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   color: hsl(var(--muted-foreground));
   padding: 2px 6px;
@@ -239,7 +241,7 @@
   border: 1px solid hsl(var(--border));
   background: hsl(var(--card));
   color: hsl(var(--foreground));
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .install-tabs {
   display: flex;
@@ -266,6 +268,7 @@
   font-weight: 600;
 }
 .install-cmd {
+  position: relative;
   padding: 14px 16px;
   font-size: 13px;
   line-height: 1.5;
@@ -280,6 +283,28 @@
 }
 .install-cmd .cli { color: hsl(var(--foreground)); }
 .install-cmd .str { color: hsl(var(--primary)); }
+.install-cmd .copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, background .15s, color .15s;
+}
+.install-block:hover .install-cmd .copy,
+.install-cmd .copy:focus-visible { opacity: 1; }
+.install-cmd .copy:hover {
+  background: hsl(var(--bg2));
+  color: hsl(var(--foreground));
+}
 
 .docs-pager {
   display: grid;
@@ -306,7 +331,7 @@
   cursor: not-allowed;
 }
 .docs-pager button .dir {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   font-weight: 600;
   color: hsl(var(--tertiary));
@@ -321,4 +346,168 @@
 .docs-pager button.next {
   text-align: right;
   align-items: flex-end;
+}
+
+/* ───── Props table ──────────────────────────────────────── */
+.docs-empty {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  background: hsl(var(--bg2) / 0.4);
+}
+.docs-props {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0 0 8px;
+  background: hsl(var(--card));
+}
+.docs-props table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.docs-props thead th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+  background: hsl(var(--bg2) / 0.5);
+  padding: 9px 14px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.docs-props tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  vertical-align: top;
+  color: hsl(var(--foreground));
+  line-height: 1.55;
+}
+.docs-props tbody tr:last-child td { border-bottom: none; }
+.docs-props tbody tr:hover { background: hsl(var(--bg2) / 0.3); }
+.docs-props td:first-child { white-space: nowrap; width: 1%; }
+.docs-props td:nth-child(2) { width: 1%; }
+.docs-props td:nth-child(3) { width: 1%; white-space: nowrap; }
+.docs-props code {
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: hsl(var(--bg2));
+  color: hsl(var(--foreground));
+  font-weight: 500;
+}
+.docs-props code.type { color: hsl(var(--primary)); }
+.docs-props code.dflt { color: hsl(var(--muted-foreground)); }
+.docs-props .req {
+  display: inline-block;
+  margin-left: 6px;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: hsl(var(--destructive));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.docs-props .dash { color: hsl(var(--tertiary)); }
+
+/* ───── Usage code block ─────────────────────────────────── */
+.docs-usage {
+  position: relative;
+  margin: 0 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+  background: hsl(var(--card));
+}
+
+/* Wraps Shiki output OR the pre fallback while Shiki loads. */
+.docs-usage .docs-code,
+.docs-usage .docs-code pre {
+  margin: 0;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.docs-usage .docs-code pre {
+  padding: 14px 16px;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.docs-usage .docs-code code {
+  font: inherit;
+  background: transparent;
+}
+.docs-usage .copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 10px;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, background .15s, color .15s;
+}
+.docs-usage:hover .copy,
+.docs-usage .copy:focus-visible { opacity: 1; }
+.docs-usage .copy:hover {
+  background: hsl(var(--bg2));
+  color: hsl(var(--foreground));
+}
+
+/* ───── Signature / Returns code block ───────────────────── */
+.docs-signature {
+  margin: 0 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+  background: hsl(var(--card));
+}
+.docs-signature pre {
+  margin: 0;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.docs-signature code {
+  font: inherit;
+  background: transparent;
+}
+/* Shiki's .line wrappers pick up a leading zero-width inline-block inside
+ * .docs-signature — suppress line numbers here (they only make sense for
+ * multi-line usage blocks). */
+.docs-signature .line {
+  display: inline;
+  padding-left: 0;
+}
+
+/* ───── Shiki dual-theme colorization ─────────────────────
+ * createHighlighter({ themes: ['github-light','github-dark'] }) + defaultColor:false
+ * emits inline CSS vars (--shiki-light, --shiki-dark, --shiki-light-bg,
+ * --shiki-dark-bg). The default shows the light theme; .dark flips both
+ * the foreground and background to the dark variants. */
+.docs-code .shiki,
+.docs-code .shiki span {
+  color: var(--shiki-light);
+  background-color: var(--shiki-light-bg);
+}
+.dark .docs-code .shiki,
+.dark .docs-code .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
 }
