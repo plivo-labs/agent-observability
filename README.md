@@ -87,7 +87,9 @@ See the [full documentation](packages/ui/README.md) for usage, available compone
 
 ### Preview App
 
-A standalone app to browse all components with mock data:
+Live playground: **https://plivo-labs.github.io/agent-observability/** — browse every component with mock data, no install required.
+
+To run locally:
 
 ```bash
 cd packages/ui/preview

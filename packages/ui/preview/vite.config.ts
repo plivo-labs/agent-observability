@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
+import { handleMockRequest, type MockData } from './src/lib/mock-handler'
 
 const reg = (...segments: string[]) =>
   resolve(__dirname, '../registry/new-york', ...segments)
@@ -13,60 +14,28 @@ function mockApiPlugin() {
   return {
     name: 'mock-api',
     configureServer(server: any) {
-      server.middlewares.use((req: any, res: any, next: any) => {
+      const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8')) as MockData
+      server.middlewares.use(async (req: any, res: any, next: any) => {
         if (!req.url?.startsWith('/api/')) return next()
-
-        const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8'))
-        res.setHeader('Content-Type', 'application/json')
-
-        if (req.url === '/api/sessions' || req.url?.startsWith('/api/sessions?')) {
-          res.end(JSON.stringify({
-            api_id: 'preview-mock',
-            meta: { limit: 20, offset: 0, total_count: mockData.sessions.length, next: null, previous: null },
-            objects: mockData.sessions,
-          }))
-        } else if (req.url?.match(/^\/api\/sessions\/[^?]+$/)) {
-          const id = req.url.split('/api/sessions/')[1]
-          const session = mockData.sessions.find((s: any) => s.session_id === id) ?? mockData.sessions[0]
-          res.end(JSON.stringify(session))
-        } else if (req.url === '/api/evals' || req.url?.startsWith('/api/evals?')) {
-          const runs = (mockData.evals ?? []).map((r: any) => {
-            const { cases: _cases, ...row } = r
-            return row
-          })
-          res.end(JSON.stringify({
-            api_id: 'preview-mock',
-            meta: { limit: 20, offset: 0, total_count: runs.length, next: null, previous: null },
-            objects: runs,
-          }))
-        } else if (req.url?.match(/^\/api\/evals\/[^/?]+\/cases\/[^?]+$/)) {
-          const m = req.url.match(/^\/api\/evals\/([^/?]+)\/cases\/([^?]+)$/)
-          const runId = m?.[1]
-          const caseId = m?.[2]
-          const run = (mockData.evals ?? []).find((r: any) => r.run_id === runId)
-          const c = run?.cases?.find((x: any) => x.case_id === caseId) ?? run?.cases?.[0]
-          if (!c) { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found' })); return }
-          res.end(JSON.stringify({ ...c, api_id: 'preview-mock' }))
-        } else if (req.url?.match(/^\/api\/evals\/[^/?]+$/)) {
-          const runId = req.url.split('/api/evals/')[1].split('?')[0]
-          const run = (mockData.evals ?? []).find((r: any) => r.run_id === runId) ?? (mockData.evals ?? [])[0]
-          if (!run) { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found' })); return }
-          res.end(JSON.stringify({ ...run, api_id: 'preview-mock' }))
-        } else {
-          res.statusCode = 404
-          res.end(JSON.stringify({ error: 'Not found' }))
-        }
+        const url = new URL(req.url, 'http://localhost')
+        const response = handleMockRequest(url.pathname, url.search, mockData)
+        if (!response) return next()
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
       })
     },
   }
 }
 
 export default defineConfig({
+  base: '/agent-observability/',
   plugins: [react(), tailwindcss(), mockApiPlugin()],
   optimizeDeps: {
     include: ['recharts', 'dayjs', 'lucide-react', 'wavesurfer.js'],
   },
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: [
       // shadcn UI — local to preview
       { find: '@/components/ui', replacement: resolve(__dirname, 'src/components/ui') },
