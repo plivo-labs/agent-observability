@@ -52,7 +52,7 @@ interface PropDef {
 interface DocEntry {
   id: string
   label: string
-  group: 'Getting started' | 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
+  group: 'Server setup' | 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
   /** Component registry name (for the install command). Omitted for guide
    *  entries that don't correspond to a registry item. */
   pkg?: string
@@ -124,53 +124,34 @@ const ENTRIES: DocEntry[] = [
   {
     id: 'server-quickstart',
     label: 'Quickstart',
-    group: 'Getting started',
+    group: 'Server setup',
     description:
-      'Run the Agent Observability server locally. It receives session reports from the agent-transport SDKs, stores them in Postgres, and serves the dashboard UI.',
+      'Run the Agent Observability server. It receives session reports from the agent-transport SDKs, stores them in Postgres, and serves the dashboard UI.',
     body: () => (
       <>
-        <div className="comp-sub">Local dev</div>
         <p className="docs-p">
-          Clone the repo, install deps, and start a Postgres — everything else runs from Bun.
+          Clone the repo and bring up Postgres + the app together. Migrations apply automatically on startup; the dashboard is on <code className="type">:9090</code>.
         </p>
         <CodeBlock
-          lang="tsx"
+          lang="bash"
           code={`git clone https://github.com/plivo-labs/agent-observability
 cd agent-observability
-bun install
-
-# Start Postgres (Docker)
-docker compose up postgres -d
-
-# Copy env and run the server
-cp .env.example .env
-bun run dev              # backend on :9090
-bun run dev:frontend     # vite dev server on :5173 (proxies /api to :9090)`}
+docker compose up --build`}
         />
-
-        <div className="comp-sub">Docker</div>
         <p className="docs-p">
-          Bring up Postgres + the app together. Migrations apply automatically on startup.
+          That's it for most users. If you want to hack on the code instead, see{' '}
+          <a href="https://github.com/plivo-labs/agent-observability#development">
+            the repo README
+          </a>{' '}
+          for the Bun-based dev flow.
         </p>
-        <CodeBlock lang="tsx" code={`docker compose up`} />
-
-        <div className="comp-sub">Production</div>
-        <p className="docs-p">
-          Build the frontend once, then start the Hono server — it serves the static bundle
-          alongside the API.
-        </p>
-        <CodeBlock
-          lang="tsx"
-          code={`bun run build:frontend
-bun run start            # serves API + static UI on :9090`}
-        />
       </>
     ),
   },
   {
     id: 'server-env',
     label: 'Environment',
-    group: 'Getting started',
+    group: 'Server setup',
     description:
       'Configuration comes from environment variables. Only DATABASE_URL is required; basic auth and S3 are opt-in and enable themselves when both vars in the pair are set.',
     body: () => (
@@ -249,7 +230,7 @@ bun run start            # serves API + static UI on :9090`}
   {
     id: 'server-api',
     label: 'API routes',
-    group: 'Getting started',
+    group: 'Server setup',
     description:
       'HTTP surface exposed by the server. The /observability/* routes are inbound (SDKs call them); the /api/* routes power the dashboard and anything else that needs to read back captured data.',
     body: () => (
@@ -1159,14 +1140,14 @@ export function MyChart({ data }: { data: Row[] }) {
   },
 ]
 
-const GROUPS: Array<DocEntry['group']> = [
-  'Getting started',
-  'Core',
-  'Hooks',
-  'Pages',
-  'Components',
-  'Charts',
-  'Utilities',
+/** Sidebar structure: two top-level categories, each containing one or
+ * more groups. Inside a group, entries render in declaration order. */
+const CATEGORIES: Array<{ label: string; groups: Array<DocEntry['group']> }> = [
+  { label: 'Server setup', groups: ['Server setup'] },
+  {
+    label: 'UI components',
+    groups: ['Core', 'Hooks', 'Pages', 'Components', 'Charts', 'Utilities'],
+  },
 ]
 
 function PlivoLogo() {
@@ -1200,9 +1181,6 @@ function DocsTopbar() {
         </div>
       </div>
       <div className="main-zone">
-        <nav>
-          <a className="active">Components</a>
-        </nav>
         <div className="spacer" />
         <a
           className="link-out"
@@ -1226,19 +1204,32 @@ function DocsSidebar({
 }) {
   return (
     <aside className="docs-sidebar">
-      {GROUPS.map((group) => (
-        <div className="sect" key={group}>
-          <div className="sect-h">{group}</div>
-          {ENTRIES.filter((e) => e.group === group).map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              className={'item' + (entry.id === active ? ' active' : '')}
-              onClick={() => onSelect(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
+      {CATEGORIES.map((category) => (
+        <div className="cat" key={category.label}>
+          <div className="cat-h">{category.label}</div>
+          {category.groups.map((group) => {
+            const entries = ENTRIES.filter((e) => e.group === group)
+            if (entries.length === 0) return null
+            // If the category has only one group and it shares the category
+            // label, skip the redundant subheader.
+            const showGroupHeader =
+              category.groups.length > 1 || group !== category.label
+            return (
+              <div className="sect" key={group}>
+                {showGroupHeader && <div className="sect-h">{group}</div>}
+                {entries.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={'item' + (entry.id === active ? ' active' : '')}
+                    onClick={() => onSelect(entry.id)}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </div>
+            )
+          })}
         </div>
       ))}
     </aside>
@@ -1318,6 +1309,7 @@ async function getHighlighter(): Promise<HighlighterCore> {
         langs: [
           import('shiki/langs/tsx.mjs'),
           import('shiki/langs/typescript.mjs'),
+          import('shiki/langs/bash.mjs'),
         ],
         engine: createOnigurumaEngine(import('shiki/wasm')),
       })
@@ -1332,7 +1324,7 @@ function CodeBlock({
   className,
 }: {
   code: string
-  lang?: 'tsx' | 'ts'
+  lang?: 'tsx' | 'ts' | 'bash'
   className?: string
 }) {
   const [html, setHtml] = useState<string>('')

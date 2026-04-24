@@ -103,16 +103,34 @@
   overflow-y: auto;
   background: hsl(var(--background));
 }
+.docs-sidebar .cat {
+  margin-bottom: 26px;
+}
+.docs-sidebar .cat + .cat {
+  padding-top: 18px;
+  border-top: 1px solid hsl(var(--border));
+}
+.docs-sidebar .cat-h {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: hsl(var(--foreground));
+  margin: 0 0 12px;
+  padding: 0 8px;
+}
 .docs-sidebar .sect {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+}
+.docs-sidebar .sect:last-child {
+  margin-bottom: 0;
 }
 .docs-sidebar .sect-h {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: hsl(var(--foreground));
-  margin-bottom: 6px;
+  letter-spacing: 0.08em;
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 6px;
   padding: 0 8px;
 }
 .docs-sidebar .item {
@@ -187,6 +205,26 @@
   color: hsl(var(--muted-foreground));
   margin: 0 0 14px;
   max-width: 680px;
+}
+
+/* Raw CodeBlock in a guide body — gets the same card treatment as the
+ * Signature / Usage blocks so it doesn't sit naked on the page. */
+.docs-main > pre.shiki,
+.docs-main > div > pre.shiki {
+  margin: 4px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  font-family: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-x: auto;
+}
+.docs-main > pre.shiki code,
+.docs-main > div > pre.shiki code {
+  font: inherit;
+  background: transparent;
 }
 
 .pvw {
