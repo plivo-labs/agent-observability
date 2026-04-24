@@ -14,8 +14,13 @@ interface Bucket {
 
 const pending: Bucket = { runResults: [], judgments: [] };
 
-/** Users call this inside a test to record a LiveKit RunResult. */
+/** Users call this inside a test to record a LiveKit RunResult.
+ * Idempotent by reference — calling it explicitly AND via the auto-capture
+ * wrapper on the same RunResult produces a single entry, so events aren't
+ * double-serialized. */
 export function captureRunResult<T>(runResult: T): T {
+  if (runResult == null) return runResult;
+  if (pending.runResults.indexOf(runResult as unknown) !== -1) return runResult;
   pending.runResults.push(runResult);
   return runResult;
 }

@@ -71,14 +71,23 @@ async function findJudgeTarget(): Promise<{ proto: any; original: Function } | n
 
 function findChatMessageAssert(mod: any): any | null {
   if (!mod) return null;
-  // Direct export
-  if (mod.ChatMessageAssert) return mod.ChatMessageAssert;
-  // Namespaced — `voice.ChatMessageAssert` or similar
-  const voice = mod.voice;
-  if (voice?.ChatMessageAssert) return voice.ChatMessageAssert;
-  if (voice?.expect?.ChatMessageAssert) return voice.expect.ChatMessageAssert;
-  // Default export barrel
-  const def = mod.default;
-  if (def?.ChatMessageAssert) return def.ChatMessageAssert;
-  return null;
+  // The class was named `ChatMessageAssert` on older LiveKit snapshots and
+  // `MessageAssert` on current releases (1.2.x Node). Probe both names at
+  // each plausible namespace depth.
+  const NAMES = ["ChatMessageAssert", "MessageAssert"];
+  const hit = (obj: any): any | null => {
+    if (!obj) return null;
+    for (const n of NAMES) if (obj[n]) return obj[n];
+    return null;
+  };
+  return (
+    hit(mod)
+    ?? hit(mod.voice)
+    ?? hit(mod.voice?.testing)
+    ?? hit(mod.voice?.testing?.runResult)
+    ?? hit(mod.voice?.expect)
+    ?? hit(mod.default)
+    ?? hit(mod.default?.voice)
+    ?? hit(mod.default?.voice?.testing)
+  );
 }

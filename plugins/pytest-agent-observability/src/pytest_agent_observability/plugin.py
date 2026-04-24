@@ -66,6 +66,36 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="Account identifier for this test run. Overrides AGENT_OBSERVABILITY_ACCOUNT_ID.",
     )
+    group.addoption(
+        "--agent-observability-timeout",
+        dest="agent_observability_timeout",
+        default=None,
+        type=float,
+        help=(
+            "Upload request timeout in seconds. Default 10. "
+            "Overrides AGENT_OBSERVABILITY_TIMEOUT."
+        ),
+    )
+    group.addoption(
+        "--agent-observability-max-retries",
+        dest="agent_observability_max_retries",
+        default=None,
+        type=int,
+        help=(
+            "Max upload attempts before writing the payload to the fallback "
+            "cache. Default 3. Overrides AGENT_OBSERVABILITY_MAX_RETRIES."
+        ),
+    )
+    group.addoption(
+        "--agent-observability-fallback-dir",
+        dest="agent_observability_fallback_dir",
+        default=None,
+        help=(
+            "Directory to write failed-upload payloads to. Defaults to the "
+            "pytest cache (.pytest_cache/agent-observability). "
+            "Overrides AGENT_OBSERVABILITY_FALLBACK_DIR."
+        ),
+    )
 
 
 # ── Configure / unconfigure (lifecycle) ─────────────────────────────────────
@@ -80,8 +110,22 @@ def pytest_configure(config: pytest.Config) -> None:
     pw = os.getenv("AGENT_OBSERVABILITY_PASS")
     auth = (user, pw) if user and pw else None
 
+    timeout_s = (
+        config.getoption("agent_observability_timeout")
+        or up._env_float("AGENT_OBSERVABILITY_TIMEOUT", 10.0)
+    )
+    max_retries = (
+        config.getoption("agent_observability_max_retries")
+        or up._env_int("AGENT_OBSERVABILITY_MAX_RETRIES", 3)
+    )
+
     _state.enabled = True
-    _state.upload_config = up.UploadConfig(url=url, basic_auth=auth)
+    _state.upload_config = up.UploadConfig(
+        url=url,
+        basic_auth=auth,
+        timeout_s=float(timeout_s),
+        max_retries=int(max_retries),
+    )
     _state.agent_id = (
         config.getoption("agent_observability_agent_id")
         or os.getenv("AGENT_OBSERVABILITY_AGENT_ID")
@@ -91,14 +135,21 @@ def pytest_configure(config: pytest.Config) -> None:
         or os.getenv("AGENT_OBSERVABILITY_ACCOUNT_ID")
     )
 
-    cache_dir = getattr(config, "cache", None)
-    if cache_dir is not None:
-        try:
-            _state.fallback_dir = Path(cache_dir.mkdir("agent-observability"))
-        except Exception:
-            _state.fallback_dir = Path(".pytest_cache") / "agent-observability"
+    override_dir = (
+        config.getoption("agent_observability_fallback_dir")
+        or os.getenv("AGENT_OBSERVABILITY_FALLBACK_DIR")
+    )
+    if override_dir:
+        _state.fallback_dir = Path(override_dir)
     else:
-        _state.fallback_dir = Path(".pytest_cache") / "agent-observability"
+        cache_dir = getattr(config, "cache", None)
+        if cache_dir is not None:
+            try:
+                _state.fallback_dir = Path(cache_dir.mkdir("agent-observability"))
+            except Exception:
+                _state.fallback_dir = Path(".pytest_cache") / "agent-observability"
+        else:
+            _state.fallback_dir = Path(".pytest_cache") / "agent-observability"
 
     _install_judge_wrapper()
     _install_autocapture_wrapper()

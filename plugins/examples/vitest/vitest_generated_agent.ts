@@ -22,9 +22,10 @@
  */
 
 import { describe, it } from "vitest";
-import { Agent, AgentSession } from "@livekit/agents";
-import { inference } from "@livekit/agents-plugin-inference";
-import { tool } from "@livekit/agents/llm";
+import { voice, llm } from "@livekit/agents";
+const { Agent, AgentSession } = voice;
+import { LLM as OpenAILLM } from "@livekit/agents-plugin-openai";
+const { tool } = llm;
 import { z } from "zod";
 
 import {
@@ -179,11 +180,11 @@ describe("LLM-generated PizzaShopAgent scenarios", () => {
   it.each(SCENARIOS.map((s) => [s.name, s] as const))(
     "scenario: %s",
     async (_name, scenario) => {
-      const model = new inference.LLM({ model: "openai/gpt-4.1-mini" });
+      const model = new OpenAILLM({ model: "gpt-4.1-mini" });
       const sess = new AgentSession({ llm: model });
       try {
         await sess.start({ agent: new PizzaShopAgent() });
-        const result = await sess.run({ userInput: scenario.userInput });
+        const result = await sess.run({ userInput: scenario.userInput }).wait();
 
         // Strict tool-call check when the generator specified one. This
         // stays a structural assertion — it's not an LLM-judged call.
@@ -192,12 +193,12 @@ describe("LLM-generated PizzaShopAgent scenarios", () => {
         }
 
         // Main verdict goes through `.judge()`, which the plugin records.
-        await result.expect.nextEvent({ type: "message" }).judge(model, {
+        await result.expect.at(-1).isMessage({ role: "assistant" }).judge(model, {
           intent: scenario.judgeIntent,
         });
       } finally {
         await sess.close();
-        await model.close?.();
+        await model?.close?.();
       }
     },
   );

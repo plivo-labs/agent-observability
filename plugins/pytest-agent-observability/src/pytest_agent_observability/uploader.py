@@ -87,11 +87,41 @@ def _write_fallback(payload: dict, fallback_dir: Path) -> None:
 
 
 def config_from_env() -> Optional[UploadConfig]:
-    """Build an UploadConfig from env vars. Returns None if URL is missing."""
+    """Build an UploadConfig from env vars. Returns None if URL is missing.
+
+    Reads `AGENT_OBSERVABILITY_TIMEOUT` (seconds) and
+    `AGENT_OBSERVABILITY_MAX_RETRIES` alongside the required URL + optional
+    basic-auth pair. Invalid numeric values fall back to the defaults.
+    """
     url = os.getenv("AGENT_OBSERVABILITY_URL")
     if not url:
         return None
     user = os.getenv("AGENT_OBSERVABILITY_USER")
     pw = os.getenv("AGENT_OBSERVABILITY_PASS")
     auth: Optional[tuple[str, str]] = (user, pw) if user and pw else None
-    return UploadConfig(url=url, basic_auth=auth)
+    return UploadConfig(
+        url=url,
+        basic_auth=auth,
+        timeout_s=_env_float("AGENT_OBSERVABILITY_TIMEOUT", 10.0),
+        max_retries=_env_int("AGENT_OBSERVABILITY_MAX_RETRIES", 3),
+    )
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default

@@ -114,22 +114,37 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
   }
   if (event.type === 'function_call') {
     const f = event as RunEventFunctionCall
+    const argsStr =
+      typeof f.arguments === 'string'
+        ? f.arguments
+        : f.arguments == null
+          ? ''
+          : JSON.stringify(f.arguments, null, 2)
+    // Treat empty string / `{}` / `null` / `undefined` as "no arguments"
+    // rather than leaving the <pre> blank.
+    const argsEmpty = argsStr.trim() === '' || argsStr.trim() === '{}' || argsStr.trim() === 'null'
     return (
       <div className="border rounded-md overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-foreground border-b border-border text-xs-600">
           tool call · {f.name ?? 'unknown'}
           <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
         </div>
-        <pre className="p-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
-          {typeof f.arguments === 'string'
-            ? f.arguments
-            : JSON.stringify(f.arguments, null, 2)}
-        </pre>
+        {argsEmpty ? (
+          <div className="p-3 text-xs-400 italic text-muted-foreground">
+            No arguments recorded.
+          </div>
+        ) : (
+          <pre className="p-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
+            {argsStr}
+          </pre>
+        )}
       </div>
     )
   }
   if (event.type === 'function_call_output') {
     const o = event as RunEventFunctionCallOutput
+    const out = o.output == null ? '' : String(o.output)
+    const outEmpty = out.trim() === ''
     return (
       <div className="border rounded-md overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-foreground border-b border-border text-xs-600">
@@ -141,9 +156,15 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
           )}
           <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
         </div>
-        <div className="p-3 text-s-400 font-mono whitespace-pre-wrap break-words">
-          {o.output ?? ''}
-        </div>
+        {outEmpty ? (
+          <div className="p-3 text-s-400 italic text-muted-foreground">
+            No output recorded.
+          </div>
+        ) : (
+          <div className="p-3 text-s-400 font-mono whitespace-pre-wrap break-words">
+            {out}
+          </div>
+        )}
       </div>
     )
   }

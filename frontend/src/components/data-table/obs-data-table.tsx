@@ -45,7 +45,13 @@ export function ObsDataTable<TData>({
       {...props}
     >
       {toolbar}
-      <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+      {/*
+        Edge columns get `pl-4` / `pr-4` so the first and last cells don't
+        crash into the card border — the stock shadcn TableCell ships with
+        `p-2` on every cell, which reads as "no padding" against the card
+        edge. Inner cells keep their default 2-unit horizontal padding.
+      */}
+      <div className="overflow-hidden rounded-md border bg-card shadow-sm [&_tr>:first-child]:pl-4 [&_tr>:last-child]:pr-4">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (

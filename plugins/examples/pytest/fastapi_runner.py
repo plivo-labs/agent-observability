@@ -13,7 +13,7 @@
 # ]
 #
 # [tool.uv.sources]
-# pytest-agent-observability = { path = "../pytest-agent-observability" }
+# pytest-agent-observability = { path = "../../pytest-agent-observability" }
 # ///
 """FastAPI server that exposes test runs over HTTP.
 
@@ -56,7 +56,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
-
 # ── Logging ─────────────────────────────────────────────────────────────────
 
 # Use a named logger so uvicorn can route it alongside its own access logs.
@@ -69,7 +68,6 @@ log = logging.getLogger("fastapi_runner")
 
 import pytest
 from fastapi import Body, FastAPI, HTTPException
-from pydantic import BaseModel, Field
 
 # Pre-import the LiveKit OpenAI plugin on the main thread at module load.
 # `pytest.main()` runs in a FastAPI threadpool worker for sync endpoints,
@@ -78,6 +76,7 @@ from pydantic import BaseModel, Field
 # import here — at uvicorn startup, on the main thread — registers the
 # plugin safely; the worker-thread import later is a no-op re-import.
 from livekit.plugins import openai as _lk_openai_preload  # noqa: F401
+from pydantic import BaseModel, Field
 
 # ── Pytest in-process collector plugin ──────────────────────────────────────
 
@@ -140,6 +139,7 @@ class _ResultsCollector:
 
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:

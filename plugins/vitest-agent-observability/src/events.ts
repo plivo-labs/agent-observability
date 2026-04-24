@@ -52,7 +52,11 @@ function serializeEvent(ev: unknown): RunEvent {
     // Pass per-turn metrics through so the dashboard can render latency.
     if ("metrics" in item) setDefault(ev_dict, "metrics", item.metrics);
   } else if (type === "function_call") {
-    let args: unknown = item.arguments;
+    // LiveKit Node's FunctionCall chat item stores the JSON-string args
+    // under `args`, not `arguments`. Python's FunctionCall uses
+    // `arguments`. Accept both so either SDK flavor produces a populated
+    // payload instead of `arguments: undefined`.
+    let args: unknown = item.arguments ?? item.args;
     if (typeof args === "string") {
       try {
         args = JSON.parse(args);

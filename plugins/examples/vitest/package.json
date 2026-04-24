@@ -1,0 +1,30 @@
+{
+  "name": "agent-observability-examples",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable Vitest examples for vitest-agent-observability",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:agent": "AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot vitest run vitest_agent.ts",
+    "test:banking": "AGENT_OBSERVABILITY_AGENT_ID=demo-banking-bot vitest run vitest_banking_agent.ts",
+    "test:generated": "AGENT_OBSERVABILITY_AGENT_ID=demo-pizza-bot vitest run vitest_generated_agent.ts",
+    "runner": "bun run bun_runner.ts"
+  },
+  "dependencies": {
+    "@livekit/agents": "^1.2.8",
+    "@livekit/agents-plugin-openai": "^1.2.8",
+    "openai": "^4.80.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.9",
+    "vitest-agent-observability": "file:../../vitest-agent-observability"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

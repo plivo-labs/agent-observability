@@ -8,8 +8,9 @@
  * Vitest programmatically via its Node API).
  */
 
-import { Agent, AgentSession, llm } from "@livekit/agents";
-import { inference } from "@livekit/agents-plugin-inference";
+import { voice, llm } from "@livekit/agents";
+const { Agent, AgentSession } = voice;
+import { LLM as OpenAILLM } from "@livekit/agents-plugin-openai";
 import OpenAI from "openai";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -142,7 +143,7 @@ export async function generateScenarios(
 // ── Scenario execution ──────────────────────────────────────────────────────
 
 export function defaultJudgeLLM(): llm.LLM {
-  return new inference.LLM({ model: "openai/gpt-4.1-mini" });
+  return new OpenAILLM({ model: "gpt-4.1-mini" });
 }
 
 async function judgeReply(
@@ -195,7 +196,7 @@ export async function runScenario(
 
   try {
     await session.start({ agent: agentFactory() });
-    const result = await session.run({ userInput: scenario.userInput });
+    const result = await session.run({ userInput: scenario.userInput }).wait();
 
     for (const event of result.events ?? []) {
       // LiveKit agents surface events with {type, item} shape. Field names

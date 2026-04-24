@@ -10,8 +10,8 @@ copy-paste blueprint for testing their own agent-transport voice agents.
 
 | File | Framework | What it shows |
 |------|-----------|----------------|
-| `pytest_agent.py` | pytest (Python) | `Assistant` class, tool-call assertions, `.judge()` evals, agent handoff, off-task resistance |
-| `vitest_agent.ts` | Vitest (Node/TS) | Same shape, same test cases, same assertions |
+| `pytest/pytest_agent.py` | pytest (Python) | `Assistant` class, tool-call assertions, `.judge()` evals, agent handoff, off-task resistance |
+| `vitest/vitest_agent.ts` | Vitest (Node/TS) | Same shape, same test cases, same assertions |
 
 ### Complex multi-agent example
 
@@ -23,8 +23,8 @@ refusals, prompt injection, and every handoff in the agent graph.
 
 | File | Framework |
 |------|-----------|
-| `pytest_banking_agent.py` | pytest (Python) |
-| `vitest_banking_agent.ts` | Vitest (Node/TS) |
+| `pytest/pytest_banking_agent.py` | pytest (Python) |
+| `vitest/vitest_banking_agent.ts` | Vitest (Node/TS) |
 
 Notable patterns:
 
@@ -46,9 +46,9 @@ enforced strictly.
 
 | File | Framework | Purpose |
 |------|-----------|---------|
-| `scenario_runner.py` / `scenarioRunner.ts` | library | Reusable core: `generate_scenarios`, `run_scenario`, `run_scenarios`, `summarize` |
-| `pytest_generated_agent.py` | pytest (Python) | Parametrized generated tests over `PizzaShopAgent` |
-| `vitest_generated_agent.ts` | Vitest (Node/TS) | `it.each` generated tests over `PizzaShopAgent` |
+| `pytest/scenario_runner.py` / `vitest/scenarioRunner.ts` | library | Reusable core: `generate_scenarios`, `run_scenario`, `run_scenarios`, `summarize` |
+| `pytest/pytest_generated_agent.py` | pytest (Python) | Parametrized generated tests over `PizzaShopAgent` |
+| `vitest/vitest_generated_agent.ts` | Vitest (Node/TS) | `it.each` generated tests over `PizzaShopAgent` |
 
 How it works:
 
@@ -68,7 +68,7 @@ any tests run, so generation happens synchronously at import time (via
 `asyncio.run`). We cache the result in the module so a single pytest run
 hits the API once.
 
-Node equivalent: ES-module top-level `await` in `vitest_generated_agent.ts`
+Node equivalent: ES-module top-level `await` in `vitest/vitest_generated_agent.ts`
 does the same thing declaratively.
 
 ### HTTP-triggered test runners
@@ -80,14 +80,14 @@ agent directly.
 
 | File | Framework |
 |------|-----------|
-| `fastapi_runner.py` | FastAPI + `pytest.main()` |
-| `bun_runner.ts` | Bun HTTP server + `startVitest` from `vitest/node` |
+| `pytest/fastapi_runner.py` | FastAPI + `pytest.main()` |
+| `vitest/bun_runner.ts` | Bun HTTP server + `startVitest` from `vitest/node` |
 
 Both servers expose two endpoints:
 
 | Endpoint | What it does |
 |----------|--------------|
-| `POST /run/pytest` / `POST /run/vitest` | Invokes the test framework in-process on `pytest_generated_agent.py` / `vitest_generated_agent.ts`. A custom reporter/plugin captures per-case outcomes and durations; results come back as JSON. Third-party plugins (including `pytest-agent-observability` / `vitest-agent-observability` when installed) fire their hooks as usual and upload results to the dashboard. |
+| `POST /run/pytest` / `POST /run/vitest` | Invokes the test framework in-process on `pytest/pytest_generated_agent.py` / `vitest/vitest_generated_agent.ts`. A custom reporter/plugin captures per-case outcomes and durations; results come back as JSON. Third-party plugins (including `pytest-agent-observability` / `vitest-agent-observability` when installed) fire their hooks as usual and upload results to the dashboard. |
 | `POST /run/scenarios` | Bypasses the test-framework framing entirely. Imports `pytest_generated_agent` / `vitest_generated_agent` and calls its exported `run_all()`. Same generated scenarios, same agent, same judgments — returned as raw JSON. |
 
 Both endpoints accept `{"n": 5}` to control how many scenarios the LLM
@@ -98,7 +98,7 @@ Example:
 ```bash
 # Python side — `uv run` auto-installs inline deps declared in the file
 export OPENAI_API_KEY=sk-...
-uv run plugins/examples/fastapi_runner.py
+uv run plugins/examples/pytest/fastapi_runner.py
 
 curl -X POST http://localhost:8080/run/pytest \
      -H content-type:application/json -d '{"n": 5}' | jq
@@ -106,8 +106,9 @@ curl -X POST http://localhost:8080/run/scenarios \
      -H content-type:application/json -d '{"n": 5}' | jq
 
 # Node side
+cd plugins/examples/vitest && bun install       # once
 export OPENAI_API_KEY=sk-...
-bun plugins/examples/bun_runner.ts
+bun run runner
 
 curl -X POST http://localhost:8080/run/vitest \
      -H content-type:application/json -d '{"n": 5}' | jq

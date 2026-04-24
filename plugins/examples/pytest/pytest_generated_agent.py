@@ -10,7 +10,7 @@
 # ]
 #
 # [tool.uv.sources]
-# pytest-agent-observability = { path = "../pytest-agent-observability" }
+# pytest-agent-observability = { path = "../../pytest-agent-observability" }
 # ///
 """Pytest example where an LLM generates the scenarios for you.
 
@@ -48,20 +48,18 @@ from typing import Any
 import pytest
 from livekit.agents import Agent, AgentSession, RunContext, function_tool
 from livekit.plugins import openai as lk_openai
-
 from scenario_runner import (
     AgentSpec,
     Scenario,
     generate_scenarios,
 )
 
-
 # ── The agent under test ────────────────────────────────────────────────────
 
 _MENU = {
     "margherita": {"price_cents": 1200, "desc": "tomato, mozzarella, basil"},
     "pepperoni": {"price_cents": 1400, "desc": "pepperoni, mozzarella"},
-    "veggie":    {"price_cents": 1300, "desc": "peppers, onions, olives, mushrooms"},
+    "veggie": {"price_cents": 1300, "desc": "peppers, onions, olives, mushrooms"},
 }
 _ORDERS: dict[str, dict] = {}
 
@@ -166,6 +164,7 @@ SPEC = AgentSpec(
 
 # ── Collection-time scenario generation ─────────────────────────────────────
 
+
 def _load_scenarios() -> list[Scenario]:
     """Generate or load scenarios at import/collection time.
 
@@ -190,6 +189,7 @@ _SCENARIOS: list[Scenario] = _load_scenarios()
 
 # ── The test ────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", _SCENARIOS, ids=[s.name for s in _SCENARIOS])
 async def test_generated_scenario(scenario: Scenario) -> None:
@@ -201,9 +201,10 @@ async def test_generated_scenario(scenario: Scenario) -> None:
     verdict + reasoning as a first-class Judgment event in the dashboard. A
     fail surfaces as a judgment card, not a raw pytest assertion traceback.
     """
-    async with lk_openai.LLM(model="gpt-4.1-mini") as model, AgentSession(
-        llm=model
-    ) as sess:
+    async with (
+        lk_openai.LLM(model="gpt-4.1-mini") as model,
+        AgentSession(llm=model) as sess,
+    ):
         await sess.start(PizzaShopAgent())
         result = await sess.run(user_input=scenario.user_input)
 
@@ -220,6 +221,7 @@ async def test_generated_scenario(scenario: Scenario) -> None:
 
 
 # ── Programmatic entry point (used by fastapi_runner.py) ────────────────────
+
 
 async def run_all() -> list[ScenarioResult]:
     """Run every generated scenario and return raw results.

@@ -70,8 +70,22 @@ describe('Assistant', () => {
 });
 ```
 
-`captureRunResult(result)` attaches the RunResult to the current test.
-`.judge(...)` calls on LiveKit's assertion API are intercepted automatically.
+**Auto-capture is on by default.** The plugin monkey-patches
+`AgentSession.prototype.run` so every `RunResult` flows into the collector
+automatically — in practice you rarely need to call `captureRunResult(...)`
+at all. The wrapper remains exported for RunResults produced outside the
+standard `.run()` path, and it's idempotent so calling it on an
+already-captured result is a no-op.
+
+`.judge(...)` calls on LiveKit's assertion API are intercepted
+automatically. Verdict, intent, and reasoning are recorded as a first-class
+Judgment event in the dashboard.
+
+> **Python users:** the mirror plugin
+> [`pytest-agent-observability`](../pytest-agent-observability/) exposes
+> the same behavior. The manual helper is named `capture(result)` there
+> (vs. `captureRunResult(result)` here); the auto-capture and `.judge()`
+> interception are identical across both sides.
 
 ## Configuration
 
@@ -92,6 +106,77 @@ CI metadata (GitHub Actions / GitLab / CircleCI / Buildkite) is auto-detected.
 - On total failure, payload is written to
   `.vitest-cache/agent-observability/<run_id>.json` and logged.
 - Never throws — upload issues won't fail your test suite.
+
+## Running evals from a server
+
+You can invoke Vitest programmatically from a Bun or Node HTTP server so
+your evals run on demand — useful for CI webhooks, scheduled runs, or an
+internal "re-grade this agent" button. The reporter attaches the same
+way it does on the CLI, so each HTTP-triggered run lands in the
+dashboard as its own `eval_run`.
+
+Use `startVitest` from `vitest/node`:
+
+```ts
+import { startVitest } from "vitest/node";
+import type { Reporter } from "vitest/node";
+
+// Minimal in-memory reporter — collects per-case outcomes for the API
+// response. The observability reporter from vitest.config.ts still runs
+// alongside this one and uploads to the dashboard.
+class JsonReporter implements Reporter {
+  cases: Array<{ name: string; state: string; ms: number }> = [];
+  onTestFinished(test: any) {
+    this.cases.push({
+      name: test.name,
+      state: test.result?.state ?? "unknown",
+      ms: test.result?.duration ?? 0,
+    });
+  }
+}
+
+Bun.serve({
+  port: 8080,
+  async fetch(req) {
+    if (new URL(req.url).pathname !== "/run") {
+      return new Response(null, { status: 404 });
+    }
+    const { files } = (await req.json()) as { files: string[] };
+    const reporter = new JsonReporter();
+    const vitest = await startVitest(
+      "test",
+      files,
+      { watch: false, run: true, reporters: [reporter] },
+    );
+    // `run: true` runs to completion, but some Vitest versions queue the
+    // run async — awaiting close() guarantees the reporter is drained.
+    await vitest?.close();
+    return Response.json({ cases: reporter.cases });
+  },
+});
+```
+
+Notes:
+
+- `startVitest("test", files, overrides)` loads the project's
+  `vitest.config.ts`, so the `vitest-agent-observability` reporter from
+  the config attaches automatically. Any extra reporters you pass in the
+  third argument run *in addition to* the configured ones.
+- `startVitest` spawns worker threads. You can't run two concurrent
+  invocations in the same process — Vitest's internal state collides.
+  For a throughput-oriented server, either queue requests or spawn a
+  subprocess per run (e.g. `Bun.spawn`). For a developer-facing
+  "trigger a run" endpoint, in-process is fine.
+- Set the upload env vars (`AGENT_OBSERVABILITY_URL`, optional basic
+  auth, etc.) on the server process — the reporter reads them once per
+  run.
+
+A working reference server with both `/run/vitest` (full Vitest run)
+and `/run/scenarios` (bypasses Vitest, calls the scenario runner
+directly) lives at
+[`plugins/examples/vitest/bun_runner.ts`](../examples/vitest/bun_runner.ts).
+Its Python mirror using `pytest.main()` from FastAPI is at
+[`plugins/examples/pytest/fastapi_runner.py`](../examples/pytest/fastapi_runner.py).
 
 ## Development
 

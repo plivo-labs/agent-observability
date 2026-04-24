@@ -59,9 +59,20 @@ def _serialize_event(ev: Any) -> dict:
     # consumers (dashboard timeline renderer) find them where they already
     # look — `role`, `content`, `name`, `arguments`, etc. — WITHOUT stripping
     # the nested `item` (which carries `metrics`, IDs, timestamps, …).
+    # Accept camelCase aliases alongside snake_case for every field we
+    # pick off the nested `item`. The Node plugin's `events.ts` does this
+    # too — keeps Python resilient if upstream ever ships camelCase
+    # variants (or a user builds a RunResult by hand in JS-shaped dicts).
+    def _pick(d: Any, *keys: str) -> Any:
+        for k in keys:
+            v = (d or {}).get(k) if isinstance(d, dict) else getattr(d, k, None)
+            if v is not None:
+                return v
+        return None
+
     item = ev_dict.get("item") or {}
     if ev_type == "message":
-        content = item.get("text_content")
+        content = _pick(item, "text_content", "textContent")
         if content is None:
             content = item.get("content")
             if isinstance(content, list):
@@ -76,7 +87,10 @@ def _serialize_event(ev: Any) -> dict:
             ev_dict.setdefault("metrics", item.get("metrics"))
 
     elif ev_type == "function_call":
-        raw_args = item.get("arguments")
+        # LiveKit Node stores the JSON-string args under `args`; Python
+        # uses `arguments`. Accept either so payloads stay populated
+        # regardless of which SDK flavor emitted the event.
+        raw_args = _pick(item, "arguments", "args")
         args = raw_args
         if isinstance(raw_args, str):
             try:
@@ -85,21 +99,28 @@ def _serialize_event(ev: Any) -> dict:
                 args = raw_args
         ev_dict.setdefault("name", item.get("name"))
         ev_dict.setdefault("arguments", args)
-        ev_dict.setdefault("call_id", item.get("call_id") or item.get("id"))
+        ev_dict.setdefault("call_id", _pick(item, "call_id", "callId", "id"))
 
     elif ev_type == "function_call_output":
         ev_dict.setdefault("output", item.get("output"))
-        ev_dict.setdefault("is_error", bool(item.get("is_error", False)))
-        ev_dict.setdefault("call_id", item.get("call_id"))
+        ev_dict.setdefault(
+            "is_error",
+            bool(_pick(item, "is_error", "isError") or False),
+        )
+        ev_dict.setdefault("call_id", _pick(item, "call_id", "callId"))
 
     elif ev_type == "agent_handoff":
         # `old_agent` / `new_agent` are full Agent instances — replace them
         # with class names for JSON safety; keep the original keys around too
         # for reference but as strings.
-        ev_dict["from_agent"] = _class_name(getattr(ev, "old_agent", None))
-        ev_dict["to_agent"] = _class_name(getattr(ev, "new_agent", None))
-        ev_dict.pop("old_agent", None)
-        ev_dict.pop("new_agent", None)
+        ev_dict["from_agent"] = _class_name(
+            _pick(ev, "old_agent", "oldAgent")
+        )
+        ev_dict["to_agent"] = _class_name(
+            _pick(ev, "new_agent", "newAgent")
+        )
+        for k in ("old_agent", "oldAgent", "new_agent", "newAgent"):
+            ev_dict.pop(k, None)
 
     return ev_dict
 

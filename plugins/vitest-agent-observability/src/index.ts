@@ -37,6 +37,7 @@ import {
   defaultLogger,
 } from "./uploader.js";
 import { installJudgeWrapper } from "./judge.js";
+import { installAutocaptureWrapper } from "./autocapture.js";
 import type {
   EvalCase,
   Failure,
@@ -88,6 +89,7 @@ export default class AgentObservabilityReporter {
   private uploadConfig: UploadConfig | null;
   private collector: collector.RunCollector | null = null;
   private restoreJudge: (() => void) | null = null;
+  private restoreAutocapture: (() => void) | null = null;
   private logger: Logger;
 
   constructor(opts: ReporterOptions = {}) {
@@ -99,7 +101,11 @@ export default class AgentObservabilityReporter {
   async onInit(_ctx: unknown): Promise<void> {
     if (!this.uploadConfig) return;
     this.collector = collector.newRun(Date.now() / 1000, detectCi());
+    // The setup file also installs these in each worker (where tests
+    // actually run); installing here is a belt-and-suspenders for users
+    // who skip the setupFile entry — both installers are idempotent.
     this.restoreJudge = await installJudgeWrapper(this.logger);
+    this.restoreAutocapture = await installAutocaptureWrapper(this.logger);
   }
 
   async onFinished(
@@ -134,6 +140,10 @@ export default class AgentObservabilityReporter {
       if (this.restoreJudge) {
         try { this.restoreJudge(); } catch { /* ignore */ }
         this.restoreJudge = null;
+      }
+      if (this.restoreAutocapture) {
+        try { this.restoreAutocapture(); } catch { /* ignore */ }
+        this.restoreAutocapture = null;
       }
     }
   }

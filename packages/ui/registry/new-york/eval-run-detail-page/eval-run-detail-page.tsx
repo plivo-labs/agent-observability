@@ -190,11 +190,22 @@ export const EvalRunDetailPage = ({
         id: 'file',
         accessorKey: 'file',
         header: ({ column }) => <DataTableColumnHeader column={column} label="File" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-xs-400 text-muted-foreground">
-            {row.original.file ?? '—'}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const file = row.original.file
+          if (!file) return <span className="text-muted-foreground">—</span>
+          // Long absolute paths force horizontal scroll on the table;
+          // truncate to a fixed width and surface the full path via
+          // native title tooltip. `block` so `truncate` (which uses
+          // text-overflow: ellipsis) works inside a td cell.
+          return (
+            <span
+              title={file}
+              className="block font-mono text-xs-400 text-muted-foreground max-w-[260px] truncate"
+            >
+              {file}
+            </span>
+          )
+        },
         meta: { label: 'File' },
       },
       {
