@@ -41,12 +41,12 @@ function durationToneClass(ms: number | null): string {
 
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
-    'bg-muted text-foreground border-border',
+    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
   failed:
-    'bg-muted text-foreground border-border',
+    'bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))]',
   errored:
-    'bg-muted text-foreground border-border',
-  skipped: 'bg-muted text-muted-foreground border',
+    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
+  skipped: 'bg-muted text-muted-foreground border-border',
 }
 
 function StatusChip({ status }: { status: CaseStatus }) {
@@ -62,41 +62,59 @@ function StatusChip({ status }: { status: CaseStatus }) {
   )
 }
 
+type StatTone = 'good' | 'warn' | 'bad' | 'zero' | 'default'
+
+/** Card tones mirror the session-detail metric tiles: good/warn/bad pick
+ * up the semantic token family (success / warning / destructive). `zero`
+ * mutes the value so 0 counts don't compete with real signals. */
 function StatCard({
   label,
   value,
   suffix,
   tone = 'default',
   meterPct,
-  meterClass,
 }: {
   label: string
   value: string | number
   suffix?: string
-  tone?: 'default' | 'hero' | 'passed' | 'failed' | 'zero'
+  tone?: StatTone
   meterPct?: number
-  meterClass?: string
 }) {
-  const valueTone =
-    tone === 'hero' || tone === 'failed'
-      ? 'text-foreground'
-      : tone === 'passed'
-        ? 'text-foreground'
-        : tone === 'zero'
-          ? 'text-muted-foreground'
+  const valueClass =
+    tone === 'good'
+      ? 'text-[hsl(var(--success-fg,var(--success)))]'
+      : tone === 'warn'
+        ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
+        : tone === 'bad'
+          ? 'text-[hsl(var(--destructive))]'
+          : tone === 'zero'
+            ? 'text-muted-foreground'
+            : ''
+  const borderClass =
+    tone === 'good'
+      ? 'border-[hsl(var(--success-border))]'
+      : tone === 'warn'
+        ? 'border-[hsl(var(--warning-border))]'
+        : tone === 'bad'
+          ? 'border-[hsl(var(--destructive-border))]'
           : ''
-  // Hero card lift: solid card background + slightly heavier border.
-  // No gradient — the value + meter already carry the signal.
-  const cardTone = tone === 'hero' ? 'border-foreground/40' : ''
+  const meterClass =
+    tone === 'good'
+      ? 'bg-[hsl(var(--success-fg,var(--success)))]'
+      : tone === 'warn'
+        ? 'bg-[hsl(var(--warning-fg,var(--warning)))]'
+        : tone === 'bad'
+          ? 'bg-[hsl(var(--destructive))]'
+          : 'bg-foreground'
   return (
-    <Card className={cn('relative overflow-hidden', cardTone)}>
+    <Card className={cn('relative overflow-hidden', borderClass)}>
       <CardHeader className="pb-2">
-        <CardTitle className={cn('text-xs-600 uppercase tracking-wide text-muted-foreground', tone === 'hero' && 'text-foreground')}>
+        <CardTitle className="text-xs-600 uppercase tracking-wide text-muted-foreground">
           {label}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className={cn('text-h1-600 font-semibold tabular-nums flex items-baseline gap-2', valueTone)}>
+        <div className={cn('text-h1-600 font-semibold tabular-nums flex items-baseline gap-2', valueClass)}>
           {value}
           {suffix && <span className="text-p-500 text-muted-foreground">{suffix}</span>}
         </div>
@@ -111,6 +129,14 @@ function StatCard({
       </CardContent>
     </Card>
   )
+}
+
+/** Pass-rate card tone matches the session-detail latency scale:
+ * 100% good, ≥ 70% warn, below bad. */
+function passRateTone(pct: number): StatTone {
+  if (pct >= 100) return 'good'
+  if (pct >= 70) return 'warn'
+  return 'bad'
 }
 
 export const EvalRunDetailPage = ({
@@ -214,7 +240,9 @@ export const EvalRunDetailPage = ({
           return (
             <span className="inline-flex items-center gap-2 text-s-400">
               {judgePass > 0 && (
-                <span className="text-foreground text-xs-600">✓ {judgePass} pass</span>
+                <span className="text-[hsl(var(--success-fg,var(--success)))] text-xs-600">
+                  ✓ {judgePass} pass
+                </span>
               )}
               {judgePass > 0 && judgeFail > 0 && (
                 <span className="text-muted-foreground">·</span>
@@ -222,7 +250,7 @@ export const EvalRunDetailPage = ({
               {judgeFail > 0 && (
                 <Badge
                   variant="outline"
-                  className="text-xxs-600 text-foreground border-border uppercase tracking-wider"
+                  className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] uppercase tracking-wider"
                 >
                   {judgeFail} fail
                 </Badge>
@@ -322,34 +350,31 @@ export const EvalRunDetailPage = ({
           label="Pass rate"
           value={stats.passRate}
           suffix="%"
-          tone={stats.hasAnyFailure ? 'hero' : 'passed'}
+          tone={passRateTone(stats.passRate)}
           meterPct={stats.passRate}
-          meterClass={
-            stats.passRate === 100
-              ? 'bg-foreground'
-              : 'bg-foreground'
-          }
         />
         <StatCard
           label="Passed"
           value={run.passed}
-          tone="passed"
+          tone={run.passed > 0 ? 'good' : 'zero'}
           meterPct={stats.passedPct}
-          meterClass="bg-foreground"
         />
         <StatCard
           label="Failed"
           value={run.failed}
-          tone={run.failed > 0 ? 'failed' : 'zero'}
+          tone={run.failed > 0 ? 'bad' : 'zero'}
           meterPct={stats.failedPct}
-          meterClass="bg-foreground"
         />
         <StatCard
           label="Errored"
           value={run.errored}
-          tone={run.errored > 0 ? 'failed' : 'zero'}
+          tone={run.errored > 0 ? 'bad' : 'zero'}
         />
-        <StatCard label="Skipped" value={run.skipped} tone="zero" />
+        <StatCard
+          label="Skipped"
+          value={run.skipped}
+          tone={run.skipped > 0 ? 'warn' : 'zero'}
+        />
       </div>
 
       {run.ci && (
