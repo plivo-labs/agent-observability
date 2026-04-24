@@ -3,21 +3,23 @@ import { formatMs } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
 import { usePerformance } from '@/lib/observability-hooks'
 
+type Tone = 'good' | 'warn' | 'bad'
+
 function MetricTile({
   icon,
   label,
   value,
   sub,
-  warn,
+  tone,
 }: {
   icon: React.ReactNode
   label: string
   value: React.ReactNode
   sub?: string
-  warn?: boolean
+  tone?: Tone
 }) {
   return (
-    <div className={`metric-tile${warn ? ' warn' : ''}`}>
+    <div className={`metric-tile${tone ? ' ' + tone : ''}`}>
       <div className="hd">
         {icon} {label}
       </div>
@@ -25,6 +27,14 @@ function MetricTile({
       {sub && <div className="sub">{sub}</div>}
     </div>
   )
+}
+
+/** User-perceived speech latency thresholds. Good < 1s, warn 1–2s, bad > 2s. */
+function latencyTone(ms: number | null): Tone | undefined {
+  if (ms == null) return undefined
+  if (ms < 1000) return 'good'
+  if (ms < 2000) return 'warn'
+  return 'bad'
 }
 
 /** Split a formatted ms string like "1.42s" or "382ms" into number + unit so
@@ -71,13 +81,14 @@ export const MetricSummaryCards = ({
         label="P95 Latency"
         value={renderLatency(p95)}
         sub={p95 != null ? 'user perceived' : undefined}
-        warn={p95 != null && p95 >= 2000}
+        tone={latencyTone(p95)}
       />
       <MetricTile
         icon={<Timer size={12} />}
         label="Avg Latency"
         value={renderLatency(avg)}
         sub={avg != null ? 'user perceived' : undefined}
+        tone={latencyTone(avg)}
       />
       <MetricTile
         icon={<Coins size={12} />}

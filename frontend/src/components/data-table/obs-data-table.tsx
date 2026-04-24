@@ -45,7 +45,7 @@ export function ObsDataTable<TData>({
       {...props}
     >
       {toolbar}
-      <div className="overflow-hidden rounded-md border">
+      <div className="overflow-hidden rounded-md border bg-card shadow-sm">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (

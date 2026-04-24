@@ -29,6 +29,16 @@ const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
   { label: 'Skipped', value: 'skipped' },
 ]
 
+/** Duration thresholds for eval cases: good ≤ 2s, okay 2–5s, bad > 5s.
+ * Wider than voice latencies since eval cases often involve multi-turn
+ * conversations or slow fixtures. */
+function durationToneClass(ms: number | null): string {
+  if (ms == null) return ''
+  if (ms <= 2000) return 'text-[hsl(var(--success-fg,var(--success)))]'
+  if (ms <= 5000) return 'text-[hsl(var(--warning-fg,var(--warning)))]'
+  return 'text-[hsl(var(--destructive))]'
+}
+
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
     'bg-muted text-foreground border-border',
@@ -183,7 +193,12 @@ export const EvalRunDetailPage = ({
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
         cell: ({ row }) => (
-          <span className="font-mono text-s-400 tabular-nums">
+          <span
+            className={cn(
+              'font-mono text-s-400 tabular-nums',
+              durationToneClass(row.original.duration_ms),
+            )}
+          >
             {formatDuration(row.original.duration_ms)}
           </span>
         ),
