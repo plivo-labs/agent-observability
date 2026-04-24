@@ -13,7 +13,7 @@
       "has_llm": true,
       "has_tts": true,
       "chat_history": null,
-      "record_url": "/mock-recording.ogg",
+      "record_url": "/agent-observability/mock-recording.ogg",
       "created_at": "2026-04-14T10:00:00Z",
       "events": [
         {

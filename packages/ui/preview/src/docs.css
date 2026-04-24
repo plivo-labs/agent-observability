@@ -93,6 +93,52 @@
 .docs-topbar .link-out:hover {
   color: hsl(var(--foreground));
 }
+.docs-topbar .theme-toggle,
+.docs-topbar .menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: color 120ms, background 120ms, border-color 120ms;
+}
+.docs-topbar .theme-toggle {
+  margin-right: 14px;
+}
+.docs-topbar .theme-toggle:hover,
+.docs-topbar .menu-toggle:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--bg2));
+}
+/* Hamburger only shows on small screens — desktop layout has the sidebar
+ * permanently visible. */
+.docs-topbar .menu-toggle {
+  display: none;
+  margin-right: 14px;
+}
+
+.docs-sidebar-scrim {
+  display: none;
+  position: fixed;
+  /* Start below the sticky topbar so it doesn't dim the navbar. */
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: hsl(0 0% 0% / 0.35);
+  z-index: 19;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.dark .docs-sidebar-scrim {
+  background: hsl(0 0% 0% / 0.55);
+}
 
 .docs-sidebar {
   padding: 24px 16px 40px 24px;
@@ -548,12 +594,117 @@
  * --shiki-dark-bg). The default shows the light theme; .dark flips both
  * the foreground and background to the dark variants. */
 .docs-code .shiki,
-.docs-code .shiki span {
+.docs-code .shiki span,
+.docs-main pre.shiki,
+.docs-main pre.shiki span {
   color: var(--shiki-light);
   background-color: var(--shiki-light-bg);
 }
 .dark .docs-code .shiki,
-.dark .docs-code .shiki span {
+.dark .docs-code .shiki span,
+.dark .docs-main pre.shiki,
+.dark .docs-main pre.shiki span {
   color: var(--shiki-dark) !important;
   background-color: var(--shiki-dark-bg) !important;
+}
+
+/* ═════ Mobile layout ═══════════════════════════════════════════════════
+ * Below 900px: collapse the two-column grid, turn the sidebar into a
+ * slide-in drawer, show the hamburger, tighten paddings, let tables +
+ * code blocks scroll horizontally.
+ * ═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  .docs-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* Collapse the topbar grid into a single flex row so brand + actions
+   * sit on the same line at 56px, not stacked vertically. */
+  .docs-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .docs-topbar .brand-zone {
+    padding: 0 16px;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+  .docs-topbar .main-zone {
+    padding: 0 16px;
+    gap: 10px;
+    border-left: 0;
+    flex: 0 0 auto;
+  }
+  .docs-topbar .menu-toggle {
+    display: inline-flex;
+  }
+  .docs-topbar .link-out {
+    display: none;
+  }
+
+  .docs-sidebar {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    bottom: 0;
+    width: min(280px, 80vw);
+    z-index: 20;
+    border-right: 1px solid hsl(var(--border));
+    transform: translateX(-100%);
+    transition: transform 180ms ease;
+    padding: 20px 14px 32px 18px;
+  }
+  .docs-sidebar.open {
+    transform: translateX(0);
+    box-shadow: 4px 0 16px hsl(0 0% 0% / 0.08);
+  }
+  .dark .docs-sidebar.open {
+    box-shadow: 4px 0 16px hsl(0 0% 0% / 0.4);
+  }
+  .docs-sidebar-scrim.open {
+    display: block;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .docs-main {
+    padding: 24px 18px 60px;
+    border-left: 0;
+  }
+  .docs-main h1 {
+    font-size: 26px;
+  }
+  .docs-main .lede {
+    font-size: 15px;
+  }
+
+  /* Props / API tables become horizontally scrollable at this size. */
+  .docs-props {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .docs-props table {
+    min-width: 520px;
+  }
+
+  /* Code blocks & preview stages should not force page overflow. */
+  .pvw-stage {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Very small phones — squeeze the topbar further. */
+@media (max-width: 420px) {
+  .docs-topbar .brand .divider,
+  .docs-topbar .brand > span:last-child {
+    display: none;
+  }
+  .docs-main {
+    padding: 20px 14px 56px;
+  }
+  .docs-main h1 {
+    font-size: 24px;
+  }
 }

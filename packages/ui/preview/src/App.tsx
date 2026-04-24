@@ -8,6 +8,7 @@ import {
   useParams,
 } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+import { Menu, Moon, Sun, X } from 'lucide-react'
 import type { HighlighterCore } from 'shiki'
 import { AgentObservabilityProvider } from '@/lib/observability-provider'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
@@ -75,6 +76,70 @@ interface DocEntry {
    *  When set, the standard Preview / Installation / Usage / Props / Returns
    *  sections are skipped and this is rendered after the lede instead. */
   body?: () => React.ReactNode
+}
+
+/** Theme strategy:
+ *   - Default: follow the OS `prefers-color-scheme`. No localStorage key
+ *     is written until the user explicitly clicks the toggle.
+ *   - After the user toggles, their choice is stored and wins.
+ *   - While following system, an OS theme change flips the UI live;
+ *     once overridden, OS changes are ignored.
+ */
+const THEME_KEY = 'darkMode'
+
+const readSystemPref = () => {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+const readStoredOverride = (): boolean | null => {
+  if (typeof window === 'undefined') return null
+  const v = localStorage.getItem(THEME_KEY)
+  if (v === 'true') return true
+  if (v === 'false') return false
+  return null
+}
+
+const useDarkMode = () => {
+  const [dark, setDark] = useState(() => {
+    const override = readStoredOverride()
+    return override ?? readSystemPref()
+  })
+
+  // Apply class on every change. Don't touch localStorage here — we only
+  // persist when the user explicitly toggles (see the returned fn below).
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+  }, [dark])
+
+  // Follow the OS theme as long as there's no stored override. We listen
+  // to `change` for the live case, but some browsers don't fire it while
+  // the tab is in the background — re-check on visibilitychange / focus
+  // so a theme switch made in another app is picked up immediately.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const sync = () => {
+      if (readStoredOverride() === null) setDark(readSystemPref())
+    }
+    mq.addEventListener('change', sync)
+    document.addEventListener('visibilitychange', sync)
+    window.addEventListener('focus', sync)
+    return () => {
+      mq.removeEventListener('change', sync)
+      document.removeEventListener('visibilitychange', sync)
+      window.removeEventListener('focus', sync)
+    }
+  }, [])
+
+  const toggle = () =>
+    setDark((prev) => {
+      const next = !prev
+      localStorage.setItem(THEME_KEY, String(next))
+      return next
+    })
+
+  return [dark, toggle] as const
 }
 
 function SessionsListPreview() {
@@ -1170,10 +1235,30 @@ function PlivoLogo() {
   )
 }
 
-function DocsTopbar() {
+function DocsTopbar({
+  dark,
+  toggleDark,
+  menuOpen,
+  toggleMenu,
+}: {
+  dark: boolean
+  toggleDark: () => void
+  menuOpen: boolean
+  toggleMenu: () => void
+}) {
   return (
     <header className="docs-topbar">
       <div className="brand-zone">
+        <button
+          type="button"
+          className="menu-toggle"
+          onClick={toggleMenu}
+          title={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? <X size={18} /> : <Menu size={18} />}
+        </button>
         <div className="brand">
           <PlivoLogo />
           <span className="divider">/</span>
@@ -1182,6 +1267,15 @@ function DocsTopbar() {
       </div>
       <div className="main-zone">
         <div className="spacer" />
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleDark}
+          title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {dark ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <a
           className="link-out"
           href="https://github.com/plivo-labs/agent-observability"
@@ -1198,12 +1292,23 @@ function DocsTopbar() {
 function DocsSidebar({
   active,
   onSelect,
+  open,
+  onClose,
 }: {
   active: string
   onSelect: (id: string) => void
+  open: boolean
+  onClose: () => void
 }) {
   return (
-    <aside className="docs-sidebar">
+    <>
+      {/* Click-outside scrim — only visible on small screens via CSS. */}
+      <div
+        className={'docs-sidebar-scrim' + (open ? ' open' : '')}
+        aria-hidden="true"
+        onClick={onClose}
+      />
+      <aside className={'docs-sidebar' + (open ? ' open' : '')}>
       {CATEGORIES.map((category) => (
         <div className="cat" key={category.label}>
           <div className="cat-h">{category.label}</div>
@@ -1222,7 +1327,10 @@ function DocsSidebar({
                     key={entry.id}
                     type="button"
                     className={'item' + (entry.id === active ? ' active' : '')}
-                    onClick={() => onSelect(entry.id)}
+                    onClick={() => {
+                      onSelect(entry.id)
+                      onClose()
+                    }}
                   >
                     {entry.label}
                   </button>
@@ -1232,7 +1340,8 @@ function DocsSidebar({
           })}
         </div>
       ))}
-    </aside>
+      </aside>
+    </>
   )
 }
 
@@ -1453,6 +1562,8 @@ function Preview({
 function DocsPage() {
   const { entryId } = useParams<{ entryId: string }>()
   const navigate = useNavigate()
+  const [dark, toggleDark] = useDarkMode()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const active = useMemo(
     () => ENTRIES.find((e) => e.id === entryId) ?? ENTRIES[0],
@@ -1466,8 +1577,18 @@ function DocsPage() {
 
   return (
     <div className="docs-shell">
-      <DocsTopbar />
-      <DocsSidebar active={active.id} onSelect={select} />
+      <DocsTopbar
+        dark={dark}
+        toggleDark={toggleDark}
+        menuOpen={menuOpen}
+        toggleMenu={() => setMenuOpen((v) => !v)}
+      />
+      <DocsSidebar
+        active={active.id}
+        onSelect={select}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+      />
       <main className="docs-main">
         <div className="docs-crumbs">
           <span>{active.group}</span>
