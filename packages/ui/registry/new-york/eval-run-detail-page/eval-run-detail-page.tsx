@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import type { ColumnDef } from '@tanstack/react-table'
+import { parseAsString, useQueryState } from 'nuqs'
 import { ArrowLeft, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,27 +12,27 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
+import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
+import { ObsDataTable } from '@/components/data-table/obs-data-table'
+import { useDataTable } from '@/hooks/use-data-table'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
 import type { CaseStatus, EvalCaseRow } from '@/lib/observability-types'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 
+const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
+  { label: 'Passed', value: 'passed' },
+  { label: 'Failed', value: 'failed' },
+  { label: 'Errored', value: 'errored' },
+  { label: 'Skipped', value: 'skipped' },
+]
+
 const STATUS_TONE: Record<CaseStatus, string> = {
-  passed:
-    'bg-[hsl(var(--success-bg,142_76%_96%))] text-[hsl(var(--success,162_94%_24%))] border-[hsl(var(--success-border,156_72%_80%))]',
-  failed:
-    'bg-[hsl(var(--destructive-bg,0_85%_97%))] text-destructive border-[hsl(var(--destructive-border,0_93%_88%))]',
-  errored:
-    'bg-[hsl(var(--warning-bg,48_100%_96%))] text-[hsl(var(--warning,28_85%_36%))] border-[hsl(var(--warning-border,45_96%_75%))]',
+  passed: 'bg-muted text-foreground border-border',
+  failed: 'bg-muted text-foreground border-border',
+  errored: 'bg-muted text-foreground border-border',
   skipped: 'bg-muted text-muted-foreground border',
 }
 
@@ -64,20 +66,17 @@ function StatCard({
 }) {
   const valueTone =
     tone === 'hero' || tone === 'failed'
-      ? 'text-destructive'
+      ? 'text-foreground'
       : tone === 'passed'
-        ? 'text-[hsl(var(--success,162_94%_24%))]'
+        ? 'text-foreground'
         : tone === 'zero'
           ? 'text-muted-foreground'
           : ''
-  const cardTone =
-    tone === 'hero'
-      ? 'bg-gradient-to-b from-[hsl(var(--destructive-bg,0_85%_97%))] to-card border-[hsl(var(--destructive-border,0_93%_88%))]'
-      : ''
+  const cardTone = tone === 'hero' ? 'border-foreground' : ''
   return (
     <Card className={cn('relative overflow-hidden', cardTone)}>
       <CardHeader className="pb-2">
-        <CardTitle className={cn('text-xs-600 uppercase tracking-wide text-muted-foreground', tone === 'hero' && 'text-destructive')}>
+        <CardTitle className={cn('text-xs-600 uppercase tracking-wide text-muted-foreground', tone === 'hero' && 'text-foreground')}>
           {label}
         </CardTitle>
       </CardHeader>
@@ -109,11 +108,18 @@ export const EvalRunDetailPage = ({
   onCaseClick?: (caseId: string) => void
 }) => {
   const { run, loading, error } = useEvalRun(runId)
-  const [openCaseId, setOpenCaseId] = useState<string | null>(null)
+  const [openCaseId, setOpenCaseId] = useQueryState('case', parseAsString)
+  const [localOpenCaseId, setLocalOpenCaseId] = useState<string | null>(null)
+  const drawerCaseId = openCaseId ?? localOpenCaseId
 
   const handleRowClick = (caseId: string) => {
     if (onCaseClick) onCaseClick(caseId)
-    else setOpenCaseId(caseId)
+    else if (openCaseId !== undefined) void setOpenCaseId(caseId)
+    else setLocalOpenCaseId(caseId)
+  }
+  const closeDrawer = () => {
+    if (openCaseId !== null) void setOpenCaseId(null)
+    setLocalOpenCaseId(null)
   }
 
   const stats = useMemo(() => {
@@ -126,6 +132,105 @@ export const EvalRunDetailPage = ({
       failedPct: run.total > 0 ? (run.failed / run.total) * 100 : 0,
     }
   }, [run])
+
+  const columns = useMemo<ColumnDef<EvalCaseRow>[]>(
+    () => [
+      {
+        id: 'name',
+        accessorKey: 'name',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Name" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400">{row.original.name}</span>
+        ),
+        enableColumnFilter: true,
+        meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
+      },
+      {
+        id: 'file',
+        accessorKey: 'file',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="File" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs-400 text-muted-foreground">
+            {row.original.file ?? '—'}
+          </span>
+        ),
+        meta: { label: 'File' },
+      },
+      {
+        id: 'status',
+        accessorKey: 'status',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
+        cell: ({ row }) => <StatusChip status={row.original.status} />,
+        enableColumnFilter: true,
+        meta: {
+          label: 'Status',
+          variant: 'multiSelect',
+          options: STATUS_OPTIONS,
+        },
+        filterFn: (row, id, value) => {
+          if (!Array.isArray(value) || value.length === 0) return true
+          return value.includes(row.getValue(id))
+        },
+      },
+      {
+        id: 'duration_ms',
+        accessorKey: 'duration_ms',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400 tabular-nums">
+            {formatDuration(row.original.duration_ms)}
+          </span>
+        ),
+        meta: { label: 'Duration' },
+      },
+      {
+        id: 'judgments',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Judgments" />,
+        cell: ({ row }) => {
+          const c = row.original
+          const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
+          const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
+          if (c.judgments.length === 0) return <span className="text-muted-foreground">—</span>
+          return (
+            <span className="inline-flex items-center gap-2 text-s-400">
+              {judgePass > 0 && (
+                <span className="text-foreground text-xs-600">✓ {judgePass} pass</span>
+              )}
+              {judgePass > 0 && judgeFail > 0 && (
+                <span className="text-muted-foreground">·</span>
+              )}
+              {judgeFail > 0 && (
+                <Badge
+                  variant="outline"
+                  className="text-xxs-600 text-foreground border-border uppercase tracking-wider"
+                >
+                  {judgeFail} fail
+                </Badge>
+              )}
+            </span>
+          )
+        },
+      },
+      {
+        id: 'events',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Events" />,
+        cell: ({ row }) => (
+          <span className="text-s-400 tabular-nums text-muted-foreground">
+            {row.original.events.length}
+          </span>
+        ),
+      },
+    ],
+    [],
+  )
+
+  const { table } = useDataTable({
+    data: run?.cases ?? [],
+    columns,
+    pageCount: 1,
+    initialState: { pagination: { pageIndex: 0, pageSize: 20 } },
+    getRowId: (row) => row.case_id,
+  })
 
   if (loading) {
     return (
@@ -143,7 +248,7 @@ export const EvalRunDetailPage = ({
 
   if (error || !run || !stats) {
     return (
-      <div className="p-12 text-center text-destructive">
+      <div className="p-12 text-center text-foreground">
         <p>Failed to load eval run: {error ?? 'not found'}</p>
         {onBack && (
           <Button variant="ghost" size="sm" onClick={onBack} className="mt-4">
@@ -199,25 +304,21 @@ export const EvalRunDetailPage = ({
           suffix="%"
           tone={stats.hasAnyFailure ? 'hero' : 'passed'}
           meterPct={stats.passRate}
-          meterClass={
-            stats.passRate === 100
-              ? 'bg-[hsl(var(--success,162_94%_24%))]'
-              : 'bg-destructive'
-          }
+          meterClass="bg-foreground"
         />
         <StatCard
           label="Passed"
           value={run.passed}
           tone="passed"
           meterPct={stats.passedPct}
-          meterClass="bg-[hsl(var(--success,162_94%_24%))]"
+          meterClass="bg-foreground"
         />
         <StatCard
           label="Failed"
           value={run.failed}
           tone={run.failed > 0 ? 'failed' : 'zero'}
           meterPct={stats.failedPct}
-          meterClass="bg-destructive"
+          meterClass="bg-foreground"
         />
         <StatCard
           label="Errored"
@@ -268,85 +369,22 @@ export const EvalRunDetailPage = ({
       <div>
         <h2 className="text-h4-600 font-semibold mb-3">
           Cases{' '}
-          <span className="text-muted-foreground text-s-400">({run.cases.length})</span>
+          <span className="text-muted-foreground text-s-400">
+            ({table.getFilteredRowModel().rows.length} of {run.cases.length})
+          </span>
         </h2>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>File</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Judgments</TableHead>
-                <TableHead>Events</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {run.cases.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    No cases in this run.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                run.cases.map((c: EvalCaseRow) => {
-                  const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
-                  const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
-                  return (
-                    <TableRow
-                      key={c.case_id}
-                      className="cursor-pointer hover:bg-accent/50"
-                      onClick={() => handleRowClick(c.case_id)}
-                    >
-                      <TableCell className="font-mono text-s-400">{c.name}</TableCell>
-                      <TableCell className="font-mono text-xs-400 text-muted-foreground">
-                        {c.file ?? '—'}
-                      </TableCell>
-                      <TableCell>
-                        <StatusChip status={c.status} />
-                      </TableCell>
-                      <TableCell className="font-mono text-s-400 tabular-nums">
-                        {formatDuration(c.duration_ms)}
-                      </TableCell>
-                      <TableCell className="text-s-400">
-                        {c.judgments.length === 0 ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : (
-                          <span className="inline-flex items-center gap-2">
-                            {judgePass > 0 && (
-                              <span className="text-[hsl(var(--success,162_94%_24%))] text-xs-600">
-                                ✓ {judgePass} pass
-                              </span>
-                            )}
-                            {judgePass > 0 && judgeFail > 0 && (
-                              <span className="text-muted-foreground">·</span>
-                            )}
-                            {judgeFail > 0 && (
-                              <Badge variant="outline" className="text-xxs-600 text-destructive border-[hsl(var(--destructive-border,0_93%_88%))]">
-                                {judgeFail} fail
-                              </Badge>
-                            )}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-s-400 tabular-nums text-muted-foreground">
-                        {c.events.length}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <ObsDataTable
+          table={table}
+          toolbar={<DataTableToolbar table={table} />}
+          onRowClick={(row) => handleRowClick(row.original.case_id)}
+        />
       </div>
 
       {!onCaseClick && (
         <Sheet
-          open={!!openCaseId}
+          open={!!drawerCaseId}
           onOpenChange={(open) => {
-            if (!open) setOpenCaseId(null)
+            if (!open) closeDrawer()
           }}
         >
           <SheetContent
@@ -356,11 +394,11 @@ export const EvalRunDetailPage = ({
             <SheetHeader className="sr-only">
               <SheetTitle>Case detail</SheetTitle>
             </SheetHeader>
-            {openCaseId && (
+            {drawerCaseId && (
               <EvalCaseDetailPage
                 runId={runId}
-                caseId={openCaseId}
-                onBack={() => setOpenCaseId(null)}
+                caseId={drawerCaseId}
+                onBack={closeDrawer}
               />
             )}
           </SheetContent>

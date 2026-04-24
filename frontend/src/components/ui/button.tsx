@@ -20,7 +20,7 @@ const buttonVariants = cva(
         default:
           "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive:
-          "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20",
+          "bg-foreground text-foreground-foreground hover:bg-foreground/90 focus-visible:ring-destructive/20",
         outline:
           "border border-input bg-background text-foreground hover:bg-bg2 hover:border-secondary/40 [&_svg]:text-tertiary hover:[&_svg]:text-secondary",
         /** Dashed-border filter pill used by data-table toolbars. Becomes

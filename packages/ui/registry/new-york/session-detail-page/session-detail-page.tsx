@@ -38,7 +38,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
   if (error || !session) {
     return (
-      <div className="p-12 text-center text-destructive">
+      <div className="p-12 text-center text-foreground">
         <p>{error ?? 'Session not found'}</p>
       </div>
     )

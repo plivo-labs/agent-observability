@@ -7,6 +7,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router'
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
 import type { HighlighterCore } from 'shiki'
 import { AgentObservabilityProvider } from '@/lib/observability-provider'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
@@ -23,6 +24,7 @@ import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
 import { EvalsPage } from '@/components/evals-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
+import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 import mockData from './mock-data.json'
 import './docs.css'
 
@@ -30,6 +32,12 @@ const SESSION_ID = mockData.sessions[0].session_id
 const EVAL_RUN_ID =
   (mockData as { evals?: Array<{ run_id: string }> }).evals?.[0]?.run_id ??
   'run_pytest_2026_04_22'
+const EVAL_CASE_ID =
+  (
+    mockData as {
+      evals?: Array<{ cases?: Array<{ case_id: string }> }>
+    }
+  ).evals?.[0]?.cases?.[0]?.case_id ?? 'case_001'
 
 type Stage = 'centered' | 'left' | 'stretch'
 
@@ -81,6 +89,21 @@ function EvalsListPreview() {
 
 function EvalRunDetailPreview() {
   return <EvalRunDetailPage runId={EVAL_RUN_ID} onBack={() => {}} />
+}
+
+function EvalCaseDetailPreview() {
+  // Normally rendered inside the Sheet drawer that EvalRunDetailPage opens.
+  // Here we surface it standalone — constrain width to the typical drawer
+  // size so the layout reads the same as it does in production.
+  return (
+    <div className="max-w-3xl mx-auto border bg-card">
+      <EvalCaseDetailPage
+        runId={EVAL_RUN_ID}
+        caseId={EVAL_CASE_ID}
+        onBack={() => {}}
+      />
+    </div>
+  )
 }
 
 function StretchWrap({ children }: { children: React.ReactNode }) {
@@ -463,7 +486,9 @@ export function EvalRunDetailRoute() {
     group: 'Components',
     pkg: 'eval-case-detail-page',
     description:
-      'Single-case drill-in — header with status chip, metric tiles (avg TTFT / speaking time / turn count), user input, full transcript, judgments list, and a collapsible failure block. Ships rendered inside the EvalRunDetailPage drawer by default; reuse it directly when you want a standalone route. No standalone preview here — open it via the Eval Run Detail page.',
+      'Single-case drill-in — header with status chip, metric tiles (avg TTFT / speaking time / turn count), user input, full transcript, judgments list, and a collapsible failure block. Ships rendered inside the EvalRunDetailPage drawer by default; reuse it directly when you want a standalone route.',
+    stage: 'stretch',
+    render: () => <EvalCaseDetailPreview />,
     props: [
       {
         name: 'runId',
@@ -1312,11 +1337,13 @@ export default function App() {
   return (
     <AgentObservabilityProvider baseUrl="/api" sessionId={SESSION_ID}>
       <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <Routes>
-          <Route path="/" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
-          <Route path="/:entryId" element={<DocsPage />} />
-          <Route path="*" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
-        </Routes>
+        <NuqsAdapter>
+          <Routes>
+            <Route path="/" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
+            <Route path="/:entryId" element={<DocsPage />} />
+            <Route path="*" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
+          </Routes>
+        </NuqsAdapter>
       </BrowserRouter>
     </AgentObservabilityProvider>
   )

@@ -23,9 +23,11 @@ const buildTokenData = (metrics: SessionMetrics): TokenData => {
   return { prompt, completion, total, ttsChars, tokensPerTurn }
 }
 
+// Monochrome donut — prompt = full ink, completion = 40% ink. Relative
+// weight drives the visual signal instead of hue.
 const COLORS = [
-  'hsl(var(--success, 162 94% 24%))',
-  'hsl(var(--accent-purple, 262 52% 42%))',
+  'hsl(var(--foreground))',
+  'hsl(var(--foreground) / 0.4)',
 ]
 
 export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {
@@ -101,11 +103,11 @@ export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionM
       {chartData.length > 0 && (
         <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground" />
             Prompt
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-blue-500" />
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground/40" />
             Completion
           </span>
         </div>

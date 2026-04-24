@@ -52,11 +52,11 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
 
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
-    'bg-[hsl(var(--success-bg,142_76%_96%))] text-[hsl(var(--success,162_94%_24%))] border-[hsl(var(--success-border,156_72%_80%))]',
+    'bg-muted text-foreground border-border',
   failed:
-    'bg-[hsl(var(--destructive-bg,0_85%_97%))] text-destructive border-[hsl(var(--destructive-border,0_93%_88%))]',
+    'bg-muted text-foreground border-border',
   errored:
-    'bg-[hsl(var(--warning-bg,48_100%_96%))] text-[hsl(var(--warning,28_85%_36%))] border-[hsl(var(--warning-border,45_96%_75%))]',
+    'bg-muted text-foreground border-border',
   skipped: 'bg-muted text-muted-foreground border',
 }
 
@@ -98,11 +98,11 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
     return (
       <div className="border rounded-md overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-xs-600 text-muted-foreground border-b">
-          <span className="inline-flex items-center px-1.5 py-0 rounded bg-[hsl(var(--accent-purple-bg,250_100%_98%))] text-[hsl(var(--accent-purple,262_52%_42%))] border border-[hsl(var(--accent-purple-border,252_100%_92%))] text-xxs-600 capitalize">
+          <span className="inline-flex items-center px-1.5 py-0 rounded bg-muted text-foreground border border-border text-xxs-600 capitalize">
             {m.role ?? 'assistant'}
           </span>
           {m.interrupted && (
-            <Badge variant="outline" className="text-xxs-600 text-destructive border-[hsl(var(--destructive-border,0_93%_88%))]">
+            <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
               interrupted
             </Badge>
           )}
@@ -116,7 +116,7 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
     const f = event as RunEventFunctionCall
     return (
       <div className="border rounded-md overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--info-bg,226_100%_97%))] text-[hsl(var(--info,243_47%_42%))] border-b border-[hsl(var(--info-border,213_97%_87%))] text-xs-600">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-foreground border-b border-border text-xs-600">
           tool call · {f.name ?? 'unknown'}
           <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
         </div>
@@ -132,10 +132,10 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
     const o = event as RunEventFunctionCallOutput
     return (
       <div className="border rounded-md overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--success-bg,142_76%_96%))] text-[hsl(var(--success,162_94%_24%))] border-b border-[hsl(var(--success-border,156_72%_80%))] text-xs-600">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-foreground border-b border-border text-xs-600">
           tool result
           {o.is_error && (
-            <Badge variant="outline" className="text-xxs-600 text-destructive border-[hsl(var(--destructive-border,0_93%_88%))]">
+            <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
               error
             </Badge>
           )}
@@ -187,7 +187,7 @@ export const EvalCaseDetailPage = ({
 
   if (error || !evalCase) {
     return (
-      <div className="p-12 text-center text-destructive">
+      <div className="p-12 text-center text-foreground">
         <p>Failed to load case: {error ?? 'not found'}</p>
       </div>
     )
@@ -299,7 +299,7 @@ export const EvalCaseDetailPage = ({
                     className={cn(
                       'rounded-md px-3 py-2.5',
                       isFail
-                        ? 'border border-[hsl(var(--destructive-border,0_93%_88%))] bg-[hsl(var(--destructive-bg,0_85%_97%))]/50'
+                        ? 'border border-border bg-muted/50'
                         : 'border',
                     )}
                   >
@@ -328,9 +328,9 @@ export const EvalCaseDetailPage = ({
         )}
 
         {evalCase.failure && (
-          <Card className="border-[hsl(var(--destructive-border,0_93%_88%))] bg-[hsl(var(--destructive-bg,0_85%_97%))]/40">
+          <Card className="border-border bg-muted/40">
             <CardContent className="py-3">
-              <div className="flex items-center gap-2 text-s-600 text-destructive mb-2">
+              <div className="flex items-center gap-2 text-s-600 text-foreground mb-2">
                 <AlertTriangle className="h-3.5 w-3.5" /> Failure ({evalCase.failure.kind})
               </div>
               {evalCase.failure.message && (

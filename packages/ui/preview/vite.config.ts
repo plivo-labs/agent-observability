@@ -32,10 +32,17 @@ export default defineConfig({
   base: '/agent-observability/',
   plugins: [react(), tailwindcss(), mockApiPlugin()],
   optimizeDeps: {
-    include: ['recharts', 'dayjs', 'lucide-react', 'wavesurfer.js'],
+    include: [
+      'recharts',
+      'dayjs',
+      'lucide-react',
+      'wavesurfer.js',
+      '@tanstack/react-table',
+      'nuqs',
+    ],
   },
   resolve: {
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', 'nuqs', '@tanstack/react-table'],
     alias: [
       // shadcn UI — local to preview
       { find: '@/components/ui', replacement: resolve(__dirname, 'src/components/ui') },
@@ -47,6 +54,16 @@ export default defineConfig({
       { find: '@/lib/observability-api', replacement: reg('observability-api/api.ts') },
       { find: '@/lib/observability-provider', replacement: reg('observability-provider/provider.tsx') },
       { find: '@/lib/observability-hooks', replacement: reg('observability-hooks/hooks.ts') },
+
+      // Registry data-table (tablecn) — shared by sessions-page, evals-page, eval-run-detail-page
+      { find: '@/components/data-table', replacement: reg('data-table') },
+      { find: '@/hooks/use-data-table', replacement: reg('data-table/use-data-table.ts') },
+      { find: '@/hooks/use-debounced-callback', replacement: reg('data-table/use-debounced-callback.ts') },
+      { find: '@/hooks/use-callback-ref', replacement: reg('data-table/use-callback-ref.ts') },
+      { find: '@/lib/parsers', replacement: reg('data-table/parsers.ts') },
+      { find: '@/lib/data-table', replacement: reg('data-table/data-table-utils.ts') },
+      { find: '@/types/data-table', replacement: reg('data-table/types.ts') },
+      { find: '@/config/data-table', replacement: reg('data-table/data-table-config.ts') },
 
       // Registry components
       { find: '@/components/observability-chart-shared', replacement: reg('observability-chart-shared/chart-shared.tsx') },

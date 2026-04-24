@@ -3,17 +3,10 @@ import { formatMs } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
 import { usePerformance } from '@/lib/observability-hooks'
 
-const LATENCY_COLOR: Record<string, string> = {
-  success: 'text-green-600',
-  warning: 'text-amber-600',
-  destructive: 'text-destructive',
-}
-
-const p95Color = (ms: number) => {
-  if (ms < 500) return LATENCY_COLOR.success
-  if (ms < 1000) return LATENCY_COLOR.warning
-  return LATENCY_COLOR.destructive
-}
+// Monochrome: emphasis comes from weight, not hue. The P95 tile reads as
+// foreground ink at all times; warn states surface via border on the tile
+// rather than the number turning red.
+const p95Color = (_ms: number) => 'text-foreground'
 
 const StatCard = ({
   icon: Icon,

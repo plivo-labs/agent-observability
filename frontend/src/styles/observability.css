@@ -37,74 +37,82 @@
 }
 
 /* Neo surface tokens + semantic color extensions.
-   Wrapped in :where() so specificity is 0 — any :root declaration in the
-   consumer's own theme wins, letting the components adopt their design system.
-   Components never reference hex literals; they only read HSL-triplet vars. */
+ * Wrapped in :where() so specificity is 0 — any :root declaration in the
+ * consumer's own theme wins, letting the components adopt their design system.
+ * Components never reference hex literals; they only read HSL-triplet vars.
+ *
+ * Monochrome (shadcn "zinc") palette: all status / capability / accent
+ * extensions collapse to a single neutral scale. Emphasis comes from weight,
+ * border, and position — not hue. Mirror of theme-dev.css from the handoff. */
 :where(html) {
-  /* Neo surface tiers — pale-to-deep greys beyond shadcn's --muted/--accent */
-  --bg1: 210 8% 95%;
-  --bg2: 210 13% 97%;
-  --bg3: 240 5% 96%;
-  --hv1: 210 40% 96%;
-  --hv2: 210 5% 92%;
-  --hv3: 210 4% 90%;
-  --st1: 213 27% 84%;
-  --st2: 214 32% 91%;
-  --tertiary: 215 20% 65%;
-  --bubble-agent: 220 100% 96%;
+  /* Surface tiers — zinc-50 → zinc-300 in HSL triplet form */
+  --bg1: 240 5% 96%;
+  --bg2: 0 0% 98%;
+  --bg3: 240 5% 91%;
+  --hv1: 240 5% 96%;
+  --hv2: 240 6% 90%;
+  --hv3: 240 5% 84%;
+  --st1: 240 6% 90%;
+  --st2: 240 5% 84%;
+  --tertiary: 240 5% 65%;
+  --bubble-agent: 240 5% 96%;
 
-  /* Semantic color extensions (subtle bg + border + text) */
-  --success-bg: 142 76% 96%;
-  --success-border: 156 72% 80%;
-  --info: 243 47% 42%;
+  /* Semantic extensions — collapsed to neutral zinc.
+   * `-bg` tokens all land near zinc-50; `-border` near zinc-200;
+   * `-foreground` text (success/info/warning/accent-purple) all lands on
+   * the main foreground so chips read as uppercase mono outlines. */
+  --success-bg: 240 5% 96%;
+  --success-border: 240 6% 90%;
+  --info: 240 10% 10%;
   --info-foreground: 0 0% 100%;
-  --info-bg: 226 100% 97%;
-  --info-border: 213 97% 87%;
-  --accent-purple: 262 52% 42%;
+  --info-bg: 240 5% 96%;
+  --info-border: 240 6% 90%;
+  --accent-purple: 240 10% 10%;
   --accent-purple-foreground: 0 0% 100%;
-  --accent-purple-bg: 250 100% 98%;
-  --accent-purple-border: 252 100% 92%;
-  --warning-bg: 48 100% 96%;
-  --warning-border: 45 96% 75%;
-  --destructive-bg: 0 85% 97%;
-  --destructive-border: 0 93% 88%;
+  --accent-purple-bg: 240 5% 96%;
+  --accent-purple-border: 240 6% 90%;
+  --warning-bg: 240 5% 96%;
+  --warning-border: 240 6% 90%;
+  --destructive-bg: 240 5% 96%;
+  --destructive-border: 240 6% 90%;
 
-  /* JSON syntax highlighting */
-  --code-key: 262 83% 58%;
-  --code-string: 160 84% 39%;
-  --code-number: 28 85% 36%;
-  --code-bool: 21 90% 40%;
+  /* JSON syntax highlighting — single neutral ink with subtle weight
+   * differentiation (same monochrome discipline as the rest). */
+  --code-key: 240 10% 10%;
+  --code-string: 240 4% 46%;
+  --code-number: 240 4% 46%;
+  --code-bool: 240 4% 46%;
 }
 
 :where(.dark) {
-  --bg1: 240 11% 7%;
-  --bg2: 240 10% 6%;
-  --bg3: 240 10% 40%;
-  --hv1: 240 12% 13%;
-  --hv2: 240 14% 11%;
-  --hv3: 240 12% 13%;
-  --st1: 210 5% 16%;
-  --st2: 220 4% 15%;
-  --tertiary: 234 5% 37%;
-  --bubble-agent: 233 37% 22%;
+  --bg1: 240 6% 7%;
+  --bg2: 240 10% 4%;
+  --bg3: 240 5% 11%;
+  --hv1: 240 5% 11%;
+  --hv2: 240 4% 16%;
+  --hv3: 240 4% 20%;
+  --st1: 240 4% 16%;
+  --st2: 240 4% 20%;
+  --tertiary: 240 5% 40%;
+  --bubble-agent: 240 5% 11%;
 
-  --success-bg: 162 94% 12%;
-  --success-border: 162 50% 25%;
-  --info: 238 83% 66%;
-  --info-bg: 243 47% 15%;
-  --info-border: 243 30% 30%;
-  --accent-purple: 262 83% 70%;
-  --accent-purple-bg: 262 50% 15%;
-  --accent-purple-border: 262 30% 30%;
-  --warning-bg: 33 80% 12%;
-  --warning-border: 38 40% 30%;
-  --destructive-bg: 0 62% 12%;
-  --destructive-border: 0 40% 28%;
+  --success-bg: 240 10% 4%;
+  --success-border: 240 4% 16%;
+  --info: 240 5% 96%;
+  --info-bg: 240 10% 4%;
+  --info-border: 240 4% 16%;
+  --accent-purple: 240 5% 96%;
+  --accent-purple-bg: 240 10% 4%;
+  --accent-purple-border: 240 4% 16%;
+  --warning-bg: 240 10% 4%;
+  --warning-border: 240 4% 16%;
+  --destructive-bg: 240 10% 4%;
+  --destructive-border: 240 4% 16%;
 
-  --code-key: 262 83% 70%;
-  --code-string: 160 84% 50%;
-  --code-number: 28 85% 55%;
-  --code-bool: 21 90% 55%;
+  --code-key: 240 5% 96%;
+  --code-string: 240 5% 54%;
+  --code-number: 240 5% 54%;
+  --code-bool: 240 5% 54%;
 }
 
 :root {
@@ -381,12 +389,16 @@ a { color: inherit; text-decoration: none; }
 }
 .transport svg { color: hsl(var(--secondary)); }
 
-/* Duration with warning */
+/* Duration with warning — dashed outline, not red. Monochrome-friendly. */
 .dur-bad {
   display: inline-flex; align-items: center; gap: 4px;
-  color: hsl(var(--destructive));
+  color: hsl(var(--foreground));
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border: 1px dashed hsl(var(--muted-foreground));
+  border-radius: 3px;
+  background: hsl(var(--muted));
 }
 
 /* ───── Pagination ───────────────────────────────────────── */
@@ -540,9 +552,11 @@ a { color: inherit; text-decoration: none; }
   color: hsl(var(--tertiary));
   margin-top: 2px;
 }
-.metric-tile.warn { border-color: hsl(var(--destructive-border)); background: hsl(var(--destructive-bg) / 0.5); }
-.metric-tile.warn .val { color: hsl(var(--destructive)); }
-.metric-tile.warn .hd svg { color: hsl(var(--destructive)); }
+/* Monochrome warn: stronger foreground border on the tile; the value and
+ * icon stay on foreground ink. Emphasis via border weight, not hue. */
+.metric-tile.warn { border-color: hsl(var(--foreground)); background: hsl(var(--card)); }
+.metric-tile.warn .val { color: hsl(var(--foreground)); font-weight: 700; }
+.metric-tile.warn .hd svg { color: hsl(var(--foreground)); }
 
 /* ───── Secondary tabs ───────────────────────────────────── */
 .obs-subtabs {
@@ -725,19 +739,24 @@ a { color: inherit; text-decoration: none; }
 }
 .passrate .fail {
   font: var(--text-xxs-600);
-  color: hsl(var(--destructive));
-  background: hsl(var(--destructive-bg));
-  border: 1px solid hsl(var(--destructive-border));
+  color: hsl(var(--foreground));
+  background: transparent;
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   padding: 1px 6px;
   white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
-.passrate.good .label { color: hsl(var(--success)); }
-.passrate.good .meter > i { background: hsl(var(--success)); }
-.passrate.warn .label { color: hsl(var(--warning)); }
-.passrate.warn .meter > i { background: hsl(var(--warning)); }
-.passrate.bad .label { color: hsl(var(--destructive)); }
-.passrate.bad .meter > i { background: hsl(var(--destructive)); }
+/* Monochrome pass-rate: single-ink label and meter fill across every
+ * variant. The meter length drives the signal; font-weight lifts the
+ * worst cases. */
+.passrate.good .label { color: hsl(var(--foreground)); }
+.passrate.good .meter > i { background: hsl(var(--foreground)); }
+.passrate.warn .label { color: hsl(var(--foreground)); font-weight: 600; }
+.passrate.warn .meter > i { background: hsl(var(--foreground)); }
+.passrate.bad .label { color: hsl(var(--foreground)); font-weight: 700; }
+.passrate.bad .meter > i { background: hsl(var(--foreground)); }
 
 /* ───── Eval run header ──────────────────────────────────── */
 .eval-head {
@@ -802,15 +821,19 @@ a { color: inherit; text-decoration: none; }
   font: var(--text-p-500);
   color: hsl(var(--tertiary));
 }
+/* Monochrome hero: no gradient wash; emphasis via a heavier foreground
+ * border. Value stays on foreground ink. */
 .eval-stat.hero {
-  background: linear-gradient(180deg, hsl(var(--destructive-bg)) 0%, hsl(var(--card)) 80%);
-  border-color: hsl(var(--destructive-border));
+  background: hsl(var(--card));
+  border-color: hsl(var(--foreground));
 }
-.eval-stat.hero .val { color: hsl(var(--destructive)); }
-.eval-stat.hero .hd { color: hsl(var(--destructive)); }
-.eval-stat.hero .val .suffix { color: hsl(var(--destructive) / .7); }
-.eval-stat.passed .val { color: hsl(var(--success)); }
-.eval-stat.failed .val { color: hsl(var(--destructive)); }
+/* Monochrome eval tiles: numeric value always lands on foreground. Hero
+ * distinguishes itself via a stronger border (set in .eval-stat.hero). */
+.eval-stat.hero .val { color: hsl(var(--foreground)); }
+.eval-stat.hero .hd { color: hsl(var(--foreground)); font-weight: 700; }
+.eval-stat.hero .val .suffix { color: hsl(var(--muted-foreground)); }
+.eval-stat.passed .val { color: hsl(var(--foreground)); }
+.eval-stat.failed .val { color: hsl(var(--foreground)); font-weight: 700; }
 .eval-stat.zero .val { color: hsl(var(--tertiary)); }
 
 .eval-meter {
@@ -831,10 +854,12 @@ a { color: inherit; text-decoration: none; }
   font: var(--text-xxs-600);
   letter-spacing: 0.02em;
 }
-.status-chip.passed { background: hsl(var(--success-bg)); color: hsl(var(--success)); border: 1px solid hsl(var(--success-border)); }
-.status-chip.failed { background: hsl(var(--destructive-bg)); color: hsl(var(--destructive)); border: 1px solid hsl(var(--destructive-border)); }
-.status-chip.errored { background: hsl(var(--warning-bg)); color: hsl(var(--warning)); border: 1px solid hsl(var(--warning-border)); }
-.status-chip.skipped { background: hsl(var(--bg2)); color: hsl(var(--secondary)); border: 1px solid hsl(var(--border)); }
+/* Monochrome status chips: all four variants are outline-only; fail gets a
+ * bolder border and font-weight so the eye still lands on it first. */
+.status-chip.passed { background: transparent; color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); text-transform: uppercase; letter-spacing: 0.04em; }
+.status-chip.failed { background: transparent; color: hsl(var(--foreground)); border: 1px solid hsl(var(--foreground)); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.status-chip.errored { background: transparent; color: hsl(var(--muted-foreground)); border: 1px dashed hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; }
+.status-chip.skipped { background: transparent; color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border)); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .judg-pass {
   color: hsl(var(--success));
@@ -1007,9 +1032,11 @@ a { color: inherit; text-decoration: none; }
 .turn.assistant .turn-head { background: hsl(var(--accent-purple-bg)); color: hsl(var(--accent-purple)); border-bottom-color: hsl(var(--accent-purple-border)); }
 .turn.assistant .turn-head svg { color: hsl(var(--accent-purple)); }
 
+/* Monochrome failure block: outline-only, no red wash. The AlertTriangle
+ * icon + bold uppercase header carry the signal. */
 .fail-block {
-  border: 1px solid hsl(var(--destructive-border));
-  background: hsl(var(--destructive-bg) / 0.5);
+  border: 1px solid hsl(var(--foreground));
+  background: transparent;
   border-radius: 8px;
   padding: 12px 14px;
   margin-top: 16px;
@@ -1017,8 +1044,10 @@ a { color: inherit; text-decoration: none; }
 .fail-block .hd {
   display: flex; align-items: center; gap: 8px;
   font: var(--text-s-600);
-  color: hsl(var(--destructive));
+  color: hsl(var(--foreground));
   margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .fail-block .msg {
   font: var(--text-s-500);
@@ -1463,9 +1492,9 @@ a { color: inherit; text-decoration: none; }
 .msg-metrics .m + .m::before {
   content: "|";
   margin: 0 8px;
-  color: hsl(var(--destructive) / .3);
+  color: hsl(var(--border));
 }
-.msg-metrics .k { color: hsl(var(--destructive) / .7); text-transform: uppercase; letter-spacing: 0.04em; font-size: 9.5px; }
+.msg-metrics .k { color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; font-size: 9.5px; }
 .msg-metrics .v { font-weight: 600; }
 
 .msg-meta-foot {

@@ -451,22 +451,135 @@
       ]
     },
     {
-      "name": "sessions-page",
-      "type": "registry:block",
-      "title": "Sessions Page",
-      "description": "Paginated sessions list with filters (account, started-date range). Router-agnostic: navigation via onSessionClick callback. Requires shadcn primitives: badge, button, calendar, popover, table, pagination.",
+      "name": "data-table",
+      "type": "registry:ui",
+      "title": "Data Table (tablecn)",
+      "description": "TanStack Table + shadcn primitives with nuqs URL-synced state. Ports sadmann7/shadcn-table + ObsDataTable wrapper.",
       "dependencies": [
+        "@tanstack/react-table",
+        "nuqs",
+        "zod",
         "dayjs",
-        "lucide-react"
+        "lucide-react",
+        "react-day-picker"
       ],
       "registryDependencies": [
         "badge",
         "button",
         "calendar",
+        "command",
+        "input",
+        "label",
         "popover",
+        "separator",
         "skeleton",
-        "table",
-        "pagination"
+        "slider",
+        "table"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/data-table/data-table.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-column-header.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-column-header.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-date-filter.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-date-filter.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-faceted-filter.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-faceted-filter.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-pagination.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-pagination.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-skeleton.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-skeleton.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-slider-filter.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-slider-filter.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-toolbar.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-toolbar.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-view-options.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/data-table-view-options.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/obs-data-table.tsx",
+          "type": "registry:component",
+          "target": "components/data-table/obs-data-table.tsx"
+        },
+        {
+          "path": "registry/new-york/data-table/use-data-table.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-data-table.ts"
+        },
+        {
+          "path": "registry/new-york/data-table/use-debounced-callback.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-debounced-callback.ts"
+        },
+        {
+          "path": "registry/new-york/data-table/use-callback-ref.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-callback-ref.ts"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-utils.ts",
+          "type": "registry:lib",
+          "target": "lib/data-table.ts"
+        },
+        {
+          "path": "registry/new-york/data-table/parsers.ts",
+          "type": "registry:lib",
+          "target": "lib/parsers.ts"
+        },
+        {
+          "path": "registry/new-york/data-table/types.ts",
+          "type": "registry:lib",
+          "target": "types/data-table.ts"
+        },
+        {
+          "path": "registry/new-york/data-table/data-table-config.ts",
+          "type": "registry:lib",
+          "target": "config/data-table.ts"
+        }
+      ]
+    },
+    {
+      "name": "sessions-page",
+      "type": "registry:block",
+      "title": "Sessions Page",
+      "description": "Paginated sessions list with tablecn-backed filters (account, transport, started-date). URL-synced via nuqs. Router-agnostic: navigation via onSessionClick callback.",
+      "dependencies": [
+        "dayjs",
+        "lucide-react",
+        "@tanstack/react-table",
+        "nuqs"
+      ],
+      "registryDependencies": [
+        "badge",
+        "button",
+        "data-table",
+        "skeleton"
       ],
       "files": [
         {
@@ -622,19 +735,18 @@
       "name": "evals-page",
       "type": "registry:block",
       "title": "Evals Page",
-      "description": "Paginated eval runs list with filters (agent, account, started-date). Router-agnostic: navigation via onRunClick callback.",
+      "description": "Paginated eval runs list with tablecn-backed filters (agent, account, framework, started-date). URL-synced via nuqs. Router-agnostic: navigation via onRunClick callback.",
       "dependencies": [
         "dayjs",
-        "lucide-react"
+        "lucide-react",
+        "@tanstack/react-table",
+        "nuqs"
       ],
       "registryDependencies": [
         "badge",
         "button",
-        "calendar",
-        "popover",
-        "skeleton",
-        "table",
-        "pagination"
+        "data-table",
+        "skeleton"
       ],
       "files": [
         {
@@ -719,18 +831,20 @@
       "name": "eval-run-detail-page",
       "type": "registry:block",
       "title": "Eval Run Detail Page",
-      "description": "Single eval run detail: pass-rate stats, CI metadata, cases table, and a case-detail drawer.",
+      "description": "Single eval run detail: pass-rate stats, CI metadata, tablecn cases table with status filter, and a case-detail drawer.",
       "dependencies": [
-        "lucide-react"
+        "lucide-react",
+        "@tanstack/react-table",
+        "nuqs"
       ],
       "registryDependencies": [
         "badge",
         "button",
         "card",
         "collapsible",
+        "data-table",
         "sheet",
         "skeleton",
-        "table",
         "eval-case-detail-page"
       ],
       "files": [

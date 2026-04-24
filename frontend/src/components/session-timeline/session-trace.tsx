@@ -4,13 +4,16 @@ import type { SessionMetrics, TurnRecord } from '@/lib/observability-types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Monochrome: every span uses the neutral scale. Pipeline stages are
+// differentiated by density (solid vs translucent fill) rather than hue,
+// and labels always land on foreground/muted-foreground.
 const SPAN_COLORS = {
   user: { bg: 'bg-muted', border: 'border-border', label: 'text-muted-foreground' },
-  agent: { bg: 'bg-primary/20', border: 'border-primary/40', label: 'text-primary' },
-  stt: { bg: 'bg-blue-500/20', border: 'border-blue-500/40', label: 'text-blue-600' },
-  turn_decision: { bg: 'bg-slate-400/20', border: 'border-slate-400/40', label: 'text-slate-500' },
-  llm: { bg: 'bg-violet-500/20', border: 'border-violet-500/40', label: 'text-violet-600' },
-  tts: { bg: 'bg-teal-500/20', border: 'border-teal-500/40', label: 'text-teal-600' },
+  agent: { bg: 'bg-foreground/15', border: 'border-foreground/30', label: 'text-foreground' },
+  stt: { bg: 'bg-foreground/10', border: 'border-foreground/25', label: 'text-muted-foreground' },
+  turn_decision: { bg: 'bg-foreground/5', border: 'border-foreground/20', label: 'text-muted-foreground' },
+  llm: { bg: 'bg-foreground/15', border: 'border-foreground/30', label: 'text-foreground' },
+  tts: { bg: 'bg-foreground/10', border: 'border-foreground/25', label: 'text-muted-foreground' },
 } as const
 
 const ROW_HEIGHT = 28

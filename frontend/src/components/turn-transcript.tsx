@@ -7,16 +7,17 @@ import { useTranscript } from '@/lib/observability-hooks'
 
 const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) => {
   if (ms == null) return null
-  const color =
+  // Monochrome: fast / ok / slow are signalled via weight + border, not hue.
+  const tone =
     ms < 200
-      ? 'text-green-600 bg-green-500/10'
+      ? 'text-foreground border border-border bg-background'
       : ms < 500
-        ? 'text-yellow-600 bg-yellow-500/10'
-        : 'text-red-500 bg-red-500/10'
+        ? 'text-foreground border border-border bg-muted/50'
+        : 'text-foreground border border-foreground bg-muted font-semibold'
   return (
     <span
       title={`${label}: ${formatMs(ms)}`}
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${color}`}
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${tone}`}
     >
       {label}&nbsp;&nbsp;|&nbsp;&nbsp;{formatMs(ms)}
     </span>
@@ -83,7 +84,7 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
               <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b">
                 <Code2 size={12} className="text-primary shrink-0" />
                 <span className="text-xs font-semibold text-primary">{tc.name}</span>
-                {tc.is_error && <span className="text-[10px] text-red-500 font-medium">failed</span>}
+                {tc.is_error && <span className="text-[10px] text-foreground font-semibold uppercase tracking-wider">failed</span>}
               </div>
               <div className="px-3 py-2 space-y-1.5">
                 <div>
@@ -100,7 +101,7 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
                 {tc.output != null && (
                   <div>
                     <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Output</span>
-                    <pre className={`mt-1 text-xs font-mono whitespace-pre-wrap break-all ${tc.is_error ? 'text-red-500' : 'text-green-600'}`}>
+                    <pre className={`mt-1 text-xs font-mono whitespace-pre-wrap break-all ${tc.is_error ? 'text-foreground font-semibold' : 'text-foreground'}`}>
                       {tc.output}
                     </pre>
                   </div>
