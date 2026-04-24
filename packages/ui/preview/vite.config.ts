@@ -14,9 +14,12 @@ function mockApiPlugin() {
   return {
     name: 'mock-api',
     configureServer(server: any) {
-      const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8')) as MockData
       server.middlewares.use(async (req: any, res: any, next: any) => {
         if (!req.url?.startsWith('/api/')) return next()
+        // Re-read mock-data.json on every request so JSON edits are picked
+        // up without a dev-server restart. (Dev-only cost — production uses
+        // install-mock-fetch which imports the JSON as a static module.)
+        const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8')) as MockData
         const url = new URL(req.url, 'http://localhost')
         const response = handleMockRequest(url.pathname, url.search, mockData)
         if (!response) return next()

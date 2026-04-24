@@ -22,6 +22,10 @@ interface TurnRecord {
   llm_ttft_ms?: number;
   tts_ttfb_ms?: number;
   turn_decision_ms?: number;
+  /** STT confidence for the user utterance, 0–1. Source:
+   * `chat_history[item].transcript_confidence` from LiveKit's ChatMessage.
+   * Present only when the STT plugin populates it (Deepgram, Google, etc.). */
+  user_transcript_confidence?: number;
   llm_prompt_tokens?: number;
   llm_completion_tokens?: number;
   llm_total_tokens?: number;
@@ -168,6 +172,7 @@ export function buildSessionMetrics(
   if (chatHistory) {
     let currentUserText: string | null = null;
     let currentUserMetrics: any = {};
+    let currentUserConfidence: number | undefined;
     let pendingToolCalls: ToolCallRecord[] = [];
 
     for (const item of chatHistory) {
@@ -179,6 +184,12 @@ export function buildSessionMetrics(
       if (item.type === "message" && role === "user") {
         currentUserText = text;
         currentUserMetrics = { ...itemMetrics };
+        // LiveKit's ChatMessage.transcript_confidence comes through pydantic
+        // serialization at the chat-item level (not inside metrics).
+        currentUserConfidence =
+          typeof item.transcript_confidence === "number"
+            ? item.transcript_confidence
+            : undefined;
       } else if (item.type === "message" && role === "assistant") {
         turnNumber++;
 
@@ -222,6 +233,7 @@ export function buildSessionMetrics(
           llm_ttft_ms: llmMs,
           tts_ttfb_ms: ttsMs,
           turn_decision_ms: turnDecisionMs,
+          user_transcript_confidence: currentUserConfidence,
           llm_prompt_tokens: m.llm_prompt_tokens,
           llm_completion_tokens: m.llm_completion_tokens,
           llm_total_tokens: m.llm_total_tokens ?? (((m.llm_prompt_tokens ?? 0) + (m.llm_completion_tokens ?? 0)) || undefined),
@@ -244,6 +256,7 @@ export function buildSessionMetrics(
         turns.push(turn);
         currentUserText = null;
         currentUserMetrics = {};
+        currentUserConfidence = undefined;
         pendingToolCalls = [];
       } else if (item.type === "function_call" || item.type === "tool_call") {
         const rawArgs = item.arguments ?? item.function?.arguments ?? {};
@@ -298,11 +311,16 @@ export function buildSessionMetrics(
         turn_id: `turn-${turnNumber}-partial`,
         user_text: currentUserText,
         agent_text: null,
-        agent_first: false,
+        // Match the normal-path rule: if there's no user text, the agent
+        // must have started the turn (orphan tool call with no preceding
+        // user speech). Previously hardcoded `false`, which suppressed
+        // the "Agent initiated" badge on agent-initiated orphan turns.
+        agent_first: currentUserText == null,
         interrupted: false,
         user_started_speaking_at: toIso(currentUserMetrics.started_speaking_at),
         user_stopped_speaking_at: toIso(currentUserMetrics.stopped_speaking_at),
         turn_decision_ms: toMs(currentUserMetrics.end_of_turn_delay),
+        user_transcript_confidence: currentUserConfidence,
         tool_calls: hasOrphanToolCalls ? [...pendingToolCalls] : undefined,
       });
       pendingToolCalls = [];

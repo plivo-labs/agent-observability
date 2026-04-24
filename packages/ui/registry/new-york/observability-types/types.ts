@@ -16,6 +16,10 @@ export interface TurnRecord {
   llm_ttft_ms?: number
   tts_ttfb_ms?: number
   turn_decision_ms?: number
+  /** STT confidence for the user utterance, 0–1. Populated by the STT
+   * plugin (Deepgram, Google, …); absent when the plugin doesn't report
+   * confidence. */
+  user_transcript_confidence?: number
   llm_prompt_tokens?: number
   llm_completion_tokens?: number
   llm_total_tokens?: number

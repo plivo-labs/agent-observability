@@ -15,6 +15,28 @@ const LATENCY_THRESHOLDS: Record<string, { good: number; warn: number }> = {
   TTS: { good: 300, warn: 600 },
 }
 
+/** STT confidence pill on user bubbles. Thresholds mirror voice SLOs:
+ * ≥ 0.9 green, ≥ 0.7 amber, below red. */
+const ConfidencePill = ({ value }: { value: number | undefined }) => {
+  if (value == null) return null
+  const tone =
+    value >= 0.9
+      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]'
+      : value >= 0.7
+        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))]'
+        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] font-semibold'
+  const pct = Math.round(value * 100)
+  return (
+    <span
+      title={`Transcript confidence: ${pct}%`}
+      aria-label={`Transcript confidence: ${pct}%`}
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${tone}`}
+    >
+      CONF&nbsp;&nbsp;|&nbsp;&nbsp;{pct}%
+    </span>
+  )
+}
+
 const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) => {
   if (ms == null) return null
   const th = LATENCY_THRESHOLDS[label] ?? { good: 500, warn: 1500 }
@@ -77,13 +99,20 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
         {/* Messages */}
         <div className="flex flex-col gap-2">
           {turn.user_text && (
-            <div className="flex items-start gap-2 max-w-[85%]">
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--bubble-user))] border border-border mt-0.5">
-                <User size={11} className="text-muted-foreground" />
+            <div className="flex flex-col gap-1 max-w-[85%]">
+              <div className="flex items-start gap-2">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--bubble-user))] border border-border mt-0.5">
+                  <User size={11} className="text-muted-foreground" />
+                </div>
+                <div className="rounded-lg rounded-tl-sm bg-[hsl(var(--bubble-user))] border border-border px-3 py-2">
+                  <span className="text-xs">{turn.user_text}</span>
+                </div>
               </div>
-              <div className="rounded-lg rounded-tl-sm bg-[hsl(var(--bubble-user))] border border-border px-3 py-2">
-                <span className="text-xs">{turn.user_text}</span>
-              </div>
+              {turn.user_transcript_confidence != null && (
+                <div className="ml-7">
+                  <ConfidencePill value={turn.user_transcript_confidence} />
+                </div>
+              )}
             </div>
           )}
           {/* Tool calls — rendered BEFORE the agent message so the visual
