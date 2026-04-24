@@ -52,8 +52,10 @@ interface PropDef {
 interface DocEntry {
   id: string
   label: string
-  group: 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
-  pkg: string
+  group: 'Getting started' | 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
+  /** Component registry name (for the install command). Omitted for guide
+   *  entries that don't correspond to a registry item. */
+  pkg?: string
   description: string
   stage?: Stage
   /** Omit to skip the Preview section (use for context providers and other
@@ -69,6 +71,10 @@ interface DocEntry {
   returns?: string
   /** Usage code snippet shown under the preview. */
   usage?: string
+  /** Free-form body for guide-style entries (no install/preview/props).
+   *  When set, the standard Preview / Installation / Usage / Props / Returns
+   *  sections are skipped and this is rendered after the lede instead. */
+  body?: () => React.ReactNode
 }
 
 function SessionsListPreview() {
@@ -115,6 +121,215 @@ function StretchWrap({ children }: { children: React.ReactNode }) {
 }
 
 const ENTRIES: DocEntry[] = [
+  {
+    id: 'server-quickstart',
+    label: 'Quickstart',
+    group: 'Getting started',
+    description:
+      'Run the Agent Observability server locally. It receives session reports from the agent-transport SDKs, stores them in Postgres, and serves the dashboard UI.',
+    body: () => (
+      <>
+        <div className="comp-sub">Local dev</div>
+        <p className="docs-p">
+          Clone the repo, install deps, and start a Postgres — everything else runs from Bun.
+        </p>
+        <CodeBlock
+          lang="tsx"
+          code={`git clone https://github.com/plivo-labs/agent-observability
+cd agent-observability
+bun install
+
+# Start Postgres (Docker)
+docker compose up postgres -d
+
+# Copy env and run the server
+cp .env.example .env
+bun run dev              # backend on :9090
+bun run dev:frontend     # vite dev server on :5173 (proxies /api to :9090)`}
+        />
+
+        <div className="comp-sub">Docker</div>
+        <p className="docs-p">
+          Bring up Postgres + the app together. Migrations apply automatically on startup.
+        </p>
+        <CodeBlock lang="tsx" code={`docker compose up`} />
+
+        <div className="comp-sub">Production</div>
+        <p className="docs-p">
+          Build the frontend once, then start the Hono server — it serves the static bundle
+          alongside the API.
+        </p>
+        <CodeBlock
+          lang="tsx"
+          code={`bun run build:frontend
+bun run start            # serves API + static UI on :9090`}
+        />
+      </>
+    ),
+  },
+  {
+    id: 'server-env',
+    label: 'Environment',
+    group: 'Getting started',
+    description:
+      'Configuration comes from environment variables. Only DATABASE_URL is required; basic auth and S3 are opt-in and enable themselves when both vars in the pair are set.',
+    body: () => (
+      <>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Default</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>DATABASE_URL</code><span className="req"> required</span></td>
+                <td><span className="dash">—</span></td>
+                <td>Postgres connection string. Example: <code className="type">postgres://user:password@localhost:5432/agent_observability</code></td>
+              </tr>
+              <tr>
+                <td><code>PORT</code></td>
+                <td><code className="dflt">9090</code></td>
+                <td>HTTP port the server listens on.</td>
+              </tr>
+              <tr>
+                <td><code>AUTO_MIGRATE</code></td>
+                <td><code className="dflt">true</code></td>
+                <td>Run SQL migrations in <code className="type">migrations/</code> on startup. Set to <code className="type">false</code> if you manage migrations externally (e.g. goose).</td>
+              </tr>
+              <tr>
+                <td><code>AGENT_OBSERVABILITY_USER</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Basic-auth username. Paired with <code className="type">_PASS</code>.</td>
+              </tr>
+              <tr>
+                <td><code>AGENT_OBSERVABILITY_PASS</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Basic-auth password. When both user + pass are set, every route except <code className="type">/health</code> requires basic auth.</td>
+              </tr>
+              <tr>
+                <td><code>S3_BUCKET</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Target bucket for uploaded audio recordings. S3 upload is enabled only when the bucket and credentials are all set.</td>
+              </tr>
+              <tr>
+                <td><code>S3_REGION</code></td>
+                <td><code className="dflt">us-east-1</code></td>
+                <td>AWS region for <code className="type">S3_BUCKET</code>.</td>
+              </tr>
+              <tr>
+                <td><code>S3_ACCESS_KEY_ID</code></td>
+                <td><span className="dash">—</span></td>
+                <td>AWS access key ID.</td>
+              </tr>
+              <tr>
+                <td><code>S3_SECRET_ACCESS_KEY</code></td>
+                <td><span className="dash">—</span></td>
+                <td>AWS secret access key.</td>
+              </tr>
+              <tr>
+                <td><code>S3_ENDPOINT</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Custom S3-compatible endpoint (e.g. MinIO). Leave blank for AWS S3.</td>
+              </tr>
+              <tr>
+                <td><code>S3_PREFIX</code></td>
+                <td><code className="dflt">recordings</code></td>
+                <td>Object-key prefix for uploaded recordings.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'server-api',
+    label: 'API routes',
+    group: 'Getting started',
+    description:
+      'HTTP surface exposed by the server. The /observability/* routes are inbound (SDKs call them); the /api/* routes power the dashboard and anything else that needs to read back captured data.',
+    body: () => (
+      <>
+        <div className="comp-sub">Inbound (SDKs)</div>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Method / Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>POST /observability/recordings/v0</code></td>
+                <td>Multipart session report from an agent-transport SDK: JSON header, chat history, and optional OGG audio. Parsed, stored in Postgres, and optionally uploaded to S3.</td>
+              </tr>
+              <tr>
+                <td><code>POST /observability/evals/v0</code></td>
+                <td>Eval run payload from the pytest / vitest plugins: run metadata, per-case results, judgments, failures, and captured events.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="comp-sub">Dashboard API</div>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Method / Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>GET /api/sessions</code></td>
+                <td>Paginated list of sessions. Supports <code className="type">limit</code> (1–20), <code className="type">offset</code>, and filters like <code className="type">account_id</code>, <code className="type">transport</code>, <code className="type">started_from</code>, <code className="type">started_to</code>.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/sessions/:id</code></td>
+                <td>Full session detail: chat history, computed per-turn metrics, raw report, events, and options.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/evals</code></td>
+                <td>Paginated list of eval runs with the same pagination contract as sessions.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/evals/:run_id</code></td>
+                <td>Single eval run with aggregate pass rate, CI metadata, and its list of cases.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/evals/:run_id/cases/:case_id</code></td>
+                <td>One case with its transcript, judgments, and failure block.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="comp-sub">Ops</div>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Method / Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>GET /health</code></td>
+                <td>Always open (never behind basic auth). Returns <code className="type">200 OK</code> when the server is up.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </>
+    ),
+  },
   {
     id: 'observability-provider',
     label: 'Agent Observability Provider',
@@ -945,6 +1160,7 @@ export function MyChart({ data }: { data: Row[] }) {
 ]
 
 const GROUPS: Array<DocEntry['group']> = [
+  'Getting started',
   'Core',
   'Hooks',
   'Pages',
@@ -1269,43 +1485,53 @@ function DocsPage() {
         <h1>{active.label}</h1>
         <p className="lede">{active.description}</p>
 
-        {active.render && (
+        {active.body ? (
+          active.body()
+        ) : (
           <>
-            <div className="comp-sub">Preview</div>
-            <Preview stage={active.stage}>{active.render()}</Preview>
-          </>
-        )}
+            {active.render && (
+              <>
+                <div className="comp-sub">Preview</div>
+                <Preview stage={active.stage}>{active.render()}</Preview>
+              </>
+            )}
 
-        {active.signature && (
-          <>
-            <div className="comp-sub">Signature</div>
-            <CodeBlock code={active.signature} lang="ts" className="docs-signature" />
-          </>
-        )}
+            {active.signature && (
+              <>
+                <div className="comp-sub">Signature</div>
+                <CodeBlock code={active.signature} lang="ts" className="docs-signature" />
+              </>
+            )}
 
-        <div className="comp-sub">Installation</div>
-        <InstallBlock pkg={active.pkg} />
+            {active.pkg && (
+              <>
+                <div className="comp-sub">Installation</div>
+                <InstallBlock pkg={active.pkg} />
+              </>
+            )}
 
-        {active.usage && (
-          <>
-            <div className="comp-sub">Usage</div>
-            <UsageBlock code={active.usage} />
-          </>
-        )}
+            {active.usage && (
+              <>
+                <div className="comp-sub">Usage</div>
+                <UsageBlock code={active.usage} />
+              </>
+            )}
 
-        {active.props && (
-          <>
-            <div className="comp-sub">
-              {active.group === 'Hooks' ? 'Parameters' : 'Props'}
-            </div>
-            <PropsTable props={active.props} />
-          </>
-        )}
+            {active.props && (
+              <>
+                <div className="comp-sub">
+                  {active.group === 'Hooks' ? 'Parameters' : 'Props'}
+                </div>
+                <PropsTable props={active.props} />
+              </>
+            )}
 
-        {active.returns && (
-          <>
-            <div className="comp-sub">Returns</div>
-            <CodeBlock code={active.returns} lang="ts" className="docs-signature" />
+            {active.returns && (
+              <>
+                <div className="comp-sub">Returns</div>
+                <CodeBlock code={active.returns} lang="ts" className="docs-signature" />
+              </>
+            )}
           </>
         )}
 

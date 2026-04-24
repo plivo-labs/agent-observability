@@ -181,6 +181,14 @@
   margin: 22px 0 8px;
 }
 
+.docs-main .docs-p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 14px;
+  max-width: 680px;
+}
+
 .pvw {
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
