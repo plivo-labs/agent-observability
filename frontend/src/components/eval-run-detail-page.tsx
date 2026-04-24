@@ -85,10 +85,9 @@ function StatCard({
         : tone === 'zero'
           ? 'text-muted-foreground'
           : ''
-  const cardTone =
-    tone === 'hero'
-      ? 'bg-gradient-to-b from-[hsl(var(--destructive-bg,0_85%_97%))] to-card border-border'
-      : ''
+  // Hero card lift: solid card background + slightly heavier border.
+  // No gradient — the value + meter already carry the signal.
+  const cardTone = tone === 'hero' ? 'border-foreground/40' : ''
   return (
     <Card className={cn('relative overflow-hidden', cardTone)}>
       <CardHeader className="pb-2">

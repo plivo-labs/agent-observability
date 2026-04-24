@@ -5,19 +5,29 @@ import { formatMs } from '@/lib/observability-format'
 import type { ChatItem, SessionMetrics, TurnRecord } from '@/lib/observability-types'
 import { useTranscript } from '@/lib/observability-hooks'
 
+/** Per-metric latency thresholds in ms. Tuned to voice-pipeline SLOs so
+ * each pill gives a real signal (not all-green at any sub-second value).
+ * `good` upper bound, `warn` upper bound — anything above is `bad`. */
+const LATENCY_THRESHOLDS: Record<string, { good: number; warn: number }> = {
+  Perceived: { good: 800, warn: 1500 },
+  STT: { good: 300, warn: 600 },
+  'LLM TTFT': { good: 500, warn: 1200 },
+  TTS: { good: 300, warn: 600 },
+}
+
 const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) => {
   if (ms == null) return null
-  // Monochrome: fast / ok / slow are signalled via weight + border, not hue.
+  const th = LATENCY_THRESHOLDS[label] ?? { good: 500, warn: 1500 }
   const tone =
-    ms < 200
-      ? 'text-foreground border border-border bg-background'
-      : ms < 500
-        ? 'text-foreground border border-border bg-muted/50'
-        : 'text-foreground border border-foreground bg-muted font-semibold'
+    ms <= th.good
+      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]'
+      : ms <= th.warn
+        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))]'
+        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] font-semibold'
   return (
     <span
       title={`${label}: ${formatMs(ms)}`}
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${tone}`}
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${tone}`}
     >
       {label}&nbsp;&nbsp;|&nbsp;&nbsp;{formatMs(ms)}
     </span>
@@ -45,7 +55,10 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
 
       {/* Content */}
       <div className="flex-1 pb-8 min-w-0">
-        {/* Turn badges row */}
+        {/* Turn badges row — only flags that aren't otherwise visible in the
+            layout below. Tool-call count was removed because each tool call
+            renders its own detailed card under the assistant message; the
+            badge at the top made it look like the user had called a tool. */}
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">
           {turn.interrupted && (
             <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
@@ -59,48 +72,23 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
               Agent initiated
             </Badge>
           )}
-          {turn.tool_calls && turn.tool_calls.length > 0 && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              <Code2 size={10} className="mr-0.5" />
-              {turn.tool_calls.length} tool call{turn.tool_calls.length > 1 ? 's' : ''}
-            </Badge>
-          )}
         </div>
 
         {/* Messages */}
         <div className="flex flex-col gap-2">
           {turn.user_text && (
             <div className="flex items-start gap-2 max-w-[85%]">
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted mt-0.5">
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--bubble-user))] border border-border mt-0.5">
                 <User size={11} className="text-muted-foreground" />
               </div>
-              <div className="rounded-lg rounded-tl-sm bg-muted px-3 py-2">
+              <div className="rounded-lg rounded-tl-sm bg-[hsl(var(--bubble-user))] border border-border px-3 py-2">
                 <span className="text-xs">{turn.user_text}</span>
               </div>
             </div>
           )}
-          {turn.agent_text && (
-            <div className={`flex items-start gap-2 max-w-[85%] ${isChat ? 'self-end flex-row-reverse' : ''}`}>
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 mt-0.5">
-                <Bot size={11} className="text-primary" />
-              </div>
-              <div className={`rounded-lg px-3 py-2 bg-primary/10 ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
-                <span className="text-xs">{turn.agent_text}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Latency pills — agent response pipeline */}
-          {(turn.user_perceived_ms != null || turn.stt_delay_ms != null || turn.llm_ttft_ms != null || turn.tts_ttfb_ms != null) && (
-            <div className={`flex items-center gap-1 flex-wrap ${isChat ? 'justify-end mr-7' : ''}`}>
-              <LatencyPill label="Perceived" ms={turn.user_perceived_ms} />
-              <LatencyPill label="STT" ms={turn.stt_delay_ms} />
-              <LatencyPill label="LLM TTFT" ms={turn.llm_ttft_ms} />
-              <LatencyPill label="TTS" ms={turn.tts_ttfb_ms} />
-            </div>
-          )}
-
-          {/* Tool calls */}
+          {/* Tool calls — rendered BEFORE the agent message so the visual
+              order matches the causal order: user asked → agent called tool
+              → agent replied with the result. */}
           {turn.tool_calls?.map((tc, i) => (
             <div key={i} className={`rounded-lg border bg-muted/30 overflow-hidden w-fit max-w-[85%] ${isChat ? 'self-end mr-7' : ''}`}>
               <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b">
@@ -131,6 +119,27 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
               </div>
             </div>
           ))}
+
+          {turn.agent_text && (
+            <div className={`flex items-start gap-2 max-w-[85%] ${isChat ? 'self-end flex-row-reverse' : ''}`}>
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--bubble-agent))] border border-[hsl(var(--info-border))] mt-0.5">
+                <Bot size={11} className="text-[hsl(var(--info))]" />
+              </div>
+              <div className={`rounded-lg px-3 py-2 bg-[hsl(var(--bubble-agent))] border border-[hsl(var(--info-border))] ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
+                <span className="text-xs">{turn.agent_text}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Latency pills — agent response pipeline */}
+          {(turn.user_perceived_ms != null || turn.stt_delay_ms != null || turn.llm_ttft_ms != null || turn.tts_ttfb_ms != null) && (
+            <div className={`flex items-center gap-1 flex-wrap ${isChat ? 'justify-end mr-7' : ''}`}>
+              <LatencyPill label="Perceived" ms={turn.user_perceived_ms} />
+              <LatencyPill label="STT" ms={turn.stt_delay_ms} />
+              <LatencyPill label="LLM TTFT" ms={turn.llm_ttft_ms} />
+              <LatencyPill label="TTS" ms={turn.tts_ttfb_ms} />
+            </div>
+          )}
         </div>
 
         {/* Token stats for turn */}
@@ -154,10 +163,12 @@ const ChatMessageCard = ({ item }: { item: ChatItem }) => {
 
   return (
     <div className="flex gap-3 py-2">
-      <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full mt-0.5 ${
-        isUser ? 'bg-muted' : 'bg-primary/15'
+      <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full mt-0.5 border ${
+        isUser
+          ? 'bg-[hsl(var(--bubble-user))] border-border'
+          : 'bg-[hsl(var(--bubble-agent))] border-[hsl(var(--info-border))]'
       }`}>
-        {isUser ? <User size={11} className="text-muted-foreground" /> : <Bot size={11} className="text-primary" />}
+        {isUser ? <User size={11} className="text-muted-foreground" /> : <Bot size={11} className="text-[hsl(var(--info))]" />}
       </div>
       <div>
         <span className="text-xxs-400 text-muted-foreground capitalize">{role}</span>
