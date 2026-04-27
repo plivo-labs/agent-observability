@@ -55,6 +55,7 @@ export default defineConfig({
       // Registry lib items
       { find: '@/lib/observability-types', replacement: reg('observability-types/types.ts') },
       { find: '@/lib/observability-format', replacement: reg('observability-format/format.ts') },
+      { find: '@/lib/observability-events', replacement: reg('observability-events/events.ts') },
       { find: '@/lib/observability-api', replacement: reg('observability-api/api.ts') },
       { find: '@/lib/observability-provider', replacement: reg('observability-provider/provider.tsx') },
       { find: '@/lib/observability-hooks', replacement: reg('observability-hooks/hooks.ts') },
