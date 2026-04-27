@@ -7,10 +7,10 @@
     "recharts"
   ],
   "registryDependencies": [
-    "observability-theme",
-    "observability-types",
-    "observability-hooks",
-    "observability-chart-shared"
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
   ],
   "files": [
     {

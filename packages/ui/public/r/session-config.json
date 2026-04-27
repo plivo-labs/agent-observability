@@ -8,7 +8,7 @@
   ],
   "registryDependencies": [
     "card",
-    "observability-hooks"
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
   ],
   "files": [
     {

@@ -12,9 +12,9 @@
     "button",
     "card",
     "collapsible",
-    "observability-events",
-    "observability-types",
-    "observability-hooks"
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-events.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
   ],
   "files": [
     {

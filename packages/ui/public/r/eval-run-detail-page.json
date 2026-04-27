@@ -13,10 +13,10 @@
     "button",
     "card",
     "collapsible",
-    "data-table",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
     "sheet",
     "skeleton",
-    "eval-case-detail-page"
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/eval-case-detail-page.json"
   ],
   "files": [
     {
