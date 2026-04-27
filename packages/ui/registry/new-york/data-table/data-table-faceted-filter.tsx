@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import type { Option } from "@/types/data-table";
+import type { Option } from "./types";
 
 interface DataTableFacetedFilterProps<TData, TValue> {
   column?: Column<TData, TValue>;
@@ -77,8 +77,12 @@ export function DataTableFacetedFilter<TData, TValue>({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant={selectedValues?.size > 0 ? 'outline' : 'dashed'}
-          className="font-normal"
+          variant="outline"
+          className={
+            selectedValues?.size > 0
+              ? "font-normal"
+              : "border-dashed font-normal"
+          }
         >
           {selectedValues?.size > 0 ? (
             <div
