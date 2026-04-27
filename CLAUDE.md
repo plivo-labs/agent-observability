@@ -44,6 +44,16 @@ docker compose up postgres -d  # Postgres only for local dev
 - **Dev**: Vite dev server on :5173 proxies `/api/*` to Hono on :9090
 - **Prod**: `vite build` outputs to `frontend/dist/`, Hono serves these as static files
 
+### Sharing code between `packages/ui` and `frontend/`
+
+The dashboard (`frontend/`) and the published registry (`packages/ui/`) share runtime helpers — e.g., `observability-types`, `observability-format`, `observability-hooks`, `observability-events`. The convention:
+
+- Source of truth lives at `packages/ui/registry/new-york/<name>/<name>.ts` and is published as a registry item via `packages/ui/public/r/<name>.json` (regenerated with `cd packages/ui && bun run build`).
+- `frontend/src/lib/<name>.ts` is a **standalone copy** of that source — same content verbatim. The `@/lib/...` imports inside resolve correctly in both surfaces (vite alias `@`→`./src` for the frontend, tsconfig path for `packages/ui`).
+- **Never** import from `packages/` inside `frontend/src/**` — not via relative path (`../../../packages/...`), not via alias. External consumers install components with `npx shadcn add <raw.githubusercontent.com URL>`; shadcn CLI copies the file you point it at and does **not** follow re-exports, so a re-export across the boundary leaves external consumers with a stub. The dashboard must look exactly like an external consumer to keep the contract honest.
+- When adding a new shared helper: author it under `packages/ui/registry/new-york/`, register it in `packages/ui/registry.json`, regenerate `public/r/`, then place a verbatim copy at `frontend/src/lib/<name>.ts`.
+- Smell test: `grep -rn "packages/" frontend/src/ --include='*.ts' --include='*.tsx'` — only JSDoc URL comments should match.
+
 ## Session Report Flow
 
 1. Agent-transport SDK sends multipart POST to `/observability/recordings/v0` — basic auth header is required only when `AGENT_OBSERVABILITY_USER`/`_PASS` are configured on the server

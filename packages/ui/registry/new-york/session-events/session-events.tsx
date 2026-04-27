@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 import { useEvents } from '@/lib/observability-hooks'
+import { getEventCreatedAt, getEventTimeRange } from '@/lib/observability-events'
 import type { SessionEvent } from '@/lib/observability-types'
 
 // Monochrome default palette — every type reads as an uppercase-mono
@@ -75,18 +76,21 @@ function formatAbsolute(unixSeconds: number): string {
 const EventRow = ({
   event,
   relSeconds,
+  eventTime,
   timeMode,
   badgeClass,
 }: {
   event: SessionEvent
-  relSeconds: number
+  relSeconds: number | null
+  eventTime: number | null
   timeMode: TimeMode
   badgeClass: string
 }) => {
-  const timeLabel =
-    timeMode === 'relative'
-      ? formatRelative(relSeconds)
-      : formatAbsolute(event.created_at)
+  const timeLabel = eventTime == null
+    ? 'n/a'
+    : timeMode === 'relative'
+      ? formatRelative(relSeconds ?? 0)
+      : formatAbsolute(eventTime)
   return (
     <Collapsible className="group/event border-b last:border-b-0">
       <CollapsibleTrigger className="flex w-full items-start gap-3 px-3 py-2 text-left text-sm cursor-pointer hover:bg-muted/40 transition-colors data-[state=open]:bg-muted/30">
@@ -159,8 +163,9 @@ export const SessionEvents = ({
     )
   }
 
-  const t0 = events[0].created_at
-  const tEnd = events[events.length - 1].created_at
+  const timeRange = getEventTimeRange(events)
+  const t0 = timeRange?.start ?? 0
+  const tEnd = timeRange?.end ?? t0
 
   const rangeLabel =
     timeMode === 'relative'
@@ -193,15 +198,19 @@ export const SessionEvents = ({
       </CardHeader>
       <CardContent className="p-0">
         <ul>
-          {events.map((event, i) => (
-            <EventRow
-              key={i}
-              event={event}
-              relSeconds={event.created_at - t0}
-              timeMode={timeMode}
-              badgeClass={badgeClassFor(event.type)}
-            />
-          ))}
+          {events.map((event, i) => {
+            const eventTime = getEventCreatedAt(event)
+            return (
+              <EventRow
+                key={i}
+                event={event}
+                eventTime={eventTime}
+                relSeconds={eventTime == null ? null : eventTime - t0}
+                timeMode={timeMode}
+                badgeClass={badgeClassFor(event.type)}
+              />
+            )
+          })}
         </ul>
       </CardContent>
     </Card>

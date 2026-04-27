@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronRight, Clock } from 'lucide-react'
 import dayjs from 'dayjs'
 import { useEvents } from '@/lib/observability-hooks'
+import { getEventCreatedAt, getEventTimeRange } from '@/lib/observability-events'
 import type { SessionEvent } from '@/lib/observability-types'
 
 /** Maps LiveKit event kinds to the design's `.ev-tag-*` color variants. */
@@ -101,8 +102,9 @@ export const SessionEvents = () => {
     )
   }
 
-  const t0 = events[0].created_at
-  const tEnd = events[events.length - 1].created_at
+  const timeRange = getEventTimeRange(events)
+  const t0 = timeRange?.start ?? 0
+  const tEnd = timeRange?.end ?? t0
   const rangeLabel =
     timeMode === 'relative'
       ? `${formatRelative(0)} → ${formatRelative(tEnd - t0)}`
@@ -133,8 +135,12 @@ export const SessionEvents = () => {
       </div>
       <div className="events-list">
         {events.map((event, i) => {
-          const relSec = event.created_at - t0
-          const timeLabel = timeMode === 'relative' ? formatRelative(relSec) : formatAbsolute(event.created_at)
+          const createdAt = getEventCreatedAt(event)
+          const timeLabel = createdAt == null
+            ? 'n/a'
+            : timeMode === 'relative'
+              ? formatRelative(createdAt - t0)
+              : formatAbsolute(createdAt)
           const tagClass = EV_TAG_CLASS[event.type] ?? 'ev-tag-agent'
           const isOpen = expanded.has(i)
           return (

@@ -499,6 +499,44 @@ describe("GET /api/sessions/:id", () => {
     expect(body.session_metrics.summary.total_turns).toBe(1);
   });
 
+  test("sorts session events by created_at", async () => {
+    const chatHistory = [
+      { id: "u1", type: "message", role: "user", content: "hi", metrics: {} },
+    ];
+    mockSql.mockResolvedValueOnce([
+      {
+        id: 1,
+        session_id: "sess-events",
+        turn_count: 1,
+        chat_history: JSON.stringify(chatHistory),
+        session_metrics: JSON.stringify({ per_turn: [], usage: null }),
+        raw_report: JSON.stringify({
+          events: [
+            { type: "late", created_at: 3 },
+            { type: "untimed" },
+            { type: "early", created_at: 1 },
+            { type: "middle", created_at: "1970-01-01T00:00:02Z" },
+          ],
+          options: {},
+        }),
+      },
+    ]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions/sess-events", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.events.map((event: any) => event.type)).toEqual([
+      "early",
+      "middle",
+      "late",
+      "untimed",
+    ]);
+  });
+
   test("handles already-parsed JSONB fields", async () => {
     mockSql.mockResolvedValueOnce([
       {
