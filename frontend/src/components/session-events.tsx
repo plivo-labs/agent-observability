@@ -156,7 +156,7 @@ export const SessionEvents = () => {
           return (
             <div key={i} className={`ev-row-wrap${isOpen ? ' open' : ''}`}>
               <div
-                className="ev-row"
+                className={`ev-row${timeMode === 'absolute' ? ' absolute-time' : ''}`}
                 onClick={() => toggle(i)}
                 role="button"
                 tabIndex={0}
@@ -173,15 +173,17 @@ export const SessionEvents = () => {
                   <Badge
                     variant="outline"
                     data-event-type={event.type}
-                    className={`h-5 rounded px-2 py-0 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
+                    className={`tag h-5 rounded px-2 py-0 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
                   >
-                    {event.type}
+                    <span>{event.type}</span>
                   </Badge>
                 </div>
                 <div className="msg"><EventMessage event={event} /></div>
               </div>
               {isOpen && (
-                <pre className="ev-detail">{JSON.stringify(event, null, 2)}</pre>
+                <pre className={`ev-detail${timeMode === 'absolute' ? ' absolute-time' : ''}`}>
+                  {JSON.stringify(event, null, 2)}
+                </pre>
               )}
             </div>
           )

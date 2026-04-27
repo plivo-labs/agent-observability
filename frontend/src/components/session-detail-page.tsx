@@ -63,8 +63,8 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
       <SessionHeader />
       <MetricSummaryCards />
 
-      <Tabs defaultValue="session">
-        <TabsList>
+      <Tabs defaultValue="session" className="min-w-0">
+        <TabsList className="max-w-full overflow-x-auto">
           <TabsTrigger value="session">
             <AudioLines size={14} /> Session
             {turnCount > 0 && <span style={{ marginLeft: 4, color: 'hsl(var(--tertiary))', font: 'var(--text-xxs-600)' }}>({turnCount})</span>}
@@ -81,7 +81,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="session" style={{ marginTop: 4 }}>
+        <TabsContent value="session" className="min-w-0" style={{ marginTop: 4 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="rounded-lg border bg-card p-5">
               <SessionTimeline />
@@ -90,7 +90,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
           </div>
         </TabsContent>
 
-        <TabsContent value="metrics" style={{ marginTop: 4 }}>
+        <TabsContent value="metrics" className="min-w-0" style={{ marginTop: 4 }}>
           <div className="perf-grid">
             <LatencyPercentilesChart />
             <PipelineBreakdownChart />
@@ -99,11 +99,11 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
           </div>
         </TabsContent>
 
-        <TabsContent value="events" style={{ marginTop: 4 }}>
+        <TabsContent value="events" className="min-w-0" style={{ marginTop: 4 }}>
           <SessionEvents />
         </TabsContent>
 
-        <TabsContent value="config" style={{ marginTop: 4 }}>
+        <TabsContent value="config" className="min-w-0" style={{ marginTop: 4 }}>
           <SessionConfig />
         </TabsContent>
       </Tabs>
