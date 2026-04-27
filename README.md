@@ -1,5 +1,11 @@
 # Agent Observability
 
+[![Tests](https://img.shields.io/github/actions/workflow/status/plivo-labs/agent-observability/test.yml?branch=main&label=tests)](https://github.com/plivo-labs/agent-observability/actions/workflows/test.yml)
+[![agent-observability-ui](https://img.shields.io/npm/v/agent-observability-ui.svg?label=agent-observability-ui)](https://www.npmjs.com/package/agent-observability-ui)
+[![vitest-agent-observability](https://img.shields.io/npm/v/vitest-agent-observability.svg?label=vitest-agent-observability)](https://www.npmjs.com/package/vitest-agent-observability)
+[![pytest-agent-observability](https://img.shields.io/pypi/v/pytest-agent-observability.svg?label=pytest-agent-observability)](https://pypi.org/project/pytest-agent-observability/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Session report callback server for [agent-transport](https://github.com/plivo-labs/agent-transport) with a built-in dashboard UI and a [shadcn component registry](packages/ui/README.md) for embedding observability views in your own app.
 
 ## What it does
