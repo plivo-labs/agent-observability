@@ -12,8 +12,9 @@
 #     "openai>=1.40",
 # ]
 #
-# [tool.uv.sources]
-# pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Local override — uncomment to test against the in-tree plugin.
+# # [tool.uv.sources]
+# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
 # ///
 """FastAPI server that exposes test runs over HTTP.
 

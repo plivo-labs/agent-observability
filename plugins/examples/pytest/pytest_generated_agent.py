@@ -9,8 +9,9 @@
 #     "openai>=1.40",
 # ]
 #
-# [tool.uv.sources]
-# pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Local override — uncomment to test against the in-tree plugin.
+# # [tool.uv.sources]
+# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
 # ///
 """Pytest example where an LLM generates the scenarios for you.
 
