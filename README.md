@@ -19,28 +19,46 @@ This server receives that report, extracts session metrics, optionally uploads t
 
 ## Setup
 
-### Prerequisites
+### Recommended: Docker Compose
+
+The easiest way to run the server is Docker Compose. It builds the frontend,
+starts Postgres, runs migrations, and serves the API plus dashboard on
+http://localhost:9090.
+
+Prerequisite: Docker with Compose.
+
+```bash
+git clone https://github.com/plivo-labs/agent-observability
+cd agent-observability
+cp .env.example .env
+docker compose up --build
+```
+
+The compose file points `DATABASE_URL` at the bundled Postgres container and
+sets `AUTO_MIGRATE=true`. Edit `.env` only when you want optional basic auth or
+S3 recording upload settings.
+
+### Local Development
+
+Use the Bun flow when you want to work on the backend, frontend, or component
+registry directly.
+
+Prerequisites:
 
 - [Bun](https://bun.sh) runtime
 - Postgres database
 
-### Install
+Install dependencies:
 
 ```bash
-# Server dependencies
 bun install
-
-# Frontend dependencies
 cd frontend && bun install && cd ..
-
-# UI registry dependencies (optional — only if working on the component library)
+# Optional, only if working on the component library
 cd packages/ui && bun install && cd ..
-
-# Environment config
 cp .env.example .env  # set DATABASE_URL (required); AGENT_OBSERVABILITY_USER/PASS enable basic auth
 ```
 
-### Development
+Set `DATABASE_URL` in `.env` to your local Postgres database.
 
 Run the backend and frontend dev servers:
 
@@ -53,12 +71,6 @@ bun run dev:frontend
 ```
 
 Open http://localhost:5173 for the dashboard.
-
-### With Docker
-
-```bash
-docker compose up
-```
 
 ### Production Build
 
