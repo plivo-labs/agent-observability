@@ -97,6 +97,23 @@ bun install
 bun run dev  # http://localhost:5174
 ```
 
+## Eval Plugins
+
+Language-native test-framework plugins stream eval runs into the same
+dashboard. Each `pytest` or `vitest` invocation lands as one `eval_run`
+with every test surfacing as an `eval_case` — function-call assertions,
+LLM-judge verdicts, agent handoffs, and failure detail are captured
+automatically.
+
+| Plugin | Framework | Docs |
+|---|---|---|
+| [`pytest-agent-observability`](plugins/pytest-agent-observability/README.md) | pytest (Python) | Install, configure, env vars, and how to invoke pytest from a FastAPI server |
+| [`vitest-agent-observability`](plugins/vitest-agent-observability/README.md) | Vitest (Node/TS) | Install, configure, env vars, and how to invoke Vitest from a Bun/Node HTTP server via `startVitest` |
+
+Runnable reference suites for both frameworks — including simple agents,
+a multi-agent banking example, LLM-generated scenarios, and the HTTP
+runners — live under [`plugins/examples/`](plugins/examples/README.md).
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -121,6 +138,7 @@ bun run dev  # http://localhost:5174
 |--------|------|-------------|
 | `GET` | `/health` | Health check (always unauthenticated) |
 | `POST` | `/observability/recordings/v0` | Session report callback (basic auth when configured) |
+| `POST` | `/observability/evals/v0` | Eval run payload from the pytest / vitest plugins |
 
 ### Dashboard API
 
@@ -128,6 +146,9 @@ bun run dev  # http://localhost:5174
 |--------|------|-------------|
 | `GET` | `/api/sessions` | List sessions (paginated: `?limit=20&offset=0`) |
 | `GET` | `/api/sessions/:id` | Session detail |
+| `GET` | `/api/evals` | List eval runs |
+| `GET` | `/api/evals/:run_id` | Single eval run with its cases |
+| `GET` | `/api/evals/:run_id/cases/:case_id` | One case with transcript, judgments, failure |
 
 ### Dashboard UI
 
@@ -169,12 +190,16 @@ AGENT_OBSERVABILITY_PASS=your_pass
 
 ```
 agent-observability/
-├── src/                    # Backend (Bun/Hono)
-├── frontend/               # Dashboard app (Vite + React)
-├── packages/ui/            # shadcn component registry
-│   ├── registry/           # Component source
-│   ├── preview/            # Preview app
-│   └── tests/              # Unit tests
-├── migrations/             # SQL migrations
-└── tests/                  # Server tests
+├── src/                              # Backend (Bun/Hono)
+├── frontend/                         # Dashboard app (Vite + React)
+├── packages/ui/                      # shadcn component registry
+│   ├── registry/                     # Component source
+│   ├── preview/                      # Preview app
+│   └── tests/                        # Unit tests
+├── plugins/                          # Eval ingestion plugins
+│   ├── pytest-agent-observability/   # pytest plugin
+│   ├── vitest-agent-observability/   # Vitest reporter
+│   └── examples/                     # Runnable eval suites (pytest/ + vitest/)
+├── migrations/                       # SQL migrations
+└── tests/                            # Server tests
 ```

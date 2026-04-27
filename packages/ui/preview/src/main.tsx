@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import './index.css'
+import './observability.css'
 
 if (import.meta.env.PROD) {
   const { installMockFetch } = await import('./lib/install-mock-fetch')

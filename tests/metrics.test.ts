@@ -189,6 +189,43 @@ describe("buildSessionMetrics", () => {
     expect(result.turns[0].tool_calls![0].name).toBe("search_db");
   });
 
+  test("flushes orphan tool calls + final user message when session ends mid-tool-flow", () => {
+    // Real-world shape: session with 1 complete turn, then the user makes
+    // a request that triggers a tool call, then session closes before the
+    // agent's follow-up message. Both the trailing user message AND the
+    // tool call must land in the transcript as a partial final turn.
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hi" },
+      { id: "a1", type: "message", role: "assistant", content: "hello" },
+      { id: "u2", type: "message", role: "user",
+        content: "What's the weather in India?",
+        metrics: { stt_metadata: { model_name: "nova-3" } } },
+      { id: "fc1", type: "function_call", name: "lookup_weather",
+        arguments: '{"location":"India"}', call_id: "c-1",
+        timestamp: "2025-01-01T00:00:00Z" },
+      { id: "fco1", type: "function_call_output", call_id: "c-1",
+        output: "sunny", is_error: false },
+    ];
+    const result = buildSessionMetrics(chat, null, 2)!;
+
+    expect(result.turns).toHaveLength(2);
+    // Complete turn: user "hi" → assistant "hello"
+    expect(result.turns[0].user_text).toBe("hi");
+    expect(result.turns[0].agent_text).toBe("hello");
+    // Partial turn: carries the dangling user message + tool call
+    const partial = result.turns[1];
+    expect(partial.user_text).toBe("What's the weather in India?");
+    expect(partial.agent_text).toBeNull();
+    expect(partial.tool_calls).toHaveLength(1);
+    expect(partial.tool_calls![0].name).toBe("lookup_weather");
+    expect(partial.tool_calls![0].output).toBe("sunny");
+
+    // Session-level aggregates still count the tool call once.
+    expect(result.tool_calls).toHaveLength(1);
+    expect(result.summary.total_tool_calls).toBe(1);
+    expect(result.summary.total_turns).toBe(2);
+  });
+
   // ── Interruptions ────────────────────────────────────────────────────────
 
   test("tracks interrupted turns", () => {
@@ -367,6 +404,91 @@ describe("buildSessionMetrics", () => {
   });
 
   // ── Speaking timestamp collision ────────────────────────────────────────
+
+  // ── Tool calls ────────────────────────────────────────────────────────────
+
+  test("parses JSON-string arguments into an object", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "order" },
+      { id: "fc1", type: "function_call", call_id: "c1", name: "lookup_order", arguments: '{"order_id":"12345"}' },
+      { id: "fco1", type: "function_call_output", call_id: "c1", output: "shipped", is_error: false },
+      { id: "a1", type: "message", role: "assistant", content: "Shipped." },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns).toHaveLength(1);
+    const tc = result.turns[0].tool_calls?.[0];
+    expect(tc).toBeDefined();
+    expect(tc!.name).toBe("lookup_order");
+    expect(tc!.arguments).toEqual({ order_id: "12345" });
+  });
+
+  test("keeps non-JSON arg string as _raw so UI doesn't iterate chars", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "x" },
+      { id: "fc1", type: "function_call", name: "noop", arguments: "not-json" },
+      { id: "a1", type: "message", role: "assistant", content: "done" },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].tool_calls?.[0].arguments).toEqual({ _raw: "not-json" });
+  });
+
+  test("merges function_call_output into matching function_call by call_id", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "order" },
+      { id: "fc1", type: "function_call", call_id: "c1", name: "lookup_order", arguments: { id: "1" } },
+      { id: "fc2", type: "function_call", call_id: "c2", name: "check_stock", arguments: { sku: "abc" } },
+      { id: "fco2", type: "function_call_output", call_id: "c2", output: "in stock", is_error: false },
+      { id: "fco1", type: "function_call_output", call_id: "c1", output: "shipped", is_error: false },
+      { id: "a1", type: "message", role: "assistant", content: "In stock and shipped." },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    const calls = result.turns[0].tool_calls!;
+    expect(calls).toHaveLength(2);
+    const byName = Object.fromEntries(calls.map((c) => [c.name, c]));
+    expect(byName.lookup_order.output).toBe("shipped");
+    expect(byName.check_stock.output).toBe("in stock");
+  });
+
+  test("falls back to most recent pending call when call_id absent on output", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "x" },
+      { id: "fc1", type: "function_call", name: "noop", arguments: {} },
+      { id: "fco1", type: "function_call_output", output: "ok" },
+      { id: "a1", type: "message", role: "assistant", content: "done" },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].tool_calls?.[0].output).toBe("ok");
+  });
+
+  test("propagates is_error from function_call_output", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "x" },
+      { id: "fc1", type: "function_call", call_id: "c1", name: "failing", arguments: {} },
+      { id: "fco1", type: "function_call_output", call_id: "c1", output: "boom", is_error: true },
+      { id: "a1", type: "message", role: "assistant", content: "error" },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].tool_calls?.[0].is_error).toBe(true);
+  });
+
+  test("flushes trailing user message when session ends without agent reply", () => {
+    // Call ended with a user utterance after several completed turns.
+    // Recording has it, chat_history has it — render it in the transcript.
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hi" },
+      { id: "a1", type: "message", role: "assistant", content: "hello" },
+      { id: "u2", type: "message", role: "user", content: "bye",
+        metrics: { started_speaking_at: 1000.0, stopped_speaking_at: 1002.0, end_of_turn_delay: 0.5 } },
+    ];
+    const result = buildSessionMetrics(chat, null, 2)!;
+    expect(result.turns).toHaveLength(2);
+    expect(result.turns[0].user_text).toBe("hi");
+    expect(result.turns[0].agent_text).toBe("hello");
+    expect(result.turns[1].user_text).toBe("bye");
+    expect(result.turns[1].agent_text).toBeNull();
+    expect(result.turns[1].turn_decision_ms).toBe(500);
+    expect(result.turns[1].user_started_speaking_at).toContain("1970-01-01T00:16:40");
+  });
 
   test("separates user and agent speaking timestamps (collision avoidance)", () => {
     const chat = [

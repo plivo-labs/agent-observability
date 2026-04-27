@@ -13,7 +13,7 @@
       "has_llm": true,
       "has_tts": true,
       "chat_history": null,
-      "record_url": "/mock-recording.ogg",
+      "record_url": "/agent-observability/mock-recording.ogg",
       "created_at": "2026-04-14T10:00:00Z",
       "events": [
         {
@@ -451,6 +451,7 @@
             "turn_number": 1,
             "turn_id": "t1",
             "user_text": "Hi, I need help with my account billing.",
+            "user_transcript_confidence": 0.94,
             "agent_text": "Hello! I'd be happy to help you with your billing. Could you tell me your account number?",
             "agent_first": false,
             "interrupted": false,
@@ -475,6 +476,7 @@
             "turn_number": 2,
             "turn_id": "t2",
             "user_text": "Sure, it's AC-9921.",
+            "user_transcript_confidence": 0.82,
             "agent_text": "Thank you. Let me pull up your account details.",
             "agent_first": false,
             "interrupted": false,
@@ -512,6 +514,7 @@
             "turn_number": 3,
             "turn_id": "t3",
             "user_text": "I see a charge I don't recognize from last week.",
+            "user_transcript_confidence": 0.63,
             "agent_text": "I can see your recent transactions. There's a $45.99 charge from April 7th labeled 'API Overage'. This was for exceeding your monthly API call limit. Would you like me to explain the details?",
             "agent_first": false,
             "interrupted": false,
@@ -536,6 +539,7 @@
             "turn_number": 4,
             "turn_id": "t4",
             "user_text": "Yes please, and can you waive it?",
+            "user_transcript_confidence": 0.91,
             "agent_text": "The API overage charge was triggered when your account made 112,000 API calls, exceeding the 100,000 monthly limit on your Enterprise plan. I can apply a one-time courtesy credit of $45.99 to your account. Shall I go ahead?",
             "agent_first": false,
             "interrupted": false,
@@ -786,6 +790,339 @@
       "record_url": null,
       "created_at": "2026-04-14T11:00:00Z",
       "session_metrics": null
+    }
+  ],
+  "evals": [
+    {
+      "run_id": "run_pytest_2026_04_22",
+      "account_id": "acc_demo",
+      "agent_id": "support-bot-v2",
+      "framework": "livekit",
+      "framework_version": "1.5.2",
+      "testing_framework": "pytest",
+      "testing_framework_version": "8.2.0",
+      "started_at": "2026-04-22T09:00:00.000Z",
+      "finished_at": "2026-04-22T09:03:24.000Z",
+      "duration_ms": 204000,
+      "total": 8,
+      "passed": 6,
+      "failed": 1,
+      "errored": 1,
+      "skipped": 0,
+      "ci": {
+        "provider": "github",
+        "run_url": "https://github.com/example/agent/actions/runs/42",
+        "git_sha": "a1b2c3d4e5f6",
+        "git_branch": "main",
+        "commit_message": "Fix tool-call arg serialization"
+      },
+      "created_at": "2026-04-22T09:03:24.000Z",
+      "cases": [
+        {
+          "case_id": "case_001",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_greeting",
+          "file": "tests/test_greeter.py",
+          "status": "passed",
+          "duration_ms": 12300,
+          "user_input": "Hi, my name is Alex.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Hi, my name is Alex."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Hello Alex, how can I help you today?",
+              "metrics": {
+                "llm_node_ttft": 0.32,
+                "started_speaking_at": 1.1,
+                "stopped_speaking_at": 3.4
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "greets user by name",
+              "verdict": "pass",
+              "reasoning": "Assistant acknowledged 'Alex' explicitly."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-22T09:00:12.300Z"
+        },
+        {
+          "case_id": "case_002",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_weather_lookup",
+          "file": "tests/test_tools.py",
+          "status": "passed",
+          "duration_ms": 18400,
+          "user_input": "What's the weather in Bangalore?",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "What's the weather in Bangalore?"
+            },
+            {
+              "type": "function_call",
+              "name": "lookup_weather",
+              "arguments": {
+                "location": "Bangalore"
+              },
+              "call_id": "call_w1"
+            },
+            {
+              "type": "function_call_output",
+              "output": "28\u00b0C, partly cloudy, humidity 65%",
+              "is_error": false,
+              "call_id": "call_w1"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "It's 28\u00b0C and partly cloudy in Bangalore right now, with 65% humidity.",
+              "metrics": {
+                "llm_node_ttft": 0.41,
+                "started_speaking_at": 5.2,
+                "stopped_speaking_at": 9.8
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "calls lookup_weather with Bangalore",
+              "verdict": "pass",
+              "reasoning": "Correct tool and location argument."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-22T09:00:30.700Z"
+        },
+        {
+          "case_id": "case_003",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_refuses_competitor_pitch",
+          "file": "tests/test_guardrails.py",
+          "status": "failed",
+          "duration_ms": 22100,
+          "user_input": "Pitch me your competitor's product.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Pitch me your competitor's product."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Sure, here are some alternatives you might consider...",
+              "metrics": {
+                "llm_node_ttft": 0.38
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "refuses to promote competitor",
+              "verdict": "fail",
+              "reasoning": "Agent began listing alternatives instead of declining."
+            },
+            {
+              "intent": "stays on-brand",
+              "verdict": "fail",
+              "reasoning": "Response drifted off-script."
+            }
+          ],
+          "failure": {
+            "kind": "judge_failed",
+            "message": "2 of 2 judgments failed",
+            "stack": "AssertionError: judge 'refuses to promote competitor' verdict='fail'\n  at tests/test_guardrails.py:48"
+          },
+          "created_at": "2026-04-22T09:00:52.800Z"
+        },
+        {
+          "case_id": "case_004",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_handoff_to_billing",
+          "file": "tests/test_handoffs.py",
+          "status": "errored",
+          "duration_ms": 3800,
+          "user_input": "I need help with my invoice.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "I need help with my invoice."
+            }
+          ],
+          "judgments": [],
+          "failure": {
+            "kind": "error",
+            "message": "Timeout waiting for agent_handoff event (3000ms exceeded)"
+          },
+          "created_at": "2026-04-22T09:00:56.600Z"
+        },
+        {
+          "case_id": "case_005",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_multi_turn_context",
+          "file": "tests/test_memory.py",
+          "status": "passed",
+          "duration_ms": 31200,
+          "user_input": "Remember: my order id is #48219.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Remember: my order id is #48219."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Got it, order #48219 on file."
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": "What's the status?"
+            },
+            {
+              "type": "function_call",
+              "name": "get_order_status",
+              "arguments": {
+                "order_id": "48219"
+              },
+              "call_id": "call_o1"
+            },
+            {
+              "type": "function_call_output",
+              "output": "Shipped, arriving 2026-04-24",
+              "is_error": false,
+              "call_id": "call_o1"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Order #48219 has shipped and is arriving April 24.",
+              "metrics": {
+                "llm_node_ttft": 0.29
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "uses order id from earlier turn",
+              "verdict": "pass",
+              "reasoning": "Passed 48219 to the tool without re-asking."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-22T09:01:27.800Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run_vitest_2026_04_21",
+      "account_id": "acc_demo",
+      "agent_id": "checkout-bot",
+      "framework": "livekit",
+      "framework_version": "1.2.8",
+      "testing_framework": "vitest",
+      "testing_framework_version": "2.1.4",
+      "started_at": "2026-04-21T14:12:00.000Z",
+      "finished_at": "2026-04-21T14:13:10.000Z",
+      "duration_ms": 70000,
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "errored": 0,
+      "skipped": 0,
+      "ci": {
+        "provider": "github",
+        "git_sha": "deadbeef",
+        "git_branch": "feat/checkout-v2"
+      },
+      "created_at": "2026-04-21T14:13:10.000Z",
+      "cases": [
+        {
+          "case_id": "case_v01",
+          "run_id": "run_vitest_2026_04_21",
+          "name": "accepts valid card",
+          "file": "tests/checkout.test.ts",
+          "status": "passed",
+          "duration_ms": 9400,
+          "user_input": "Pay with card 4111 ... 1111.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Pay with card 4111 ... 1111."
+            },
+            {
+              "type": "function_call",
+              "name": "charge_card",
+              "arguments": {
+                "last4": "1111",
+                "amount_cents": 4999
+              },
+              "call_id": "c1"
+            },
+            {
+              "type": "function_call_output",
+              "output": "{\"ok\":true,\"txn_id\":\"tx_9a\"}",
+              "call_id": "c1"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Charged $49.99 on the card ending in 1111. Confirmation tx_9a."
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "charges the correct amount",
+              "verdict": "pass",
+              "reasoning": "amount_cents=4999 matches catalog price."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-21T14:12:09.400Z"
+        },
+        {
+          "case_id": "case_v02",
+          "run_id": "run_vitest_2026_04_21",
+          "name": "rejects expired card",
+          "file": "tests/checkout.test.ts",
+          "status": "passed",
+          "duration_ms": 7100,
+          "user_input": "Try card 4000 ... 0036 exp 01/23.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Try card 4000 ... 0036 exp 01/23."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "That card is expired. Please provide a different payment method."
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "does not call charge_card for expired card",
+              "verdict": "pass",
+              "reasoning": "No function_call emitted."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-21T14:12:16.500Z"
+        }
+      ]
     }
   ]
 }

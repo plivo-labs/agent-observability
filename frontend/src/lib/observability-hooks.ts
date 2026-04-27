@@ -3,6 +3,10 @@ import { useObservabilityContext } from '@/lib/observability-provider'
 import type {
   AgentSessionRow,
   ChatItem,
+  EvalCaseRow,
+  EvalRunDetail,
+  EvalRunRow,
+  EvalsFilters,
   MetricsSummary,
   PlivoMeta,
   SessionEvent,
@@ -17,36 +21,33 @@ import type {
 
 export function useSessions(
   limit = 20,
-  initialOffset = 0,
+  offset = 0,
   filters?: SessionsFilters,
 ) {
   const { api } = useObservabilityContext()
   const [sessions, setSessions] = useState<AgentSessionRow[]>([])
   const [meta, setMeta] = useState<PlivoMeta>({
     limit,
-    offset: initialOffset,
+    offset,
     total_count: 0,
     next: null,
     previous: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(initialOffset)
 
   const accountId = filters?.accountId
   const startedFrom = filters?.startedFrom
   const startedTo = filters?.startedTo
-
-  useEffect(() => {
-    setOffset(0)
-  }, [accountId, startedFrom, startedTo])
+  const transport = filters?.transport
+  const transportKey = (transport ?? []).slice().sort().join(',')
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     api
-      .listSessions(limit, offset, { accountId, startedFrom, startedTo })
+      .listSessions(limit, offset, { accountId, startedFrom, startedTo, transport })
       .then((res) => {
         if (cancelled) return
         setSessions(res.objects)
@@ -61,9 +62,10 @@ export function useSessions(
     return () => {
       cancelled = true
     }
-  }, [api, limit, offset, accountId, startedFrom, startedTo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, limit, offset, accountId, startedFrom, startedTo, transportKey])
 
-  return { sessions, meta, loading, error, offset, setOffset }
+  return { sessions, meta, loading, error }
 }
 
 // ---------------------------------------------------------------------------
@@ -137,4 +139,115 @@ export function useEvents(): SessionEvent[] | null {
 export function useOptions(): Record<string, unknown> | null {
   const { session } = useObservabilityContext()
   return session?.options ?? null
+}
+
+// ---------------------------------------------------------------------------
+// useEvalRuns / useEvalRun / useEvalCase
+// ---------------------------------------------------------------------------
+
+export function useEvalRuns(
+  limit = 20,
+  initialOffset = 0,
+  filters?: EvalsFilters,
+) {
+  const { api } = useObservabilityContext()
+  const [runs, setRuns] = useState<EvalRunRow[]>([])
+  const [meta, setMeta] = useState<PlivoMeta>({
+    limit,
+    offset: initialOffset,
+    total_count: 0,
+    next: null,
+    previous: null,
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [offset, setOffset] = useState(initialOffset)
+
+  const { agentId, framework, testingFramework, accountId, startedFrom, startedTo } = filters ?? {}
+  // Stable string keys for the array filters so effect deps don't churn
+  // on new-but-equal-array identities every render.
+  const frameworkKey = (framework ?? []).slice().sort().join(',')
+  const testingFrameworkKey = (testingFramework ?? []).slice().sort().join(',')
+
+  // Sync offset when the caller passes a live initialOffset (e.g. from URL
+  // state). Callers who drive pagination via setOffset pass a stable 0 and
+  // this no-ops after mount.
+  useEffect(() => {
+    setOffset(initialOffset)
+  }, [initialOffset])
+
+  useEffect(() => {
+    setOffset(0)
+  }, [agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .listEvalRuns(limit, offset, {
+        agentId,
+        framework: framework && framework.length ? framework : undefined,
+        testingFramework:
+          testingFramework && testingFramework.length ? testingFramework : undefined,
+        accountId,
+        startedFrom,
+        startedTo,
+      })
+      .then((res) => {
+        if (cancelled) return
+        setRuns(res.objects)
+        setMeta(res.meta)
+      })
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
+
+  return { runs, meta, loading, error, offset, setOffset }
+}
+
+export function useEvalRun(runId: string | undefined) {
+  const { api } = useObservabilityContext()
+  const [run, setRun] = useState<EvalRunDetail | null>(null)
+  const [loading, setLoading] = useState(!!runId)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!runId) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .getEvalRun(runId)
+      .then((res) => !cancelled && setRun(res))
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, runId])
+
+  return { run, loading, error }
+}
+
+export function useEvalCase(runId: string | undefined, caseId: string | undefined) {
+  const { api } = useObservabilityContext()
+  const [evalCase, setEvalCase] = useState<EvalCaseRow | null>(null)
+  const [loading, setLoading] = useState(!!(runId && caseId))
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!runId || !caseId) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .getEvalCase(runId, caseId)
+      .then((res) => !cancelled && setEvalCase(res))
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, runId, caseId])
+
+  return { evalCase, loading, error }
 }

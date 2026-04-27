@@ -65,7 +65,7 @@ export const ChartCard = ({
   children: React.ReactNode
 }) => {
   return (
-    <div className="rounded-lg border p-5">
+    <div className="rounded-lg border bg-card p-5">
       <span className="text-p-400 font-medium">{title}</span>
       {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
       <div className={`mt-3 ${chartHeight}`}>

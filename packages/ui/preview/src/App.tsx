@@ -7,6 +7,8 @@ import {
   useNavigate,
   useParams,
 } from 'react-router'
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+import { Menu, Moon, Sun, X } from 'lucide-react'
 import type { HighlighterCore } from 'shiki'
 import { AgentObservabilityProvider } from '@/lib/observability-provider'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
@@ -21,10 +23,22 @@ import { SessionEvents } from '@/components/session-events'
 import { SessionConfig } from '@/components/session-config'
 import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
+import { EvalsPage } from '@/components/evals-page'
+import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
+import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 import mockData from './mock-data.json'
 import './docs.css'
 
 const SESSION_ID = mockData.sessions[0].session_id
+const EVAL_RUN_ID =
+  (mockData as { evals?: Array<{ run_id: string }> }).evals?.[0]?.run_id ??
+  'run_pytest_2026_04_22'
+const EVAL_CASE_ID =
+  (
+    mockData as {
+      evals?: Array<{ cases?: Array<{ case_id: string }> }>
+    }
+  ).evals?.[0]?.cases?.[0]?.case_id ?? 'case_001'
 
 type Stage = 'centered' | 'left' | 'stretch'
 
@@ -39,8 +53,10 @@ interface PropDef {
 interface DocEntry {
   id: string
   label: string
-  group: 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
-  pkg: string
+  group: 'Server setup' | 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
+  /** Component registry name (for the install command). Omitted for guide
+   *  entries that don't correspond to a registry item. */
+  pkg?: string
   description: string
   stage?: Stage
   /** Omit to skip the Preview section (use for context providers and other
@@ -56,6 +72,74 @@ interface DocEntry {
   returns?: string
   /** Usage code snippet shown under the preview. */
   usage?: string
+  /** Free-form body for guide-style entries (no install/preview/props).
+   *  When set, the standard Preview / Installation / Usage / Props / Returns
+   *  sections are skipped and this is rendered after the lede instead. */
+  body?: () => React.ReactNode
+}
+
+/** Theme strategy:
+ *   - Default: follow the OS `prefers-color-scheme`. No localStorage key
+ *     is written until the user explicitly clicks the toggle.
+ *   - After the user toggles, their choice is stored and wins.
+ *   - While following system, an OS theme change flips the UI live;
+ *     once overridden, OS changes are ignored.
+ */
+const THEME_KEY = 'darkMode'
+
+const readSystemPref = () => {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+const readStoredOverride = (): boolean | null => {
+  if (typeof window === 'undefined') return null
+  const v = localStorage.getItem(THEME_KEY)
+  if (v === 'true') return true
+  if (v === 'false') return false
+  return null
+}
+
+const useDarkMode = () => {
+  const [dark, setDark] = useState(() => {
+    const override = readStoredOverride()
+    return override ?? readSystemPref()
+  })
+
+  // Apply class on every change. Don't touch localStorage here — we only
+  // persist when the user explicitly toggles (see the returned fn below).
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+  }, [dark])
+
+  // Follow the OS theme as long as there's no stored override. We listen
+  // to `change` for the live case, but some browsers don't fire it while
+  // the tab is in the background — re-check on visibilitychange / focus
+  // so a theme switch made in another app is picked up immediately.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const sync = () => {
+      if (readStoredOverride() === null) setDark(readSystemPref())
+    }
+    mq.addEventListener('change', sync)
+    document.addEventListener('visibilitychange', sync)
+    window.addEventListener('focus', sync)
+    return () => {
+      mq.removeEventListener('change', sync)
+      document.removeEventListener('visibilitychange', sync)
+      window.removeEventListener('focus', sync)
+    }
+  }, [])
+
+  const toggle = () =>
+    setDark((prev) => {
+      const next = !prev
+      localStorage.setItem(THEME_KEY, String(next))
+      return next
+    })
+
+  return [dark, toggle] as const
 }
 
 function SessionsListPreview() {
@@ -70,6 +154,29 @@ function SessionDetailPreview() {
   )
 }
 
+function EvalsListPreview() {
+  return <EvalsPage onRunClick={() => {}} />
+}
+
+function EvalRunDetailPreview() {
+  return <EvalRunDetailPage runId={EVAL_RUN_ID} onBack={() => {}} />
+}
+
+function EvalCaseDetailPreview() {
+  // Normally rendered inside the Sheet drawer that EvalRunDetailPage opens.
+  // Here we surface it standalone — constrain width to the typical drawer
+  // size so the layout reads the same as it does in production.
+  return (
+    <div className="max-w-3xl mx-auto border bg-card">
+      <EvalCaseDetailPage
+        runId={EVAL_RUN_ID}
+        caseId={EVAL_CASE_ID}
+        onBack={() => {}}
+      />
+    </div>
+  )
+}
+
 function StretchWrap({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ padding: 24, width: '100%', background: 'hsl(var(--bg2) / 0.4)' }}>
@@ -79,6 +186,196 @@ function StretchWrap({ children }: { children: React.ReactNode }) {
 }
 
 const ENTRIES: DocEntry[] = [
+  {
+    id: 'server-quickstart',
+    label: 'Quickstart',
+    group: 'Server setup',
+    description:
+      'Run the Agent Observability server. It receives session reports from the agent-transport SDKs, stores them in Postgres, and serves the dashboard UI.',
+    body: () => (
+      <>
+        <p className="docs-p">
+          Clone the repo and bring up Postgres + the app together. Migrations apply automatically on startup; the dashboard is on <code className="type">:9090</code>.
+        </p>
+        <CodeBlock
+          lang="bash"
+          code={`git clone https://github.com/plivo-labs/agent-observability
+cd agent-observability
+docker compose up --build`}
+        />
+        <p className="docs-p">
+          That's it for most users. If you want to hack on the code instead, see{' '}
+          <a href="https://github.com/plivo-labs/agent-observability#development">
+            the repo README
+          </a>{' '}
+          for the Bun-based dev flow.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'server-env',
+    label: 'Environment',
+    group: 'Server setup',
+    description:
+      'Configuration comes from environment variables. Only DATABASE_URL is required; basic auth and S3 are opt-in and enable themselves when both vars in the pair are set.',
+    body: () => (
+      <>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Default</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>DATABASE_URL</code><span className="req"> required</span></td>
+                <td><span className="dash">—</span></td>
+                <td>Postgres connection string. Example: <code className="type">postgres://user:password@localhost:5432/agent_observability</code></td>
+              </tr>
+              <tr>
+                <td><code>PORT</code></td>
+                <td><code className="dflt">9090</code></td>
+                <td>HTTP port the server listens on.</td>
+              </tr>
+              <tr>
+                <td><code>AUTO_MIGRATE</code></td>
+                <td><code className="dflt">true</code></td>
+                <td>Run SQL migrations in <code className="type">migrations/</code> on startup. Set to <code className="type">false</code> if you manage migrations externally (e.g. goose).</td>
+              </tr>
+              <tr>
+                <td><code>AGENT_OBSERVABILITY_USER</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Basic-auth username. Paired with <code className="type">_PASS</code>.</td>
+              </tr>
+              <tr>
+                <td><code>AGENT_OBSERVABILITY_PASS</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Basic-auth password. When both user + pass are set, every route except <code className="type">/health</code> requires basic auth.</td>
+              </tr>
+              <tr>
+                <td><code>S3_BUCKET</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Target bucket for uploaded audio recordings. S3 upload is enabled only when the bucket and credentials are all set.</td>
+              </tr>
+              <tr>
+                <td><code>S3_REGION</code></td>
+                <td><code className="dflt">us-east-1</code></td>
+                <td>AWS region for <code className="type">S3_BUCKET</code>.</td>
+              </tr>
+              <tr>
+                <td><code>S3_ACCESS_KEY_ID</code></td>
+                <td><span className="dash">—</span></td>
+                <td>AWS access key ID.</td>
+              </tr>
+              <tr>
+                <td><code>S3_SECRET_ACCESS_KEY</code></td>
+                <td><span className="dash">—</span></td>
+                <td>AWS secret access key.</td>
+              </tr>
+              <tr>
+                <td><code>S3_ENDPOINT</code></td>
+                <td><span className="dash">—</span></td>
+                <td>Custom S3-compatible endpoint (e.g. MinIO). Leave blank for AWS S3.</td>
+              </tr>
+              <tr>
+                <td><code>S3_PREFIX</code></td>
+                <td><code className="dflt">recordings</code></td>
+                <td>Object-key prefix for uploaded recordings.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'server-api',
+    label: 'API routes',
+    group: 'Server setup',
+    description:
+      'HTTP surface exposed by the server. The /observability/* routes are inbound (SDKs call them); the /api/* routes power the dashboard and anything else that needs to read back captured data.',
+    body: () => (
+      <>
+        <div className="comp-sub">Inbound (SDKs)</div>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Method / Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>POST /observability/recordings/v0</code></td>
+                <td>Multipart session report from an agent-transport SDK: JSON header, chat history, and optional OGG audio. Parsed, stored in Postgres, and optionally uploaded to S3.</td>
+              </tr>
+              <tr>
+                <td><code>POST /observability/evals/v0</code></td>
+                <td>Eval run payload from the pytest / vitest plugins: run metadata, per-case results, judgments, failures, and captured events.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="comp-sub">Dashboard API</div>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Method / Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>GET /api/sessions</code></td>
+                <td>Paginated list of sessions. Supports <code className="type">limit</code> (1–20), <code className="type">offset</code>, and filters like <code className="type">account_id</code>, <code className="type">transport</code>, <code className="type">started_from</code>, <code className="type">started_to</code>.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/sessions/:id</code></td>
+                <td>Full session detail: chat history, computed per-turn metrics, raw report, events, and options.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/evals</code></td>
+                <td>Paginated list of eval runs with the same pagination contract as sessions.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/evals/:run_id</code></td>
+                <td>Single eval run with aggregate pass rate, CI metadata, and its list of cases.</td>
+              </tr>
+              <tr>
+                <td><code>GET /api/evals/:run_id/cases/:case_id</code></td>
+                <td>One case with its transcript, judgments, and failure block.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="comp-sub">Ops</div>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>Method / Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>GET /health</code></td>
+                <td>Always open (never behind basic auth). Returns <code className="type">200 OK</code> when the server is up.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </>
+    ),
+  },
   {
     id: 'observability-provider',
     label: 'Agent Observability Provider',
@@ -361,6 +658,133 @@ export function SessionDetailRoute() {
       sessionId={sessionId}
     >
       <SessionDetailPage onBack={() => navigate('/sessions')} />
+    </AgentObservabilityProvider>
+  )
+}`,
+  },
+  {
+    id: 'evals-page',
+    label: 'Evals Page',
+    group: 'Pages',
+    pkg: 'evals-page',
+    description:
+      'Tabular index of eval runs across your pytest / vitest suites. Pass-rate meters, framework badges, CI commit trail, and drill-in navigation.',
+    stage: 'stretch',
+    render: () => <EvalsListPreview />,
+    props: [
+      {
+        name: 'onRunClick',
+        type: '(runId: string) => void',
+        description:
+          'Fires when a row is clicked. Wire it up to your router for navigation to the eval-run detail page. Omit to render a non-interactive list.',
+      },
+    ],
+    usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { EvalsPage } from '@/components/evals-page'
+import { useNavigate } from 'react-router'
+
+export function EvalsRoute() {
+  const navigate = useNavigate()
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <EvalsPage onRunClick={(id) => navigate(\`/evals/\${id}\`)} />
+    </AgentObservabilityProvider>
+  )
+}`,
+  },
+  {
+    id: 'eval-run-detail-page',
+    label: 'Eval Run Detail Page',
+    group: 'Pages',
+    pkg: 'eval-run-detail-page',
+    description:
+      'Single-run breakdown: pass-rate hero tile, passed/failed/errored/skipped counters, CI metadata, and a cases table with a drawer for per-case transcript and judgments.',
+    stage: 'stretch',
+    render: () => <EvalRunDetailPreview />,
+    props: [
+      {
+        name: 'runId',
+        type: 'string',
+        required: true,
+        description: 'The run to load and display. Typically read from the route.',
+      },
+      {
+        name: 'onBack',
+        type: '() => void',
+        description:
+          'Handler for the breadcrumb "Back to evals" action at the top of the page.',
+      },
+      {
+        name: 'onCaseClick',
+        type: '(caseId: string) => void',
+        description:
+          'Called when a row in the cases table is clicked. When omitted, the page opens a Sheet drawer with EvalCaseDetailPage inline; when provided, the drawer is suppressed so you can route to a full page instead.',
+      },
+    ],
+    usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
+import { useNavigate, useParams } from 'react-router'
+
+export function EvalRunDetailRoute() {
+  const { runId } = useParams<{ runId: string }>()
+  const navigate = useNavigate()
+  if (!runId) return null
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <EvalRunDetailPage
+        runId={runId}
+        onBack={() => navigate('/evals')}
+        // Omit onCaseClick to use the built-in drawer; provide it to
+        // route to a standalone case page instead.
+      />
+    </AgentObservabilityProvider>
+  )
+}`,
+  },
+  {
+    id: 'eval-case-detail-page',
+    label: 'Eval Case Detail',
+    group: 'Components',
+    pkg: 'eval-case-detail-page',
+    description:
+      'Single-case drill-in — header with status chip, metric tiles (avg TTFT / speaking time / turn count), user input, full transcript, judgments list, and a collapsible failure block. Ships rendered inside the EvalRunDetailPage drawer by default; reuse it directly when you want a standalone route.',
+    stage: 'stretch',
+    render: () => <EvalCaseDetailPreview />,
+    props: [
+      {
+        name: 'runId',
+        type: 'string',
+        required: true,
+        description: 'Run that owns the case.',
+      },
+      {
+        name: 'caseId',
+        type: 'string',
+        required: true,
+        description: 'The case to load.',
+      },
+      {
+        name: 'onBack',
+        type: '() => void',
+        description:
+          'Handler for the drawer close / back-to-run action. Omit to render without a back control.',
+      },
+    ],
+    usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { useNavigate, useParams } from 'react-router'
+
+export function EvalCaseRoute() {
+  const { runId, caseId } = useParams<{ runId: string; caseId: string }>()
+  const navigate = useNavigate()
+  if (!runId || !caseId) return null
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <EvalCaseDetailPage
+        runId={runId}
+        caseId={caseId}
+        onBack={() => navigate(\`/evals/\${runId}\`)}
+      />
     </AgentObservabilityProvider>
   )
 }`,
@@ -781,13 +1205,14 @@ export function MyChart({ data }: { data: Row[] }) {
   },
 ]
 
-const GROUPS: Array<DocEntry['group']> = [
-  'Core',
-  'Hooks',
-  'Pages',
-  'Components',
-  'Charts',
-  'Utilities',
+/** Sidebar structure: two top-level categories, each containing one or
+ * more groups. Inside a group, entries render in declaration order. */
+const CATEGORIES: Array<{ label: string; groups: Array<DocEntry['group']> }> = [
+  { label: 'Server setup', groups: ['Server setup'] },
+  {
+    label: 'UI components',
+    groups: ['Core', 'Hooks', 'Pages', 'Components', 'Charts', 'Utilities'],
+  },
 ]
 
 function PlivoLogo() {
@@ -810,10 +1235,30 @@ function PlivoLogo() {
   )
 }
 
-function DocsTopbar() {
+function DocsTopbar({
+  dark,
+  toggleDark,
+  menuOpen,
+  toggleMenu,
+}: {
+  dark: boolean
+  toggleDark: () => void
+  menuOpen: boolean
+  toggleMenu: () => void
+}) {
   return (
     <header className="docs-topbar">
       <div className="brand-zone">
+        <button
+          type="button"
+          className="menu-toggle"
+          onClick={toggleMenu}
+          title={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? <X size={18} /> : <Menu size={18} />}
+        </button>
         <div className="brand">
           <PlivoLogo />
           <span className="divider">/</span>
@@ -821,10 +1266,16 @@ function DocsTopbar() {
         </div>
       </div>
       <div className="main-zone">
-        <nav>
-          <a className="active">Components</a>
-        </nav>
         <div className="spacer" />
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleDark}
+          title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {dark ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <a
           className="link-out"
           href="https://github.com/plivo-labs/agent-observability"
@@ -841,28 +1292,56 @@ function DocsTopbar() {
 function DocsSidebar({
   active,
   onSelect,
+  open,
+  onClose,
 }: {
   active: string
   onSelect: (id: string) => void
+  open: boolean
+  onClose: () => void
 }) {
   return (
-    <aside className="docs-sidebar">
-      {GROUPS.map((group) => (
-        <div className="sect" key={group}>
-          <div className="sect-h">{group}</div>
-          {ENTRIES.filter((e) => e.group === group).map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              className={'item' + (entry.id === active ? ' active' : '')}
-              onClick={() => onSelect(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
+    <>
+      {/* Click-outside scrim — only visible on small screens via CSS. */}
+      <div
+        className={'docs-sidebar-scrim' + (open ? ' open' : '')}
+        aria-hidden="true"
+        onClick={onClose}
+      />
+      <aside className={'docs-sidebar' + (open ? ' open' : '')}>
+      {CATEGORIES.map((category) => (
+        <div className="cat" key={category.label}>
+          <div className="cat-h">{category.label}</div>
+          {category.groups.map((group) => {
+            const entries = ENTRIES.filter((e) => e.group === group)
+            if (entries.length === 0) return null
+            // If the category has only one group and it shares the category
+            // label, skip the redundant subheader.
+            const showGroupHeader =
+              category.groups.length > 1 || group !== category.label
+            return (
+              <div className="sect" key={group}>
+                {showGroupHeader && <div className="sect-h">{group}</div>}
+                {entries.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={'item' + (entry.id === active ? ' active' : '')}
+                    onClick={() => {
+                      onSelect(entry.id)
+                      onClose()
+                    }}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </div>
+            )
+          })}
         </div>
       ))}
-    </aside>
+      </aside>
+    </>
   )
 }
 
@@ -939,6 +1418,7 @@ async function getHighlighter(): Promise<HighlighterCore> {
         langs: [
           import('shiki/langs/tsx.mjs'),
           import('shiki/langs/typescript.mjs'),
+          import('shiki/langs/bash.mjs'),
         ],
         engine: createOnigurumaEngine(import('shiki/wasm')),
       })
@@ -953,7 +1433,7 @@ function CodeBlock({
   className,
 }: {
   code: string
-  lang?: 'tsx' | 'ts'
+  lang?: 'tsx' | 'ts' | 'bash'
   className?: string
 }) {
   const [html, setHtml] = useState<string>('')
@@ -1082,6 +1562,8 @@ function Preview({
 function DocsPage() {
   const { entryId } = useParams<{ entryId: string }>()
   const navigate = useNavigate()
+  const [dark, toggleDark] = useDarkMode()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const active = useMemo(
     () => ENTRIES.find((e) => e.id === entryId) ?? ENTRIES[0],
@@ -1095,8 +1577,18 @@ function DocsPage() {
 
   return (
     <div className="docs-shell">
-      <DocsTopbar />
-      <DocsSidebar active={active.id} onSelect={select} />
+      <DocsTopbar
+        dark={dark}
+        toggleDark={toggleDark}
+        menuOpen={menuOpen}
+        toggleMenu={() => setMenuOpen((v) => !v)}
+      />
+      <DocsSidebar
+        active={active.id}
+        onSelect={select}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+      />
       <main className="docs-main">
         <div className="docs-crumbs">
           <span>{active.group}</span>
@@ -1106,43 +1598,53 @@ function DocsPage() {
         <h1>{active.label}</h1>
         <p className="lede">{active.description}</p>
 
-        {active.render && (
+        {active.body ? (
+          active.body()
+        ) : (
           <>
-            <div className="comp-sub">Preview</div>
-            <Preview stage={active.stage}>{active.render()}</Preview>
-          </>
-        )}
+            {active.render && (
+              <>
+                <div className="comp-sub">Preview</div>
+                <Preview stage={active.stage}>{active.render()}</Preview>
+              </>
+            )}
 
-        {active.signature && (
-          <>
-            <div className="comp-sub">Signature</div>
-            <CodeBlock code={active.signature} lang="ts" className="docs-signature" />
-          </>
-        )}
+            {active.signature && (
+              <>
+                <div className="comp-sub">Signature</div>
+                <CodeBlock code={active.signature} lang="ts" className="docs-signature" />
+              </>
+            )}
 
-        <div className="comp-sub">Installation</div>
-        <InstallBlock pkg={active.pkg} />
+            {active.pkg && (
+              <>
+                <div className="comp-sub">Installation</div>
+                <InstallBlock pkg={active.pkg} />
+              </>
+            )}
 
-        {active.usage && (
-          <>
-            <div className="comp-sub">Usage</div>
-            <UsageBlock code={active.usage} />
-          </>
-        )}
+            {active.usage && (
+              <>
+                <div className="comp-sub">Usage</div>
+                <UsageBlock code={active.usage} />
+              </>
+            )}
 
-        {active.props && (
-          <>
-            <div className="comp-sub">
-              {active.group === 'Hooks' ? 'Parameters' : 'Props'}
-            </div>
-            <PropsTable props={active.props} />
-          </>
-        )}
+            {active.props && (
+              <>
+                <div className="comp-sub">
+                  {active.group === 'Hooks' ? 'Parameters' : 'Props'}
+                </div>
+                <PropsTable props={active.props} />
+              </>
+            )}
 
-        {active.returns && (
-          <>
-            <div className="comp-sub">Returns</div>
-            <CodeBlock code={active.returns} lang="ts" className="docs-signature" />
+            {active.returns && (
+              <>
+                <div className="comp-sub">Returns</div>
+                <CodeBlock code={active.returns} lang="ts" className="docs-signature" />
+              </>
+            )}
           </>
         )}
 
@@ -1174,11 +1676,13 @@ export default function App() {
   return (
     <AgentObservabilityProvider baseUrl="/api" sessionId={SESSION_ID}>
       <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <Routes>
-          <Route path="/" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
-          <Route path="/:entryId" element={<DocsPage />} />
-          <Route path="*" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
-        </Routes>
+        <NuqsAdapter>
+          <Routes>
+            <Route path="/" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
+            <Route path="/:entryId" element={<DocsPage />} />
+            <Route path="*" element={<Navigate to={`/${ENTRIES[0].id}`} replace />} />
+          </Routes>
+        </NuqsAdapter>
       </BrowserRouter>
     </AgentObservabilityProvider>
   )

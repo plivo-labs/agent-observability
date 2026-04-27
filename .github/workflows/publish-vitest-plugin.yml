@@ -1,0 +1,120 @@
+name: Publish vitest-agent-observability
+
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should-publish: ${{ steps.check.outputs.should-publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check for release label on merged PR
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should-publish=true" >> $GITHUB_OUTPUT
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
+              --jq 'if length > 0 then .[0].labels[].name else empty end')
+            echo "Labels on merged PR: $LABELS"
+            if echo "$LABELS" | grep -q "release-vitest-plugin"; then
+              echo "should-publish=true" >> $GITHUB_OUTPUT
+            else
+              echo "should-publish=false" >> $GITHUB_OUTPUT
+              echo "No release-vitest-plugin label found, skipping"
+            fi
+          fi
+          VERSION=$(node -p "require('./plugins/vitest-agent-observability/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing vitest-agent-observability v$VERSION to npm"
+
+  publish:
+    needs: check
+    if: needs.check.outputs.should-publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: plugins/vitest-agent-observability
+        run: npm ci || npm install
+
+      - name: Build (tsc)
+        working-directory: plugins/vitest-agent-observability
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: plugins/vitest-agent-observability
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  release:
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          TAG="vitest-plugin-v${VERSION}"
+          PREV_TAG=$(git tag --list "vitest-plugin-v*" --sort=-v:refname | head -1)
+          BASE=${PREV_TAG:-$(git rev-list --max-parents=0 HEAD)}
+          PR_NUMBERS=$(git log "$BASE"..HEAD --pretty=%s \
+            | grep -oE '(\(#[0-9]+\)|Merge pull request #[0-9]+)' \
+            | grep -oE '[0-9]+' \
+            | sort -u)
+          NOTES=""
+          for pr in $PR_NUMBERS; do
+            LABELS=$(gh pr view "$pr" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -qx "vitest-agent-observability"; then
+              TITLE=$(gh pr view "$pr" --json title --jq '.title')
+              AUTHOR=$(gh pr view "$pr" --json author --jq '.author.login')
+              NOTES+="- ${TITLE} (#${pr}) @${AUTHOR}"$'\n'
+            fi
+          done
+          if [ -z "$NOTES" ]; then
+            NOTES="Release vitest-agent-observability v${VERSION}"
+          fi
+          if [ -n "$PREV_TAG" ]; then
+            NOTES+=$'\n'"**Full changelog**: ${PREV_TAG}...${TAG}"
+          fi
+          gh release create "$TAG" \
+            --target "$TARGET_SHA" \
+            --title "vitest-agent-observability v${VERSION}" \
+            --notes "$NOTES"

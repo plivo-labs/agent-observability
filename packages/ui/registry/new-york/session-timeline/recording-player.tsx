@@ -38,10 +38,12 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-const USER_WAVE_COLOR = '#94a3b8'
-const USER_PROGRESS_COLOR = '#64748b'
-const AGENT_WAVE_COLOR = 'hsl(270 60% 65%)'
-const AGENT_PROGRESS_COLOR = 'hsl(270 60% 45%)'
+// Monochrome waveforms: user voice is the lighter ink (muted-foreground),
+// agent voice is the darker ink (foreground). Differentiation by weight, not hue.
+const USER_WAVE_COLOR = 'hsl(var(--muted-foreground) / 0.55)'
+const USER_PROGRESS_COLOR = 'hsl(var(--muted-foreground))'
+const AGENT_WAVE_COLOR = 'hsl(var(--foreground) / 0.45)'
+const AGENT_PROGRESS_COLOR = 'hsl(var(--foreground))'
 const CURSOR_COLOR = 'hsl(var(--primary))'
 
 const SHARED_WS_OPTIONS = {

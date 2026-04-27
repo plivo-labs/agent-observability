@@ -13,26 +13,21 @@ import { cn } from '@/lib/utils'
 import { useEvents } from '@/lib/observability-hooks'
 import type { SessionEvent } from '@/lib/observability-types'
 
-// All light/tinted so badges stay readable in both themes — overrides the
-// default Badge variant background via tailwind-merge.
-// Consumers can override per-type classes by passing `typeBadgeClass` to
-// <SessionEvents /> or by targeting `[data-event-type="..."]` in CSS.
+// Monochrome default palette — every type reads as an uppercase-mono
+// outline chip against the card background. Consumers can restore colored
+// type badges by passing `typeBadgeClass` to <SessionEvents /> or by
+// targeting `[data-event-type="..."]` in CSS.
+const MONO_BADGE = 'bg-transparent text-foreground border border-border'
 export const DEFAULT_TYPE_BADGE_CLASS: Record<string, string> = {
-  agent_state_changed:
-    'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200',
-  user_state_changed:
-    'bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-200',
-  user_input_transcribed:
-    'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200',
-  conversation_item_added:
-    'bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-200',
-  speech_created:
-    'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
-  close:
-    'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200',
+  agent_state_changed: MONO_BADGE,
+  user_state_changed: MONO_BADGE,
+  user_input_transcribed: MONO_BADGE,
+  conversation_item_added: MONO_BADGE,
+  speech_created: MONO_BADGE,
+  close: MONO_BADGE,
 }
 
-const FALLBACK_BADGE_CLASS = 'bg-muted text-muted-foreground'
+const FALLBACK_BADGE_CLASS = MONO_BADGE
 
 type TimeMode = 'relative' | 'absolute'
 

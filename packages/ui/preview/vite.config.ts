@@ -14,9 +14,12 @@ function mockApiPlugin() {
   return {
     name: 'mock-api',
     configureServer(server: any) {
-      const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8')) as MockData
       server.middlewares.use(async (req: any, res: any, next: any) => {
         if (!req.url?.startsWith('/api/')) return next()
+        // Re-read mock-data.json on every request so JSON edits are picked
+        // up without a dev-server restart. (Dev-only cost — production uses
+        // install-mock-fetch which imports the JSON as a static module.)
+        const mockData = JSON.parse(readFileSync(mockDataPath, 'utf-8')) as MockData
         const url = new URL(req.url, 'http://localhost')
         const response = handleMockRequest(url.pathname, url.search, mockData)
         if (!response) return next()
@@ -32,10 +35,17 @@ export default defineConfig({
   base: '/agent-observability/',
   plugins: [react(), tailwindcss(), mockApiPlugin()],
   optimizeDeps: {
-    include: ['recharts', 'dayjs', 'lucide-react', 'wavesurfer.js'],
+    include: [
+      'recharts',
+      'dayjs',
+      'lucide-react',
+      'wavesurfer.js',
+      '@tanstack/react-table',
+      'nuqs',
+    ],
   },
   resolve: {
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', 'nuqs', '@tanstack/react-table'],
     alias: [
       // shadcn UI — local to preview
       { find: '@/components/ui', replacement: resolve(__dirname, 'src/components/ui') },
@@ -47,6 +57,16 @@ export default defineConfig({
       { find: '@/lib/observability-api', replacement: reg('observability-api/api.ts') },
       { find: '@/lib/observability-provider', replacement: reg('observability-provider/provider.tsx') },
       { find: '@/lib/observability-hooks', replacement: reg('observability-hooks/hooks.ts') },
+
+      // Registry data-table (tablecn) — shared by sessions-page, evals-page, eval-run-detail-page
+      { find: '@/components/data-table', replacement: reg('data-table') },
+      { find: '@/hooks/use-data-table', replacement: reg('data-table/use-data-table.ts') },
+      { find: '@/hooks/use-debounced-callback', replacement: reg('data-table/use-debounced-callback.ts') },
+      { find: '@/hooks/use-callback-ref', replacement: reg('data-table/use-callback-ref.ts') },
+      { find: '@/lib/parsers', replacement: reg('data-table/parsers.ts') },
+      { find: '@/lib/data-table', replacement: reg('data-table/data-table-utils.ts') },
+      { find: '@/types/data-table', replacement: reg('data-table/types.ts') },
+      { find: '@/config/data-table', replacement: reg('data-table/data-table-config.ts') },
 
       // Registry components
       { find: '@/components/observability-chart-shared', replacement: reg('observability-chart-shared/chart-shared.tsx') },
@@ -65,6 +85,9 @@ export default defineConfig({
       { find: '@/components/session-config', replacement: reg('session-config/session-config.tsx') },
       { find: '@/components/sessions-page', replacement: reg('sessions-page/sessions-page.tsx') },
       { find: '@/components/session-detail-page', replacement: reg('session-detail-page/session-detail-page.tsx') },
+      { find: '@/components/evals-page', replacement: reg('evals-page/evals-page.tsx') },
+      { find: '@/components/eval-run-detail-page', replacement: reg('eval-run-detail-page/eval-run-detail-page.tsx') },
+      { find: '@/components/eval-case-detail-page', replacement: reg('eval-case-detail-page/eval-case-detail-page.tsx') },
 
       // Fallback — regex so it doesn't outprioritize specific string matches
       { find: /^@\//, replacement: resolve(__dirname, 'src') + '/' },

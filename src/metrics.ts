@@ -22,6 +22,10 @@ interface TurnRecord {
   llm_ttft_ms?: number;
   tts_ttfb_ms?: number;
   turn_decision_ms?: number;
+  /** STT confidence for the user utterance, 0–1. Source:
+   * `chat_history[item].transcript_confidence` from LiveKit's ChatMessage.
+   * Present only when the STT plugin populates it (Deepgram, Google, etc.). */
+  user_transcript_confidence?: number;
   llm_prompt_tokens?: number;
   llm_completion_tokens?: number;
   llm_total_tokens?: number;
@@ -88,6 +92,38 @@ function normalizeText(content: unknown): string {
   return "";
 }
 
+/**
+ * LiveKit emits function-call arguments as a JSON-encoded string (OpenAI
+ * convention). Parse into an object so the UI can iterate arg entries. On
+ * parse failure, keep the raw string wrapped as { _raw: "..." } so the
+ * renderer still shows something instead of treating the string as an object
+ * and iterating char-by-char.
+ */
+function parseToolArgs(raw: unknown): Record<string, unknown> {
+  if (raw == null) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === "object" && parsed != null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : { _raw: trimmed };
+    } catch {
+      return { _raw: trimmed };
+    }
+  }
+  return {};
+}
+
+function findCallById(list: ToolCallRecord[], callId: string): ToolCallRecord | undefined {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].call_id === callId) return list[i];
+  }
+  return undefined;
+}
+
 function computeAvg(values: number[]): number {
   if (!values.length) return 0;
   return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
@@ -136,6 +172,7 @@ export function buildSessionMetrics(
   if (chatHistory) {
     let currentUserText: string | null = null;
     let currentUserMetrics: any = {};
+    let currentUserConfidence: number | undefined;
     let pendingToolCalls: ToolCallRecord[] = [];
 
     for (const item of chatHistory) {
@@ -147,6 +184,12 @@ export function buildSessionMetrics(
       if (item.type === "message" && role === "user") {
         currentUserText = text;
         currentUserMetrics = { ...itemMetrics };
+        // LiveKit's ChatMessage.transcript_confidence comes through pydantic
+        // serialization at the chat-item level (not inside metrics).
+        currentUserConfidence =
+          typeof item.transcript_confidence === "number"
+            ? item.transcript_confidence
+            : undefined;
       } else if (item.type === "message" && role === "assistant") {
         turnNumber++;
 
@@ -190,6 +233,7 @@ export function buildSessionMetrics(
           llm_ttft_ms: llmMs,
           tts_ttfb_ms: ttsMs,
           turn_decision_ms: turnDecisionMs,
+          user_transcript_confidence: currentUserConfidence,
           llm_prompt_tokens: m.llm_prompt_tokens,
           llm_completion_tokens: m.llm_completion_tokens,
           llm_total_tokens: m.llm_total_tokens ?? (((m.llm_prompt_tokens ?? 0) + (m.llm_completion_tokens ?? 0)) || undefined),
@@ -212,12 +256,14 @@ export function buildSessionMetrics(
         turns.push(turn);
         currentUserText = null;
         currentUserMetrics = {};
+        currentUserConfidence = undefined;
         pendingToolCalls = [];
       } else if (item.type === "function_call" || item.type === "tool_call") {
+        const rawArgs = item.arguments ?? item.function?.arguments ?? {};
         const tc: ToolCallRecord = {
           name: item.name ?? item.function?.name ?? "unknown",
           call_id: item.call_id,
-          arguments: item.arguments ?? item.function?.arguments ?? {},
+          arguments: parseToolArgs(rawArgs),
           output: item.output,
           is_error: item.is_error,
           turn_number: turnNumber + 1,
@@ -226,20 +272,58 @@ export function buildSessionMetrics(
         pendingToolCalls.push(tc);
         allToolCalls.push(tc);
         totalToolCalls++;
+      } else if (item.type === "function_call_output" || item.type === "tool_call_output") {
+        // LiveKit emits function_call and function_call_output as separate chat
+        // items. Merge the output back into the matching call by call_id, or
+        // fall back to the most recent pending call if the id isn't present.
+        const callId = item.call_id;
+        const output = typeof item.output === "string" ? item.output : JSON.stringify(item.output);
+        const isError = item.is_error;
+        const target =
+          (callId && (findCallById(pendingToolCalls, callId) ?? findCallById(allToolCalls, callId)))
+          ?? pendingToolCalls[pendingToolCalls.length - 1]
+          ?? allToolCalls[allToolCalls.length - 1];
+        if (target) {
+          target.output = output;
+          if (isError != null) target.is_error = isError;
+        }
       }
     }
 
-    // Handle remaining user text without agent response
-    if (currentUserText != null && turnNumber === 0) {
+    // Flush state that wasn't closed off by an assistant message. Three cases
+    // we need to cover:
+    //   (a) user spoke at the very start and the agent never replied
+    //   (b) a conversation with prior turns ends with a final user message
+    //       that the agent never answered — caller hung up right after
+    //       speaking, or the agent's reply was cut off. Recording has the
+    //       audio; chat history has the user item; without this flush, the
+    //       UI drops it.
+    //   (c) agent called a tool (function_call) but the session ended before
+    //       a follow-up assistant message — orphan tool calls.
+    // Emit a "partial" turn so trailing user text and/or tool calls still
+    // appear in the transcript.
+    const hasOrphanToolCalls = pendingToolCalls.length > 0;
+    const hasDanglingUserText = currentUserText != null;
+    if (hasOrphanToolCalls || hasDanglingUserText) {
       turnNumber++;
       turns.push({
         turn_number: turnNumber,
-        turn_id: `turn-${turnNumber}`,
+        turn_id: `turn-${turnNumber}-partial`,
         user_text: currentUserText,
         agent_text: null,
-        agent_first: false,
+        // Match the normal-path rule: if there's no user text, the agent
+        // must have started the turn (orphan tool call with no preceding
+        // user speech). Previously hardcoded `false`, which suppressed
+        // the "Agent initiated" badge on agent-initiated orphan turns.
+        agent_first: currentUserText == null,
         interrupted: false,
+        user_started_speaking_at: toIso(currentUserMetrics.started_speaking_at),
+        user_stopped_speaking_at: toIso(currentUserMetrics.stopped_speaking_at),
+        turn_decision_ms: toMs(currentUserMetrics.end_of_turn_delay),
+        user_transcript_confidence: currentUserConfidence,
+        tool_calls: hasOrphanToolCalls ? [...pendingToolCalls] : undefined,
       });
+      pendingToolCalls = [];
     }
   }
 

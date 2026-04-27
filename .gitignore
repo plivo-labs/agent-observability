@@ -11,3 +11,12 @@ data/
 # frontend build
 frontend/dist/
 frontend/node_modules/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# plugin build output (regenerable; published via npm tarball)
+plugins/vitest-agent-observability/dist/

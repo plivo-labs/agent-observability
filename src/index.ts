@@ -11,6 +11,7 @@ import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse } from "./response.js";
+import { registerEvalRoutes } from "./evals/routes.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -38,6 +39,10 @@ if (basicAuthEnabled) {
 app.get("/health", (c) => {
   return c.json({ status: "ok", s3Enabled });
 });
+
+// ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
+
+registerEvalRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 
@@ -143,11 +148,16 @@ app.get("/api/sessions", async (c) => {
   const accountId = c.req.query("account_id") || null;
   const startedFrom = c.req.query("started_from") || null;
   const startedTo = c.req.query("started_to") || null;
+  const transportRaw = c.req.query("transport");
+  const transports = transportRaw
+    ? transportRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : null;
 
   const extraParams: Record<string, string> = {};
   if (accountId) extraParams.account_id = accountId;
   if (startedFrom) extraParams.started_from = startedFrom;
   if (startedTo) extraParams.started_to = startedTo;
+  if (transports && transports.length) extraParams.transport = transports.join(",");
 
   const predicates: string[] = [];
   const params: unknown[] = [];
@@ -162,6 +172,11 @@ app.get("/api/sessions", async (c) => {
   if (startedTo) {
     predicates.push(`started_at <= $${params.length + 1}`);
     params.push(startedTo);
+  }
+  if (transports && transports.length > 0) {
+    const placeholders = transports.map((_, i) => `$${params.length + i + 1}`);
+    predicates.push(`transport IN (${placeholders.join(", ")})`);
+    params.push(...transports);
   }
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
 

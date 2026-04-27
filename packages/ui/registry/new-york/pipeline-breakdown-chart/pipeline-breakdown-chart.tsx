@@ -6,10 +6,10 @@ import { usePerformance } from '@/lib/observability-hooks'
 import { ChartCard } from '@/components/observability-chart-shared'
 
 const COLORS = {
-  stt: 'hsl(210 80% 55%)',
-  llm: 'hsl(270 60% 55%)',
-  tts: 'hsl(150 60% 45%)',
-  unaccounted: 'hsl(230 7% 78%)',
+  stt: 'hsl(var(--foreground))',
+  llm: 'hsl(var(--foreground))',
+  tts: 'hsl(var(--foreground))',
+  unaccounted: 'hsl(var(--muted-foreground))',
 }
 
 interface BreakdownRow {

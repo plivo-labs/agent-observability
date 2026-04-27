@@ -23,7 +23,7 @@ const buildTokenData = (metrics: SessionMetrics): TokenData => {
   return { prompt, completion, total, ttsChars, tokensPerTurn }
 }
 
-const COLORS = ['#10b981', '#3b82f6'] // emerald-500, blue-500
+const COLORS = ['hsl(var(--success))', 'hsl(var(--accent-purple))']
 
 export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {
   const { metrics: hookMetrics } = usePerformance()
@@ -43,7 +43,7 @@ export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionM
   if (!data || data.total === 0) return null
 
   return (
-    <div className="rounded-lg border p-5">
+    <div className="rounded-lg border bg-card p-5">
       <span className="text-p-400 font-medium">Token Usage</span>
 
       <div className="mt-3 flex items-start gap-6">
@@ -98,11 +98,11 @@ export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionM
       {chartData.length > 0 && (
         <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground" />
             Prompt
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-blue-500" />
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground/40" />
             Completion
           </span>
         </div>

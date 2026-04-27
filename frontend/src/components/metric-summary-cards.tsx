@@ -1,91 +1,97 @@
-import { Clock, Coins, Gauge, MessageCircle, Wrench, Zap } from 'lucide-react'
+import { Coins, Gauge, MessageCircle, OctagonX, Timer, Wrench } from 'lucide-react'
 import { formatMs } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
 import { usePerformance } from '@/lib/observability-hooks'
 
-const LATENCY_COLOR: Record<string, string> = {
-  success: 'text-green-600',
-  warning: 'text-amber-600',
-  destructive: 'text-destructive',
-}
+type Tone = 'good' | 'warn' | 'bad'
 
-const p95Color = (ms: number) => {
-  if (ms < 500) return LATENCY_COLOR.success
-  if (ms < 1000) return LATENCY_COLOR.warning
-  return LATENCY_COLOR.destructive
-}
-
-const StatCard = ({
-  icon: Icon,
+function MetricTile({
+  icon,
   label,
   value,
   sub,
-  valueColor,
+  tone,
 }: {
-  icon: React.ElementType
+  icon: React.ReactNode
   label: string
-  value: string
+  value: React.ReactNode
   sub?: string
-  valueColor?: string
-}) => {
+  tone?: Tone
+}) {
   return (
-    <div className="group rounded-lg border bg-card p-4 transition-colors hover:border-primary/20">
-      <div className="flex items-center gap-2 mb-2">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-muted">
-          <Icon size={13} className="text-primary" />
-        </div>
-        <span className="text-xs text-muted-foreground">{label}</span>
+    <div className={`metric-tile${tone ? ' ' + tone : ''}`}>
+      <div className="hd">
+        {icon} {label}
       </div>
-      <span className={`text-h1-400 font-semibold tracking-tight ${valueColor || ''}`}>{value}</span>
-      {sub && <p className="text-[10px] text-muted-foreground mt-1">{sub}</p>}
+      <div className="val">{value}</div>
+      {sub && <div className="sub">{sub}</div>}
     </div>
   )
 }
 
-export const MetricSummaryCards = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {
+/** User-perceived speech latency thresholds. Good < 1s, warn 1–2s, bad > 2s. */
+function latencyTone(ms: number | null): Tone | undefined {
+  if (ms == null) return undefined
+  if (ms < 1000) return 'good'
+  if (ms < 2000) return 'warn'
+  return 'bad'
+}
+
+/** Split a formatted ms string like "1.42s" or "382ms" into number + unit so
+ * the tile renders the unit as a lighter-weight suffix. */
+function splitValue(formatted: string): { num: string; unit: string } {
+  const match = formatted.match(/^([\d.]+)\s*(.*)$/)
+  if (!match) return { num: formatted, unit: '' }
+  return { num: match[1], unit: match[2] }
+}
+
+export const MetricSummaryCards = ({
+  metrics: metricsProp,
+}: {
+  metrics?: SessionMetrics | null
+}) => {
   const { metrics: hookMetrics } = usePerformance()
   const metrics = metricsProp ?? hookMetrics
-
   if (!metrics) return null
 
   const { summary } = metrics
   const p95 = summary.p95_user_perceived_ms ?? summary.latency?.user_perceived_ms?.p95 ?? null
-  const avgLatency = summary.avg_user_perceived_ms ?? summary.latency?.user_perceived_ms?.avg ?? null
+  const avg = summary.avg_user_perceived_ms ?? summary.latency?.user_perceived_ms?.avg ?? null
   const totalTokens = summary.total_llm_tokens ?? summary.usage?.total_llm_tokens ?? 0
   const interruptions = summary.interruptions ?? summary.interruption?.total_interruptions ?? 0
 
+  const renderLatency = (ms: number | null) => {
+    if (ms == null) return '—'
+    const { num, unit } = splitValue(formatMs(ms))
+    return (
+      <>
+        {num}
+        <span style={{ fontSize: '0.6em', fontWeight: 500, marginLeft: 2 }}>{unit}</span>
+      </>
+    )
+  }
+
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-      <StatCard
-        icon={MessageCircle}
-        label="Turns"
-        value={String(summary.total_turns)}
-      />
-      <StatCard
-        icon={Zap}
-        label="Interruptions"
-        value={String(interruptions)}
-      />
-      <StatCard
-        icon={Wrench}
-        label="Tool Calls"
-        value={String(summary.total_tool_calls)}
-      />
-      <StatCard
-        icon={Gauge}
+    <div className="obs-metrics">
+      <MetricTile icon={<MessageCircle size={12} />} label="Turns" value={summary.total_turns} />
+      <MetricTile icon={<OctagonX size={12} />} label="Interruptions" value={interruptions} />
+      <MetricTile icon={<Wrench size={12} />} label="Tool Calls" value={summary.total_tool_calls} />
+      <MetricTile
+        icon={<Gauge size={12} />}
         label="P95 Latency"
-        value={p95 != null ? formatMs(p95) : '—'}
-        valueColor={p95 != null ? p95Color(p95) : undefined}
+        value={renderLatency(p95)}
         sub={p95 != null ? 'user perceived' : undefined}
+        tone={latencyTone(p95)}
       />
-      <StatCard
-        icon={Clock}
+      <MetricTile
+        icon={<Timer size={12} />}
         label="Avg Latency"
-        value={avgLatency != null ? formatMs(avgLatency) : '—'}
-        sub={avgLatency != null ? 'user perceived' : undefined}
+        value={renderLatency(avg)}
+        sub={avg != null ? 'user perceived' : undefined}
+        tone={latencyTone(avg)}
       />
-      <StatCard
-        icon={Coins}
+      <MetricTile
+        icon={<Coins size={12} />}
         label="Total Tokens"
         value={totalTokens > 0 ? totalTokens.toLocaleString() : '—'}
         sub={

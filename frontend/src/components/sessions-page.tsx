@@ -1,310 +1,204 @@
-import { useEffect, useState } from 'react'
-import dayjs from 'dayjs'
-import { AudioLines, Calendar as CalendarIcon, Phone, X } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination'
-import { cn } from '@/lib/utils'
-import { formatDate, formatDuration } from '@/lib/observability-format'
+import { useMemo } from 'react'
+import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
+import type { ColumnDef } from '@tanstack/react-table'
+import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
+import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
+import { ObsDataTable } from '@/components/data-table/obs-data-table'
+import { useDataTable } from '@/hooks/use-data-table'
+import { formatDate } from '@/lib/observability-format'
 import { useSessions } from '@/lib/observability-hooks'
-import type { Transport } from '@/lib/observability-types'
+import type { AgentSessionRow } from '@/lib/observability-types'
+import { CapsChips, DurationCell, TransportPill } from '@/components/obs-cells'
 
-/** Build page numbers with ellipsis for large page counts. */
-function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
-  const pages: (number | 'ellipsis')[] = [1]
-  if (current > 3) pages.push('ellipsis')
-  const start = Math.max(2, current - 1)
-  const end = Math.min(total - 1, current + 1)
-  for (let i = start; i <= end; i++) pages.push(i)
-  if (current < total - 2) pages.push('ellipsis')
-  pages.push(total)
-  return pages
-}
-
-function useDebounce<T>(value: T, delay = 300): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay)
-    return () => clearTimeout(t)
-  }, [value, delay])
-  return debounced
-}
-
-const startOfLocalDay = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0)
-const endOfLocalDay = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)
-
-function DatePickerField({
-  value,
-  onChange,
-  placeholder,
-  disabled,
-}: {
-  value: Date | undefined
-  onChange: (date: Date | undefined) => void
-  placeholder: string
-  disabled?: (date: Date) => boolean
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          className={cn(
-            'h-9 w-44 justify-start text-left font-normal text-s-400',
-            !value && 'text-muted-foreground',
-          )}
-        >
-          <CalendarIcon className="h-3.5 w-3.5 mr-2" />
-          {value ? dayjs(value).format('MMM D, YYYY') : <span>{placeholder}</span>}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <Calendar
-          mode="single"
-          selected={value}
-          onSelect={(d) => {
-            onChange(d)
-            if (d) setOpen(false)
-          }}
-          disabled={disabled}
-          autoFocus
-        />
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-const TransportCell = ({ transport }: { transport: Transport | null }) => {
-  if (transport === 'sip') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-s-400">
-        <Phone className="h-3.5 w-3.5 text-muted-foreground" />
-        SIP
-      </span>
-    )
-  }
-  if (transport === 'audio_stream') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-s-400">
-        <AudioLines className="h-3.5 w-3.5 text-muted-foreground" />
-        Audio Stream
-      </span>
-    )
-  }
-  return <span className="text-muted-foreground">—</span>
-}
-
-const inputClass =
-  'h-9 rounded-md border border-input bg-background px-3 py-1 text-s-400 shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
+const TRANSPORT_OPTIONS = [
+  { label: 'SIP', value: 'sip' },
+  { label: 'Audio Stream', value: 'audio_stream' },
+]
 
 export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
-  const [accountInput, setAccountInput] = useState('')
-  const [startedFrom, setStartedFrom] = useState<Date | undefined>(undefined)
-  const [startedTo, setStartedTo] = useState<Date | undefined>(undefined)
-  const debouncedAccount = useDebounce(accountInput, 300)
+  // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
+  // Column ids below (`account_id`, `transport`, `started_at`) become the URL keys.
+  const [page] = useQueryState('page', parseAsInteger.withDefault(1))
+  const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
+  const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
+  const [transport] = useQueryState(
+    'transport',
+    parseAsArrayOf(parseAsString, ',').withDefault([]),
+  )
+  // Single-date filter emits the picked day's midnight (local) as an epoch-ms
+  // string. We expand it server-side into a 00:00 → next-midnight window so
+  // the query returns every session that started during that calendar day.
+  const [startedAt] = useQueryState(
+    'started_at',
+    parseAsArrayOf(parseAsString, ',').withDefault([]),
+  )
+  const startedDay = useMemo(() => {
+    const v = startedAt[0]
+    if (!v) return undefined
+    const d = new Date(Number(v))
+    return Number.isNaN(d.getTime()) ? undefined : d
+  }, [startedAt])
+  const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
+  const startedToIso = useMemo(() => {
+    if (!startedDay) return undefined
+    const end = new Date(startedDay)
+    end.setHours(23, 59, 59, 999)
+    return end.toISOString()
+  }, [startedDay])
 
-  const { sessions, meta, loading, error, offset, setOffset } = useSessions(20, 0, {
-    accountId: debouncedAccount.trim() || undefined,
-    startedFrom: startedFrom ? startOfLocalDay(startedFrom).toISOString() : undefined,
-    startedTo: startedTo ? endOfLocalDay(startedTo).toISOString() : undefined,
+  const { sessions, meta, loading, error } = useSessions(
+    Math.min(perPage, 20),
+    (page - 1) * Math.min(perPage, 20),
+    {
+      accountId: accountId || undefined,
+      startedFrom: startedFromIso,
+      startedTo: startedToIso,
+      transport: transport.length ? transport : undefined,
+    },
+  )
+
+  const columns = useMemo<ColumnDef<AgentSessionRow>[]>(
+    () => [
+      {
+        id: 'session_id',
+        accessorKey: 'session_id',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Session ID" />,
+        cell: ({ row }) => (
+          <span>{row.original.session_id}</span>
+        ),
+        enableSorting: false,
+        meta: { label: 'Session ID' },
+      },
+      {
+        id: 'account_id',
+        accessorKey: 'account_id',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
+        cell: ({ row }) =>
+          row.original.account_id ? (
+            <span className="muted" style={{ fontSize: 12 }}>
+              {row.original.account_id}
+            </span>
+          ) : (
+            <span className="muted">—</span>
+          ),
+        enableSorting: false,
+        enableColumnFilter: true,
+        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
+      },
+      {
+        id: 'transport',
+        accessorKey: 'transport',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Transport" />,
+        cell: ({ row }) => <TransportPill value={row.original.transport} />,
+        enableSorting: false,
+        enableColumnFilter: true,
+        meta: {
+          label: 'Transport',
+          variant: 'multiSelect',
+          options: TRANSPORT_OPTIONS,
+        },
+      },
+      {
+        id: 'started_at',
+        accessorKey: 'started_at',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
+        cell: ({ row }) => (
+          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+            {formatDate(row.original.started_at)}
+          </span>
+        ),
+        enableSorting: false,
+        enableColumnFilter: true,
+        meta: { label: 'Started', variant: 'date' },
+      },
+      {
+        id: 'ended_at',
+        accessorKey: 'ended_at',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Ended" />,
+        cell: ({ row }) => (
+          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+            {formatDate(row.original.ended_at)}
+          </span>
+        ),
+        enableSorting: false,
+        meta: { label: 'Ended' },
+      },
+      {
+        id: 'duration_ms',
+        accessorKey: 'duration_ms',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
+        cell: ({ row }) => <DurationCell ms={row.original.duration_ms} />,
+        enableSorting: false,
+        meta: { label: 'Duration' },
+      },
+      {
+        id: 'turn_count',
+        accessorKey: 'turn_count',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Turns" />,
+        cell: ({ row }) => <span className="tnum">{row.original.turn_count}</span>,
+        enableSorting: false,
+        meta: { label: 'Turns' },
+      },
+      {
+        id: 'capabilities',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Capabilities" />,
+        cell: ({ row }) => (
+          <CapsChips
+            stt={row.original.has_stt}
+            llm={row.original.has_llm}
+            tts={row.original.has_tts}
+          />
+        ),
+      },
+    ],
+    [],
+  )
+
+  const totalCount = meta.total_count
+  const pageCount = Math.max(1, Math.ceil(totalCount / perPage))
+
+  const { table } = useDataTable({
+    data: sessions,
+    columns,
+    pageCount,
+    initialState: { pagination: { pageIndex: 0, pageSize: 10 } },
+    getRowId: (row) => row.session_id,
   })
 
-  const limit = meta.limit || 20
-  const totalCount = meta.total_count
-  const hasFilters = !!(accountInput || startedFrom || startedTo)
-  const clearFilters = () => {
-    setAccountInput('')
-    setStartedFrom(undefined)
-    setStartedTo(undefined)
-  }
-
-  const totalPages = Math.ceil(totalCount / limit)
-  const currentPage = Math.floor(offset / limit) + 1
-
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-h2-600 font-semibold">Sessions</h1>
-        <span className="text-s-400 text-muted-foreground">{totalCount} total</span>
+    <>
+      <div className="obs-head">
+        <div>
+          <h1>Sessions</h1>
+          <div className="sub">Every agent session captured in the last 30 days.</div>
+        </div>
+        <div className="total"><b>{totalCount}</b> total</div>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 mb-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs-500 text-muted-foreground">Account ID</label>
-          <input
-            type="text"
-            value={accountInput}
-            onChange={(e) => setAccountInput(e.target.value)}
-            placeholder="Filter by account"
-            className={`${inputClass} w-56`}
-          />
+      {error && (
+        <div
+          role="alert"
+          style={{
+            border: '1px solid hsl(var(--destructive-border))',
+            background: 'hsl(var(--destructive-bg))',
+            color: 'hsl(var(--destructive))',
+            padding: '10px 14px',
+            borderRadius: 8,
+            marginBottom: 12,
+            font: 'var(--text-s-400)',
+          }}
+        >
+          Failed to load sessions: {error}
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs-500 text-muted-foreground">Started from</label>
-          <DatePickerField
-            value={startedFrom}
-            onChange={setStartedFrom}
-            placeholder="Pick a date"
-            disabled={(d) => !!(startedTo && d > endOfLocalDay(startedTo))}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs-500 text-muted-foreground">Started to</label>
-          <DatePickerField
-            value={startedTo}
-            onChange={setStartedTo}
-            placeholder="Pick a date"
-            disabled={(d) => !!(startedFrom && d < startOfLocalDay(startedFrom))}
-          />
-        </div>
-        {hasFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9">
-            <X className="h-3.5 w-3.5 mr-1" />
-            Clear
-          </Button>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center p-12 text-muted-foreground">
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-            <span className="text-s-400">Loading sessions...</span>
-          </div>
-        </div>
-      ) : error ? (
-        <div className="p-12 text-center text-destructive">
-          <p>Failed to load sessions: {error}</p>
-        </div>
-      ) : (
-        <>
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Session ID</TableHead>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Transport</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Ended</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Turns</TableHead>
-                  <TableHead>Capabilities</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessions.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                      No sessions found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  sessions.map((session) => (
-                    <TableRow
-                      key={session.id}
-                      className="cursor-pointer hover:bg-accent/50"
-                      onClick={() => onSessionClick?.(session.session_id)}
-                    >
-                      <TableCell className="font-mono text-s-400 max-w-[200px] truncate">
-                        {session.session_id}
-                      </TableCell>
-                      <TableCell className="font-mono text-s-400 max-w-[150px] truncate text-muted-foreground">
-                        {session.account_id ?? '—'}
-                      </TableCell>
-                      <TableCell>
-                        <TransportCell transport={session.transport} />
-                      </TableCell>
-                      <TableCell className="text-s-400 text-muted-foreground whitespace-nowrap">
-                        {formatDate(session.started_at)}
-                      </TableCell>
-                      <TableCell className="text-s-400 text-muted-foreground whitespace-nowrap">
-                        {formatDate(session.ended_at)}
-                      </TableCell>
-                      <TableCell className="text-s-400">
-                        {formatDuration(session.duration_ms)}
-                      </TableCell>
-                      <TableCell className="text-s-400">{session.turn_count}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          {session.has_stt && <Badge variant="outline" className="text-xxs-400">STT</Badge>}
-                          {session.has_llm && <Badge variant="outline" className="text-xxs-400">LLM</Badge>}
-                          {session.has_tts && <Badge variant="outline" className="text-xxs-400">TTS</Badge>}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          {totalCount > 0 && (
-            <div className="flex items-center justify-between mt-4">
-              <span className="text-xs-400 text-muted-foreground whitespace-nowrap">
-                Showing {offset + 1}–{Math.min(offset + limit, totalCount)} of {totalCount}
-              </span>
-              {totalPages > 1 && (
-                <Pagination>
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        onClick={(e) => { e.preventDefault(); setOffset(Math.max(0, offset - limit)) }}
-                        className={offset <= 0 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
-                      />
-                    </PaginationItem>
-                    {getPageNumbers(currentPage, totalPages).map((p, i) =>
-                      p === 'ellipsis' ? (
-                        <PaginationItem key={`e-${i}`}>
-                          <PaginationEllipsis />
-                        </PaginationItem>
-                      ) : (
-                        <PaginationItem key={p}>
-                          <PaginationLink
-                            isActive={p === currentPage}
-                            onClick={(e) => { e.preventDefault(); setOffset((p as number - 1) * limit) }}
-                            className="cursor-pointer"
-                          >
-                            {p}
-                          </PaginationLink>
-                        </PaginationItem>
-                      )
-                    )}
-                    <PaginationItem>
-                      <PaginationNext
-                        onClick={(e) => { e.preventDefault(); setOffset(offset + limit) }}
-                        className={offset + limit >= totalCount ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-              )}
-            </div>
-          )}
-        </>
       )}
-    </div>
+
+      <ObsDataTable
+        table={table}
+        toolbar={<DataTableToolbar table={table} />}
+        onRowClick={(row) => onSessionClick?.(row.original.session_id)}
+        totalRowCount={totalCount}
+        loading={loading}
+      />
+    </>
   )
 }
