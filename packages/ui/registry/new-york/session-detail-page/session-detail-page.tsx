@@ -69,8 +69,8 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
         <SessionHeader />
         <MetricSummaryCards />
 
-        <Tabs defaultValue="session" className="w-full">
-          <TabsList className="sticky top-0 bg-background z-10">
+        <Tabs defaultValue="session" className="w-full min-w-0">
+          <TabsList className="sticky top-0 z-10 max-w-full overflow-x-auto bg-background">
             <TabsTrigger value="session" className="gap-1.5">
               <AudioLines size={13} />
               Session{turnCount > 0 && ` (${turnCount})`}
@@ -89,7 +89,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="session" className="mt-4">
+          <TabsContent value="session" className="mt-4 min-w-0">
             <div className="rounded-lg border p-5">
               <SessionTimeline />
               <Separator className="my-5" />
@@ -97,7 +97,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
             </div>
           </TabsContent>
 
-          <TabsContent value="metrics" className="mt-4 flex flex-col gap-4">
+          <TabsContent value="metrics" className="mt-4 flex min-w-0 flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <LatencyPercentilesChart />
               <PipelineBreakdownChart />
@@ -108,11 +108,11 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
             </div>
           </TabsContent>
 
-          <TabsContent value="events" className="mt-4">
+          <TabsContent value="events" className="mt-4 min-w-0">
             <SessionEvents />
           </TabsContent>
 
-          <TabsContent value="config" className="mt-4">
+          <TabsContent value="config" className="mt-4 min-w-0">
             <SessionConfig />
           </TabsContent>
 
