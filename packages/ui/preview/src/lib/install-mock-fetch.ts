@@ -5,6 +5,7 @@ function withPrefixedAssetPaths(data: MockData): MockData {
   const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   if (!base) return data
   return {
+    ...data,
     sessions: data.sessions.map((session) => {
       const next: Record<string, unknown> = { ...session }
       for (const [key, value] of Object.entries(next)) {

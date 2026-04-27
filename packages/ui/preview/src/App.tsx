@@ -797,8 +797,12 @@ export function EvalCaseRoute() {
     pkg: 'metric-summary-cards',
     description:
       'A row of compact metric tiles for the headline observability numbers — turn count, avg latency, token totals. Small, dense, and meant to sit above the fold on the session detail page.',
-    stage: 'left',
-    render: () => <MetricSummaryCards />,
+    stage: 'stretch',
+    render: () => (
+      <StretchWrap>
+        <MetricSummaryCards />
+      </StretchWrap>
+    ),
     props: [
       {
         name: 'metrics',
