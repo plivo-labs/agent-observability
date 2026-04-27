@@ -1,0 +1,122 @@
+name: Publish pytest-agent-observability
+
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should-publish: ${{ steps.check.outputs.should-publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check for release label on merged PR
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should-publish=true" >> $GITHUB_OUTPUT
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
+              --jq 'if length > 0 then .[0].labels[].name else empty end')
+            echo "Labels on merged PR: $LABELS"
+            if echo "$LABELS" | grep -q "release-pytest-plugin"; then
+              echo "should-publish=true" >> $GITHUB_OUTPUT
+            else
+              echo "should-publish=false" >> $GITHUB_OUTPUT
+              echo "No release-pytest-plugin label found, skipping"
+            fi
+          fi
+          VERSION=$(grep '^version' plugins/pytest-agent-observability/pyproject.toml \
+            | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing pytest-agent-observability v$VERSION to PyPI"
+
+  publish:
+    needs: check
+    if: needs.check.outputs.should-publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # for PyPI trusted publishing
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build
+
+      - name: Build wheel and sdist
+        working-directory: plugins/pytest-agent-observability
+        run: python -m build --outdir dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: plugins/pytest-agent-observability/dist/
+
+  release:
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          TAG="pytest-plugin-v${VERSION}"
+          PREV_TAG=$(git tag --list "pytest-plugin-v*" --sort=-v:refname | head -1)
+          BASE=${PREV_TAG:-$(git rev-list --max-parents=0 HEAD)}
+          PR_NUMBERS=$(git log "$BASE"..HEAD --pretty=%s \
+            | grep -oE '(\(#[0-9]+\)|Merge pull request #[0-9]+)' \
+            | grep -oE '[0-9]+' \
+            | sort -u)
+          NOTES=""
+          for pr in $PR_NUMBERS; do
+            LABELS=$(gh pr view "$pr" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -qx "pytest-agent-observability"; then
+              TITLE=$(gh pr view "$pr" --json title --jq '.title')
+              AUTHOR=$(gh pr view "$pr" --json author --jq '.author.login')
+              NOTES+="- ${TITLE} (#${pr}) @${AUTHOR}"$'\n'
+            fi
+          done
+          if [ -z "$NOTES" ]; then
+            NOTES="Release pytest-agent-observability v${VERSION}"
+          fi
+          if [ -n "$PREV_TAG" ]; then
+            NOTES+=$'\n'"**Full changelog**: ${PREV_TAG}...${TAG}"
+          fi
+          gh release create "$TAG" \
+            --target "$TARGET_SHA" \
+            --title "pytest-agent-observability v${VERSION}" \
+            --notes "$NOTES"

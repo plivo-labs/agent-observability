@@ -318,8 +318,7 @@
 }
 .pvw-stage.left { justify-content: flex-start; }
 .pvw-stage.stretch {
-  align-items: stretch;
-  justify-content: stretch;
+  display: block;
   padding: 0;
 }
 .pvw-stage.stretch > * { width: 100%; }

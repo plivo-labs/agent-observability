@@ -48,7 +48,7 @@ export function registerEvalRoutes(app: Hono) {
 
     const payload = parsed.data;
     console.log(
-      `[evals] ingest run_id=${payload.run.run_id} agent=${payload.run.agent_id ?? "-"} framework=${payload.run.framework} cases=${payload.cases.length}`,
+      `[evals] ingest run_id=${payload.run.run_id} agent=${payload.run.agent_id ?? "-"} framework=${payload.run.framework ?? "-"} testing_framework=${payload.run.testing_framework} cases=${payload.cases.length}`,
     );
 
     try {
@@ -81,10 +81,12 @@ export function registerEvalRoutes(app: Hono) {
     const offset = Math.max(0, Number(c.req.query("offset")) || 0);
     const accountId = c.req.query("account_id") || null;
     const agentId = c.req.query("agent_id") || null;
-    const frameworkRaw = c.req.query("framework");
-    const frameworks = frameworkRaw
-      ? frameworkRaw.split(",").map((s) => s.trim()).filter(Boolean)
-      : null;
+    const splitCsv = (raw: string | undefined) =>
+      raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : null;
+    // `?framework=` filters on agent framework (livekit/pipecat).
+    const frameworks = splitCsv(c.req.query("framework"));
+    // `?testing_framework=` filters on test framework (pytest/vitest).
+    const testingFrameworks = splitCsv(c.req.query("testing_framework"));
     const startedFrom = c.req.query("started_from") || null;
     const startedTo = c.req.query("started_to") || null;
 
@@ -92,10 +94,21 @@ export function registerEvalRoutes(app: Hono) {
     if (accountId) extraParams.account_id = accountId;
     if (agentId) extraParams.agent_id = agentId;
     if (frameworks && frameworks.length) extraParams.framework = frameworks.join(",");
+    if (testingFrameworks && testingFrameworks.length)
+      extraParams.testing_framework = testingFrameworks.join(",");
     if (startedFrom) extraParams.started_from = startedFrom;
     if (startedTo) extraParams.started_to = startedTo;
 
-    const opts = { limit, offset, accountId, agentId, frameworks, startedFrom, startedTo };
+    const opts = {
+      limit,
+      offset,
+      accountId,
+      agentId,
+      frameworks,
+      testingFrameworks,
+      startedFrom,
+      startedTo,
+    };
     const total = await countEvalRuns(opts);
     const rows = await listEvalRuns(opts);
 

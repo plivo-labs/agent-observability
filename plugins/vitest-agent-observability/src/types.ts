@@ -76,10 +76,15 @@ export interface EvalRun {
   run_id: string;
   account_id?: string | null;
   agent_id?: string | null;
-  framework: string;
-  framework_version?: string;
-  sdk?: string;
-  sdk_version?: string;
+  /** Agent framework family — `livekit` / `pipecat` / …. Null when no
+   *  known agent-framework package is installed. */
+  framework: string | null;
+  /** Version of the detected agent-framework package. */
+  framework_version: string | null;
+  /** Test framework that ran the suite — `vitest`. */
+  testing_framework: string;
+  /** Version of the test framework. */
+  testing_framework_version: string | null;
   started_at: number;
   finished_at: number;
   ci?: CiMetadata | null;

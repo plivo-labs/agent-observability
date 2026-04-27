@@ -75,10 +75,10 @@ function buildValidPayload(overrides?: {
       run_id: runId,
       account_id: "acct-1",
       agent_id: "support-bot",
-      framework: "pytest",
-      framework_version: "8.3.0",
-      sdk: "livekit-agents",
-      sdk_version: "1.5.2",
+      framework: "livekit",
+      framework_version: "1.5.2",
+      testing_framework: "pytest",
+      testing_framework_version: "8.3.0",
       started_at: 1714000000,
       finished_at: 1714000060,
       ci: {
@@ -230,6 +230,44 @@ describe("POST /observability/evals/v0", () => {
     expect(called.cases).toHaveLength(2);
   });
 
+  test("translates legacy payload (framework=vitest, sdk=livekit-agents)", async () => {
+    // Plugins ≤ 0.1.x sent the legacy shape. The schema preprocess
+    // step should remap onto the new fields and normalize the SDK
+    // package name to the canonical agent-framework family.
+    const legacy = buildValidPayload();
+    delete (legacy.run as any).framework;
+    delete (legacy.run as any).framework_version;
+    delete (legacy.run as any).testing_framework;
+    delete (legacy.run as any).testing_framework_version;
+    Object.assign(legacy.run, {
+      framework: "vitest",
+      framework_version: "2.1.9",
+      sdk: "livekit-agents",
+      sdk_version: "1.2.8",
+    });
+
+    const res = await server.fetch(
+      makeRequest("/observability/evals/v0", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: basicAuthHeader(),
+        },
+        body: JSON.stringify(legacy),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(mockInsertEvalRun).toHaveBeenCalledTimes(1);
+    const called = mockInsertEvalRun.mock.calls[0][0];
+    expect(called.run.framework).toBe("livekit");
+    expect(called.run.framework_version).toBe("1.2.8");
+    expect(called.run.testing_framework).toBe("vitest");
+    expect(called.run.testing_framework_version).toBe("2.1.9");
+    // Legacy keys must not leak through.
+    expect((called.run as any).sdk).toBeUndefined();
+    expect((called.run as any).sdk_version).toBeUndefined();
+  });
+
   test("returns 500 when insert fails", async () => {
     mockInsertEvalRun.mockImplementationOnce(() =>
       Promise.reject(new Error("db down")),
@@ -301,14 +339,15 @@ describe("GET /api/evals", () => {
 
     const res = await server.fetch(
       makeRequest(
-        "/api/evals?agent_id=support-bot&framework=pytest&account_id=acct-1",
+        "/api/evals?agent_id=support-bot&framework=livekit&testing_framework=pytest&account_id=acct-1",
         { headers: { Authorization: basicAuthHeader() } },
       ),
     );
     expect(res.status).toBe(200);
     const opts = mockListEvalRuns.mock.calls[0][0];
     expect(opts.agentId).toBe("support-bot");
-    expect(opts.frameworks).toEqual(["pytest"]);
+    expect(opts.frameworks).toEqual(["livekit"]);
+    expect(opts.testingFrameworks).toEqual(["pytest"]);
     expect(opts.accountId).toBe("acct-1");
   });
 
@@ -317,13 +356,27 @@ describe("GET /api/evals", () => {
     mockListEvalRuns.mockResolvedValueOnce([] as any);
 
     const res = await server.fetch(
-      makeRequest("/api/evals?framework=pytest,vitest", {
+      makeRequest("/api/evals?framework=livekit,pipecat", {
         headers: { Authorization: basicAuthHeader() },
       }),
     );
     expect(res.status).toBe(200);
     const opts = mockListEvalRuns.mock.calls[0][0];
-    expect(opts.frameworks).toEqual(["pytest", "vitest"]);
+    expect(opts.frameworks).toEqual(["livekit", "pipecat"]);
+  });
+
+  test("accepts multi-value testing_framework filter (comma-separated)", async () => {
+    mockCountEvalRuns.mockResolvedValueOnce(0 as any);
+    mockListEvalRuns.mockResolvedValueOnce([] as any);
+
+    const res = await server.fetch(
+      makeRequest("/api/evals?testing_framework=pytest,vitest", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const opts = mockListEvalRuns.mock.calls[0][0];
+    expect(opts.testingFrameworks).toEqual(["pytest", "vitest"]);
   });
 
   test("pagination links preserve filters", async () => {

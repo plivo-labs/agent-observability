@@ -186,3 +186,24 @@ npm install
 npm test
 npm run build
 ```
+
+## Releasing
+
+Publishing is PR-label triggered — no manual tags or releases.
+
+1. Bump `version` in `plugins/vitest-agent-observability/package.json` in
+   a dedicated PR (no feature changes in the same PR).
+2. Apply labels:
+   - `release-vitest-plugin` — trigger: publishes to npm on merge.
+   - `vitest-agent-observability` — (on feature/fix PRs only) filter:
+     include this PR in the next release's notes.
+3. Merge to `main`. `Tests` runs, then `Publish vitest-agent-observability`
+   picks up the merged commit, builds `plugins/vitest-agent-observability`
+   with `tsc`, publishes to npm using the `NPM_TOKEN` repo secret, and
+   creates a `vitest-plugin-v<version>` GitHub Release with notes listing
+   every `vitest-agent-observability`-labeled PR merged since the
+   previous `vitest-plugin-v*` tag.
+
+Prerequisite (one-time): `NPM_TOKEN` (an npm automation token with
+publish rights for `vitest-agent-observability`) must be set as a
+repository Actions secret.

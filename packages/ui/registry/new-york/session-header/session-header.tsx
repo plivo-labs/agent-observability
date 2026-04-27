@@ -35,7 +35,7 @@ export const SessionHeader = ({ session: sessionProp }: { session?: AgentSession
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x">
         <div className="flex flex-col px-5 py-3">
           <Row label="Session ID">
-            <span className="font-mono text-xs">{session.session_id}</span>
+            <span className="text-xs">{session.session_id}</span>
           </Row>
           <Row label="Capabilities">{capabilities.length > 0 ? capabilities.join(', ') : '—'}</Row>
           <Row label="Turns">{session.turn_count ?? '—'}</Row>

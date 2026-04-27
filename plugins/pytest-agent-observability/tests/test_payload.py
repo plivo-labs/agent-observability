@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pytest_agent_observability import collector as col
-from pytest_agent_observability.payload import build_payload, FRAMEWORK, SDK
+from pytest_agent_observability.payload import build_payload, TESTING_FRAMEWORK
 
 
 def test_build_payload_shape():
@@ -26,14 +26,15 @@ def test_build_payload_shape():
     )
 
     assert payload["version"] == "v0"
-    assert payload["run"]["framework"] == FRAMEWORK
-    assert payload["run"]["sdk"] == SDK
+    assert payload["run"]["testing_framework"] == TESTING_FRAMEWORK
+    # testing_framework_version comes from `pytest`'s installed metadata —
+    # the test is running under pytest so this must resolve.
+    assert payload["run"]["testing_framework_version"] is not None
     assert payload["run"]["agent_id"] == "support-bot"
     assert payload["run"]["account_id"] == "acct-1"
     assert payload["run"]["started_at"] == 100.0
     assert payload["run"]["finished_at"] == 200.0
     assert payload["run"]["ci"] == {"provider": "github"}
-    assert payload["run"]["framework_version"] is not None  # pytest is installed
     assert len(payload["cases"]) == 1
 
     c = payload["cases"][0]
@@ -42,6 +43,24 @@ def test_build_payload_shape():
     assert c["status"] == "passed"
     assert c["events"][0]["type"] == "message"
     assert c["judgments"][0]["verdict"] == "pass"
+
+
+def test_detect_framework_returns_livekit_when_installed():
+    """Plugin tests run inside an env where livekit-agents may or may
+    not be installed depending on the matrix. Either result is valid;
+    we just ensure the field shape is consistent.
+    """
+    rc = col.RunCollector.new(started_at=0.0)
+    payload = build_payload(
+        collector=rc,
+        agent_id=None,
+        account_id=None,
+        finished_at=0.0,
+    )
+    fw = payload["run"]["framework"]
+    assert fw is None or fw in {"livekit", "pipecat"}
+    if fw is not None:
+        assert payload["run"]["framework_version"] is not None
 
 
 def test_build_payload_handles_empty_cases():

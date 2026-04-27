@@ -163,10 +163,11 @@ export function useEvalRuns(
   const [error, setError] = useState<string | null>(null)
   const [offset, setOffset] = useState(initialOffset)
 
-  const { agentId, framework, accountId, startedFrom, startedTo } = filters ?? {}
-  // Stable string key for the framework array so effect deps don't churn
+  const { agentId, framework, testingFramework, accountId, startedFrom, startedTo } = filters ?? {}
+  // Stable string keys for the array filters so effect deps don't churn
   // on new-but-equal-array identities every render.
   const frameworkKey = (framework ?? []).slice().sort().join(',')
+  const testingFrameworkKey = (testingFramework ?? []).slice().sort().join(',')
 
   // Sync offset when the caller passes a live initialOffset (e.g. from URL
   // state). Callers who drive pagination via setOffset pass a stable 0 and
@@ -177,7 +178,7 @@ export function useEvalRuns(
 
   useEffect(() => {
     setOffset(0)
-  }, [agentId, frameworkKey, accountId, startedFrom, startedTo])
+  }, [agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
 
   useEffect(() => {
     let cancelled = false
@@ -187,6 +188,8 @@ export function useEvalRuns(
       .listEvalRuns(limit, offset, {
         agentId,
         framework: framework && framework.length ? framework : undefined,
+        testingFramework:
+          testingFramework && testingFramework.length ? testingFramework : undefined,
         accountId,
         startedFrom,
         startedTo,
@@ -200,7 +203,7 @@ export function useEvalRuns(
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, limit, offset, agentId, frameworkKey, accountId, startedFrom, startedTo])
+  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
 
   return { runs, meta, loading, error, offset, setOffset }
 }

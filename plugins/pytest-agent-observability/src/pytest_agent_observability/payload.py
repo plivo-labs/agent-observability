@@ -4,13 +4,32 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
-from typing import Optional
+from typing import Optional, Tuple
 
 from .collector import RunCollector, CaseRecord
 
 
-FRAMEWORK = "pytest"
-SDK = "livekit-agents"
+# Test framework that ran this suite — `pytest`. Constant.
+TESTING_FRAMEWORK = "pytest"
+
+# Probe order matches Plivo's typical deployment: livekit first
+# (current default), then pipecat. New agent frameworks can be added
+# here without touching anything else.
+_AGENT_FRAMEWORK_PROBES: list[tuple[str, str]] = [
+    ("livekit", "livekit-agents"),
+    ("pipecat", "pipecat-ai"),
+]
+
+
+def detect_framework() -> Optional[Tuple[str, Optional[str]]]:
+    """Probe installed agent-framework packages and return ``(name,
+    version)``. Returns ``None`` when nothing detectable is installed.
+    """
+    for name, pkg in _AGENT_FRAMEWORK_PROBES:
+        version = _pkg_version(pkg)
+        if version is not None:
+            return (name, version)
+    return None
 
 
 def build_payload(
@@ -20,16 +39,17 @@ def build_payload(
     account_id: Optional[str],
     finished_at: float,
 ) -> dict:
+    framework = detect_framework()
     return {
         "version": "v0",
         "run": {
             "run_id": collector.run_id,
             "account_id": account_id,
             "agent_id": agent_id,
-            "framework": FRAMEWORK,
-            "framework_version": _pkg_version("pytest"),
-            "sdk": SDK,
-            "sdk_version": _pkg_version("livekit-agents"),
+            "framework": framework[0] if framework else None,
+            "framework_version": framework[1] if framework else None,
+            "testing_framework": TESTING_FRAMEWORK,
+            "testing_framework_version": _pkg_version("pytest"),
             "started_at": collector.started_at,
             "finished_at": finished_at,
             "ci": collector.ci,

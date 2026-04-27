@@ -158,3 +158,24 @@ cd plugins/pytest-agent-observability
 pip install -e ".[dev]"
 pytest
 ```
+
+## Releasing
+
+Publishing is PR-label triggered — no manual tags or releases.
+
+1. Bump `version` in `plugins/pytest-agent-observability/pyproject.toml` in
+   a dedicated PR (no feature changes in the same PR).
+2. Apply labels:
+   - `release-pytest-plugin` — trigger: publishes to PyPI on merge.
+   - `pytest-agent-observability` — (on feature/fix PRs only) filter:
+     include this PR in the next release's notes.
+3. Merge to `main`. `Tests` runs, then `Publish pytest-agent-observability`
+   picks up the merged commit, builds `plugins/pytest-agent-observability`
+   with `python -m build`, publishes via PyPI trusted publishing, and
+   creates a `pytest-plugin-v<version>` GitHub Release with notes listing
+   every `pytest-agent-observability`-labeled PR merged since the
+   previous `pytest-plugin-v*` tag.
+
+Prerequisite (one-time): configure a PyPI trusted publisher for
+`pytest-agent-observability` pointing at the `publish-pytest-plugin.yml`
+workflow in this repo.

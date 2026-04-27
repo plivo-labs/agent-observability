@@ -80,7 +80,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         accessorKey: 'session_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Session ID" />,
         cell: ({ row }) => (
-          <span className="font-mono text-s-400 max-w-[200px] truncate inline-block">
+          <span className="text-s-400 max-w-[200px] truncate inline-block">
             {row.original.session_id}
           </span>
         ),
@@ -93,7 +93,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
         cell: ({ row }) =>
           row.original.account_id ? (
-            <span className="font-mono text-s-400 text-muted-foreground max-w-[150px] truncate inline-block">
+            <span className="text-s-400 text-muted-foreground max-w-[150px] truncate inline-block">
               {row.original.account_id}
             </span>
           ) : (

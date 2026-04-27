@@ -66,7 +66,7 @@ describe("AgentObservabilityReporter", () => {
     expect(url).toBe("http://stub:9090/observability/evals/v0");
     const body = JSON.parse(init.body as string);
     expect(body.version).toBe("v0");
-    expect(body.run.framework).toBe("vitest");
+    expect(body.run.testing_framework).toBe("vitest");
     expect(body.run.agent_id).toBe("support-bot");
     expect(body.cases).toHaveLength(3);
 

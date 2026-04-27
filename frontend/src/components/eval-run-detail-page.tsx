@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { parseAsString, useQueryState } from 'nuqs'
-import { ArrowLeft, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
+import { ArrowLeft, Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -336,12 +336,23 @@ export const EvalRunDetailPage = ({
             <h1 className="text-h2-600 font-semibold m-0">
               {run.agent_id ?? <span className="text-muted-foreground">—</span>}
             </h1>
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500">
-              <FlaskConical className="h-3 w-3 text-muted-foreground" />
-              {run.framework}
-              {run.framework_version && (
+            {run.framework && (
+              <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
+                <Bot className="h-3 w-3 shrink-0 text-muted-foreground" />
+                {run.framework}
+                {run.framework_version && (
+                  <span className="text-muted-foreground font-mono text-[11px]">
+                    {run.framework_version}
+                  </span>
+                )}
+              </span>
+            )}
+            <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
+              <FlaskConical className="h-3 w-3 shrink-0 text-muted-foreground" />
+              {run.testing_framework}
+              {run.testing_framework_version && (
                 <span className="text-muted-foreground font-mono text-[11px]">
-                  {run.framework_version}
+                  {run.testing_framework_version}
                 </span>
               )}
             </span>

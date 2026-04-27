@@ -64,7 +64,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         accessorKey: 'session_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Session ID" />,
         cell: ({ row }) => (
-          <span className="mono">{row.original.session_id}</span>
+          <span>{row.original.session_id}</span>
         ),
         enableSorting: false,
         meta: { label: 'Session ID' },
@@ -75,7 +75,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
         cell: ({ row }) =>
           row.original.account_id ? (
-            <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+            <span className="muted" style={{ fontSize: 12 }}>
               {row.original.account_id}
             </span>
           ) : (

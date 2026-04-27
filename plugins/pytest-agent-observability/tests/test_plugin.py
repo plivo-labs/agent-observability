@@ -68,7 +68,7 @@ def test_plugin_uploads_on_sessionfinish(pytester: pytest.Pytester, monkeypatch,
     assert captured.exists(), "uploader stub should have written the payload"
     payload = json.loads(captured.read_text())
     assert payload["version"] == "v0"
-    assert payload["run"]["framework"] == "pytest"
+    assert payload["run"]["testing_framework"] == "pytest"
     assert payload["run"]["agent_id"] == "unit-test-agent"
     assert len(payload["cases"]) == 3
     # All three cases should appear with correct status.

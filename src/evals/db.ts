@@ -21,18 +21,20 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   await sql.begin(async (tx: any) => {
     await tx`
       INSERT INTO eval_runs (
-        run_id, account_id, agent_id, framework, framework_version,
-        sdk, sdk_version, started_at, finished_at, duration_ms,
+        run_id, account_id, agent_id,
+        framework, framework_version,
+        testing_framework, testing_framework_version,
+        started_at, finished_at, duration_ms,
         total, passed, failed, errored, skipped,
         ci, raw_payload
       ) VALUES (
         ${run.run_id},
         ${run.account_id ?? null},
         ${run.agent_id ?? null},
-        ${run.framework},
+        ${run.framework ?? null},
         ${run.framework_version ?? null},
-        ${run.sdk ?? null},
-        ${run.sdk_version ?? null},
+        ${run.testing_framework},
+        ${run.testing_framework_version ?? null},
         ${startedAt},
         ${finishedAt},
         ${durationMs},
@@ -80,8 +82,12 @@ export interface ListEvalRunsOpts {
   offset: number;
   accountId?: string | null;
   agentId?: string | null;
-  /** Multi-value — `framework IN (...)` when non-empty. */
+  /** Multi-value — `framework IN (...)` when non-empty. Filters on the
+   *  agent framework (`livekit` / `pipecat` / …). */
   frameworks?: string[] | null;
+  /** Multi-value — `testing_framework IN (...)` when non-empty. Filters
+   *  on the test framework (`pytest` / `vitest` / …). */
+  testingFrameworks?: string[] | null;
   startedFrom?: string | null;
   startedTo?: string | null;
 }
@@ -96,13 +102,17 @@ export async function countEvalRuns(opts: ListEvalRunsOpts): Promise<number> {
   return row.total;
 }
 
+const RUN_SELECT_COLS =
+  "run_id, account_id, agent_id, " +
+  "framework, framework_version, testing_framework, testing_framework_version, " +
+  "started_at, finished_at, duration_ms, " +
+  "total, passed, failed, errored, skipped, ci, created_at";
+
 export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
   const { predicates, params } = buildPredicates(opts);
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
   const rows = await sql.unsafe(
-    `SELECT run_id, account_id, agent_id, framework, framework_version, sdk, sdk_version,
-            started_at, finished_at, duration_ms,
-            total, passed, failed, errored, skipped, ci, created_at
+    `SELECT ${RUN_SELECT_COLS}
      FROM eval_runs
      ${whereClause}
      ORDER BY started_at DESC
@@ -113,14 +123,13 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
 }
 
 export async function getEvalRun(runId: string): Promise<any | null> {
-  const rows = await sql`
-    SELECT run_id, account_id, agent_id, framework, framework_version, sdk, sdk_version,
-           started_at, finished_at, duration_ms,
-           total, passed, failed, errored, skipped, ci, created_at
-    FROM eval_runs
-    WHERE run_id = ${runId}
-    LIMIT 1
-  `;
+  const rows = await sql.unsafe(
+    `SELECT ${RUN_SELECT_COLS}
+     FROM eval_runs
+     WHERE run_id = $1
+     LIMIT 1`,
+    [runId],
+  );
   return rows[0] ?? null;
 }
 
@@ -165,6 +174,13 @@ function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params
     );
     predicates.push(`framework IN (${placeholders.join(", ")})`);
     params.push(...opts.frameworks);
+  }
+  if (opts.testingFrameworks && opts.testingFrameworks.length > 0) {
+    const placeholders = opts.testingFrameworks.map(
+      (_, i) => `$${params.length + i + 1}`,
+    );
+    predicates.push(`testing_framework IN (${placeholders.join(", ")})`);
+    params.push(...opts.testingFrameworks);
   }
   if (opts.startedFrom) {
     predicates.push(`started_at >= $${params.length + 1}`);

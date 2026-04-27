@@ -36,6 +36,9 @@ export function createObservabilityApi(baseUrl: string) {
       if (filters?.framework && filters.framework.length) {
         params.set('framework', filters.framework.join(','))
       }
+      if (filters?.testingFramework && filters.testingFramework.length) {
+        params.set('testing_framework', filters.testingFramework.join(','))
+      }
       if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)
       if (filters?.startedTo) params.set('started_to', filters.startedTo)

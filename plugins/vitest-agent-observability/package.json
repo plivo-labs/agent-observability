@@ -1,6 +1,6 @@
 {
   "name": "vitest-agent-observability",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vitest reporter that uploads LiveKit-agents eval results to agent-observability",
   "keywords": ["vitest", "reporter", "livekit", "agents", "observability", "evals"],
   "license": "MIT",

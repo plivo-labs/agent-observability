@@ -1,5 +1,3 @@
-// Session metrics types for the dashboard UI
-
 export interface TurnRecord {
   turn_number: number
   turn_id: string
@@ -116,6 +114,8 @@ export interface SessionsFilters {
   accountId?: string
   startedFrom?: string
   startedTo?: string
+  /** Multi-value — server accepts comma-separated list. */
+  transport?: string[]
 }
 
 export interface AgentSessionRow {
@@ -194,6 +194,8 @@ export interface RunEventMessage {
   role?: string
   content?: string
   interrupted?: boolean
+  /** Per-turn metrics attached by LiveKit (e.g. llm_node_ttft, *_speaking_at).
+   * Shape is open — LiveKit may add keys; the UI renders numeric keys generically. */
   metrics?: Record<string, number | string | null> | null
 }
 
@@ -236,10 +238,13 @@ export interface EvalRunRow {
   run_id: string
   account_id: string | null
   agent_id: string | null
-  framework: string
+  /** Agent framework family — `livekit` / `pipecat` / …. Null when no
+   *  known agent-framework package was detected by the plugin. */
+  framework: string | null
   framework_version: string | null
-  sdk: string | null
-  sdk_version: string | null
+  /** Test framework that ran the suite — `pytest` / `vitest` / …. */
+  testing_framework: string
+  testing_framework_version: string | null
   started_at: string
   finished_at: string
   duration_ms: number | null
@@ -273,7 +278,10 @@ export interface EvalRunDetail extends EvalRunRow {
 
 export interface EvalsFilters {
   agentId?: string
+  /** Multi-value agent-framework filter (`livekit` / `pipecat` / …). */
   framework?: string[]
+  /** Multi-value test-framework filter (`pytest` / `vitest` / …). */
+  testingFramework?: string[]
   accountId?: string
   startedFrom?: string
   startedTo?: string

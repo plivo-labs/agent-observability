@@ -35,7 +35,7 @@ export const SessionHeader = ({ session: sessionProp }: { session?: AgentSession
 
       <div className="obs-kv">
         <KVRow label="Session ID">
-          <span className="mono">{session.session_id}</span>
+          <span>{session.session_id}</span>
         </KVRow>
         <KVRow label="Capabilities">
           <CapsChips

@@ -67,18 +67,90 @@ See `.env.example` for all variables. Only `DATABASE_URL` is required. Basic aut
 
 ## Releasing
 
-The UI package (`packages/ui/`, published as `agent-observability-ui`) publishes to npm via PR label — no manual tags or releases needed.
+Three independently versioned packages publish from this repo, each via a
+PR-label trigger — no manual tags or releases needed. The three publish
+workflows (`publish-ui.yml`, `publish-pytest-plugin.yml`,
+`publish-vitest-plugin.yml`) all hang off the `Tests` workflow's
+`workflow_run` and fire only when a specific `release-*` label is
+present on the merged PR.
 
-1. Bump `version` in `packages/ui/package.json`.
-2. **Version bumps must be in a dedicated PR** — do not mix with feature changes.
+### Packages at a glance
+
+| Package | Source | Registry | Tag prefix | Trigger label | Notes filter label |
+|---|---|---|---|---|---|
+| `agent-observability-ui` | `packages/ui/` | npm | `ui-v*` | `release-ui-pkg` | `agent-observability-ui` |
+| `pytest-agent-observability` | `plugins/pytest-agent-observability/` | PyPI | `pytest-plugin-v*` | `release-pytest-plugin` | `pytest-agent-observability` |
+| `vitest-agent-observability` | `plugins/vitest-agent-observability/` | npm | `vitest-plugin-v*` | `release-vitest-plugin` | `vitest-agent-observability` |
+
+### Release flow (same for all three)
+
+1. Bump `version` in the package's manifest
+   (`packages/ui/package.json` / `plugins/pytest-agent-observability/pyproject.toml` /
+   `plugins/vitest-agent-observability/package.json`).
+2. **Version bumps must be in a dedicated PR** — do not mix with
+   feature changes.
 3. Labels:
-   - `release-ui-pkg` — apply to the version-bump PR to trigger the publish.
-   - `agent-observability-ui` — apply to feature/fix PRs you want listed in the next release's notes.
-4. Merge to `main`. `Tests` runs, then `Publish UI Package` picks up the merged commit, publishes `bin/cli.mjs` to npm, and creates a `ui-v<version>` GitHub Release with notes listing every `agent-observability-ui`-labeled PR merged since the previous `ui-v*` tag.
+   - `release-*` (from the table above) — apply to the version-bump PR
+     to trigger the publish.
+   - Per-package notes filter (from the table above) — apply to
+     feature/fix PRs you want listed in that package's next release
+     notes. The three packages are independent and share no source
+     code, so a PR almost always targets exactly one of them; if a PR
+     somehow touches two, apply both labels.
+4. Merge to `main`. `Tests` runs; on success, the matching publish
+   workflow picks up the merged commit, builds + publishes the package,
+   and creates a `<prefix>-v<version>` GitHub Release with notes listing
+   every labeled PR merged since the previous tag of the same prefix.
 
-> **Note:** The registry JSON under `packages/ui/public/r/` is served from git via `raw.githubusercontent.com` — it is **not** shipped in the npm tarball. If you add or change a registry item in `registry.json`, run `cd packages/ui && bun run build` and commit the regenerated `public/r/*.json` files in the same PR.
+### Registry JSON (UI package only)
+
+The registry JSON under `packages/ui/public/r/` is served from git via
+`raw.githubusercontent.com` — it is **not** shipped in the npm tarball.
+If you add or change a registry item in `registry.json`, run
+`cd packages/ui && bun run build` and commit the regenerated
+`public/r/*.json` files in the same PR.
 
 ### Prerequisites (one-time setup)
 
-- **npm:** `NPM_TOKEN` must be set as a repository Actions secret (an npm automation token with publish rights for `agent-observability-ui`).
-- **GitHub labels:** Create `release-ui-pkg` (publish trigger) and `agent-observability-ui` (release notes filter) in the repo.
+- **npm:** `NPM_TOKEN` must be set as a repository Actions secret (an npm
+  automation token with publish rights for both `agent-observability-ui`
+  and `vitest-agent-observability`).
+- **PyPI:** configure a trusted publisher at pypi.org for
+  `pytest-agent-observability` pointing at the
+  `publish-pytest-plugin.yml` workflow in this repo. No secret needed.
+- **GitHub labels:** create each label in the table above in the repo.
+
+### Labeling PRs (agents creating PRs in this repo)
+
+When an agent (or a human contributor) opens a PR against this repo,
+apply the notes-filter labels that match which packages the change
+touches. Release note generation is entirely label-driven — a PR
+without any notes-filter label will not appear in any release notes,
+even if it's merged into main.
+
+Path-to-label cheat sheet — apply every label whose path prefix the PR
+modifies:
+
+| Paths touched | Apply label |
+|---|---|
+| `packages/ui/**` | `agent-observability-ui` |
+| `plugins/pytest-agent-observability/**` | `pytest-agent-observability` |
+| `plugins/vitest-agent-observability/**` | `vitest-agent-observability` |
+| `src/**`, `migrations/**`, `frontend/**`, or any other path outside `packages/ui/**` and `plugins/**` | no notes-filter label needed — those paths aren't published as a package |
+| Version bump only, in `packages/ui/package.json` | `release-ui-pkg` (no notes-filter label — bumps are not in release notes) |
+| Version bump only, in `plugins/pytest-agent-observability/pyproject.toml` | `release-pytest-plugin` |
+| Version bump only, in `plugins/vitest-agent-observability/package.json` | `release-vitest-plugin` |
+
+Rules:
+- The three publishable packages share no source code; a PR almost
+  always targets exactly one of them and carries one notes-filter
+  label. The rare cross-cutting PR can carry multiple labels.
+- `release-*` trigger labels are mutually exclusive with notes-filter
+  labels *on the same PR*. A version-bump PR has exactly one
+  `release-*` label and nothing else — notes come from the feature PRs
+  merged since the previous tag.
+- Apply labels with `gh pr edit <n> --add-label <label>`. If the token
+  available in the current session lacks `issues: write` permission
+  on the repo, the command fails with a 403 — in that case, list the
+  labels-you-would-apply in the PR description so a maintainer can add
+  them manually, and move on. Do not block the PR on it.

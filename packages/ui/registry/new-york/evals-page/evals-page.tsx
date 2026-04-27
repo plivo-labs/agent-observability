@@ -1,19 +1,27 @@
 import { useMemo } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
-import { FlaskConical } from 'lucide-react'
+import { Bot, FlaskConical, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/hooks/use-data-table'
+import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import type { EvalRunRow } from '@/lib/observability-types'
 
+// Agent framework — what the agent under test is built with.
 const FRAMEWORK_OPTIONS = [
+  { label: 'LiveKit', value: 'livekit' },
+  { label: 'Pipecat', value: 'pipecat' },
+]
+
+// Testing framework — what ran the eval suite.
+const TESTING_FRAMEWORK_OPTIONS = [
   { label: 'pytest', value: 'pytest' },
-  { label: 'vitest', value: 'vitest' },
+  { label: 'Vitest', value: 'vitest' },
 ]
 
 function PassRateBar({ passed, total }: { passed: number; total: number }) {
@@ -28,17 +36,38 @@ function PassRateBar({ passed, total }: { passed: number; total: number }) {
   )
 }
 
-function FrameworkBadge({ name, version }: { name: string; version: string | null }) {
+function FrameworkPill({
+  name,
+  version,
+  icon: Icon,
+}: {
+  name: string | null
+  version: string | null
+  icon: LucideIcon
+}) {
+  if (!name) return <span className="text-muted-foreground">—</span>
   return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500">
-      <FlaskConical className="h-3 w-3 text-muted-foreground" />
+    <span className={cn(
+      'inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap',
+    )}>
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
       {name}
       {version && <span className="text-muted-foreground font-mono text-[11px]">{version}</span>}
     </span>
   )
 }
 
+function FrameworkBadge({ name, version }: { name: string | null; version: string | null }) {
+  return <FrameworkPill name={name} version={version} icon={Bot} />
+}
+
+function TestingFrameworkBadge({ name, version }: { name: string; version: string | null }) {
+  return <FrameworkPill name={name} version={version} icon={FlaskConical} />
+}
+
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
+  // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
+  // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
   const [agentId] = useQueryState('agent_id', parseAsString.withDefault(''))
@@ -47,6 +76,12 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     'framework',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
+  const [testingFramework] = useQueryState(
+    'testing_framework',
+    parseAsArrayOf(parseAsString, ',').withDefault([]),
+  )
+  // Single-date filter emits the picked day's midnight (local) as an epoch-ms
+  // string. Expanded server-side into a 00:00 → next-midnight window.
   const [startedAt] = useQueryState(
     'started_at',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -72,6 +107,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
       agentId: agentId || undefined,
       accountId: accountId || undefined,
       framework: framework.length ? framework : undefined,
+      testingFramework: testingFramework.length ? testingFramework : undefined,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
     },
@@ -83,9 +119,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'run_id',
         accessorKey: 'run_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Run" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400">{row.original.run_id.slice(0, 8)}</span>
-        ),
+        cell: ({ row }) => <span className="mono">{row.original.run_id.slice(0, 8)}</span>,
         enableSorting: false,
         meta: { label: 'Run' },
       },
@@ -95,9 +129,9 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         header: ({ column }) => <DataTableColumnHeader column={column} label="Agent" />,
         cell: ({ row }) =>
           row.original.agent_id ? (
-            <span className="text-s-400">{row.original.agent_id}</span>
+            <span style={{ font: 'var(--text-p-500)' }}>{row.original.agent_id}</span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="muted">—</span>
           ),
         enableSorting: false,
         enableColumnFilter: true,
@@ -122,16 +156,36 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         },
       },
       {
+        id: 'testing_framework',
+        accessorKey: 'testing_framework',
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} label="Testing Framework" />
+        ),
+        cell: ({ row }) => (
+          <TestingFrameworkBadge
+            name={row.original.testing_framework}
+            version={row.original.testing_framework_version}
+          />
+        ),
+        enableSorting: false,
+        enableColumnFilter: true,
+        meta: {
+          label: 'Testing Framework',
+          variant: 'multiSelect',
+          options: TESTING_FRAMEWORK_OPTIONS,
+        },
+      },
+      {
         id: 'account_id',
         accessorKey: 'account_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
         cell: ({ row }) =>
           row.original.account_id ? (
-            <span className="font-mono text-s-400 text-muted-foreground max-w-[140px] truncate inline-block">
+            <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
               {row.original.account_id}
             </span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="muted">—</span>
           ),
         enableSorting: false,
         enableColumnFilter: true,
@@ -160,7 +214,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'total',
         accessorKey: 'total',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Cases" />,
-        cell: ({ row }) => <span className="text-s-400 tabular-nums">{row.original.total}</span>,
+        cell: ({ row }) => <span className="tnum">{row.original.total}</span>,
         enableSorting: false,
         meta: { label: 'Cases' },
       },
@@ -169,9 +223,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
         cell: ({ row }) => (
-          <span className="font-mono text-s-400 tabular-nums">
-            {formatDuration(row.original.duration_ms)}
-          </span>
+          <span className="mono tnum">{formatDuration(row.original.duration_ms)}</span>
         ),
         enableSorting: false,
         meta: { label: 'Duration' },
@@ -181,7 +233,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="text-s-400 text-muted-foreground whitespace-nowrap">
+          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
             {formatDate(row.original.started_at)}
           </span>
         ),
@@ -193,7 +245,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'commit',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Commit" />,
         cell: ({ row }) => (
-          <span className="font-mono text-s-400 text-muted-foreground">
+          <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
             {row.original.ci?.git_sha ? String(row.original.ci.git_sha).slice(0, 7) : '—'}
           </span>
         ),
@@ -215,16 +267,21 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   })
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-h2-600 font-semibold">Evals</h1>
-        <span className="text-s-400 text-muted-foreground">{totalCount} total</span>
+    <div className="w-full p-6 flex flex-col gap-4 min-w-0">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-h2-600 font-semibold m-0">Evals</h1>
+          <div className="text-s-400 text-muted-foreground">Test runs across your agents.</div>
+        </div>
+        <div className="text-s-400 text-muted-foreground">
+          <b className="text-foreground">{totalCount}</b> total
+        </div>
       </div>
 
       {error && (
         <div
           role="alert"
-          className="border border-border bg-muted text-foreground px-4 py-3 rounded-md mb-3 text-s-400"
+          className="border border-border bg-muted text-foreground px-4 py-2.5 rounded-lg text-s-400"
         >
           Failed to load eval runs: {error}
         </div>

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
-import { FlaskConical } from 'lucide-react'
+import { Bot, FlaskConical, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
@@ -12,9 +12,16 @@ import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import type { EvalRunRow } from '@/lib/observability-types'
 
+// Agent framework — what the agent under test is built with.
 const FRAMEWORK_OPTIONS = [
+  { label: 'LiveKit', value: 'livekit' },
+  { label: 'Pipecat', value: 'pipecat' },
+]
+
+// Testing framework — what ran the eval suite.
+const TESTING_FRAMEWORK_OPTIONS = [
   { label: 'pytest', value: 'pytest' },
-  { label: 'vitest', value: 'vitest' },
+  { label: 'Vitest', value: 'vitest' },
 ]
 
 function PassRateBar({ passed, total }: { passed: number; total: number }) {
@@ -29,16 +36,33 @@ function PassRateBar({ passed, total }: { passed: number; total: number }) {
   )
 }
 
-function FrameworkBadge({ name, version }: { name: string; version: string | null }) {
+function FrameworkPill({
+  name,
+  version,
+  icon: Icon,
+}: {
+  name: string | null
+  version: string | null
+  icon: LucideIcon
+}) {
+  if (!name) return <span className="text-muted-foreground">—</span>
   return (
     <span className={cn(
-      'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500',
+      'inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap',
     )}>
-      <FlaskConical className="h-3 w-3 text-muted-foreground" />
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
       {name}
       {version && <span className="text-muted-foreground font-mono text-[11px]">{version}</span>}
     </span>
   )
+}
+
+function FrameworkBadge({ name, version }: { name: string | null; version: string | null }) {
+  return <FrameworkPill name={name} version={version} icon={Bot} />
+}
+
+function TestingFrameworkBadge({ name, version }: { name: string; version: string | null }) {
+  return <FrameworkPill name={name} version={version} icon={FlaskConical} />
 }
 
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
@@ -50,6 +74,10 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [framework] = useQueryState(
     'framework',
+    parseAsArrayOf(parseAsString, ',').withDefault([]),
+  )
+  const [testingFramework] = useQueryState(
+    'testing_framework',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
@@ -79,6 +107,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
       agentId: agentId || undefined,
       accountId: accountId || undefined,
       framework: framework.length ? framework : undefined,
+      testingFramework: testingFramework.length ? testingFramework : undefined,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
     },
@@ -124,6 +153,26 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           label: 'Framework',
           variant: 'multiSelect',
           options: FRAMEWORK_OPTIONS,
+        },
+      },
+      {
+        id: 'testing_framework',
+        accessorKey: 'testing_framework',
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} label="Testing Framework" />
+        ),
+        cell: ({ row }) => (
+          <TestingFrameworkBadge
+            name={row.original.testing_framework}
+            version={row.original.testing_framework_version}
+          />
+        ),
+        enableSorting: false,
+        enableColumnFilter: true,
+        meta: {
+          label: 'Testing Framework',
+          variant: 'multiSelect',
+          options: TESTING_FRAMEWORK_OPTIONS,
         },
       },
       {
@@ -218,27 +267,21 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   })
 
   return (
-    <>
-      <div className="obs-head">
+    <div className="w-full p-6 flex flex-col gap-4 min-w-0">
+      <div className="flex items-center justify-between">
         <div>
-          <h1>Evals</h1>
-          <div className="sub">Test runs across your agents.</div>
+          <h1 className="text-h2-600 font-semibold m-0">Evals</h1>
+          <div className="text-s-400 text-muted-foreground">Test runs across your agents.</div>
         </div>
-        <div className="total"><b>{totalCount}</b> total</div>
+        <div className="text-s-400 text-muted-foreground">
+          <b className="text-foreground">{totalCount}</b> total
+        </div>
       </div>
 
       {error && (
         <div
           role="alert"
-          style={{
-            border: '1px solid hsl(var(--border))',
-            background: 'hsl(var(--muted))',
-            color: 'hsl(var(--foreground))',
-            padding: '10px 14px',
-            borderRadius: 8,
-            marginBottom: 12,
-            font: 'var(--text-s-400)',
-          }}
+          className="border border-border bg-muted text-foreground px-4 py-2.5 rounded-lg text-s-400"
         >
           Failed to load eval runs: {error}
         </div>
@@ -251,6 +294,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         totalRowCount={totalCount}
         loading={loading}
       />
-    </>
+    </div>
   )
 }

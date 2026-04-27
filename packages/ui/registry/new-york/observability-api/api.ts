@@ -21,6 +21,9 @@ export function createObservabilityApi(baseUrl: string) {
       if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)
       if (filters?.startedTo) params.set('started_to', filters.startedTo)
+      if (filters?.transport && filters.transport.length) {
+        params.set('transport', filters.transport.join(','))
+      }
       return fetchJson<PlivoListResponse<AgentSessionRow>>(`/sessions?${params}`)
     },
 
@@ -32,6 +35,9 @@ export function createObservabilityApi(baseUrl: string) {
       if (filters?.agentId) params.set('agent_id', filters.agentId)
       if (filters?.framework && filters.framework.length) {
         params.set('framework', filters.framework.join(','))
+      }
+      if (filters?.testingFramework && filters.testingFramework.length) {
+        params.set('testing_framework', filters.testingFramework.join(','))
       }
       if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)

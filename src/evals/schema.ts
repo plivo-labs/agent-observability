@@ -45,19 +45,76 @@ export const ciMetadataSchema = z.object({
 export type CiMetadata = z.infer<typeof ciMetadataSchema>;
 
 // ── Run ─────────────────────────────────────────────────────────────────────
+//
+// Two distinct concepts are surfaced as separate fields:
+//   - `framework`           — agent framework (`livekit` | `pipecat` | …)
+//   - `testing_framework`   — test framework that ran the suite
+//                             (`pytest` | `vitest` | …)
+//
+// Plugins on or after 0.2.x send the new shape directly. Plugins ≤ 0.1.x
+// send a legacy shape where `framework` carried the test framework name
+// and `sdk` carried the agent framework. We accept both via a preprocess
+// step that normalizes legacy → new before validation: a `framework` of
+// `pytest`/`vitest` triggers the legacy interpretation (and `sdk` is
+// remapped to `framework`). New-shape input is left untouched.
 
-export const evalRunSchema = z.object({
+const AGENT_FRAMEWORK_NORMALIZERS: Record<string, string> = {
+  "livekit-agents": "livekit",
+  "pipecat-ai": "pipecat",
+  "pipecat-ai-flows": "pipecat",
+};
+
+function normalizeAgentFramework(name: unknown): unknown {
+  if (typeof name !== "string") return name;
+  return AGENT_FRAMEWORK_NORMALIZERS[name] ?? name;
+}
+
+const TESTING_FRAMEWORKS = new Set(["pytest", "vitest"]);
+
+const evalRunObjectSchema = z.object({
   run_id: z.string().uuid(),
   account_id: z.string().nullable().optional(),
   agent_id: z.string().nullable().optional(),
-  framework: z.string().min(1),           // 'pytest' | 'vitest' | other
+  // Agent framework family (livekit / pipecat / …). Optional because it
+  // may not be detectable in every environment.
+  framework: z.string().nullable().optional(),
   framework_version: z.string().nullable().optional(),
-  sdk: z.string().nullable().optional(),
-  sdk_version: z.string().nullable().optional(),
+  // Test framework name (pytest / vitest / …). Required.
+  testing_framework: z.string().min(1),
+  testing_framework_version: z.string().nullable().optional(),
   started_at: z.number(),                 // unix seconds
   finished_at: z.number(),
   ci: ciMetadataSchema.nullable().optional(),
 });
+
+export const evalRunSchema = z.preprocess((raw) => {
+  if (raw == null || typeof raw !== "object") return raw;
+  const obj = { ...(raw as Record<string, unknown>) };
+
+  // If both new-style and legacy fields are sent, prefer the new ones —
+  // strip the legacy keys so they don't leak into the validated row.
+  const hasLegacyTesting =
+    typeof obj.framework === "string" &&
+    TESTING_FRAMEWORKS.has(obj.framework as string) &&
+    obj.testing_framework === undefined;
+
+  if (hasLegacyTesting) {
+    obj.testing_framework = obj.framework;
+    obj.testing_framework_version = obj.framework_version ?? null;
+    obj.framework = obj.sdk ?? null;
+    obj.framework_version = obj.sdk_version ?? null;
+  }
+
+  // In all cases, normalize a legacy package name to the canonical
+  // family value (so `livekit-agents` becomes `livekit`).
+  obj.framework = normalizeAgentFramework(obj.framework);
+
+  // Strip the legacy slots from the validated shape.
+  delete obj.sdk;
+  delete obj.sdk_version;
+
+  return obj;
+}, evalRunObjectSchema);
 export type EvalRun = z.infer<typeof evalRunSchema>;
 
 // ── Top-level payload (v0) ──────────────────────────────────────────────────
