@@ -124,7 +124,8 @@
       "files": [
         {
           "path": "registry/new-york/observability-types/types.ts",
-          "type": "registry:lib"
+          "type": "registry:lib",
+          "target": "lib/observability-types.ts"
         }
       ]
     },
@@ -139,7 +140,8 @@
       "files": [
         {
           "path": "registry/new-york/observability-format/format.ts",
-          "type": "registry:lib"
+          "type": "registry:lib",
+          "target": "lib/observability-format.ts"
         }
       ]
     },
@@ -149,12 +151,13 @@
       "title": "Event Utilities",
       "description": "Event timestamp parsing, stable chronological sorting, and event time ranges",
       "registryDependencies": [
-        "observability-types"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json"
       ],
       "files": [
         {
           "path": "registry/new-york/observability-events/events.ts",
-          "type": "registry:lib"
+          "type": "registry:lib",
+          "target": "lib/observability-events.ts"
         }
       ]
     },
@@ -164,12 +167,13 @@
       "title": "API Client",
       "description": "createObservabilityApi(baseUrl) factory for fetching session data",
       "registryDependencies": [
-        "observability-types"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json"
       ],
       "files": [
         {
           "path": "registry/new-york/observability-api/api.ts",
-          "type": "registry:lib"
+          "type": "registry:lib",
+          "target": "lib/observability-api.ts"
         }
       ]
     },
@@ -177,15 +181,16 @@
       "name": "observability-provider",
       "type": "registry:lib",
       "title": "Observability Provider",
-      "description": "AgentObservabilityProvider context \u2014 wraps your app to provide API and session data",
+      "description": "AgentObservabilityProvider context — wraps your app to provide API and session data",
       "registryDependencies": [
-        "observability-api",
-        "observability-types"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-api.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json"
       ],
       "files": [
         {
           "path": "registry/new-york/observability-provider/provider.tsx",
-          "type": "registry:lib"
+          "type": "registry:lib",
+          "target": "lib/observability-provider.tsx"
         }
       ]
     },
@@ -195,14 +200,15 @@
       "title": "Observability Hooks",
       "description": "useSessions, useSession, useTimeline, useTranscript, usePerformance",
       "registryDependencies": [
-        "observability-events",
-        "observability-types",
-        "observability-provider"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-events.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-provider.json"
       ],
       "files": [
         {
           "path": "registry/new-york/observability-hooks/hooks.ts",
-          "type": "registry:lib"
+          "type": "registry:lib",
+          "target": "lib/observability-hooks.ts"
         }
       ]
     },
@@ -215,12 +221,13 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json"
       ],
       "files": [
         {
           "path": "registry/new-york/observability-chart-shared/chart-shared.tsx",
-          "type": "registry:ui"
+          "type": "registry:ui",
+          "target": "components/observability-chart-shared.tsx"
         }
       ]
     },
@@ -233,10 +240,10 @@
         "lucide-react"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
@@ -254,11 +261,11 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks",
-        "observability-chart-shared"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
       ],
       "files": [
         {
@@ -276,11 +283,11 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks",
-        "observability-chart-shared"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
       ],
       "files": [
         {
@@ -298,11 +305,11 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks",
-        "observability-chart-shared"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
       ],
       "files": [
         {
@@ -320,9 +327,9 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-types",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
@@ -340,11 +347,11 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks",
-        "observability-chart-shared"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
       ],
       "files": [
         {
@@ -362,10 +369,10 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-types",
-        "observability-hooks",
-        "observability-chart-shared"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
       ],
       "files": [
         {
@@ -383,10 +390,10 @@
         "recharts"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-types",
-        "observability-hooks",
-        "observability-chart-shared"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-chart-shared.json"
       ],
       "files": [
         {
@@ -401,10 +408,10 @@
       "title": "Session Header",
       "description": "Session metadata display: ID, capabilities, duration, dates, recording link",
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
@@ -423,10 +430,10 @@
       ],
       "registryDependencies": [
         "badge",
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
@@ -449,9 +456,9 @@
         "button",
         "card",
         "collapsible",
-        "observability-events",
-        "observability-types",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-events.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
@@ -470,7 +477,7 @@
       ],
       "registryDependencies": [
         "card",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
@@ -489,23 +496,26 @@
         "wavesurfer.js"
       ],
       "registryDependencies": [
-        "observability-theme",
-        "observability-format",
-        "observability-types",
-        "observability-hooks"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json"
       ],
       "files": [
         {
           "path": "registry/new-york/session-timeline/session-timeline.tsx",
-          "type": "registry:component"
+          "type": "registry:component",
+          "target": "components/session-timeline/session-timeline.tsx"
         },
         {
           "path": "registry/new-york/session-timeline/recording-player.tsx",
-          "type": "registry:component"
+          "type": "registry:component",
+          "target": "components/session-timeline/recording-player.tsx"
         },
         {
           "path": "registry/new-york/session-timeline/session-trace.tsx",
-          "type": "registry:component"
+          "type": "registry:component",
+          "target": "components/session-timeline/session-trace.tsx"
         }
       ]
     },
@@ -637,7 +647,7 @@
       "registryDependencies": [
         "badge",
         "button",
-        "data-table",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
         "skeleton"
       ],
       "files": [
@@ -814,7 +824,7 @@
       "registryDependencies": [
         "badge",
         "button",
-        "data-table",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
         "skeleton"
       ],
       "files": [
@@ -921,10 +931,10 @@
         "button",
         "card",
         "collapsible",
-        "data-table",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
         "sheet",
         "skeleton",
-        "eval-case-detail-page"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/eval-case-detail-page.json"
       ],
       "files": [
         {
