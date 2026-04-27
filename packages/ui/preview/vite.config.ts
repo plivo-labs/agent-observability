@@ -38,6 +38,7 @@ export default defineConfig({
     include: [
       'recharts',
       'dayjs',
+      'dayjs/plugin/relativeTime',
       'lucide-react',
       'wavesurfer.js',
       '@tanstack/react-table',
@@ -57,6 +58,7 @@ export default defineConfig({
       { find: '@/lib/observability-api', replacement: reg('observability-api/api.ts') },
       { find: '@/lib/observability-provider', replacement: reg('observability-provider/provider.tsx') },
       { find: '@/lib/observability-hooks', replacement: reg('observability-hooks/hooks.ts') },
+      { find: '@/lib/observability-events', replacement: reg('observability-events/events.ts') },
 
       // Registry data-table (tablecn) — shared by sessions-page, evals-page, eval-run-detail-page
       { find: '@/components/data-table', replacement: reg('data-table') },
