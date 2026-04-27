@@ -537,9 +537,11 @@
         "button",
         "calendar",
         "command",
+        "dropdown-menu",
         "input",
         "label",
         "popover",
+        "select",
         "separator",
         "skeleton",
         "slider",
@@ -599,37 +601,37 @@
         {
           "path": "registry/new-york/data-table/use-data-table.ts",
           "type": "registry:hook",
-          "target": "hooks/use-data-table.ts"
+          "target": "components/data-table/use-data-table.ts"
         },
         {
           "path": "registry/new-york/data-table/use-debounced-callback.ts",
           "type": "registry:hook",
-          "target": "hooks/use-debounced-callback.ts"
+          "target": "components/data-table/use-debounced-callback.ts"
         },
         {
           "path": "registry/new-york/data-table/use-callback-ref.ts",
           "type": "registry:hook",
-          "target": "hooks/use-callback-ref.ts"
+          "target": "components/data-table/use-callback-ref.ts"
         },
         {
           "path": "registry/new-york/data-table/data-table-utils.ts",
           "type": "registry:lib",
-          "target": "lib/data-table.ts"
+          "target": "components/data-table/data-table-utils.ts"
         },
         {
           "path": "registry/new-york/data-table/parsers.ts",
           "type": "registry:lib",
-          "target": "lib/parsers.ts"
+          "target": "components/data-table/parsers.ts"
         },
         {
           "path": "registry/new-york/data-table/types.ts",
           "type": "registry:lib",
-          "target": "types/data-table.ts"
+          "target": "components/data-table/types.ts"
         },
         {
           "path": "registry/new-york/data-table/data-table-config.ts",
           "type": "registry:lib",
-          "target": "config/data-table.ts"
+          "target": "components/data-table/data-table-config.ts"
         }
       ]
     },
