@@ -556,7 +556,10 @@ a { color: inherit; text-decoration: none; }
 /* ───── Metric tiles ─────────────────────────────────────── */
 .obs-metrics {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  /* `auto-fit` wraps to multiple rows when 6 cards × min-content > avail
+   * width; `minmax(0, 1fr)` lets each column shrink below its content's
+   * natural minimum so a single row doesn't overflow on narrow viewports. */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-top: 16px;
 }

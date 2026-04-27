@@ -147,9 +147,11 @@
 .dark {
   --background: 240 10% 4%;
   --foreground: 0 0% 100%;
-  --card: 240 10% 3.9%;
+  /* --card / --popover sit a step ABOVE --bg1 (7% L) so card surfaces
+   * read as elevated, not depressed, against the page background. */
+  --card: 240 7% 11%;
   --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%;
+  --popover: 240 7% 11%;
   --popover-foreground: 0 0% 98%;
   --primary: 0 0% 98%;
   --primary-foreground: 222 47% 11%;
@@ -166,8 +168,9 @@
   --success-foreground: 174 58% 91%;
   --warning: 26 89% 37%;
   --warning-foreground: 44 95% 92%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
+  /* Bumped from 15.9% L → 22% L for visible chrome on inputs / borders. */
+  --border: 240 5% 22%;
+  --input: 240 5% 22%;
   --ring: 240 4.9% 83.9%;
   --st1: 240 4% 16%;
   --st2: 240 4% 20%;
