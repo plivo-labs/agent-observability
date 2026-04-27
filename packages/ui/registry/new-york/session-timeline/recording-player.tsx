@@ -38,20 +38,38 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-// Monochrome waveforms: user voice is the lighter ink (muted-foreground),
-// agent voice is the darker ink (foreground). Differentiation by weight, not hue.
-const USER_WAVE_COLOR = 'hsl(var(--muted-foreground) / 0.55)'
-const USER_PROGRESS_COLOR = 'hsl(var(--muted-foreground))'
-const AGENT_WAVE_COLOR = 'hsl(var(--foreground) / 0.45)'
-const AGENT_PROGRESS_COLOR = 'hsl(var(--foreground))'
-const CURSOR_COLOR = 'hsl(var(--primary))'
+/* WaveSurfer assigns wave/progress colors directly to canvas fillStyle,
+ * which doesn't resolve CSS `var()` (vars are CSS-context only). So we
+ * read the `H S% L%` triple via getComputedStyle and build literal
+ * `hsl(...)` strings. Re-resolve on theme change since wavesurfer
+ * caches the parsed color at paint time.
+ *
+ * Monochrome design: user voice is the lighter ink (muted-foreground),
+ * agent voice is the darker ink (foreground). Differentiation by
+ * weight, not hue. */
+function readVar(name: string): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || '0 0% 50%'
+}
+
+function resolveColors() {
+  const muted = readVar('--muted-foreground')
+  const fg = readVar('--foreground')
+  const primary = readVar('--primary')
+  return {
+    userWave: `hsl(${muted} / 0.55)`,
+    userProgress: `hsl(${muted})`,
+    agentWave: `hsl(${fg} / 0.45)`,
+    agentProgress: `hsl(${fg})`,
+    cursor: `hsl(${primary})`,
+  }
+}
 
 const SHARED_WS_OPTIONS = {
   height: 36,
   barWidth: 2,
   barGap: 1,
   barRadius: 2,
-  cursorColor: CURSOR_COLOR,
   cursorWidth: 0,
   normalize: true,
   interact: true,
@@ -159,11 +177,13 @@ export function RecordingPlayer({
         audio.preload = 'auto'
         audioRef.current = audio
 
+        const colors = resolveColors()
         const userWs = toWS(
           WaveSurfer.create({
             container: userContainerRef.current as HTMLDivElement,
-            waveColor: USER_WAVE_COLOR,
-            progressColor: USER_PROGRESS_COLOR,
+            waveColor: colors.userWave,
+            progressColor: colors.userProgress,
+            cursorColor: colors.cursor,
             ...SHARED_WS_OPTIONS,
             ...({
               media: audio,
@@ -176,8 +196,9 @@ export function RecordingPlayer({
         const agentWs = toWS(
           WaveSurfer.create({
             container: agentContainerRef.current as HTMLDivElement,
-            waveColor: AGENT_WAVE_COLOR,
-            progressColor: AGENT_PROGRESS_COLOR,
+            waveColor: colors.agentWave,
+            progressColor: colors.agentProgress,
+            cursorColor: colors.cursor,
             ...SHARED_WS_OPTIONS,
             ...({
               peaks: [rightChannelData],
@@ -267,24 +288,26 @@ export function RecordingPlayer({
 
   /* WaveSurfer caches resolved colors at draw time, so a `dark` class
    * toggle on <html> won't repaint the canvas with the new theme's
-   * variables. Watch the class change and re-set the colors. */
+   * variables. Watch the class change, re-resolve CSS variables (canvas
+   * can't read them), and re-set the colors. */
   useEffect(() => {
     const root = document.documentElement
     const repaint = () => {
       const userWs = userWsRef.current
       const agentWs = agentWsRef.current
+      const c = resolveColors()
       if (userWs) {
         userWs.setOptions({
-          waveColor: USER_WAVE_COLOR,
-          progressColor: USER_PROGRESS_COLOR,
-          cursorColor: CURSOR_COLOR,
+          waveColor: c.userWave,
+          progressColor: c.userProgress,
+          cursorColor: c.cursor,
         })
       }
       if (agentWs) {
         agentWs.setOptions({
-          waveColor: AGENT_WAVE_COLOR,
-          progressColor: AGENT_PROGRESS_COLOR,
-          cursorColor: CURSOR_COLOR,
+          waveColor: c.agentWave,
+          progressColor: c.agentProgress,
+          cursorColor: c.cursor,
         })
       }
     }
@@ -364,14 +387,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor={USER_WAVE_COLOR}
+        labelColor="hsl(var(--muted-foreground))"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor={AGENT_WAVE_COLOR}
+        labelColor="hsl(var(--foreground))"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />

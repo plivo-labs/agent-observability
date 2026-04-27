@@ -38,24 +38,37 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-/* WaveSurfer v7 resolves color strings to canvas fillStyle at render
- * time, so once the canvas is painted CSS-variable changes (e.g. dark
- * mode toggle) won't repaint until we call `setOptions` again. We pick
- * neutral foreground-with-alpha for the user channel and accent-purple
- * for the agent so both have enough contrast in either theme — and we
- * still re-set on theme change to be safe. */
-const USER_WAVE_COLOR = 'hsl(var(--foreground) / 0.30)'
-const USER_PROGRESS_COLOR = 'hsl(var(--foreground) / 0.70)'
-const AGENT_WAVE_COLOR = 'hsl(var(--accent-purple) / 0.55)'
-const AGENT_PROGRESS_COLOR = 'hsl(var(--accent-purple))'
-const CURSOR_COLOR = 'hsl(var(--primary))'
+/* WaveSurfer assigns wave/progress colors directly to canvas fillStyle.
+ * Canvas does NOT resolve CSS `var()` — that only works in stylesheet /
+ * inline-style contexts. So we read the raw `H S% L%` triple via
+ * getComputedStyle and build literal `hsl(...)` strings ourselves. We
+ * also re-resolve on theme change (the .dark class is toggled on
+ * <html>) and call setOptions, since wavesurfer caches the parsed
+ * color and won't repaint on its own. */
+function readVar(name: string): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  // Fallback if the var isn't defined yet (rare initial paint).
+  return v || '0 0% 50%'
+}
+
+function resolveColors() {
+  const fg = readVar('--foreground')
+  const accent = readVar('--accent-purple')
+  const primary = readVar('--primary')
+  return {
+    userWave: `hsl(${fg} / 0.45)`,
+    userProgress: `hsl(${fg} / 0.85)`,
+    agentWave: `hsl(${accent} / 0.65)`,
+    agentProgress: `hsl(${accent})`,
+    cursor: `hsl(${primary})`,
+  }
+}
 
 const SHARED_WS_OPTIONS = {
   height: 36,
   barWidth: 2,
   barGap: 1,
   barRadius: 2,
-  cursorColor: CURSOR_COLOR,
   cursorWidth: 0,
   normalize: true,
   interact: true,
@@ -163,11 +176,13 @@ export function RecordingPlayer({
         audio.preload = 'auto'
         audioRef.current = audio
 
+        const colors = resolveColors()
         const userWs = toWS(
           WaveSurfer.create({
             container: userContainerRef.current as HTMLDivElement,
-            waveColor: USER_WAVE_COLOR,
-            progressColor: USER_PROGRESS_COLOR,
+            waveColor: colors.userWave,
+            progressColor: colors.userProgress,
+            cursorColor: colors.cursor,
             ...SHARED_WS_OPTIONS,
             ...({
               media: audio,
@@ -180,8 +195,9 @@ export function RecordingPlayer({
         const agentWs = toWS(
           WaveSurfer.create({
             container: agentContainerRef.current as HTMLDivElement,
-            waveColor: AGENT_WAVE_COLOR,
-            progressColor: AGENT_PROGRESS_COLOR,
+            waveColor: colors.agentWave,
+            progressColor: colors.agentProgress,
+            cursorColor: colors.cursor,
             ...SHARED_WS_OPTIONS,
             ...({
               peaks: [rightChannelData],
@@ -271,25 +287,26 @@ export function RecordingPlayer({
 
   /* WaveSurfer caches resolved colors at draw time, so toggling the
    * `dark` class on <html> doesn't repaint the waves. Watch for that
-   * class change and call setOptions to force a repaint with the
-   * theme's freshly-resolved CSS variables. */
+   * class change, re-resolve CSS variables (canvas can't read them),
+   * and call setOptions to force a repaint. */
   useEffect(() => {
     const root = document.documentElement
     const repaint = () => {
       const userWs = userWsRef.current
       const agentWs = agentWsRef.current
+      const c = resolveColors()
       if (userWs) {
         userWs.setOptions({
-          waveColor: USER_WAVE_COLOR,
-          progressColor: USER_PROGRESS_COLOR,
-          cursorColor: CURSOR_COLOR,
+          waveColor: c.userWave,
+          progressColor: c.userProgress,
+          cursorColor: c.cursor,
         })
       }
       if (agentWs) {
         agentWs.setOptions({
-          waveColor: AGENT_WAVE_COLOR,
-          progressColor: AGENT_PROGRESS_COLOR,
-          cursorColor: CURSOR_COLOR,
+          waveColor: c.agentWave,
+          progressColor: c.agentProgress,
+          cursorColor: c.cursor,
         })
       }
     }
@@ -369,14 +386,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor={USER_WAVE_COLOR}
+        labelColor="hsl(var(--foreground) / 0.85)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor={AGENT_WAVE_COLOR}
+        labelColor="hsl(var(--accent-purple))"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />

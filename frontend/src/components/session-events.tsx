@@ -171,8 +171,9 @@ export const SessionEvents = () => {
                 <div className="t">{timeLabel}</div>
                 <div>
                   <Badge
+                    variant="outline"
                     data-event-type={event.type}
-                    className={`rounded border px-2 py-0.5 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
+                    className={`h-5 rounded px-2 py-0 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
                   >
                     {event.type}
                   </Badge>
