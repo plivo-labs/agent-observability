@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useObservabilityContext } from '@/lib/observability-provider'
+import { sortEventsByCreatedAt } from '@/lib/observability-events'
 import type {
   AgentSessionRow,
   ChatItem,
@@ -133,7 +134,8 @@ export function usePerformance() {
 
 export function useEvents(): SessionEvent[] | null {
   const { session } = useObservabilityContext()
-  return session?.events ?? null
+  const events = session?.events ?? null
+  return useMemo(() => sortEventsByCreatedAt(events), [events])
 }
 
 export function useOptions(): Record<string, unknown> | null {

@@ -12,6 +12,7 @@ import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
+import { sortSessionEvents } from "./events.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -221,7 +222,7 @@ app.get("/api/sessions/:id", async (c) => {
   row.chat_history = chatHistory;
   row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count);
   row.raw_report = rawReport;
-  row.events = rawReport?.events ?? null;
+  row.events = sortSessionEvents(rawReport?.events ?? null);
   row.options = rawReport?.options ?? null;
   row.api_id = newApiId();
 

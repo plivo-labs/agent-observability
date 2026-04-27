@@ -1,0 +1,17 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "observability-events",
+  "title": "Event Utilities",
+  "description": "Event timestamp parsing, stable chronological sorting, and event time ranges",
+  "registryDependencies": [
+    "observability-types"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/observability-events/events.ts",
+      "content": "import type { SessionEvent } from '@/lib/observability-types'\n\nexport function getEventCreatedAt(event: SessionEvent): number | null {\n  const value = (event as unknown as { created_at?: unknown }).created_at\n  if (typeof value === 'number' && Number.isFinite(value)) return value\n  if (typeof value === 'string') {\n    const parsed = Date.parse(value)\n    return Number.isFinite(parsed) ? parsed / 1000 : null\n  }\n  return null\n}\n\nexport function sortEventsByCreatedAt(\n  events: readonly SessionEvent[] | null | undefined,\n): SessionEvent[] | null {\n  if (!events) return null\n  return events\n    .map((event, index) => ({ event, index }))\n    .sort((a, b) => {\n      const at = getEventCreatedAt(a.event)\n      const bt = getEventCreatedAt(b.event)\n      if (at == null && bt == null) return a.index - b.index\n      if (at == null) return 1\n      if (bt == null) return -1\n      return at - bt || a.index - b.index\n    })\n    .map(({ event }) => event)\n}\n\nexport function getEventTimeRange(\n  events: readonly SessionEvent[] | null | undefined,\n): { start: number; end: number } | null {\n  if (!events) return null\n  const eventTimes = events\n    .map(getEventCreatedAt)\n    .filter((value): value is number => value != null)\n  if (eventTimes.length === 0) return null\n  return {\n    start: eventTimes[0],\n    end: eventTimes[eventTimes.length - 1],\n  }\n}\n",
+      "type": "registry:lib"
+    }
+  ],
+  "type": "registry:lib"
+}

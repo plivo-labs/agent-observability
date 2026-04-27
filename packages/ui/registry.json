@@ -144,6 +144,21 @@
       ]
     },
     {
+      "name": "observability-events",
+      "type": "registry:lib",
+      "title": "Event Utilities",
+      "description": "Event timestamp parsing, stable chronological sorting, and event time ranges",
+      "registryDependencies": [
+        "observability-types"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/observability-events/events.ts",
+          "type": "registry:lib"
+        }
+      ]
+    },
+    {
       "name": "observability-api",
       "type": "registry:lib",
       "title": "API Client",
@@ -180,6 +195,7 @@
       "title": "Observability Hooks",
       "description": "useSessions, useSession, useTimeline, useTranscript, usePerformance",
       "registryDependencies": [
+        "observability-events",
         "observability-types",
         "observability-provider"
       ],
@@ -433,6 +449,7 @@
         "button",
         "card",
         "collapsible",
+        "observability-events",
         "observability-types",
         "observability-hooks"
       ],
@@ -635,6 +652,11 @@
           "target": "lib/observability-format.ts"
         },
         {
+          "path": "registry/new-york/observability-events/events.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-events.ts"
+        },
+        {
           "path": "registry/new-york/observability-api/api.ts",
           "type": "registry:lib",
           "target": "lib/observability-api.ts"
@@ -686,6 +708,11 @@
           "path": "registry/new-york/observability-format/format.ts",
           "type": "registry:lib",
           "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-events/events.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-events.ts"
         },
         {
           "path": "registry/new-york/observability-api/api.ts",
@@ -802,6 +829,11 @@
           "target": "lib/observability-format.ts"
         },
         {
+          "path": "registry/new-york/observability-events/events.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-events.ts"
+        },
+        {
           "path": "registry/new-york/observability-api/api.ts",
           "type": "registry:lib",
           "target": "lib/observability-api.ts"
@@ -847,6 +879,11 @@
           "path": "registry/new-york/observability-format/format.ts",
           "type": "registry:lib",
           "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-events/events.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-events.ts"
         },
         {
           "path": "registry/new-york/observability-api/api.ts",
@@ -899,6 +936,11 @@
           "path": "registry/new-york/observability-format/format.ts",
           "type": "registry:lib",
           "target": "lib/observability-format.ts"
+        },
+        {
+          "path": "registry/new-york/observability-events/events.ts",
+          "type": "registry:lib",
+          "target": "lib/observability-events.ts"
         },
         {
           "path": "registry/new-york/observability-api/api.ts",
