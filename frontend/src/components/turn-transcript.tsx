@@ -15,6 +15,9 @@ const LATENCY_THRESHOLDS: Record<string, { good: number; warn: number }> = {
   TTS: { good: 300, warn: 600 },
 }
 
+const PILL_BASE =
+  'rounded border px-1.5 py-0.5 text-[10px] font-mono font-normal tabular-nums'
+
 /** STT confidence pill on user bubbles. Thresholds mirror voice SLOs:
  * ≥ 0.9 green, ≥ 0.7 amber, below red. */
 const ConfidencePill = ({ value }: { value: number | undefined }) => {
@@ -27,13 +30,14 @@ const ConfidencePill = ({ value }: { value: number | undefined }) => {
         : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] font-semibold'
   const pct = Math.round(value * 100)
   return (
-    <span
+    <Badge
+      variant="outline"
       title={`Transcript confidence: ${pct}%`}
       aria-label={`Transcript confidence: ${pct}%`}
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${tone}`}
+      className={`${PILL_BASE} ${tone}`}
     >
       CONF&nbsp;&nbsp;|&nbsp;&nbsp;{pct}%
-    </span>
+    </Badge>
   )
 }
 
@@ -47,12 +51,13 @@ const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) =
         ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))]'
         : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] font-semibold'
   return (
-    <span
+    <Badge
+      variant="outline"
       title={`${label}: ${formatMs(ms)}`}
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono tabular-nums ${tone}`}
+      className={`${PILL_BASE} ${tone}`}
     >
       {label}&nbsp;&nbsp;|&nbsp;&nbsp;{formatMs(ms)}
-    </span>
+    </Badge>
   )
 }
 
