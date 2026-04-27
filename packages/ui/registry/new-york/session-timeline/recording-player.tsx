@@ -38,20 +38,27 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-// Monochrome waveforms: user voice is the lighter ink (muted-foreground),
-// agent voice is the darker ink (foreground). Differentiation by weight, not hue.
-const USER_WAVE_COLOR = 'hsl(var(--muted-foreground) / 0.55)'
-const USER_PROGRESS_COLOR = 'hsl(var(--muted-foreground))'
-const AGENT_WAVE_COLOR = 'hsl(var(--foreground) / 0.45)'
-const AGENT_PROGRESS_COLOR = 'hsl(var(--foreground))'
-const CURSOR_COLOR = 'hsl(var(--primary))'
+interface WaveColors {
+  userWave: string
+  userProgress: string
+  agentWave: string
+  agentProgress: string
+  cursor: string
+}
+
+const FALLBACK_WAVE_COLORS: WaveColors = {
+  userWave: 'rgba(148, 163, 184, 0.7)',
+  userProgress: 'rgb(203, 213, 225)',
+  agentWave: 'rgba(226, 232, 240, 0.72)',
+  agentProgress: 'rgb(248, 250, 252)',
+  cursor: 'rgb(59, 130, 246)',
+}
 
 const SHARED_WS_OPTIONS = {
   height: 36,
   barWidth: 2,
   barGap: 1,
   barRadius: 2,
-  cursorColor: CURSOR_COLOR,
   cursorWidth: 0,
   normalize: true,
   interact: true,
@@ -64,6 +71,49 @@ function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+}
+
+function hslTripletToCanvasColor(value: string, alpha: number | null, fallback: string): string {
+  const match = value.trim().match(/^(-?[\d.]+)(?:deg)?\s+([\d.]+%)\s+([\d.]+%)$/)
+  if (!match) return fallback
+  const [, hue, saturation, lightness] = match
+  return alpha == null
+    ? `hsl(${hue}, ${saturation}, ${lightness})`
+    : `hsla(${hue}, ${saturation}, ${lightness}, ${alpha})`
+}
+
+function resolveThemeColor(
+  element: HTMLElement,
+  name: string,
+  alpha: number | null,
+  fallback: string,
+): string {
+  const value = getComputedStyle(element).getPropertyValue(name).trim()
+  if (!value) return fallback
+  if (value.startsWith('#') || value.startsWith('rgb') || value.startsWith('hsl')) {
+    return value
+  }
+  return hslTripletToCanvasColor(value, alpha, fallback)
+}
+
+function resolveWaveColors(element: HTMLElement): WaveColors {
+  return {
+    userWave: resolveThemeColor(element, '--muted-foreground', 0.72, FALLBACK_WAVE_COLORS.userWave),
+    userProgress: resolveThemeColor(element, '--muted-foreground', null, FALLBACK_WAVE_COLORS.userProgress),
+    agentWave: resolveThemeColor(element, '--foreground', 0.62, FALLBACK_WAVE_COLORS.agentWave),
+    agentProgress: resolveThemeColor(element, '--foreground', null, FALLBACK_WAVE_COLORS.agentProgress),
+    cursor: resolveThemeColor(element, '--primary', null, FALLBACK_WAVE_COLORS.cursor),
+  }
+}
+
+function areWaveColorsEqual(a: WaveColors, b: WaveColors): boolean {
+  return (
+    a.userWave === b.userWave &&
+    a.userProgress === b.userProgress &&
+    a.agentWave === b.agentWave &&
+    a.agentProgress === b.agentProgress &&
+    a.cursor === b.cursor
+  )
 }
 
 /* ─── Channel label + waveform row ──────────────────────── */
@@ -125,6 +175,24 @@ export function RecordingPlayer({
   const [volume, setVolume] = useState(1)
   const [isMuted, setIsMuted] = useState(false)
   const [speed, setSpeed] = useState<Speed>(1)
+  const [waveColors, setWaveColors] = useState<WaveColors>(FALLBACK_WAVE_COLORS)
+
+  useEffect(() => {
+    const updateWaveColors = () => {
+      const element = userContainerRef.current ?? document.documentElement
+      const next = resolveWaveColors(element)
+      setWaveColors((prev) => (areWaveColorsEqual(prev, next) ? prev : next))
+    }
+
+    updateWaveColors()
+    const observer = new MutationObserver(updateWaveColors)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'style'],
+    })
+
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (!recordUrl) return
@@ -162,9 +230,10 @@ export function RecordingPlayer({
         const userWs = toWS(
           WaveSurfer.create({
             container: userContainerRef.current as HTMLDivElement,
-            waveColor: USER_WAVE_COLOR,
-            progressColor: USER_PROGRESS_COLOR,
             ...SHARED_WS_OPTIONS,
+            waveColor: waveColors.userWave,
+            progressColor: waveColors.userProgress,
+            cursorColor: waveColors.cursor,
             ...({
               media: audio,
               peaks: [leftChannelData],
@@ -176,9 +245,10 @@ export function RecordingPlayer({
         const agentWs = toWS(
           WaveSurfer.create({
             container: agentContainerRef.current as HTMLDivElement,
-            waveColor: AGENT_WAVE_COLOR,
-            progressColor: AGENT_PROGRESS_COLOR,
             ...SHARED_WS_OPTIONS,
+            waveColor: waveColors.agentWave,
+            progressColor: waveColors.agentProgress,
+            cursorColor: waveColors.cursor,
             ...({
               peaks: [rightChannelData],
               duration: audioDuration,
@@ -254,7 +324,7 @@ export function RecordingPlayer({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordUrl])
+  }, [recordUrl, waveColors])
 
   useEffect(() => {
     if (currentTimeMs === undefined) return
@@ -329,14 +399,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor={USER_WAVE_COLOR}
+        labelColor={waveColors.userProgress}
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor={AGENT_WAVE_COLOR}
+        labelColor={waveColors.agentProgress}
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />

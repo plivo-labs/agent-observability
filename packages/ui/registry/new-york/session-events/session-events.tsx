@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, Clock } from 'lucide-react'
 import dayjs from 'dayjs'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Collapsible,
   CollapsibleContent,
@@ -14,21 +11,18 @@ import { useEvents } from '@/lib/observability-hooks'
 import { getEventCreatedAt, getEventTimeRange } from '@/lib/observability-events'
 import type { SessionEvent } from '@/lib/observability-types'
 
-// Monochrome default palette — every type reads as an uppercase-mono
-// outline chip against the card background. Consumers can restore colored
-// type badges by passing `typeBadgeClass` to <SessionEvents /> or by
-// targeting `[data-event-type="..."]` in CSS.
-const MONO_BADGE = 'bg-transparent text-foreground border border-border'
+// Default Neo event badge palette. Consumers can override per-type badges by
+// passing `typeBadgeClass` or by targeting `[data-event-type="..."]` in CSS.
 export const DEFAULT_TYPE_BADGE_CLASS: Record<string, string> = {
-  agent_state_changed: MONO_BADGE,
-  user_state_changed: MONO_BADGE,
-  user_input_transcribed: MONO_BADGE,
-  conversation_item_added: MONO_BADGE,
-  speech_created: MONO_BADGE,
-  close: MONO_BADGE,
+  agent_state_changed: 'ev-tag-agent',
+  user_state_changed: 'ev-tag-user',
+  user_input_transcribed: 'ev-tag-user',
+  conversation_item_added: 'ev-tag-conv',
+  speech_created: 'ev-tag-speech',
+  close: 'ev-tag-agent',
 }
 
-const FALLBACK_BADGE_CLASS = MONO_BADGE
+const FALLBACK_BADGE_CLASS = 'ev-tag-conv'
 
 type TimeMode = 'relative' | 'absolute'
 
@@ -92,36 +86,30 @@ const EventRow = ({
       ? formatRelative(relSeconds ?? 0)
       : formatAbsolute(eventTime)
   return (
-    <Collapsible className="group/event border-b last:border-b-0">
-      <CollapsibleTrigger className="flex w-full items-start gap-3 px-3 py-2 text-left text-sm cursor-pointer hover:bg-muted/40 transition-colors data-[state=open]:bg-muted/30">
+    <Collapsible className="ev-row-wrap group/event">
+      <CollapsibleTrigger
+        className={cn('ev-row', timeMode === 'absolute' && 'absolute-time')}
+      >
         <ChevronDown
           size={13}
-          className="mt-0.5 text-muted-foreground transition-transform group-data-[state=open]/event:rotate-0 -rotate-90"
+          className="caret -rotate-90 group-data-[state=open]/event:rotate-0"
         />
-        <span
-          className={cn(
-            'font-mono text-xs text-muted-foreground shrink-0 pt-0.5 tabular-nums',
-            timeMode === 'relative' ? 'w-16' : 'w-24',
-          )}
-        >
+        <span className="t">
           {timeLabel}
         </span>
-        <Badge
+        <span
           data-event-type={event.type}
-          className={cn('shrink-0 border-transparent', badgeClass)}
+          className={cn('tag', badgeClass)}
         >
-          {event.type}
-        </Badge>
-        <span className="flex-1 truncate text-muted-foreground">
+          <span>{event.type}</span>
+        </span>
+        <span className="msg">
           {summarize(event)}
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
         <pre
-          className={cn(
-            'overflow-auto bg-muted/20 px-3 pb-3 text-xs leading-relaxed',
-            timeMode === 'relative' ? 'pl-[76px]' : 'pl-[108px]',
-          )}
+          className={cn('ev-detail', timeMode === 'absolute' && 'absolute-time')}
         >
           {JSON.stringify(event, null, 2)}
         </pre>
@@ -155,11 +143,11 @@ export const SessionEvents = ({
 
   if (events == null || events.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+      <div className="events-card">
+        <div className="py-8 text-center text-sm text-muted-foreground">
           No events captured for this session.
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     )
   }
 
@@ -173,30 +161,24 @@ export const SessionEvents = ({
       : `${formatAbsolute(t0)} → ${formatAbsolute(tEnd)}`
 
   return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="border-b py-3">
-        <CardTitle className="flex items-center justify-between text-sm font-medium">
-          <div className="flex items-center gap-3">
-            <span>{events.length} events</span>
-            <span className="font-mono text-xs text-muted-foreground">
-              {rangeLabel}
-            </span>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              setTimeMode((m) => (m === 'relative' ? 'absolute' : 'relative'))
-            }
-            className="gap-1.5 text-xs"
-          >
-            <Clock size={12} />
-            {timeMode === 'relative' ? 'Relative' : 'Absolute'}
-          </Button>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
+    <div className="events-card">
+      <div className="events-head">
+        <div className="title">
+          <span>{events.length} events</span>
+          <span className="rng">{rangeLabel}</span>
+        </div>
+        <button
+          type="button"
+          className="timemode"
+          onClick={() =>
+            setTimeMode((m) => (m === 'relative' ? 'absolute' : 'relative'))
+          }
+        >
+          <Clock size={12} />
+          {timeMode === 'relative' ? 'Relative' : 'Absolute'}
+        </button>
+      </div>
+      <div className="events-list">
         <ul>
           {events.map((event, i) => {
             const eventTime = getEventCreatedAt(event)
@@ -212,7 +194,7 @@ export const SessionEvents = ({
             )
           })}
         </ul>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
