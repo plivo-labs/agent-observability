@@ -1,19 +1,29 @@
 import { useState } from 'react'
 import { ChevronRight, Clock } from 'lucide-react'
 import dayjs from 'dayjs'
+import { Badge } from '@/components/ui/badge'
 import { useEvents } from '@/lib/observability-hooks'
 import { getEventCreatedAt, getEventTimeRange } from '@/lib/observability-events'
 import type { SessionEvent } from '@/lib/observability-types'
 
-/** Maps LiveKit event kinds to the design's `.ev-tag-*` color variants. */
-const EV_TAG_CLASS: Record<string, string> = {
-  conversation_item_added: 'ev-tag-conv',
-  speech_created: 'ev-tag-speech',
-  agent_state_changed: 'ev-tag-agent',
-  user_state_changed: 'ev-tag-user',
-  user_input_transcribed: 'ev-tag-user',
-  close: 'ev-tag-speech',
+/** Maps LiveKit event kinds to tonal Badge classes (success / warning /
+ * info / accent-purple) so each event type reads at a glance. */
+const EV_BADGE_TONE: Record<string, string> = {
+  conversation_item_added:
+    'bg-[hsl(var(--info-bg))] text-[hsl(var(--info))] border-[hsl(var(--info-border))]',
+  speech_created:
+    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
+  agent_state_changed:
+    'bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))] border-[hsl(var(--accent-purple-border))]',
+  user_state_changed:
+    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
+  user_input_transcribed:
+    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
+  close:
+    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
 }
+const EV_BADGE_FALLBACK =
+  'bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))] border-[hsl(var(--accent-purple-border))]'
 
 type TimeMode = 'relative' | 'absolute'
 
@@ -141,7 +151,7 @@ export const SessionEvents = () => {
             : timeMode === 'relative'
               ? formatRelative(createdAt - t0)
               : formatAbsolute(createdAt)
-          const tagClass = EV_TAG_CLASS[event.type] ?? 'ev-tag-agent'
+          const tagTone = EV_BADGE_TONE[event.type] ?? EV_BADGE_FALLBACK
           const isOpen = expanded.has(i)
           return (
             <div key={i} className={`ev-row-wrap${isOpen ? ' open' : ''}`}>
@@ -159,7 +169,14 @@ export const SessionEvents = () => {
               >
                 <div className="caret"><ChevronRight size={14} /></div>
                 <div className="t">{timeLabel}</div>
-                <div><span className={`tag ${tagClass}`}>{event.type}</span></div>
+                <div>
+                  <Badge
+                    data-event-type={event.type}
+                    className={`rounded border px-2 py-0.5 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
+                  >
+                    {event.type}
+                  </Badge>
+                </div>
                 <div className="msg"><EventMessage event={event} /></div>
               </div>
               {isOpen && (

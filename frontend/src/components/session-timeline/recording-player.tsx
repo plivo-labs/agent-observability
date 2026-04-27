@@ -38,9 +38,15 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-const USER_WAVE_COLOR = 'hsl(var(--tertiary))'
-const USER_PROGRESS_COLOR = 'hsl(var(--secondary))'
-const AGENT_WAVE_COLOR = 'hsl(var(--accent-purple) / 0.7)'
+/* WaveSurfer v7 resolves color strings to canvas fillStyle at render
+ * time, so once the canvas is painted CSS-variable changes (e.g. dark
+ * mode toggle) won't repaint until we call `setOptions` again. We pick
+ * neutral foreground-with-alpha for the user channel and accent-purple
+ * for the agent so both have enough contrast in either theme — and we
+ * still re-set on theme change to be safe. */
+const USER_WAVE_COLOR = 'hsl(var(--foreground) / 0.30)'
+const USER_PROGRESS_COLOR = 'hsl(var(--foreground) / 0.70)'
+const AGENT_WAVE_COLOR = 'hsl(var(--accent-purple) / 0.55)'
 const AGENT_PROGRESS_COLOR = 'hsl(var(--accent-purple))'
 const CURSOR_COLOR = 'hsl(var(--primary))'
 
@@ -262,6 +268,42 @@ export function RecordingPlayer({
     if (!userWs || dur <= 0) return
     userWs.seekTo(currentTimeMs / (dur * 1000))
   }, [currentTimeMs])
+
+  /* WaveSurfer caches resolved colors at draw time, so toggling the
+   * `dark` class on <html> doesn't repaint the waves. Watch for that
+   * class change and call setOptions to force a repaint with the
+   * theme's freshly-resolved CSS variables. */
+  useEffect(() => {
+    const root = document.documentElement
+    const repaint = () => {
+      const userWs = userWsRef.current
+      const agentWs = agentWsRef.current
+      if (userWs) {
+        userWs.setOptions({
+          waveColor: USER_WAVE_COLOR,
+          progressColor: USER_PROGRESS_COLOR,
+          cursorColor: CURSOR_COLOR,
+        })
+      }
+      if (agentWs) {
+        agentWs.setOptions({
+          waveColor: AGENT_WAVE_COLOR,
+          progressColor: AGENT_PROGRESS_COLOR,
+          cursorColor: CURSOR_COLOR,
+        })
+      }
+    }
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName === 'class') {
+          repaint()
+          break
+        }
+      }
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [loadState])
 
   useEffect(() => {
     if (!audioRef.current || loadState !== 'ready') return

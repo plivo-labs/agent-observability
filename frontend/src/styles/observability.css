@@ -164,8 +164,16 @@ body {
   background: var(--app-bg);
   -webkit-font-smoothing: antialiased;
 }
-button { font: inherit; cursor: pointer; color: inherit; background: transparent; border: none; padding: 0; }
-a { color: inherit; text-decoration: none; }
+/* Put the unstyled-button reset in @layer base so Tailwind utilities
+ * (which live in @layer utilities, ordered AFTER `base`) can override
+ * `border` / `background`. Without the layer wrap these unlayered
+ * rules win the cascade against utilities and silently strip every
+ * shadcn button's chrome — invisible pagination, outline filter
+ * buttons, select triggers, etc. */
+@layer base {
+  button { font: inherit; cursor: pointer; color: inherit; background: transparent; border: none; padding: 0; }
+  a { color: inherit; text-decoration: none; }
+}
 
 /* ───── App shell ──────────────────────────────────────────── */
 .obs-app {

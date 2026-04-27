@@ -265,6 +265,41 @@ export function RecordingPlayer({
     userWs.seekTo(currentTimeMs / (dur * 1000))
   }, [currentTimeMs])
 
+  /* WaveSurfer caches resolved colors at draw time, so a `dark` class
+   * toggle on <html> won't repaint the canvas with the new theme's
+   * variables. Watch the class change and re-set the colors. */
+  useEffect(() => {
+    const root = document.documentElement
+    const repaint = () => {
+      const userWs = userWsRef.current
+      const agentWs = agentWsRef.current
+      if (userWs) {
+        userWs.setOptions({
+          waveColor: USER_WAVE_COLOR,
+          progressColor: USER_PROGRESS_COLOR,
+          cursorColor: CURSOR_COLOR,
+        })
+      }
+      if (agentWs) {
+        agentWs.setOptions({
+          waveColor: AGENT_WAVE_COLOR,
+          progressColor: AGENT_PROGRESS_COLOR,
+          cursorColor: CURSOR_COLOR,
+        })
+      }
+    }
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName === 'class') {
+          repaint()
+          break
+        }
+      }
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [loadState])
+
   useEffect(() => {
     if (!audioRef.current || loadState !== 'ready') return
     audioRef.current.volume = isMuted ? 0 : volume
