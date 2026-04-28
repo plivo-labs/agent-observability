@@ -33,12 +33,21 @@ const SESSION_ID = mockData.sessions[0].session_id
 const EVAL_RUN_ID =
   (mockData as { evals?: Array<{ run_id: string }> }).evals?.[0]?.run_id ??
   'run_pytest_2026_04_22'
-const EVAL_CASE_ID =
-  (
-    mockData as {
-      evals?: Array<{ cases?: Array<{ case_id: string }> }>
-    }
-  ).evals?.[0]?.cases?.[0]?.case_id ?? 'case_001'
+type MockCase = {
+  case_id: string
+  judgments?: Array<{ verdict?: string }>
+}
+
+const EVAL_CASES: MockCase[] =
+  (mockData as { evals?: Array<{ cases?: MockCase[] }> }).evals?.[0]?.cases ?? []
+
+const EVAL_CASE_ID = EVAL_CASES[0]?.case_id ?? 'case_001'
+
+// Pick the first case that has at least one failing judgment so the preview
+// shows the new fail-state styling alongside the passing case above it.
+const EVAL_FAIL_CASE_ID =
+  EVAL_CASES.find((c) => c.judgments?.some((j) => j.verdict === 'fail'))?.case_id ??
+  EVAL_CASE_ID
 
 type Stage = 'centered' | 'left' | 'stretch'
 
@@ -165,14 +174,27 @@ function EvalRunDetailPreview() {
 function EvalCaseDetailPreview() {
   // Normally rendered inside the Sheet drawer that EvalRunDetailPage opens.
   // Here we surface it standalone — constrain width to the typical drawer
-  // size so the layout reads the same as it does in production.
+  // size so the layout reads the same as it does in production. Two cases
+  // are stacked so reviewers see both pass-tinted and fail-tinted judgment
+  // cards in the same shot.
   return (
-    <div className="max-w-3xl mx-auto border bg-card">
-      <EvalCaseDetailPage
-        runId={EVAL_RUN_ID}
-        caseId={EVAL_CASE_ID}
-        onBack={() => {}}
-      />
+    <div className="flex flex-col gap-6 max-w-3xl mx-auto">
+      <div className="border bg-card">
+        <EvalCaseDetailPage
+          runId={EVAL_RUN_ID}
+          caseId={EVAL_CASE_ID}
+          onBack={() => {}}
+        />
+      </div>
+      {EVAL_FAIL_CASE_ID !== EVAL_CASE_ID && (
+        <div className="border bg-card">
+          <EvalCaseDetailPage
+            runId={EVAL_RUN_ID}
+            caseId={EVAL_FAIL_CASE_ID}
+            onBack={() => {}}
+          />
+        </div>
+      )}
     </div>
   )
 }
