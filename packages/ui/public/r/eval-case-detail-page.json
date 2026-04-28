@@ -7,6 +7,7 @@
     "lucide-react"
   ],
   "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
     "badge",
     "button",
     "card",
