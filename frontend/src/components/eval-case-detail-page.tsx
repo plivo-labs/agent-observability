@@ -313,28 +313,39 @@ export const EvalCaseDetailPage = ({
             </div>
             <div className="flex flex-col gap-2">
               {evalCase.judgments.map((j, i) => {
-                const isFail = j.verdict === 'fail'
+                const tone =
+                  j.verdict === 'pass'
+                    ? 'pass'
+                    : j.verdict === 'fail'
+                      ? 'fail'
+                      : 'other'
                 return (
                   <div
                     key={`${j.intent}-${i}`}
                     className={cn(
-                      'rounded-md px-3 py-2.5',
-                      isFail
-                        ? 'border border-border bg-muted/50'
-                        : 'border',
+                      'rounded-md border px-3 py-2.5',
+                      tone === 'pass' &&
+                        'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/30',
+                      tone === 'fail' &&
+                        'border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/30',
+                      tone === 'other' && 'border-border bg-muted/40',
                     )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-s-500 m-0">{j.intent}</p>
-                      <StatusChip
-                        status={
-                          j.verdict === 'pass'
-                            ? 'passed'
-                            : j.verdict === 'fail'
-                              ? 'failed'
-                              : 'errored'
-                        }
-                      />
+                      <span
+                        className={cn(
+                          'inline-flex items-center h-[22px] px-2 rounded-full border text-xxs-600 capitalize',
+                          tone === 'pass' &&
+                            'border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-200',
+                          tone === 'fail' &&
+                            'border-rose-300 bg-rose-100 text-rose-900 dark:border-rose-800/60 dark:bg-rose-950/50 dark:text-rose-200',
+                          tone === 'other' &&
+                            'border-border bg-muted text-muted-foreground',
+                        )}
+                      >
+                        {tone === 'pass' ? 'passed' : tone === 'fail' ? 'failed' : 'errored'}
+                      </span>
                     </div>
                     {j.reasoning && (
                       <p className="mt-2 text-s-400 text-muted-foreground whitespace-pre-wrap">
