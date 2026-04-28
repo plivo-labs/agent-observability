@@ -1,12 +1,24 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
+import { Trash2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/components/data-table/use-data-table'
 import { formatDate } from '@/lib/observability-format'
 import { useSessions } from '@/lib/observability-hooks'
+import { useObservabilityContext } from '@/lib/observability-provider'
 import type { AgentSessionRow } from '@/lib/observability-types'
 import { CapsChips, DurationCell, TransportPill } from '@/components/obs-cells'
 
@@ -46,9 +58,9 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     return end.toISOString()
   }, [startedDay])
 
-  const { sessions, meta, loading, error } = useSessions(
-    Math.min(perPage, 20),
-    (page - 1) * Math.min(perPage, 20),
+  const { sessions, meta, loading, error, refetch } = useSessions(
+    perPage,
+    (page - 1) * perPage,
     {
       accountId: accountId || undefined,
       startedFrom: startedFromIso,
@@ -59,6 +71,34 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
 
   const columns = useMemo<ColumnDef<AgentSessionRow>[]>(
     () => [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            aria-label="Select all rows on this page"
+            checked={
+              table.getIsAllPageRowsSelected()
+                ? true
+                : table.getIsSomePageRowsSelected()
+                  ? 'indeterminate'
+                  : false
+            }
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            aria-label={`Select session ${row.original.session_id}`}
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 32,
+      },
       {
         id: 'session_id',
         accessorKey: 'session_id',
@@ -165,6 +205,28 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     getRowId: (row) => row.session_id,
   })
 
+  const { api } = useObservabilityContext()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const selectedIds = Object.keys(table.getState().rowSelection)
+  const selectedCount = selectedIds.length
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deleteSessions(selectedIds)
+      table.resetRowSelection()
+      refetch()
+      setConfirmOpen(false)
+    } catch (e) {
+      setDeleteError((e as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <>
       <div className="obs-head">
@@ -192,6 +254,31 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         </div>
       )}
 
+      {selectedCount > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-md border bg-card">
+          <span className="text-s-500">
+            <b>{selectedCount}</b> selected
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.resetRowSelection()}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={() => setConfirmOpen(true)}
+            >
+              <Trash2 /> Delete
+            </Button>
+          </div>
+        </div>
+      )}
+
       <ObsDataTable
         table={table}
         toolbar={<DataTableToolbar table={table} />}
@@ -199,6 +286,36 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         totalRowCount={totalCount}
         loading={loading}
       />
+
+      <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedCount} session{selectedCount === 1 ? '' : 's'}?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the selected session{selectedCount === 1 ? '' : 's'} and any
+              associated chat history, metrics, and recording references. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="text-s-400 text-[hsl(var(--destructive))]">
+              Failed to delete: {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : `Delete ${selectedCount}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

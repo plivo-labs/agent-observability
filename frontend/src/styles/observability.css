@@ -288,7 +288,7 @@ body {
 }
 .obs-crumbs a:hover { color: hsl(var(--foreground)); }
 .obs-crumbs .sep { color: hsl(var(--tertiary)); }
-.obs-crumbs .cur { color: hsl(var(--foreground)); font: var(--text-s-600); font-family: var(--mono); letter-spacing: -0.01em; }
+.obs-crumbs .cur { color: hsl(var(--foreground)); font: var(--text-s-600); letter-spacing: -0.01em; }
 .obs-back {
   display: inline-flex; align-items: center; gap: 6px;
   font: var(--text-s-500);

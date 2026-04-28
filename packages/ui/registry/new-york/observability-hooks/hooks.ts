@@ -36,6 +36,10 @@ export function useSessions(
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Bumping this re-runs the fetch effect — used by callers to refresh
+  // after a mutation like bulk delete.
+  const [refetchTick, setRefetchTick] = useState(0)
+  const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
 
   const accountId = filters?.accountId
   const startedFrom = filters?.startedFrom
@@ -64,9 +68,9 @@ export function useSessions(
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, limit, offset, accountId, startedFrom, startedTo, transportKey])
+  }, [api, limit, offset, accountId, startedFrom, startedTo, transportKey, refetchTick])
 
-  return { sessions, meta, loading, error }
+  return { sessions, meta, loading, error, refetch }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +168,8 @@ export function useEvalRuns(
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [offset, setOffset] = useState(initialOffset)
+  const [refetchTick, setRefetchTick] = useState(0)
+  const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
 
   const { agentId, framework, testingFramework, accountId, startedFrom, startedTo } = filters ?? {}
   // Stable string keys for the array filters so effect deps don't churn
@@ -205,9 +211,9 @@ export function useEvalRuns(
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
+  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo, refetchTick])
 
-  return { runs, meta, loading, error, offset, setOffset }
+  return { runs, meta, loading, error, offset, setOffset, refetch }
 }
 
 export function useEvalRun(runId: string | undefined) {

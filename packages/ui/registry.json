@@ -932,7 +932,9 @@
         "badge",
         "button",
         "calendar",
+        "checkbox",
         "command",
+        "dialog",
         "dropdown-menu",
         "input",
         "label",
@@ -1046,6 +1048,8 @@
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
         "badge",
         "button",
+        "checkbox",
+        "dialog",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
         "skeleton"
       ],
@@ -1225,6 +1229,8 @@
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
         "badge",
         "button",
+        "checkbox",
+        "dialog",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
         "skeleton"
       ],

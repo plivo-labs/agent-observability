@@ -64,8 +64,14 @@ The dashboard (`frontend/`) and the published registry (`packages/ui/`) share ru
 
 ## Dashboard API
 
-- `GET /api/sessions?limit=20&offset=0` — List sessions (paginated; `limit` clamps to [1, 20], optional `account_id` filter). Returns `{ objects, meta: { total_count, limit, offset, next, previous } }`.
+- `GET /api/sessions?limit=20&offset=0` — List sessions (paginated; `limit` clamps to [1, 50], default 20, optional `account_id` filter). Returns `{ objects, meta: { total_count, limit, offset, next, previous } }`.
 - `GET /api/sessions/:id` — Session detail: includes `chat_history`, `session_metrics` (computed on the fly from raw data), `raw_report`, `events`, `options`.
+- `DELETE /api/sessions` — Bulk delete. JSON body `{ session_ids: string[] }`, max 200 ids. Returns `{ deleted: <count> }`. Mirror endpoint `DELETE /api/evals` accepts `{ run_ids: string[] }` (UUID format) and cascades to `eval_cases`.
+
+### Filter semantics
+
+- Free-text filters (`account_id` on sessions; `account_id` and `agent_id` on evals) match via `LOWER(col) LIKE '%lower(input)%'` — case-insensitive substring. User input is escaped for `%` / `_` / `\` before being wrapped in wildcards. The wrap defeats the existing btree index and falls back to a sequential scan; acceptable at current row counts. If filter latency becomes a bottleneck, add a `pg_trgm` GIN index on `LOWER(col)` rather than dialing the match back to exact equality.
+- Multi-value filters (`transport`, `framework`, `testing_framework`) stay strict via `IN (…)` since they're enum picks from a fixed option list.
 
 ## Migrations
 

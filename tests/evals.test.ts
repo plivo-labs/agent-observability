@@ -11,6 +11,7 @@ const mockListEvalCases = mock((_runId: string) => Promise.resolve([] as any[]))
 const mockGetEvalCase = mock((_runId: string, _caseId: string) =>
   Promise.resolve(null as any),
 );
+const mockDeleteEvalRuns = mock((_runIds: string[]) => Promise.resolve(0));
 
 const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 mockSql.unsafe = mockSql;
@@ -44,6 +45,7 @@ mock.module("../src/evals/db.js", () => ({
   getEvalRun: mockGetEvalRun,
   listEvalCases: mockListEvalCases,
   getEvalCase: mockGetEvalCase,
+  deleteEvalRuns: mockDeleteEvalRuns,
 }));
 
 mock.module("../src/migrate.js", () => ({
@@ -319,7 +321,7 @@ describe("GET /api/evals", () => {
     expect(body.objects).toHaveLength(2);
   });
 
-  test("clamps limit to 20", async () => {
+  test("clamps limit to 50", async () => {
     mockCountEvalRuns.mockResolvedValueOnce(0 as any);
     mockListEvalRuns.mockResolvedValueOnce([] as any);
 
@@ -330,7 +332,7 @@ describe("GET /api/evals", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.meta.limit).toBe(20);
+    expect(body.meta.limit).toBe(50);
   });
 
   test("forwards filters to db opts", async () => {
@@ -481,6 +483,91 @@ describe("GET /api/evals/:run_id/cases/:case_id", () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error.code).toBe("not_found");
+  });
+});
+
+// ── DELETE /api/evals ───────────────────────────────────────────────────────
+
+describe("DELETE /api/evals", () => {
+  beforeEach(() => {
+    mockDeleteEvalRuns.mockClear();
+  });
+
+  test("rejects without auth", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/evals", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: [randomUUID()] }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("400 when body is not JSON", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/evals", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: "{",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_json");
+  });
+
+  test("400 when run_ids contains non-UUID values", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/evals", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: ["not-a-uuid"] }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_payload");
+  });
+
+  test("400 when run_ids is empty", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/evals", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: [] }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_payload");
+  });
+
+  test("400 when more than 200 ids", async () => {
+    const ids = Array.from({ length: 201 }, () => randomUUID());
+    const res = await server.fetch(
+      makeRequest("/api/evals", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: ids }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("too_many");
+  });
+
+  test("calls deleteEvalRuns and returns deleted count", async () => {
+    const ids = [randomUUID(), randomUUID()];
+    mockDeleteEvalRuns.mockResolvedValueOnce(2);
+    const res = await server.fetch(
+      makeRequest("/api/evals", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: ids }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deleted).toBe(2);
+    expect(body.api_id).toBeDefined();
+    expect(mockDeleteEvalRuns).toHaveBeenCalledWith(ids);
   });
 });
 
