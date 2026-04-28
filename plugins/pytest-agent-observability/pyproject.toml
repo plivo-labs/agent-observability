@@ -7,17 +7,17 @@ name = "pytest-agent-observability"
 version = "0.2.1"
 description = "pytest plugin that uploads LiveKit-agents eval results to agent-observability"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Plivo Labs" }]
 keywords = ["pytest", "livekit", "agents", "observability", "evals"]
 classifiers = [
   "Framework :: Pytest",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
