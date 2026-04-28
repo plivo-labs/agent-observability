@@ -45,3 +45,11 @@ export function buildErrorResponse(code: string, message: string) {
     error: { code, message },
   };
 }
+
+/** Escape `%`, `_`, and `\` so user-typed text is treated as literal
+ *  characters inside a SQL LIKE pattern. The caller is expected to
+ *  wrap the result in `%...%` for substring matching.
+ *  e.g. user types `50%` → `50\%` → matches the literal "50%". */
+export function escapeLikePattern(s: string): string {
+  return s.replace(/[\\%_]/g, "\\$&");
+}

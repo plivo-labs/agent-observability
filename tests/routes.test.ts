@@ -360,13 +360,13 @@ describe("GET /api/sessions", () => {
     expect(body.meta.previous).toContain("offset=0");
   });
 
-  test("passes account_id filter as a WHERE predicate", async () => {
+  test("passes account_id filter as a case-insensitive LIKE predicate", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
 
     const res = await server.fetch(
-      makeRequest("/api/sessions?account_id=acct-xyz", {
+      makeRequest("/api/sessions?account_id=Acct-XYZ", {
         headers: { Authorization: basicAuthHeader() },
       })
     );
@@ -375,11 +375,28 @@ describe("GET /api/sessions", () => {
     // Count + rows = 2 SQL calls; both must include the WHERE clause and the param.
     expect(mockSql).toHaveBeenCalledTimes(2);
     const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
-    expect(countQuery).toContain("WHERE account_id =");
-    expect(countParams).toEqual(["acct-xyz"]);
+    expect(countQuery).toContain("WHERE LOWER(account_id) LIKE");
+    expect(countParams).toEqual(["%acct-xyz%"]);
     const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
-    expect(rowsQuery).toContain("WHERE account_id =");
-    expect(rowsParams).toEqual(["acct-xyz", 20, 0]);
+    expect(rowsQuery).toContain("WHERE LOWER(account_id) LIKE");
+    expect(rowsParams).toEqual(["%acct-xyz%", 20, 0]);
+  });
+
+  test("escapes LIKE metacharacters in account_id input", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?account_id=" + encodeURIComponent("50% off_lab"), {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const [, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    // `%` and `_` are escaped, lower-cased, then wrapped in `%...%`.
+    expect(countParams).toEqual(["%50\\% off\\_lab%"]);
   });
 
   test("passes started_from/started_to filters as timestamp predicates", async () => {
@@ -420,8 +437,8 @@ describe("GET /api/sessions", () => {
 
     const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
     // All three predicates present, joined with AND.
-    expect(countQuery).toMatch(/account_id = \$1.*AND.*started_at >= \$2.*AND.*started_at <= \$3/s);
-    expect(countParams).toEqual(["acct-1", from, to]);
+    expect(countQuery).toMatch(/LOWER\(account_id\) LIKE \$1.*AND.*started_at >= \$2.*AND.*started_at <= \$3/s);
+    expect(countParams).toEqual(["%acct-1%", from, to]);
   });
 
   test("omits WHERE clause entirely when no filters are active", async () => {
