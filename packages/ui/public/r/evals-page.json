@@ -10,6 +10,7 @@
     "nuqs"
   ],
   "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
     "badge",
     "button",
     "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
