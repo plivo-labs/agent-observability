@@ -9,8 +9,8 @@ import type {
 } from '@/lib/observability-types'
 
 export function createObservabilityApi(baseUrl: string) {
-  async function fetchJson<T>(path: string): Promise<T> {
-    const res = await fetch(`${baseUrl}${path}`)
+  async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(`${baseUrl}${path}`, init)
     if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`)
     return res.json()
   }
@@ -29,6 +29,13 @@ export function createObservabilityApi(baseUrl: string) {
 
     getSession: (id: string) =>
       fetchJson<AgentSessionRow>(`/sessions/${id}`),
+
+    deleteSessions: (sessionIds: string[]) =>
+      fetchJson<{ api_id: string; deleted: number }>(`/sessions`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_ids: sessionIds }),
+      }),
 
     listEvalRuns: (limit = 20, offset = 0, filters?: EvalsFilters) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
@@ -50,6 +57,13 @@ export function createObservabilityApi(baseUrl: string) {
 
     getEvalCase: (runId: string, caseId: string) =>
       fetchJson<EvalCaseRow & { api_id?: string }>(`/evals/${runId}/cases/${caseId}`),
+
+    deleteEvalRuns: (runIds: string[]) =>
+      fetchJson<{ api_id: string; deleted: number }>(`/evals`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_ids: runIds }),
+      }),
   }
 }
 

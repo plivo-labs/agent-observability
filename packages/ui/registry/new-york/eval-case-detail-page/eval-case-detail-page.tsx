@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { AlertTriangle, ArrowLeft, AudioWaveform, Clock, Repeat, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ChevronRight, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -23,12 +23,10 @@ import type {
 interface MetricsSummary {
   turnsWithMetrics: number
   avgTtftMs: number | null
-  totalSpeakingMs: number | null
 }
 
 function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
   const ttfts: number[] = []
-  let speakingMs = 0
   let turns = 0
   for (const ev of events) {
     if (ev.type !== 'message') continue
@@ -37,27 +35,21 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
     turns += 1
     const ttft = metrics.llm_node_ttft
     if (typeof ttft === 'number') ttfts.push(ttft * 1000)
-    const start = metrics.started_speaking_at
-    const stop = metrics.stopped_speaking_at
-    if (typeof start === 'number' && typeof stop === 'number' && stop >= start) {
-      speakingMs += (stop - start) * 1000
-    }
   }
   return {
     turnsWithMetrics: turns,
     avgTtftMs: ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null,
-    totalSpeakingMs: speakingMs > 0 ? speakingMs : null,
   }
 }
 
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
-    'bg-muted text-foreground border-border',
+    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
   failed:
-    'bg-muted text-foreground border-border',
+    'bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))]',
   errored:
-    'bg-muted text-foreground border-border',
-  skipped: 'bg-muted text-muted-foreground border',
+    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
+  skipped: 'bg-muted text-muted-foreground border-border',
 }
 
 function StatusChip({ status }: { status: CaseStatus }) {
@@ -70,25 +62,6 @@ function StatusChip({ status }: { status: CaseStatus }) {
     >
       {status}
     </span>
-  )
-}
-
-function StatTile({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-}) {
-  return (
-    <div className="rounded-md bg-card p-2.5">
-      <div className="flex items-center gap-1.5 text-xxs-600 text-muted-foreground uppercase tracking-wider mb-1">
-        {icon} {label}
-      </div>
-      <div className="font-mono text-p-600 tabular-nums">{value}</div>
-    </div>
   )
 }
 
@@ -124,21 +97,24 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
     // rather than leaving the <pre> blank.
     const argsEmpty = argsStr.trim() === '' || argsStr.trim() === '{}' || argsStr.trim() === 'null'
     return (
-      <div className="border rounded-md overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-foreground border-b border-border text-xs-600">
+      <Collapsible className="border rounded-md overflow-hidden">
+        <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
+          <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
           tool call · {f.name ?? 'unknown'}
           <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
-        </div>
-        {argsEmpty ? (
-          <div className="p-3 text-xs-400 italic text-muted-foreground">
-            No arguments recorded.
-          </div>
-        ) : (
-          <pre className="p-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
-            {argsStr}
-          </pre>
-        )}
-      </div>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {argsEmpty ? (
+            <div className="p-3 text-xs-400 italic text-muted-foreground">
+              No arguments recorded.
+            </div>
+          ) : (
+            <pre className="p-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
+              {argsStr}
+            </pre>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
     )
   }
   if (event.type === 'function_call_output') {
@@ -146,8 +122,9 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
     const out = o.output == null ? '' : String(o.output)
     const outEmpty = out.trim() === ''
     return (
-      <div className="border rounded-md overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-foreground border-b border-border text-xs-600">
+      <Collapsible className="border rounded-md overflow-hidden">
+        <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
+          <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
           tool result
           {o.is_error && (
             <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
@@ -155,17 +132,19 @@ function EventRow({ event, index }: { event: RunEvent; index: number }) {
             </Badge>
           )}
           <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
-        </div>
-        {outEmpty ? (
-          <div className="p-3 text-s-400 italic text-muted-foreground">
-            No output recorded.
-          </div>
-        ) : (
-          <div className="p-3 text-s-400 font-mono whitespace-pre-wrap break-words">
-            {out}
-          </div>
-        )}
-      </div>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {outEmpty ? (
+            <div className="p-3 text-s-400 italic text-muted-foreground">
+              No output recorded.
+            </div>
+          ) : (
+            <div className="p-3 text-s-400 font-mono whitespace-pre-wrap break-words">
+              {out}
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
     )
   }
   return (
@@ -262,27 +241,13 @@ export const EvalCaseDetailPage = ({
               </span>
             </>
           )}
+          {summary?.avgTtftMs != null && (
+            <>
+              <span> · </span>
+              <span>Avg TTFT {formatMs(summary.avgTtftMs)}</span>
+            </>
+          )}
         </div>
-
-        {summary && summary.turnsWithMetrics > 0 && (
-          <div className="grid grid-cols-3 gap-0.5 bg-muted border rounded-lg p-0.5">
-            <StatTile
-              icon={<Clock className="h-2.5 w-2.5" />}
-              label="Avg TTFT"
-              value={summary.avgTtftMs != null ? formatMs(summary.avgTtftMs) : '—'}
-            />
-            <StatTile
-              icon={<AudioWaveform className="h-2.5 w-2.5" />}
-              label="Agent spoke"
-              value={summary.totalSpeakingMs != null ? formatMs(summary.totalSpeakingMs) : '—'}
-            />
-            <StatTile
-              icon={<Repeat className="h-2.5 w-2.5" />}
-              label="Turns w/ metrics"
-              value={String(summary.turnsWithMetrics)}
-            />
-          </div>
-        )}
 
         {evalCase.user_input && (
           <div>

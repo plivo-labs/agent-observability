@@ -72,7 +72,12 @@ export function ObsDataTable<TData>({
                 <TableRow key={`sk-${i}`} aria-hidden="true">
                   {table.getAllLeafColumns().map((col) => (
                     <TableCell key={col.id}>
-                      <Skeleton className="h-4 w-24" />
+                      {/* The row-select column renders a checkbox, so a
+                       *  full-width pill leaves a confusing gap. Match the
+                       *  checkbox footprint instead. */}
+                      <Skeleton
+                        className={col.id === "select" ? "h-4 w-4 rounded-sm" : "h-4 w-24"}
+                      />
                     </TableCell>
                   ))}
                 </TableRow>

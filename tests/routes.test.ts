@@ -314,7 +314,7 @@ describe("GET /api/sessions", () => {
     expect(body.meta.limit).toBe(20);
   });
 
-  test("clamps limit to 20", async () => {
+  test("clamps limit to 50", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
@@ -326,7 +326,7 @@ describe("GET /api/sessions", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.meta.limit).toBe(20);
+    expect(body.meta.limit).toBe(50);
   });
 
   test("clamps offset minimum to 0", async () => {
@@ -571,5 +571,91 @@ describe("GET /api/sessions/:id", () => {
     expect(body.api_id).toBeDefined();
     expect(body.error.code).toBe("not_found");
     expect(body.error.message).toBe("Session not found");
+  });
+});
+
+// ── Dashboard API: DELETE /api/sessions ─────────────────────────────────────
+
+describe("DELETE /api/sessions", () => {
+  beforeEach(() => {
+    mockSql.mockReset();
+  });
+
+  test("rejects without auth", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_ids: ["a"] }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("400 when body is not JSON", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: "not-json",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("invalid_json");
+  });
+
+  test("400 when session_ids is missing or empty", async () => {
+    const cases: Array<unknown> = [
+      undefined,
+      [],
+      ["", "valid"],
+      [123],
+    ];
+    for (const ids of cases) {
+      const res = await server.fetch(
+        makeRequest("/api/sessions", {
+          method: "DELETE",
+          headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+          body: JSON.stringify({ session_ids: ids }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe("invalid_payload");
+    }
+  });
+
+  test("400 when more than 200 ids", async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `s-${i}`);
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ session_ids: ids }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("too_many");
+  });
+
+  test("returns deleted count from RETURNING rows", async () => {
+    mockSql.mockResolvedValueOnce([
+      { session_id: "sess-1" },
+      { session_id: "sess-2" },
+    ]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ session_ids: ["sess-1", "sess-2", "sess-missing"] }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deleted).toBe(2);
+    expect(body.api_id).toBeDefined();
   });
 });

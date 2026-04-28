@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Link, NavLink, useParams, useNavigate } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
 import { Activity, CheckCheck, List, Moon, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
@@ -37,9 +37,13 @@ const useDarkMode = () => {
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
+  const { pathname } = useLocation()
 
-  const tabClass = ({ isActive }: { isActive: boolean }) =>
-    `obs-tab${isActive ? ' active' : ''}`
+  // NavLink's `end` prop scopes the active match to a single path, so the
+  // Sessions tab (at `/`) would lose its highlight on `/sessions/:id`. Compute
+  // active state ourselves: each tab claims its detail routes too.
+  const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
+  const isEvalsActive = pathname.startsWith('/evals')
 
   return (
     <div className="obs-app">
@@ -49,12 +53,12 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           Agent Observability
         </Link>
         <div className="obs-nav-tabs">
-          <NavLink to="/" end className={tabClass}>
+          <Link to="/" className={`obs-tab${isSessionsActive ? ' active' : ''}`}>
             <List size={14} /> Sessions
-          </NavLink>
-          <NavLink to="/evals" className={tabClass}>
+          </Link>
+          <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
             <CheckCheck size={14} /> Evals
-          </NavLink>
+          </Link>
         </div>
         <div className="obs-nav-spacer" />
         <div className="obs-nav-right">

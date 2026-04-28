@@ -61,7 +61,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
               Sessions
             </button>
             <ChevronRight size={14} className="text-muted-foreground/60" />
-            <span className="font-mono truncate max-w-[300px]">{session.session_id}</span>
+            <span className="truncate max-w-[300px]">{session.session_id}</span>
           </nav>
         )}
 
