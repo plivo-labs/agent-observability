@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pytest_agent_observability import collector as col
+from pytest_agent_observability import payload as payload_mod
 from pytest_agent_observability.payload import build_payload, TESTING_FRAMEWORK
 
 
@@ -69,3 +70,40 @@ def test_build_payload_handles_empty_cases():
     assert payload["cases"] == []
     assert payload["run"]["agent_id"] is None
     assert payload["run"]["account_id"] is None
+
+
+def test_build_payload_prefers_captured_pipecat_framework():
+    rc = col.RunCollector.new(started_at=0.0)
+    rc.note_framework("pipecat")
+    payload = build_payload(collector=rc, agent_id=None, account_id=None, finished_at=0.0)
+    assert payload["run"]["framework"] == "pipecat"
+    assert payload["run"]["testing_framework"] == "pytest"
+
+
+def test_build_payload_reports_captured_pipecat_framework_version(monkeypatch):
+    def fake_version(name: str) -> str:
+        versions = {
+            "pipecat-ai": "1.2.3",
+            "pytest": "9.0.0",
+        }
+        if name in versions:
+            return versions[name]
+        raise payload_mod.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(payload_mod.importlib.metadata, "version", fake_version)
+
+    rc = col.RunCollector.new(started_at=0.0)
+    rc.note_framework("pipecat")
+    payload = build_payload(collector=rc, agent_id=None, account_id=None, finished_at=0.0)
+
+    assert payload["run"]["framework"] == "pipecat"
+    assert payload["run"]["framework_version"] == "1.2.3"
+
+
+def test_build_payload_reports_mixed_frameworks():
+    rc = col.RunCollector.new(started_at=0.0)
+    rc.note_framework("livekit")
+    rc.note_framework("pipecat")
+    payload = build_payload(collector=rc, agent_id=None, account_id=None, finished_at=0.0)
+    assert payload["run"]["framework"] == "mixed"
+    assert payload["run"]["framework_version"] is None

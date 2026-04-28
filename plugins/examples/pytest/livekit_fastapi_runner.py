@@ -22,11 +22,11 @@ Two endpoints, same underlying evals:
 
   - `POST /run/pytest`    — invokes `pytest.main([...])` **in-process** via
                             pytest's Python API, against
-                            `pytest_generated_agent.py`. A tiny collector
+                            `livekit_generated_agent.py`. A tiny collector
                             plugin captures per-test outcomes and durations.
 
   - `POST /run/scenarios` — skips the pytest framing entirely and calls
-                            `pytest_generated_agent.run_all()`, which
+                            `livekit_generated_agent.run_all()`, which
                             reuses the same generated scenarios and the same
                             `PizzaShopAgent`. Returns raw judged results.
 
@@ -36,7 +36,7 @@ thread of control (though evals fan out under `asyncio.gather`).
 Run (inline deps via PEP 723 — no prior install step needed):
 
     export OPENAI_API_KEY=sk-...
-    uv run plugins/examples/fastapi_runner.py
+    uv run plugins/examples/pytest/livekit_fastapi_runner.py
 
 Then:
 
@@ -65,7 +65,7 @@ logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-log = logging.getLogger("fastapi_runner")
+log = logging.getLogger("livekit_fastapi_runner")
 
 import pytest
 from fastapi import Body, FastAPI, HTTPException
@@ -146,7 +146,7 @@ class _ResultsCollector:
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown hook. Replaces the deprecated @app.on_event('startup')."""
     log.info(
-        "fastapi_runner ready: examples_dir=%s openai_key_set=%s "
+        "livekit_fastapi_runner ready: examples_dir=%s openai_key_set=%s "
         "observability_url=%s agent_id=%s",
         _EXAMPLES_DIR,
         bool(os.environ.get("OPENAI_API_KEY")),
@@ -154,7 +154,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         os.environ.get("AGENT_OBSERVABILITY_AGENT_ID") or "(unset)",
     )
     yield
-    log.info("fastapi_runner shutting down")
+    log.info("livekit_fastapi_runner shutting down")
 
 
 app = FastAPI(
@@ -166,7 +166,7 @@ app = FastAPI(
 )
 
 
-# Make sure sibling modules (scenario_runner, pytest_generated_agent) are
+# Make sure sibling modules (livekit_scenario_runner, livekit_generated_agent) are
 # importable whether the server is launched from the repo root or from the
 # examples dir.
 _EXAMPLES_DIR = Path(__file__).resolve().parent
@@ -214,7 +214,7 @@ def run_pytest(
         )
 
     os.environ["AGENT_OBSERVABILITY_GENERATED_N"] = str(req.n)
-    test_path = req.test_path or str(_EXAMPLES_DIR / "pytest_generated_agent.py")
+    test_path = req.test_path or str(_EXAMPLES_DIR / "livekit_generated_agent.py")
 
     log.info("/run/pytest start: n=%d test_path=%s", req.n, test_path)
     started = time.monotonic()
@@ -265,8 +265,8 @@ async def run_scenarios_direct(
     started = time.monotonic()
 
     # Reload scenarios with the requested count. This hits OpenAI.
-    import pytest_generated_agent as gen
-    from scenario_runner import summarize
+    import livekit_generated_agent as gen
+    from livekit_scenario_runner import summarize
 
     scenarios = gen.reload_scenarios(req.n)
     log.info(
@@ -298,13 +298,13 @@ async def run_scenarios_direct(
     return out
 
 
-# ── Convenience: `python fastapi_runner.py` runs uvicorn ────────────────────
+# ── Convenience: `python livekit_fastapi_runner.py` runs uvicorn ────────────────────
 
 if __name__ == "__main__":  # pragma: no cover
     import uvicorn
 
     uvicorn.run(
-        "fastapi_runner:app",
+        "livekit_fastapi_runner:app",
         host="127.0.0.1",
         port=int(os.environ.get("PORT", "8080")),
         reload=False,

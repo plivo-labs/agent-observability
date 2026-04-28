@@ -1,5 +1,5 @@
 /**
- * Bun HTTP server that exposes Vitest runs — mirror of `fastapi_runner.py`.
+ * Bun HTTP server that exposes Vitest runs — mirror of `livekit_fastapi_runner.py`.
  *
  * Two endpoints, same underlying evals:
  *

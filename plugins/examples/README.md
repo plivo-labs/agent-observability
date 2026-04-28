@@ -1,8 +1,8 @@
 # Plugin Examples
 
-Reference LiveKit agents with matching eval suites — one per framework. These
-files (a) prove the plugins ingest data correctly and (b) give developers a
-copy-paste blueprint for testing their own agent-transport voice agents.
+Reference agent eval suites — one set per framework. These files (a) prove the
+plugins ingest data correctly and (b) give developers a copy-paste blueprint for
+testing their own LiveKit or Pipecat agents.
 
 ## Files
 
@@ -10,7 +10,8 @@ copy-paste blueprint for testing their own agent-transport voice agents.
 
 | File | Framework | What it shows |
 |------|-----------|----------------|
-| `pytest/pytest_agent.py` | pytest (Python) | `Assistant` class, tool-call assertions, `.judge()` evals, agent handoff, off-task resistance |
+| `pytest/livekit_agent.py` | pytest + LiveKit (Python) | `Assistant` class, tool-call assertions, `.judge()` evals, agent handoff, off-task resistance |
+| `pytest/pipecat_agent.py` | pytest + Pipecat (Python) | Real `OpenAILLMService` pipeline, tool-call assertions, `OpenAIJudge` evals, off-task resistance |
 | `vitest/vitest_agent.ts` | Vitest (Node/TS) | Same shape, same test cases, same assertions |
 
 ### Complex multi-agent example
@@ -23,7 +24,8 @@ refusals, prompt injection, and every handoff in the agent graph.
 
 | File | Framework |
 |------|-----------|
-| `pytest/pytest_banking_agent.py` | pytest (Python) |
+| `pytest/livekit_banking_agent.py` | pytest + LiveKit (Python) |
+| `pytest/pipecat_banking_agent.py` | pytest + Pipecat (Python) |
 | `vitest/vitest_banking_agent.ts` | Vitest (Node/TS) |
 
 Notable patterns:
@@ -31,9 +33,16 @@ Notable patterns:
 - **Shared `UserData`** carries the authenticated `Profile` between agents.
   Specialist tools read `ctx.userdata.profile` (py) / `ctx.userData.profile`
   (ts) to gate access.
-- **Deterministic stubs** — every "database" call returns a fixed value.
-- **Mix of exact assertions** (`is_function_call(arguments={...})`) **and
+- **Deterministic tool stubs** — every "database" call returns a fixed value
+  so the only nondeterminism is in the LLM's behavior under test.
+- **Mix of exact assertions** (`contains_function_call(arguments={...})`) **and
   LLM-judged intents** (privacy, refusals).
+- The Pipecat examples are text-only but driven by a real `OpenAILLMService`:
+  the LLM itself decides when to call which tool, just like in production.
+  All Pipecat examples therefore require `OPENAI_API_KEY`. State that needs
+  to flow between tools (e.g. authenticated profile in
+  `pipecat_banking_agent.py`) is held in a closure inside `build_pipeline()`
+  so each test gets a fresh context.
 
 ### LLM-generated scenarios
 
@@ -46,8 +55,10 @@ enforced strictly.
 
 | File | Framework | Purpose |
 |------|-----------|---------|
-| `pytest/scenario_runner.py` / `vitest/scenarioRunner.ts` | library | Reusable core: `generate_scenarios`, `run_scenario`, `run_scenarios`, `summarize` |
-| `pytest/pytest_generated_agent.py` | pytest (Python) | Parametrized generated tests over `PizzaShopAgent` |
+| `pytest/livekit_scenario_runner.py` / `vitest/scenarioRunner.ts` | library | Reusable core: `generate_scenarios`, `run_scenario`, `run_scenarios`, `summarize` |
+| `pytest/livekit_generated_agent.py` | pytest (Python) | Parametrized generated tests over `PizzaShopAgent` |
+| `pytest/pipecat_scenario_runner.py` | library | Pipecat dynamic scenario generation (with hardcoded fallback scenarios for local pytest collection only — the agent itself always runs against a real LLM) |
+| `pytest/pipecat_generated_agent.py` | pytest + Pipecat (Python) | Parametrized generated tests over a text-mode `OpenAILLMService`-driven pizza pipeline; judges each reply with `OpenAIJudge` |
 | `vitest/vitest_generated_agent.ts` | Vitest (Node/TS) | `it.each` generated tests over `PizzaShopAgent` |
 
 How it works:
@@ -71,6 +82,13 @@ hits the API once.
 Node equivalent: ES-module top-level `await` in `vitest/vitest_generated_agent.ts`
 does the same thing declaratively.
 
+Pipecat note: `pytest/pipecat_generated_agent.py` runs the agent under test
+against a real `OpenAILLMService` and judges each reply with `OpenAIJudge`,
+so it requires `OPENAI_API_KEY`. If the key is missing at module-load time,
+scenario generation falls back to a small set of hardcoded scenarios just so
+pytest collection still works — but the parametrized cases will themselves
+fail when they try to call OpenAI.
+
 ### HTTP-triggered test runners
 
 A FastAPI server (Python) and a Bun server (Node) that expose the same
@@ -80,15 +98,15 @@ agent directly.
 
 | File | Framework |
 |------|-----------|
-| `pytest/fastapi_runner.py` | FastAPI + `pytest.main()` |
+| `pytest/livekit_fastapi_runner.py` | FastAPI + `pytest.main()` |
 | `vitest/bun_runner.ts` | Bun HTTP server + `startVitest` from `vitest/node` |
 
 Both servers expose two endpoints:
 
 | Endpoint | What it does |
 |----------|--------------|
-| `POST /run/pytest` / `POST /run/vitest` | Invokes the test framework in-process on `pytest/pytest_generated_agent.py` / `vitest/vitest_generated_agent.ts`. A custom reporter/plugin captures per-case outcomes and durations; results come back as JSON. Third-party plugins (including `pytest-agent-observability` / `vitest-agent-observability` when installed) fire their hooks as usual and upload results to the dashboard. |
-| `POST /run/scenarios` | Bypasses the test-framework framing entirely. Imports `pytest_generated_agent` / `vitest_generated_agent` and calls its exported `run_all()`. Same generated scenarios, same agent, same judgments — returned as raw JSON. |
+| `POST /run/pytest` / `POST /run/vitest` | Invokes the test framework in-process on `pytest/livekit_generated_agent.py` / `vitest/vitest_generated_agent.ts`. A custom reporter/plugin captures per-case outcomes and durations; results come back as JSON. Third-party plugins (including `pytest-agent-observability` / `vitest-agent-observability` when installed) fire their hooks as usual and upload results to the dashboard. |
+| `POST /run/scenarios` | Bypasses the test-framework framing entirely. Imports `livekit_generated_agent` / `vitest_generated_agent` and calls its exported `run_all()`. Same generated scenarios, same agent, same judgments — returned as raw JSON. |
 
 Both endpoints accept `{"n": 5}` to control how many scenarios the LLM
 generates.
@@ -98,7 +116,7 @@ Example:
 ```bash
 # Python side — `uv run` auto-installs inline deps declared in the file
 export OPENAI_API_KEY=sk-...
-uv run plugins/examples/pytest/fastapi_runner.py
+uv run plugins/examples/pytest/livekit_fastapi_runner.py
 
 curl -X POST http://localhost:8080/run/pytest \
      -H content-type:application/json -d '{"n": 5}' | jq
@@ -125,11 +143,13 @@ curl -X POST http://localhost:8080/run/scenarios \
 
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
-| `OPENAI_API_KEY` | yes | every example | Backs both the agent's own LLM (via `livekit-plugins-openai`) and the LLM judge. The generated-scenario examples also use it to call `chat.completions` with JSON-schema output for scenario generation. |
+| `OPENAI_API_KEY` | yes for every example | LiveKit and Pipecat examples | Backs the agent's LLM (via `livekit-plugins-openai` or `pipecat.services.openai.llm.OpenAILLMService`) and the LLM judge. The generated-scenario examples also use it to call `chat.completions` for scenario generation. |
+| `AGENT_OBSERVABILITY_AGENT_MODEL` | no | Pipecat examples | OpenAI model that drives the agent under test. Default `gpt-4.1-mini`. |
+| `AGENT_OBSERVABILITY_JUDGE_MODEL` | no | Pipecat examples | OpenAI model used by `pipecat-evals` `OpenAIJudge`. Default `gpt-4.1-mini`. |
 | `AGENT_OBSERVABILITY_URL` | no | all pytest/vitest examples | Dashboard base URL (e.g. `http://localhost:9090`). Read by `pytest-agent-observability` / `vitest-agent-observability` when installed — if unset, tests still run but no eval data is uploaded. |
 | `AGENT_OBSERVABILITY_AGENT_ID` | no | all pytest/vitest examples | Tag that groups eval runs under one agent in the dashboard. Pair with `AGENT_OBSERVABILITY_URL`. |
 | `AGENT_OBSERVABILITY_GENERATED_N` | no | generated-scenario examples | How many scenarios the LLM should produce per run. Default `10`. The FastAPI/Bun endpoints also accept `{"n": N}` in the request body, which overrides this. |
-| `PORT` | no | `fastapi_runner.py`, `bun_runner.ts` | HTTP port for the runner servers. Default `8080`. |
+| `PORT` | no | `livekit_fastapi_runner.py`, `bun_runner.ts` | HTTP port for the runner servers. Default `8080`. |
 | `PYTEST_DISABLE_PLUGIN_AUTOLOAD` | no | FastAPI in-process runner | Set to `1` only if you want to suppress auto-discovery of installed pytest plugins (including `pytest-agent-observability`) during a `pytest.main()` call. Leave unset to keep default behavior. |
 
 Not used by these examples, but note for completeness: if your
@@ -141,9 +161,9 @@ server's env, not the client's.
 
 Export the env vars above (at minimum `OPENAI_API_KEY`) and run.
 
-**Python** — every `*.py` under `plugins/examples/` carries [PEP 723][pep723]
-inline script metadata, so `uv run <file>` resolves and installs deps into
-an ephemeral venv on first invocation. No `pip install` step.
+**Python** — runnable example scripts carry [PEP 723][pep723] inline script
+metadata, so `uv run <file>` resolves and installs deps into an ephemeral
+venv on first invocation. No `pip install` step.
 
 [pep723]: https://peps.python.org/pep-0723/
 
@@ -152,9 +172,15 @@ export OPENAI_API_KEY=sk-...
 export AGENT_OBSERVABILITY_URL=http://localhost:9090     # optional
 export AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot     # optional
 
-uv run plugins/examples/pytest_banking_agent.py
-uv run plugins/examples/pytest_generated_agent.py
-uv run plugins/examples/fastapi_runner.py       # starts the HTTP server
+# LiveKit — agent runs against `livekit-plugins-openai`.
+uv run plugins/examples/pytest/livekit_banking_agent.py
+uv run plugins/examples/pytest/livekit_generated_agent.py
+uv run plugins/examples/pytest/livekit_fastapi_runner.py       # starts the HTTP server
+
+# Pipecat — agent runs against `pipecat.services.openai.llm.OpenAILLMService`.
+uv run plugins/examples/pytest/pipecat_agent.py
+uv run plugins/examples/pytest/pipecat_banking_agent.py
+uv run plugins/examples/pytest/pipecat_generated_agent.py
 ```
 
 Pytest files work as runnable scripts because each has a `__main__` block
@@ -178,9 +204,10 @@ for generation itself.
 
 ## Why these exist
 
-LiveKit's eval framework (`AgentSession.run(user_input=...)`) is **text-only**.
-The agent code under test must be the bare `Assistant` class — not wrapped in
-a SIP or audio-stream entrypoint.
+LiveKit's eval framework and `pipecat-evals` both use
+`AgentSession.run(user_input=...)` in **text-only** mode. The agent code under
+test should be the bare agent or pipeline logic — not wrapped in a SIP,
+telephony, or audio-stream entrypoint.
 
 For agents built with `agent-transport`, the pattern is:
 

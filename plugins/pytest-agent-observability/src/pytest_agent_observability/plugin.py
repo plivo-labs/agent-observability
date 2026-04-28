@@ -1,4 +1,4 @@
-"""pytest hook implementations + LiveKit `.judge()` interception."""
+"""pytest hook implementations + agent eval judgment capture."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class _State:
     fallback_dir: Optional[Path] = None
     _judge_restorer: Optional[Any] = None
     _autocapture_restorer: Optional[Any] = None
+    _pipecat_hooks_restorer: Optional[Any] = None
     _test_tokens: dict = {}
     # Populated by pytest_sessionfinish so pytest_terminal_summary can print the
     # run_id (and clickable dashboard URL) alongside the normal pytest summary.
@@ -153,10 +154,15 @@ def pytest_configure(config: pytest.Config) -> None:
 
     _install_judge_wrapper()
     _install_autocapture_wrapper()
+    _install_pipecat_hooks()
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    for attr in ("_judge_restorer", "_autocapture_restorer"):
+    for attr in (
+        "_judge_restorer",
+        "_autocapture_restorer",
+        "_pipecat_hooks_restorer",
+    ):
         restorer = getattr(_state, attr, None)
         if restorer is not None:
             try:
@@ -250,6 +256,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
     state = col.pop_state(item.nodeid)
     run_results = state.run_results if state else []
     judgments = state.judgments if state else []
+    frameworks = state.frameworks if state else set()
+    for framework in frameworks:
+        _state.collector.note_framework(framework)
 
     # Merge events across possibly-multiple RunResult objects (multi-turn tests).
     events: list[dict] = []
@@ -394,3 +403,29 @@ def _install_autocapture_wrapper() -> None:
         AgentSession.run = original  # type: ignore[method-assign]
 
     _state._autocapture_restorer = _restore
+
+
+def _install_pipecat_hooks() -> None:
+    """Register first-class pipecat-evals observers when available."""
+    try:
+        from pipecat_evals.hooks import (  # type: ignore
+            register_judgment_hook,
+            register_run_result_hook,
+        )
+    except Exception:
+        return
+
+    def _record_judgment(intent: str, judgment: Any) -> None:
+        success = bool(getattr(judgment, "success", False))
+        verdict = str(getattr(judgment, "verdict", "pass" if success else "fail"))
+        reasoning = str(getattr(judgment, "reasoning", "") or "")
+        col._record_judgment(intent=intent, verdict=verdict, reasoning=reasoning)
+
+    unregister_run = register_run_result_hook(col.capture)
+    unregister_judgment = register_judgment_hook(_record_judgment)
+
+    def _restore() -> None:
+        unregister_judgment()
+        unregister_run()
+
+    _state._pipecat_hooks_restorer = _restore

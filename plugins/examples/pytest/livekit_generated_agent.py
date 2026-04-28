@@ -22,12 +22,12 @@ runs the agent, lets a second LLM judge the reply, and passes/fails on the
 judge's verdict (plus a strict `expected_tool` check if the generator asked
 for one).
 
-This complements `pytest_generated_agent.py`-style hand-written tests:
+This complements `livekit_generated_agent.py`-style hand-written tests:
 
   - Hand-written tests pin behaviors you already know you care about.
   - Generated tests find gaps you wouldn't have thought of.
 
-Reused from `scenario_runner.py`:
+Reused from `livekit_scenario_runner.py`:
   - `generate_scenarios(spec, n)` → the LLM call
   - `run_scenario(factory, sc, judge)` → one eval
   - `summarize(results)` → human-readable report
@@ -37,7 +37,7 @@ Run (inline deps via PEP 723 — no prior install step needed):
     export OPENAI_API_KEY=sk-...
     export AGENT_OBSERVABILITY_AGENT_ID=demo-pizza-bot   # optional
     export AGENT_OBSERVABILITY_GENERATED_N=10            # optional; default 10
-    uv run plugins/examples/pytest_generated_agent.py
+    uv run plugins/examples/pytest/livekit_generated_agent.py
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ from typing import Any
 import pytest
 from livekit.agents import Agent, AgentSession, RunContext, function_tool
 from livekit.plugins import openai as lk_openai
-from scenario_runner import (
+from livekit_scenario_runner import (
     AgentSpec,
     Scenario,
     generate_scenarios,
@@ -221,17 +221,17 @@ async def test_generated_scenario(scenario: Scenario) -> None:
         )
 
 
-# ── Programmatic entry point (used by fastapi_runner.py) ────────────────────
+# ── Programmatic entry point (used by livekit_fastapi_runner.py) ────────────────────
 
 
 async def run_all() -> list[ScenarioResult]:
     """Run every generated scenario and return raw results.
 
-    The FastAPI endpoint in `fastapi_runner.py` imports this when the caller
+    The FastAPI endpoint in `livekit_fastapi_runner.py` imports this when the caller
     wants to bypass pytest entirely. Shares the same scenarios and the same
     agent — only the framing changes.
     """
-    from scenario_runner import run_scenarios
+    from livekit_scenario_runner import run_scenarios
 
     return await run_scenarios(PizzaShopAgent, _SCENARIOS)
 
@@ -245,7 +245,7 @@ def reload_scenarios(n: int | None = None) -> list[Scenario]:
     return _SCENARIOS
 
 
-# ── Entry point: `uv run pytest_generated_agent.py` ─────────────────────────
+# ── Entry point: `uv run livekit_generated_agent.py` ─────────────────────────
 
 if __name__ == "__main__":
     import sys

@@ -50,22 +50,58 @@ async def test_greeting():
         )
 ```
 
-**Auto-capture is on by default.** The plugin monkey-patches
+**Auto-capture is on by default.** For LiveKit, the plugin monkeypatches
 `AgentSession.run` so every `RunResult` flows into the collector
-automatically — in practice you rarely need to call `capture(result)` at
-all. The helper remains exported for RunResults produced outside the
-standard `.run()` path, and it's idempotent so calling it on an
-already-captured result is a no-op.
+automatically. For Pipecat, `pipecat-evals` provides first-class observer
+hooks instead. In practice you rarely need to call `capture(result)` at all.
+The helper remains exported for RunResults produced outside the standard
+`.run()` path, and it's idempotent so calling it on an already-captured result
+is a no-op.
 
 `.judge(...)` calls on LiveKit's assertion API are intercepted
 automatically. Verdict, intent, and reasoning are recorded as a first-class
 Judgment event in the dashboard.
 
+## With Pipecat eval tests
+
+Pipecat evals use the companion package
+[`pipecat-evals`](../pipecat-evals/). This pytest plugin stays focused on
+uploading dashboard payloads and does not import Pipecat directly.
+
+```python
+import pytest
+from pipecat_evals import AgentSession, OpenAIJudge
+
+def build_pipeline():
+    ...
+
+@pytest.mark.asyncio
+async def test_pipecat_greeting():
+    async with AgentSession() as sess:
+        await sess.start(build_pipeline)
+        result = await sess.run(user_input="Hello")
+
+    result.expect.next_event().is_message(role="assistant")
+    await result.expect.contains_message(role="assistant").judge(
+        OpenAIJudge(model="gpt-4.1-mini"),
+        intent="greets the user politely",
+    )
+```
+
+`pipecat_evals.RunResult` objects are auto-captured the same way LiveKit
+results are. Their payloads report `framework="pipecat"` and
+`testing_framework="pytest"`; when `pipecat-ai` is installed, the payload also
+includes the Pipecat runtime version as `framework_version`.
+
+Unlike the external LiveKit integration, the Pipecat path does not monkeypatch
+`AgentSession.run` or `.judge(...)`. `pipecat-evals` exposes first-class observer
+hooks, and this plugin registers/unregisters those hooks during pytest startup
+and shutdown.
+
 > **Node/TypeScript users:** the mirror plugin
 > [`vitest-agent-observability`](../vitest-agent-observability/) exposes
 > the same behavior. The manual helper is named `captureRunResult(result)`
-> there (vs. `capture(result)` here); the auto-capture and `.judge()`
-> interception are identical across both sides.
+> there (vs. `capture(result)` here).
 
 ## Configuration
 
@@ -147,7 +183,7 @@ Notes:
 A working reference server with both `/run/pytest` (full pytest run)
 and `/run/scenarios` (bypasses pytest, calls the scenario runner
 directly) lives at
-[`plugins/examples/pytest/fastapi_runner.py`](../examples/pytest/fastapi_runner.py).
+[`plugins/examples/pytest/livekit_fastapi_runner.py`](../examples/pytest/livekit_fastapi_runner.py).
 Its Node mirror using `startVitest` from Bun is at
 [`plugins/examples/vitest/bun_runner.ts`](../examples/vitest/bun_runner.ts).
 

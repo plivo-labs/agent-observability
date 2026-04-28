@@ -1,3 +1,17 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pytest>=7.0",
+#     "pytest-asyncio>=0.21",
+#     "pytest-agent-observability",
+#     "livekit-agents>=1.5",
+#     "livekit-plugins-openai>=1.5",
+# ]
+#
+# # Local override — uncomment to test against the in-tree plugin.
+# # [tool.uv.sources]
+# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# ///
 """Example LiveKit agent + pytest evals.
 
 Demonstrates the shape of tests that `pytest-agent-observability` will ingest:
@@ -15,7 +29,7 @@ To run against the plugin (once M2 ships):
     export AGENT_OBSERVABILITY_URL=http://localhost:9090
     export AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot
     export OPENAI_API_KEY=sk-...
-    uv run pytest plugins/examples/pytest_agent.py -v
+    uv run plugins/examples/pytest/livekit_agent.py
 
 Requires: livekit-agents>=1.5, livekit-plugins-openai. Swap the _judge_llm()
 body for `inference.LLM("openai/gpt-4.1-mini")` if you prefer LiveKit Inference
@@ -167,3 +181,11 @@ async def test_refuses_off_task_request():
                 "conversation back to support topics."
             ),
         )
+
+
+if __name__ == "__main__":
+    import os
+    import sys
+
+    os.environ.setdefault("AGENT_OBSERVABILITY_AGENT_ID", "demo-support-bot")
+    sys.exit(pytest.main([__file__, "-v"]))

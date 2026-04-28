@@ -113,11 +113,15 @@ def _serialize_event(ev: Any) -> dict:
         # `old_agent` / `new_agent` are full Agent instances — replace them
         # with class names for JSON safety; keep the original keys around too
         # for reference but as strings.
-        ev_dict["from_agent"] = _class_name(
+        ev_dict["from_agent"] = _agent_ref_name(
             _pick(ev, "old_agent", "oldAgent")
+            or _pick(ev_dict, "from_agent", "fromAgent")
+            or _pick(item, "from_agent", "fromAgent")
         )
-        ev_dict["to_agent"] = _class_name(
+        ev_dict["to_agent"] = _agent_ref_name(
             _pick(ev, "new_agent", "newAgent")
+            or _pick(ev_dict, "to_agent", "toAgent")
+            or _pick(item, "to_agent", "toAgent")
         )
         for k in ("old_agent", "oldAgent", "new_agent", "newAgent"):
             ev_dict.pop(k, None)
@@ -159,3 +163,11 @@ def _class_name(obj: Any) -> Optional[str]:
         return None
     cls = getattr(obj, "__class__", None)
     return cls.__name__ if cls is not None else None
+
+
+def _agent_ref_name(obj: Any) -> Optional[str]:
+    if obj is None:
+        return None
+    if isinstance(obj, str):
+        return obj
+    return _class_name(obj)

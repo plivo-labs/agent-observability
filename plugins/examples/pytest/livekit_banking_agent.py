@@ -14,7 +14,7 @@
 # ///
 """Complex multi-agent example: a retail-banking voice assistant.
 
-This example is deliberately larger than `pytest_agent.py` — it exercises:
+This example is deliberately larger than `livekit_agent.py` — it exercises:
 
   - Four cooperating agents (Greeter, Auth, Accounts, Transactions, Loans) with
     explicit handoffs.
@@ -40,7 +40,7 @@ Run (inline deps via PEP 723 — no prior install step needed):
     export OPENAI_API_KEY=sk-...
     export AGENT_OBSERVABILITY_URL=http://localhost:9090     # optional
     export AGENT_OBSERVABILITY_AGENT_ID=demo-bank-bot         # optional
-    uv run plugins/examples/pytest_banking_agent.py
+    uv run plugins/examples/pytest/livekit_banking_agent.py
 """
 
 from __future__ import annotations
@@ -591,7 +591,7 @@ async def test_prompt_injection_is_rejected():
         )
 
 
-# ── Entry point: `uv run pytest_banking_agent.py` ───────────────────────────
+# ── Entry point: `uv run livekit_banking_agent.py` ───────────────────────────
 
 if __name__ == "__main__":
     import os

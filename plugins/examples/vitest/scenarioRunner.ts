@@ -1,7 +1,7 @@
 /**
  * Reusable scenario-runner for the Node/Vitest side.
  *
- * Mirror of `scenario_runner.py`. Describe an agent (role, instructions, tool
+ * Mirror of `livekit_scenario_runner.py`. Describe an agent (role, instructions, tool
  * signatures). An LLM proposes N test scenarios. A second LLM grades each
  * result.  Shared by `vitest_generated_agent.ts` (test file, uses top-level
  * await to populate `it.each`) and `bun_runner.ts` (HTTP endpoint, invokes
