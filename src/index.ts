@@ -144,7 +144,7 @@ app.post("/observability/recordings/v0", async (c) => {
 // ── REST API for the dashboard UI ───────────────────────────────────────────
 
 app.get("/api/sessions", async (c) => {
-  const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 20));
+  const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
   const accountId = c.req.query("account_id") || null;
   const startedFrom = c.req.query("started_from") || null;
@@ -197,6 +197,45 @@ app.get("/api/sessions", async (c) => {
   );
 
   return c.json(buildListResponse(rows, limit, offset, countResult.total, "/api/sessions", extraParams));
+});
+
+app.delete("/api/sessions", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+  }
+  const sessionIds = (body as { session_ids?: unknown })?.session_ids;
+  if (
+    !Array.isArray(sessionIds) ||
+    sessionIds.length === 0 ||
+    !sessionIds.every((s) => typeof s === "string" && s.length > 0)
+  ) {
+    return c.json(
+      buildErrorResponse("invalid_payload", "session_ids must be a non-empty array of strings"),
+      400,
+    );
+  }
+  // Cap each request to a reasonable batch size so a single call can't
+  // wipe the table by accident or balloon the parameter array.
+  if (sessionIds.length > 200) {
+    return c.json(
+      buildErrorResponse("too_many", "Cannot delete more than 200 sessions at once"),
+      400,
+    );
+  }
+  // Bun's `sql\`...\`` template stringifies a JS array as a CSV — Postgres
+  // then complains the value isn't a valid array literal. Build positional
+  // placeholders via `sql.unsafe` instead, matching the listing endpoints.
+  const placeholders = sessionIds.map((_, i) => `$${i + 1}`).join(", ");
+  const deleted = await sql.unsafe(
+    `DELETE FROM agent_transport_sessions
+     WHERE session_id IN (${placeholders})
+     RETURNING session_id`,
+    sessionIds,
+  );
+  return c.json({ api_id: newApiId(), deleted: deleted.length });
 });
 
 app.get("/api/sessions/:id", async (c) => {

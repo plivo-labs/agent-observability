@@ -155,6 +155,23 @@ export async function getEvalCase(runId: string, caseId: string): Promise<any | 
   return rows[0] ? decodeCaseJsonb(rows[0]) : null;
 }
 
+// `eval_cases.run_id` has ON DELETE CASCADE, so deleting runs cleans
+// up their cases automatically.
+export async function deleteEvalRuns(runIds: string[]): Promise<number> {
+  if (runIds.length === 0) return 0;
+  // `${runIds}::uuid[]` would let Bun stringify the array as a CSV which
+  // Postgres rejects ("malformed array literal"). Bind each id as its own
+  // ::uuid placeholder via sql.unsafe, the same pattern the list filters use.
+  const placeholders = runIds.map((_, i) => `$${i + 1}::uuid`).join(", ");
+  const rows = await sql.unsafe(
+    `DELETE FROM eval_runs
+     WHERE run_id IN (${placeholders})
+     RETURNING run_id`,
+    runIds,
+  );
+  return rows.length;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params: unknown[] } {

@@ -17,9 +17,9 @@ import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/components/data-table/use-data-table'
 import { cn } from '@/lib/utils'
-import { formatDate, formatDuration } from '@/lib/observability-format'
+import { formatDate, formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
-import type { CaseStatus, EvalCaseRow } from '@/lib/observability-types'
+import type { CaseStatus, EvalCaseRow, RunEvent, RunEventMessage } from '@/lib/observability-types'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 
 const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
@@ -47,6 +47,18 @@ const STATUS_TONE: Record<CaseStatus, string> = {
   errored:
     'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
   skipped: 'bg-muted text-muted-foreground border-border',
+}
+
+/** Mean of `metrics.llm_node_ttft` (seconds → ms) across all `message`
+ * events with metrics. Returns null when no samples exist. */
+function caseAvgTtftMs(events: RunEvent[]): number | null {
+  const ttfts: number[] = []
+  for (const ev of events) {
+    if (ev.type !== 'message') continue
+    const ttft = (ev as RunEventMessage).metrics?.llm_node_ttft
+    if (typeof ttft === 'number') ttfts.push(ttft * 1000)
+  }
+  return ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null
 }
 
 function StatusChip({ status }: { status: CaseStatus }) {
@@ -166,11 +178,25 @@ export const EvalRunDetailPage = ({
   const stats = useMemo(() => {
     if (!run) return null
     const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
+    // Flat-average TTFT across every message-with-metrics event in every
+    // case, so the headline number reflects typical LLM latency rather
+    // than weighting each case equally regardless of turn count.
+    const allTtfts: number[] = []
+    for (const c of run.cases) {
+      for (const ev of c.events) {
+        if (ev.type !== 'message') continue
+        const ttft = (ev as RunEventMessage).metrics?.llm_node_ttft
+        if (typeof ttft === 'number') allTtfts.push(ttft * 1000)
+      }
+    }
+    const avgTtftMs =
+      allTtfts.length ? allTtfts.reduce((a, b) => a + b, 0) / allTtfts.length : null
     return {
       passRate,
       hasAnyFailure: run.failed > 0 || run.errored > 0,
       passedPct: run.total > 0 ? (run.passed / run.total) * 100 : 0,
       failedPct: run.total > 0 ? (run.failed / run.total) * 100 : 0,
+      avgTtftMs,
     }
   }, [run])
 
@@ -185,28 +211,6 @@ export const EvalRunDetailPage = ({
         ),
         enableColumnFilter: true,
         meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
-      },
-      {
-        id: 'file',
-        accessorKey: 'file',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="File" />,
-        cell: ({ row }) => {
-          const file = row.original.file
-          if (!file) return <span className="text-muted-foreground">—</span>
-          // Long absolute paths force horizontal scroll on the table;
-          // truncate to a fixed width and surface the full path via
-          // native title tooltip. `block` so `truncate` (which uses
-          // text-overflow: ellipsis) works inside a td cell.
-          return (
-            <span
-              title={file}
-              className="block font-mono text-xs-400 text-muted-foreground max-w-[260px] truncate"
-            >
-              {file}
-            </span>
-          )
-        },
-        meta: { label: 'File' },
       },
       {
         id: 'status',
@@ -239,6 +243,28 @@ export const EvalRunDetailPage = ({
           </span>
         ),
         meta: { label: 'Duration' },
+      },
+      {
+        id: 'avg_ttft_ms',
+        accessorFn: (row) => caseAvgTtftMs(row.events),
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Avg TTFT" />,
+        cell: ({ getValue }) => {
+          const ms = getValue<number | null>()
+          return (
+            <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
+              {ms != null ? formatMs(ms) : '—'}
+            </span>
+          )
+        },
+        meta: { label: 'Avg TTFT' },
+        sortingFn: (a, b, id) => {
+          const av = a.getValue<number | null>(id)
+          const bv = b.getValue<number | null>(id)
+          if (av == null && bv == null) return 0
+          if (av == null) return 1
+          if (bv == null) return -1
+          return av - bv
+        },
       },
       {
         id: 'judgments',
@@ -367,7 +393,7 @@ export const EvalRunDetailPage = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard
           label="Pass rate"
           value={stats.passRate}
@@ -396,6 +422,11 @@ export const EvalRunDetailPage = ({
           label="Skipped"
           value={run.skipped}
           tone={run.skipped > 0 ? 'warn' : 'zero'}
+        />
+        <StatCard
+          label="Avg TTFT"
+          value={stats.avgTtftMs != null ? formatMs(stats.avgTtftMs) : '—'}
+          tone={stats.avgTtftMs == null ? 'zero' : 'default'}
         />
       </div>
 

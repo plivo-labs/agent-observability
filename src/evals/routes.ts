@@ -7,6 +7,7 @@ import {
   getEvalRun,
   listEvalCases,
   getEvalCase,
+  deleteEvalRuns,
 } from "./db.js";
 import {
   buildListResponse,
@@ -77,7 +78,7 @@ export function registerEvalRoutes(app: Hono) {
   // ── List ─────────────────────────────────────────────────────────────────
 
   app.get("/api/evals", async (c) => {
-    const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 20));
+    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
     const offset = Math.max(0, Number(c.req.query("offset")) || 0);
     const accountId = c.req.query("account_id") || null;
     const agentId = c.req.query("agent_id") || null;
@@ -115,6 +116,36 @@ export function registerEvalRoutes(app: Hono) {
     return c.json(
       buildListResponse(rows, limit, offset, total, "/api/evals", extraParams),
     );
+  });
+
+  // ── Bulk delete ──────────────────────────────────────────────────────────
+
+  app.delete("/api/evals", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+    }
+    const runIds = (body as { run_ids?: unknown })?.run_ids;
+    if (
+      !Array.isArray(runIds) ||
+      runIds.length === 0 ||
+      !runIds.every((s) => typeof s === "string" && /^[0-9a-f-]{36}$/i.test(s))
+    ) {
+      return c.json(
+        buildErrorResponse("invalid_payload", "run_ids must be a non-empty array of UUID strings"),
+        400,
+      );
+    }
+    if (runIds.length > 200) {
+      return c.json(
+        buildErrorResponse("too_many", "Cannot delete more than 200 runs at once"),
+        400,
+      );
+    }
+    const deleted = await deleteEvalRuns(runIds as string[]);
+    return c.json({ api_id: newApiId(), deleted });
   });
 
   // ── Run detail (includes cases) ──────────────────────────────────────────
