@@ -10,7 +10,7 @@ import { sql, insertSession } from "./db.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
-import { newApiId, buildListResponse, buildErrorResponse } from "./response.js";
+import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { sortSessionEvents } from "./events.js";
 
@@ -163,8 +163,14 @@ app.get("/api/sessions", async (c) => {
   const predicates: string[] = [];
   const params: unknown[] = [];
   if (accountId) {
-    predicates.push(`account_id = $${params.length + 1}`);
-    params.push(accountId);
+    // Case-insensitive substring match. The user-typed value is escaped
+    // for LIKE metacharacters and lower-cased once in JS so the SQL can
+    // pattern-match against `LOWER(account_id)` without a runtime
+    // `LOWER` on the constant. Trades the existing btree index for a
+    // sequential scan — fine at current volumes; revisit with a
+    // pg_trgm GIN index if filter latency starts mattering.
+    predicates.push(`LOWER(account_id) LIKE $${params.length + 1}`);
+    params.push(`%${escapeLikePattern(accountId.toLowerCase())}%`);
   }
   if (startedFrom) {
     predicates.push(`started_at >= $${params.length + 1}`);

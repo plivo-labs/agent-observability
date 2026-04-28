@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { escapeLikePattern } from "../response.js";
 import type {
   EvalCase,
   EvalPayloadV0,
@@ -177,13 +178,17 @@ export async function deleteEvalRuns(runIds: string[]): Promise<number> {
 function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params: unknown[] } {
   const predicates: string[] = [];
   const params: unknown[] = [];
+  // Free-text filters use lower-cased substring LIKE — case-insensitive,
+  // forgiving of partial matches. Loses index usage on `account_id` /
+  // `agent_id`; revisit with a pg_trgm GIN index if filter latency
+  // matters at higher row counts.
   if (opts.accountId) {
-    predicates.push(`account_id = $${params.length + 1}`);
-    params.push(opts.accountId);
+    predicates.push(`LOWER(account_id) LIKE $${params.length + 1}`);
+    params.push(`%${escapeLikePattern(opts.accountId.toLowerCase())}%`);
   }
   if (opts.agentId) {
-    predicates.push(`agent_id = $${params.length + 1}`);
-    params.push(opts.agentId);
+    predicates.push(`LOWER(agent_id) LIKE $${params.length + 1}`);
+    params.push(`%${escapeLikePattern(opts.agentId.toLowerCase())}%`);
   }
   if (opts.frameworks && opts.frameworks.length > 0) {
     const placeholders = opts.frameworks.map(
