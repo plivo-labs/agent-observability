@@ -4,9 +4,9 @@ import {
   mergeSessionRawReport,
   upsertSessionOutcome,
   upsertSessionTag,
-} from "./db.js";
-import type { DecodedOtlpLog } from "./livekit-protobuf.js";
-import { parseJsonValue } from "./raw-report.js";
+} from "../db.js";
+import type { DecodedOtlpLog } from "./protobuf.js";
+import { parseJsonValue } from "../raw-report.js";
 
 interface PersistResult {
   tags: number;

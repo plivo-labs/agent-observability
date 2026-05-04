@@ -1,8 +1,8 @@
 import type { Context, Next } from "hono";
 import { jwtVerify } from "jose";
 import { timingSafeEqual } from "node:crypto";
-import { basicAuthEnabled, config, liveKitAuthEnabled } from "./config.js";
-import { buildErrorResponse } from "./response.js";
+import { basicAuthEnabled, config, liveKitAuthEnabled } from "../config.js";
+import { buildErrorResponse } from "../response.js";
 
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);

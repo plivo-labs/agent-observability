@@ -13,9 +13,9 @@ import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { sortSessionEvents } from "./events.js";
-import { nativeLiveKitUploadAuth } from "./livekit-auth.js";
-import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit-protobuf.js";
-import { persistLiveKitOtlpLogs } from "./livekit-observability.js";
+import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
+import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
+import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 
 // Run migrations on startup if enabled

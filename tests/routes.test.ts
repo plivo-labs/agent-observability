@@ -305,6 +305,41 @@ describe("POST /observability/recordings/v0", () => {
     expect(res.status).toBe(401);
   });
 
+  test("rejects LiveKit Bearer auth without observability.write grant", async () => {
+    // Token is valid (correct signature, issuer, exp) but the grant body
+    // says read-only. The middleware must reject — we don't want a token
+    // that can read other resources to also be able to write sessions.
+    const form = new FormData();
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: liveKitBearerHeader({ observability: { read: true } }) },
+        body: form,
+      }),
+    );
+
+    expect(res.status).toBe(401);
+  });
+
+  test("rejects LiveKit Bearer auth when observability claim is missing entirely", async () => {
+    // `observability: undefined` causes JSON.stringify to drop the field,
+    // so the JWT carries no observability claim at all. Defence-in-depth
+    // for tokens minted for other LiveKit features but somehow shipped
+    // without the observability scope.
+    const form = new FormData();
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: liveKitBearerHeader({ observability: undefined }) },
+        body: form,
+      }),
+    );
+
+    expect(res.status).toBe(401);
+  });
+
   test("accepts valid request and calls insertSession", async () => {
     const chatHistory = JSON.stringify({
       items: [
