@@ -116,7 +116,7 @@ function ToolInvocationRow({
         )}
         <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
       </CollapsibleTrigger>
-      <CollapsibleContent>
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         {call && (
           <>
             <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">

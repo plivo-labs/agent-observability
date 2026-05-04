@@ -143,7 +143,7 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
                   </span>
                 )}
               </CollapsibleTrigger>
-              <CollapsibleContent>
+              <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
                 <div className="px-3 py-2 space-y-1.5">
                   <div>
                     <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
