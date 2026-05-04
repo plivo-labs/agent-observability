@@ -290,6 +290,7 @@ def test_pipecat_evals_autocapture_and_judge(pytester: pytest.Pytester, monkeypa
             role: str = 'assistant'
             text_content: str = 'pipecat hi'
             interrupted: bool = False
+            metrics: dict = None
 
         @dataclass
         class FakeEvent:
@@ -302,7 +303,9 @@ def test_pipecat_evals_autocapture_and_judge(pytester: pytest.Pytester, monkeypa
             def __init__(self, user_input):
                 self._user_input = user_input
                 self.user_input = user_input
-                self.events = [FakeEvent(item=FakeMsg())]
+                self.events = [FakeEvent(item=FakeMsg(
+                    metrics={{'llm_node_ttft': 0.42}},
+                ))]
 
         class AgentSession:
             async def run(self, *, user_input, **_):
@@ -369,6 +372,8 @@ def test_pipecat_evals_autocapture_and_judge(pytester: pytest.Pytester, monkeypa
     case = {case["name"]: case for case in payload["cases"]}["test_no_manual_capture_needed"]
     assert case["user_input"] == "ping"
     assert case["events"][0]["content"] == "pipecat hi"
+    assert case["events"][0]["metrics"]["llm_node_ttft"] == 0.42
+    assert case["events"][0]["item"]["metrics"]["llm_node_ttft"] == 0.42
     assert case["judgments"] == [{
         "intent": "greets via pipecat",
         "verdict": "pass",

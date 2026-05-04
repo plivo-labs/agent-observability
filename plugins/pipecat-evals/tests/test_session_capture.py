@@ -64,6 +64,40 @@ class FunctionCallResultFrame:
 
 
 @dataclass
+class TTFBMetricsData:
+    processor: str
+    value: float
+    model: str | None = None
+
+
+@dataclass
+class LLMTokenUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cache_read_input_tokens: int | None = None
+
+
+@dataclass
+class LLMUsageMetricsData:
+    processor: str
+    value: LLMTokenUsage
+    model: str | None = None
+
+
+@dataclass
+class TTSUsageMetricsData:
+    processor: str
+    value: int
+    model: str | None = None
+
+
+@dataclass
+class MetricsFrame:
+    data: list
+
+
+@dataclass
 class AgentHandoffFrame:
     from_agent: str
     to_agent: str
@@ -166,6 +200,74 @@ async def test_frame_capture_records_variant_frames_and_errors():
     capture.capture_frame(ErrorFrame(error="bad frame"))
     with pytest.raises(RuntimeError, match="bad frame"):
         await result.wait(timeout_s=0.001)
+
+
+@pytest.mark.asyncio
+async def test_frame_capture_attaches_metrics_to_message_events():
+    result = RunResult(user_input="hello")
+    capture = _FrameCapture()
+    capture.begin_run(result)
+
+    capture.capture_frame(MetricsFrame(data=[
+        TTFBMetricsData(
+            processor="OpenAILLMService",
+            model="gpt-4.1-mini",
+            value=0.42,
+        ),
+        LLMUsageMetricsData(
+            processor="OpenAILLMService",
+            model="gpt-4.1-mini",
+            value=LLMTokenUsage(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cache_read_input_tokens=3,
+            ),
+        ),
+        TTSUsageMetricsData(
+            processor="ElevenLabsTTSService",
+            model="eleven_flash_v2_5",
+            value=12,
+        ),
+    ]))
+    capture.capture_frame(LLMTextFrame("Hi there"))
+    capture.capture_frame(LLMFullResponseEndFrame())
+
+    message = result.expect.next_event().is_message(content="Hi there").message
+    assert message.metrics == {
+        "llm_node_ttft": 0.42,
+        "llm_metadata": {
+            "model_name": "gpt-4.1-mini",
+            "model_provider": "OpenAILLMService",
+        },
+        "llm_prompt_tokens": 10,
+        "llm_completion_tokens": 5,
+        "llm_total_tokens": 15,
+        "llm_cache_read_tokens": 3,
+        "tts_characters": 12,
+        "tts_metadata": {
+            "model_name": "eleven_flash_v2_5",
+            "model_provider": "ElevenLabsTTSService",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_frame_capture_attaches_late_metrics_to_latest_message_event():
+    result = RunResult(user_input="hello")
+    capture = _FrameCapture()
+    capture.begin_run(result)
+
+    capture.capture_frame(LLMMessagesFrame(messages=[
+        {"role": "assistant", "content": "hi"},
+    ]))
+    capture.capture_frame(MetricsFrame(data=[
+        TTFBMetricsData(processor="OpenAILLMService", value=0.21),
+    ]))
+    capture.end_run()
+
+    message = result.expect.next_event().is_message(content="hi").message
+    assert message.metrics == {"llm_node_ttft": 0.21}
 
 
 @pytest.mark.asyncio

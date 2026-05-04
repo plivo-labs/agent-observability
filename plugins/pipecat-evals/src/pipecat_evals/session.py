@@ -160,6 +160,7 @@ class _FrameCapture:
     def __init__(self) -> None:
         self._active: Optional[RunResult] = None
         self._text = _TextBuffer()
+        self._pending_metrics: dict[str, Any] = {}
         self._pending_calls = 0
         # Each Pipecat frame triggers the observer multiple times — once per
         # push event and once per process event on each processor it
@@ -177,6 +178,7 @@ class _FrameCapture:
     def begin_run(self, result: RunResult) -> None:
         self._active = result
         self._text = _TextBuffer()
+        self._pending_metrics = {}
         self._pending_calls = 0
         self._seen_frame_ids = set()
         self._seen_call_keys = set()
@@ -215,6 +217,14 @@ class _FrameCapture:
             self._active._set_exception(RuntimeError(str(error)))
             return
 
+        if frame_name == "MetricsFrame":
+            metrics = _metrics_frame(frame)
+            if metrics and (
+                self._text.chunks or not self._attach_metrics_to_latest_message(metrics)
+            ):
+                self._pending_metrics = _merge_metrics(self._pending_metrics, metrics)
+            return
+
         if frame_name in {"LLMTextFrame", "TextFrame"}:
             text = _frame_text(frame)
             if text:
@@ -229,6 +239,9 @@ class _FrameCapture:
 
         if frame_name in {"LLMMessagesFrame", "LLMMessagesAppendFrame"}:
             for message in _assistant_messages(frame):
+                if self._pending_metrics and not message.metrics:
+                    message.metrics = self._pending_metrics
+                    self._pending_metrics = {}
                 self._active.add_event(ChatMessageEvent(item=message))
             return
 
@@ -268,9 +281,24 @@ class _FrameCapture:
             return
         text = self._text.flush()
         if text:
+            metrics = self._pending_metrics or None
+            self._pending_metrics = {}
             self._active.add_event(ChatMessageEvent(
-                item=ChatMessage(role="assistant", text_content=text)
+                item=ChatMessage(role="assistant", text_content=text, metrics=metrics)
             ))
+
+    def _attach_metrics_to_latest_message(self, metrics: dict[str, Any]) -> bool:
+        if self._active is None:
+            return False
+        for event in reversed(self._active.events):
+            if getattr(event, "type", None) != "message":
+                continue
+            item = getattr(event, "item", None)
+            if item is None:
+                return False
+            item.metrics = _merge_metrics(getattr(item, "metrics", None), metrics)
+            return True
+        return False
 
 
 class _PipecatObserver:
@@ -358,8 +386,82 @@ def _assistant_messages(frame: Any) -> list[ChatMessage]:
         content = first_present(msg, "content", "text", "text_content", default="")
         if isinstance(content, list):
             content = "".join(str(part) for part in content)
-        out.append(ChatMessage(role="assistant", text_content=str(content)))
+        out.append(ChatMessage(
+            role="assistant",
+            text_content=str(content),
+            metrics=first_present(msg, "metrics", default=None),
+        ))
     return out
+
+
+def _metrics_frame(frame: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for metric in first_present(frame, "data", default=[]) or []:
+        out = _merge_metrics(out, _metric_data(metric))
+    return out
+
+
+def _metric_data(metric: Any) -> dict[str, Any]:
+    name = metric.__class__.__name__
+    processor = str(first_present(metric, "processor", default="") or "")
+    model = first_present(metric, "model", default=None)
+    value = first_present(metric, "value", default=None)
+    family = _processor_family(processor)
+    out: dict[str, Any] = {}
+
+    if name == "TTFBMetricsData":
+        if family == "tts":
+            out["tts_node_ttfb"] = value
+        elif family == "stt":
+            out["transcription_delay"] = value
+        else:
+            out["llm_node_ttft"] = value
+    elif name == "ProcessingMetricsData":
+        key = f"{family}_processing_time" if family else "processing_time"
+        out[key] = value
+    elif name == "LLMUsageMetricsData":
+        usage = value
+        out["llm_prompt_tokens"] = first_present(usage, "prompt_tokens", default=None)
+        out["llm_completion_tokens"] = first_present(usage, "completion_tokens", default=None)
+        out["llm_total_tokens"] = first_present(usage, "total_tokens", default=None)
+        cache_read = first_present(usage, "cache_read_input_tokens", default=None)
+        if cache_read is not None:
+            out["llm_cache_read_tokens"] = cache_read
+    elif name == "TTSUsageMetricsData":
+        out["tts_characters"] = value
+    elif name in {"TurnMetricsData", "SmartTurnMetricsData"}:
+        e2e_ms = first_present(metric, "e2e_processing_time_ms", default=None)
+        if e2e_ms is not None:
+            out["end_of_turn_delay"] = e2e_ms / 1000
+
+    if model:
+        metadata_key = f"{family}_metadata" if family else "pipecat_metadata"
+        out[metadata_key] = {
+            "model_name": model,
+            "model_provider": processor or None,
+        }
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _processor_family(processor: str) -> str:
+    lower = processor.lower()
+    if "tts" in lower or "texttospeech" in lower or "text_to_speech" in lower:
+        return "tts"
+    if "stt" in lower or "transcrib" in lower or "speech-to-text" in lower:
+        return "stt"
+    if "llm" in lower or "openai" in lower or "anthropic" in lower or "gemini" in lower:
+        return "llm"
+    return ""
+
+
+def _merge_metrics(base: Optional[dict[str, Any]], update: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base or {})
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
 
 
 def _function_calls(frame: Any) -> list[FunctionCall]:
