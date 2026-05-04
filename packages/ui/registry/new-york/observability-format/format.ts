@@ -39,15 +39,38 @@ export const computePercentile = (values: number[], p: number) => {
 }
 
 // Stringifies a tool-call argument or a tool-result output for display.
-// Try to parse strings as JSON; on failure, return the string as-is so plain
-// text outputs (e.g. "shipped") render cleanly. Non-strings are stringified
-// directly. Used by the eval case detail and session detail transcripts.
+// Tries each format in order and returns the first one that parses:
+//   1. Strict JSON — the right format. Tools that return native dicts via the
+//      LiveKit Python SDK serialize this way.
+//   2. Python repr — when a tool ran `str(dict)` instead of `json.dumps(dict)`,
+//      we get single quotes, capitalized True/False/None. This is a *best
+//      effort* recovery; it breaks if any string value contains an apostrophe
+//      (e.g. "O'Brien") because the heuristic flips every `'` to `"`. The
+//      proper fix is producer-side — make tools return JSON-shaped output.
+//   3. Raw string — plain text outputs (e.g. "shipped") render as-is so they
+//      aren't wrapped in extra quotes.
+// Non-strings (already-an-object/array) are JSON-stringified directly.
 export function formatToolValue(value: unknown): string {
   if (value == null) return ''
   if (typeof value !== 'string') return JSON.stringify(value, null, 2)
   try {
     return JSON.stringify(JSON.parse(value), null, 2)
   } catch {
+    // Python-repr fallback. Only attempt for strings that look like a dict /
+    // list — don't munge plain text containing the word `True`.
+    const trimmed = value.trim()
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const jsonish = value
+          .replace(/(?<!\\)'/g, '"')
+          .replace(/\bTrue\b/g, 'true')
+          .replace(/\bFalse\b/g, 'false')
+          .replace(/\bNone\b/g, 'null')
+        return JSON.stringify(JSON.parse(jsonish), null, 2)
+      } catch {
+        // fall through to raw string
+      }
+    }
     return value
   }
 }
