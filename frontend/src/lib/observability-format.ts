@@ -1,3 +1,5 @@
+// Formatting utilities for session metrics display
+
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 
@@ -34,4 +36,18 @@ export const computePercentile = (values: number[], p: number) => {
   const sorted = [...values].sort((a, b) => a - b)
   const idx = Math.min(Math.floor(sorted.length * p), sorted.length - 1)
   return sorted[idx]
+}
+
+// Stringifies a tool-call argument or a tool-result output for display.
+// Try to parse strings as JSON; on failure, return the string as-is so plain
+// text outputs (e.g. "shipped") render cleanly. Non-strings are stringified
+// directly. Used by the eval case detail and session detail transcripts.
+export function formatToolValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value !== 'string') return JSON.stringify(value, null, 2)
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
 }

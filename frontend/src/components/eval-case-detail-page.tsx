@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { formatDuration, formatMs } from '@/lib/observability-format'
+import { formatDuration, formatMs, formatToolValue } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
 import type {
   CaseStatus,
@@ -63,20 +63,6 @@ function StatusChip({ status }: { status: CaseStatus }) {
       {status}
     </span>
   )
-}
-
-// Stringifies a tool-call argument or a tool-result output for display.
-// Try to parse strings as JSON; on failure, return the string as-is so plain
-// text outputs (e.g. "shipped") render cleanly. Non-strings are stringified
-// directly.
-function formatToolValue(value: unknown): string {
-  if (value == null) return ''
-  if (typeof value !== 'string') return JSON.stringify(value, null, 2)
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2)
-  } catch {
-    return value
-  }
 }
 
 function MessageRow({ event, index }: { event: RunEventMessage; index: number }) {
