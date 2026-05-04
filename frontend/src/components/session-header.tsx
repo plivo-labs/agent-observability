@@ -36,6 +36,12 @@ export const SessionHeader = ({
 
   const stateClass = session.state === 'ended' ? 'status-ended' : 'status-live'
   const evaluationCount = session.evaluations?.length ?? 0
+  // `evaluations:enabled` is emitted by the Python adapter when judges are
+  // configured (or by callers passing `metadata.evaluations=true`). Surfacing
+  // the button on that signal lets users see "evaluations are coming" before
+  // judge results land. Node sessions never carry this tag.
+  const hasEvaluationFlag = session.tags?.some((tag) => tag.name === 'evaluations:enabled') ?? false
+  const hasEvaluationData = evaluationCount > 0 || session.outcome != null || hasEvaluationFlag
   const textOnly = isTextOnlySession(session)
 
   return (
@@ -49,7 +55,7 @@ export const SessionHeader = ({
           </span>
         </div>
         <div className="session-actions">
-          {onEvaluationsClick && (
+          {onEvaluationsClick && hasEvaluationData && (
             <Button variant="outline" size="sm" onClick={onEvaluationsClick}>
               <ClipboardCheck size={13} />
               Evaluation

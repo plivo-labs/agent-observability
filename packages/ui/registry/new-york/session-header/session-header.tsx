@@ -39,6 +39,12 @@ export const SessionHeader = ({
     !textOnly && session.has_tts && 'TTS',
   ].filter(Boolean)
   const evaluationCount = session.evaluations?.length ?? 0
+  // `evaluations:enabled` is emitted by the Python adapter when judges are
+  // configured (or by callers passing `metadata.evaluations=true`). Surfacing
+  // the button on that signal lets users see "evaluations are coming" before
+  // judge results land. Node sessions never carry this tag.
+  const hasEvaluationFlag = session.tags?.some((tag) => tag.name === 'evaluations:enabled') ?? false
+  const hasEvaluationData = evaluationCount > 0 || session.outcome != null || hasEvaluationFlag
 
   return (
     <div className="rounded-lg border bg-card">
@@ -46,7 +52,7 @@ export const SessionHeader = ({
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b">
         <span className="text-p-400 font-medium">Session</span>
         <div className="flex items-center gap-3">
-          {onEvaluationsClick && (
+          {onEvaluationsClick && hasEvaluationData && (
             <Button variant="outline" size="sm" onClick={onEvaluationsClick}>
               <ClipboardCheck size={13} />
               Evaluation
