@@ -76,6 +76,14 @@ function TestingFrameworkBadge({ name, version }: { name: string; version: strin
   return <FrameworkPill name={name} version={version} icon={FlaskConical} />
 }
 
+function formatTokens(tokens: number): string {
+  return tokens > 0 ? tokens.toLocaleString() : '—'
+}
+
+function formatCost(cost: number | null): string {
+  return cost == null ? '—' : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+}
+
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
   // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
@@ -266,6 +274,22 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         ),
         enableSorting: false,
         meta: { label: 'Duration' },
+      },
+      {
+        id: 'total_tokens',
+        accessorKey: 'total_tokens',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Tokens" />,
+        cell: ({ row }) => <span className="mono tnum">{formatTokens(row.original.total_tokens)}</span>,
+        enableSorting: false,
+        meta: { label: 'Tokens' },
+      },
+      {
+        id: 'estimated_cost_usd',
+        accessorKey: 'estimated_cost_usd',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Est. cost" />,
+        cell: ({ row }) => <span className="mono tnum">{formatCost(row.original.estimated_cost_usd)}</span>,
+        enableSorting: false,
+        meta: { label: 'Est. cost' },
       },
       {
         id: 'started_at',

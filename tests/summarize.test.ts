@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { summarize } from "../src/evals/summarize.js";
+import { computeCaseMetrics, summarize } from "../src/evals/summarize.js";
 
 function mkCase(overrides: any) {
   return {
@@ -44,5 +44,50 @@ describe("summarize()", () => {
     expect(r.skipped).toBe(1);
     expect(r.passed).toBe(0);
     expect(r.failed).toBe(0);
+  });
+});
+
+describe("computeCaseMetrics()", () => {
+  test("aggregates tokens and estimates known model cost", () => {
+    const metrics = computeCaseMetrics([
+      {
+        type: "message",
+        role: "assistant",
+        metrics: {
+          llm_prompt_tokens: 1_000,
+          llm_completion_tokens: 250,
+          llm_metadata: { model_provider: "openai", model_name: "gpt-4o-mini" },
+        },
+      },
+      {
+        type: "usage",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        input_tokens: 500,
+        output_tokens: 100,
+      },
+    ]);
+
+    expect(metrics.prompt_tokens).toBe(1_500);
+    expect(metrics.completion_tokens).toBe(350);
+    expect(metrics.total_tokens).toBe(1_850);
+    expect(metrics.estimated_cost_usd).toBe(0.00066);
+  });
+
+  test("keeps cost unknown when provider or model is not priced", () => {
+    const metrics = computeCaseMetrics([
+      {
+        type: "message",
+        role: "assistant",
+        metrics: {
+          llm_prompt_tokens: 100,
+          llm_completion_tokens: 25,
+          llm_metadata: { model_provider: "local", model_name: "custom" },
+        },
+      },
+    ]);
+
+    expect(metrics.total_tokens).toBe(125);
+    expect(metrics.estimated_cost_usd).toBeNull();
   });
 });

@@ -5,8 +5,6 @@ services:
       POSTGRES_USER: observability
       POSTGRES_PASSWORD: observability
       POSTGRES_DB: agent_observability
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

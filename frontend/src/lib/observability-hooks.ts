@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useObservabilityContext } from '@/lib/observability-provider'
 import { sortEventsByCreatedAt } from '@/lib/observability-events'
 import type {
+  AgentRow,
   AgentSessionRow,
   ChatItem,
   EvalCaseRow,
@@ -236,6 +237,29 @@ export function useEvalRun(runId: string | undefined) {
   }, [api, runId])
 
   return { run, loading, error }
+}
+
+export function useEvalAgents() {
+  const { api } = useObservabilityContext()
+  const [agents, setAgents] = useState<AgentRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refetchTick, setRefetchTick] = useState(0)
+  const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .getEvalAgents()
+      .then((res) => !cancelled && setAgents(res.objects))
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, refetchTick])
+
+  return { agents, loading, error, refetch }
 }
 
 export function useEvalCase(runId: string | undefined, caseId: string | undefined) {

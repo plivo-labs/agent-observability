@@ -2,6 +2,17 @@ import { useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { parseAsString, useQueryState } from 'nuqs'
 import { ArrowLeft, Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -19,7 +30,8 @@ import { useDataTable } from '@/components/data-table/use-data-table'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
-import type { CaseStatus, EvalCaseRow, RunEvent, RunEventMessage } from '@/lib/observability-types'
+import type { CaseStatus, EvalCaseRow } from '@/lib/observability-types'
+import { ChartCard } from '@/components/observability-chart-shared'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 
 const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
@@ -39,6 +51,14 @@ function durationToneClass(ms: number | null): string {
   return 'text-[hsl(var(--destructive))]'
 }
 
+function formatTokens(tokens: number): string {
+  return tokens > 0 ? tokens.toLocaleString() : '—'
+}
+
+function formatCost(cost: number | null): string {
+  return cost == null ? '—' : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+}
+
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
     'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
@@ -49,16 +69,9 @@ const STATUS_TONE: Record<CaseStatus, string> = {
   skipped: 'bg-muted text-muted-foreground border-border',
 }
 
-/** Mean of `metrics.llm_node_ttft` (seconds → ms) across all `message`
- * events with metrics. Returns null when no samples exist. */
-function caseAvgTtftMs(events: RunEvent[]): number | null {
-  const ttfts: number[] = []
-  for (const ev of events) {
-    if (ev.type !== 'message') continue
-    const ttft = (ev as RunEventMessage).metrics?.llm_node_ttft
-    if (typeof ttft === 'number') ttfts.push(ttft * 1000)
-  }
-  return ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null
+const CHART_COLORS = {
+  ttft: 'hsl(var(--accent-purple))',
+  ttfb: 'hsl(var(--success))',
 }
 
 function StatusChip({ status }: { status: CaseStatus }) {
@@ -178,26 +191,40 @@ export const EvalRunDetailPage = ({
   const stats = useMemo(() => {
     if (!run) return null
     const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
-    // Flat-average TTFT across every message-with-metrics event in every
-    // case, so the headline number reflects typical LLM latency rather
-    // than weighting each case equally regardless of turn count.
-    const allTtfts: number[] = []
-    for (const c of run.cases) {
-      for (const ev of c.events) {
-        if (ev.type !== 'message') continue
-        const ttft = (ev as RunEventMessage).metrics?.llm_node_ttft
-        if (typeof ttft === 'number') allTtfts.push(ttft * 1000)
-      }
-    }
-    const avgTtftMs =
-      allTtfts.length ? allTtfts.reduce((a, b) => a + b, 0) / allTtfts.length : null
     return {
       passRate,
       hasAnyFailure: run.failed > 0 || run.errored > 0,
       passedPct: run.total > 0 ? (run.passed / run.total) * 100 : 0,
       failedPct: run.total > 0 ? (run.failed / run.total) * 100 : 0,
-      avgTtftMs,
     }
+  }, [run])
+
+  const percentilesData = useMemo(() => {
+    if (!run) return []
+    return [
+      { name: 'TTFT', avg: run.ttft_avg_ms ?? 0, p50: run.ttft_p50_ms ?? 0, p95: run.ttft_p95_ms ?? 0 },
+      { name: 'TTFB', avg: run.ttfb_avg_ms ?? 0, p50: run.ttfb_p50_ms ?? 0, p95: run.ttfb_p95_ms ?? 0 },
+    ].filter((d) => d.avg > 0 || d.p50 > 0 || d.p95 > 0)
+  }, [run])
+
+  const pipelineData = useMemo(() => {
+    if (!run) return []
+    return run.cases
+      .filter((c) => c.ttft_avg_ms != null || c.ttfb_avg_ms != null)
+      .map((c, i) => ({
+        label: c.name.length > 20 ? `${c.name.slice(0, 18)}…` : c.name || `#${i + 1}`,
+        ttft: c.ttft_avg_ms ?? 0,
+        ttfb: c.ttfb_avg_ms ?? 0,
+      }))
+  }, [run])
+
+  const overCasesData = useMemo(() => {
+    if (!run) return []
+    return run.cases.map((c, i) => ({
+      idx: i + 1,
+      ttft: c.ttft_avg_ms,
+      ttfb: c.ttfb_avg_ms,
+    }))
   }, [run])
 
   const columns = useMemo<ColumnDef<EvalCaseRow>[]>(
@@ -246,7 +273,7 @@ export const EvalRunDetailPage = ({
       },
       {
         id: 'avg_ttft_ms',
-        accessorFn: (row) => caseAvgTtftMs(row.events),
+        accessorFn: (row) => row.ttft_avg_ms,
         header: ({ column }) => <DataTableColumnHeader column={column} label="Avg TTFT" />,
         cell: ({ getValue }) => {
           const ms = getValue<number | null>()
@@ -265,6 +292,28 @@ export const EvalRunDetailPage = ({
           if (bv == null) return -1
           return av - bv
         },
+      },
+      {
+        id: 'total_tokens',
+        accessorKey: 'total_tokens',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Tokens" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
+            {formatTokens(row.original.total_tokens)}
+          </span>
+        ),
+        meta: { label: 'Tokens' },
+      },
+      {
+        id: 'estimated_cost_usd',
+        accessorKey: 'estimated_cost_usd',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Est. cost" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
+            {formatCost(row.original.estimated_cost_usd)}
+          </span>
+        ),
+        meta: { label: 'Est. cost' },
       },
       {
         id: 'judgments',
@@ -393,7 +442,7 @@ export const EvalRunDetailPage = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-3">
         <StatCard
           label="Pass rate"
           value={stats.passRate}
@@ -424,11 +473,141 @@ export const EvalRunDetailPage = ({
           tone={run.skipped > 0 ? 'warn' : 'zero'}
         />
         <StatCard
-          label="Avg TTFT"
-          value={stats.avgTtftMs != null ? formatMs(stats.avgTtftMs) : '—'}
-          tone={stats.avgTtftMs == null ? 'zero' : 'default'}
+          label="p95 TTFT"
+          value={run.ttft_p95_ms != null ? formatMs(run.ttft_p95_ms) : '—'}
+          tone={run.ttft_p95_ms == null ? 'zero' : 'default'}
+        />
+        <StatCard
+          label="p95 TTFB"
+          value={run.ttfb_p95_ms != null ? formatMs(run.ttfb_p95_ms) : '—'}
+          tone={run.ttfb_p95_ms == null ? 'zero' : 'default'}
+        />
+        <StatCard
+          label="Tokens"
+          value={formatTokens(run.total_tokens)}
+          tone={run.total_tokens > 0 ? 'default' : 'zero'}
+        />
+        <StatCard
+          label="Est. cost"
+          value={formatCost(run.estimated_cost_usd)}
+          tone={run.estimated_cost_usd == null ? 'zero' : 'default'}
         />
       </div>
+
+      {(percentilesData.length > 0 || pipelineData.length > 0 || overCasesData.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {percentilesData.length > 0 && (
+            <ChartCard
+              title="Latency Percentiles"
+              legend={[
+                { color: 'hsl(var(--primary) / 0.3)', label: 'Avg' },
+                { color: 'hsl(var(--primary) / 0.6)', label: 'P50' },
+                { color: 'hsl(var(--primary))', label: 'P95' },
+              ]}
+            >
+              <BarChart data={percentilesData} barCategoryGap="20%">
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  stroke="hsl(var(--st2))"
+                />
+                <YAxis
+                  tickFormatter={(v: number) => formatMs(v)}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  stroke="hsl(var(--st2))"
+                />
+                <Tooltip
+                  formatter={(v: unknown) => formatMs(Number(v))}
+                  contentStyle={{
+                    background: 'hsl(var(--background))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: 8,
+                  }}
+                />
+                <Bar dataKey="avg" name="Avg" fill="hsl(var(--primary) / 0.3)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="p50" name="P50" fill="hsl(var(--primary) / 0.6)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="p95" name="P95" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ChartCard>
+          )}
+
+          {pipelineData.length > 0 && (
+            <ChartCard
+              title="Pipeline Breakdown"
+              subtitle="Avg TTFT vs TTFB per case"
+              legend={[
+                { color: CHART_COLORS.ttft, label: 'TTFT' },
+                { color: CHART_COLORS.ttfb, label: 'TTFB' },
+              ]}
+            >
+              <BarChart data={pipelineData} barCategoryGap="20%">
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                  stroke="hsl(var(--st2))"
+                  interval={0}
+                  angle={-25}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis
+                  tickFormatter={(v: number) => formatMs(v)}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  stroke="hsl(var(--st2))"
+                />
+                <Tooltip
+                  formatter={(v: unknown) => formatMs(Number(v))}
+                  contentStyle={{
+                    background: 'hsl(var(--background))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: 8,
+                  }}
+                />
+                <Legend formatter={(v: string) => <span className="text-xs">{v}</span>} />
+                <Bar dataKey="ttft" name="TTFT" stackId="stack" fill={CHART_COLORS.ttft} />
+                <Bar dataKey="ttfb" name="TTFB" stackId="stack" fill={CHART_COLORS.ttfb} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ChartCard>
+          )}
+
+          {overCasesData.length > 0 && (
+            <ChartCard
+              title="Latency Over Cases"
+              subtitle="Avg TTFT and TTFB across cases in order"
+              legend={[
+                { color: CHART_COLORS.ttft, label: 'TTFT' },
+                { color: CHART_COLORS.ttfb, label: 'TTFB' },
+              ]}
+            >
+              <LineChart data={overCasesData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+                <XAxis
+                  dataKey="idx"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  stroke="hsl(var(--st2))"
+                />
+                <YAxis
+                  tickFormatter={(v: number) => formatMs(v)}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  stroke="hsl(var(--st2))"
+                />
+                <Tooltip
+                  formatter={(v: unknown) => formatMs(Number(v))}
+                  contentStyle={{
+                    background: 'hsl(var(--background))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: 8,
+                  }}
+                />
+                <Line type="monotone" dataKey="ttft" name="TTFT" stroke={CHART_COLORS.ttft} dot={false} strokeWidth={2} connectNulls />
+                <Line type="monotone" dataKey="ttfb" name="TTFB" stroke={CHART_COLORS.ttfb} dot={false} strokeWidth={2} connectNulls />
+              </LineChart>
+            </ChartCard>
+          )}
+        </div>
+      )}
 
       {run.ci && (
         <Card>

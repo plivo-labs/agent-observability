@@ -5,9 +5,12 @@ import type {
   EvalPayloadV0,
   CaseStatus,
 } from "./schema.js";
-import { summarize } from "./summarize.js";
+import { summarize, computeCaseMetrics, percentile, avg } from "./summarize.js";
 export { summarize } from "./summarize.js";
 export type { RunSummary } from "./summarize.js";
+
+// Sentinel value used in the URL/agents endpoint to represent rows with NULL agent_id.
+export const UNKNOWN_AGENT_ID = "__unknown__";
 
 // ── Insert ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,29 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const finishedAt = new Date(run.finished_at * 1000);
   const durationMs = Math.max(0, Math.round((run.finished_at - run.started_at) * 1000));
 
+  const caseMetrics = cases.map((c) => computeCaseMetrics(c.events ?? []));
+
+  const allTtfts: number[] = [];
+  const allTtfbs: number[] = [];
+  let runPromptTokens = 0;
+  let runCompletionTokens = 0;
+  let runCost: number | null = 0;
+  for (const m of caseMetrics) {
+    allTtfts.push(...m.ttfts_ms);
+    allTtfbs.push(...m.ttfbs_ms);
+    runPromptTokens += m.prompt_tokens;
+    runCompletionTokens += m.completion_tokens;
+    if (m.estimated_cost_usd == null && m.total_tokens > 0) runCost = null;
+    else if (runCost != null) runCost += m.estimated_cost_usd ?? 0;
+  }
+
+  const runTtftP50 = percentile(allTtfts, 50);
+  const runTtftP95 = percentile(allTtfts, 95);
+  const runTtftAvg = avg(allTtfts);
+  const runTtfbP50 = percentile(allTtfbs, 50);
+  const runTtfbP95 = percentile(allTtfbs, 95);
+  const runTtfbAvg = avg(allTtfbs);
+
   await sql.begin(async (tx: any) => {
     await tx`
       INSERT INTO eval_runs (
@@ -27,7 +53,10 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         testing_framework, testing_framework_version,
         started_at, finished_at, duration_ms,
         total, passed, failed, errored, skipped,
-        ci, raw_payload
+        ci, raw_payload,
+        ttft_p50_ms, ttft_p95_ms, ttft_avg_ms,
+        ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms,
+        prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
       ) VALUES (
         ${run.run_id},
         ${run.account_id ?? null},
@@ -45,11 +74,23 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.errored},
         ${summary.skipped},
         ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
-        ${JSON.stringify(payload)}::jsonb
+        ${JSON.stringify(payload)}::jsonb,
+        ${runTtftP50},
+        ${runTtftP95},
+        ${runTtftAvg},
+        ${runTtfbP50},
+        ${runTtfbP95},
+        ${runTtfbAvg},
+        ${runPromptTokens},
+        ${runCompletionTokens},
+        ${runPromptTokens + runCompletionTokens},
+        ${runCost == null ? null : Number(runCost.toFixed(6))}
       )
     `;
 
-    for (const c of cases) {
+    for (let i = 0; i < cases.length; i++) {
+      const c = cases[i];
+      const m = caseMetrics[i];
       const caseDurationMs = c.duration_ms
         ?? (c.started_at != null && c.finished_at != null
           ? Math.max(0, Math.round((c.finished_at - c.started_at) * 1000))
@@ -58,7 +99,12 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
       await tx`
         INSERT INTO eval_cases (
           case_id, run_id, name, file, status, duration_ms,
-          user_input, events, judgments, failure
+          user_input, events, judgments, failure,
+          ttft_p50_ms, ttft_p95_ms, ttft_avg_ms,
+          ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms,
+          turn_count, tool_call_count, interruption_count,
+          agent_handoff_count, ttft_sample_count,
+          prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
         ) VALUES (
           ${c.case_id},
           ${run.run_id},
@@ -69,7 +115,22 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${c.user_input ?? null},
           ${JSON.stringify(c.events ?? [])}::jsonb,
           ${JSON.stringify(c.judgments ?? [])}::jsonb,
-          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb
+          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb,
+          ${m.ttft_p50_ms},
+          ${m.ttft_p95_ms},
+          ${m.ttft_avg_ms},
+          ${m.ttfb_p50_ms},
+          ${m.ttfb_p95_ms},
+          ${m.ttfb_avg_ms},
+          ${m.turn_count},
+          ${m.tool_call_count},
+          ${m.interruption_count},
+          ${m.agent_handoff_count},
+          ${m.ttft_sample_count},
+          ${m.prompt_tokens},
+          ${m.completion_tokens},
+          ${m.total_tokens},
+          ${m.estimated_cost_usd}
         )
       `;
     }
@@ -107,7 +168,19 @@ const RUN_SELECT_COLS =
   "run_id, account_id, agent_id, " +
   "framework, framework_version, testing_framework, testing_framework_version, " +
   "started_at, finished_at, duration_ms, " +
-  "total, passed, failed, errored, skipped, ci, created_at";
+  "total, passed, failed, errored, skipped, ci, created_at, " +
+  "ttft_p50_ms, ttft_p95_ms, ttft_avg_ms, " +
+  "ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms, " +
+  "prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
+
+const CASE_SELECT_COLS =
+  "case_id, run_id, name, file, status, duration_ms, user_input, " +
+  "events, judgments, failure, created_at, " +
+  "ttft_p50_ms, ttft_p95_ms, ttft_avg_ms, " +
+  "ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms, " +
+  "turn_count, tool_call_count, interruption_count, " +
+  "agent_handoff_count, ttft_sample_count, " +
+  "prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
 
 export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
   const { predicates, params } = buildPredicates(opts);
@@ -135,24 +208,24 @@ export async function getEvalRun(runId: string): Promise<any | null> {
 }
 
 export async function listEvalCases(runId: string): Promise<any[]> {
-  const rows = await sql`
-    SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, created_at
-    FROM eval_cases
-    WHERE run_id = ${runId}
-    ORDER BY created_at ASC
-  `;
+  const rows = await sql.unsafe(
+    `SELECT ${CASE_SELECT_COLS}
+     FROM eval_cases
+     WHERE run_id = $1
+     ORDER BY created_at ASC`,
+    [runId],
+  );
   return rows.map(decodeCaseJsonb);
 }
 
 export async function getEvalCase(runId: string, caseId: string): Promise<any | null> {
-  const rows = await sql`
-    SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, created_at
-    FROM eval_cases
-    WHERE run_id = ${runId} AND case_id = ${caseId}
-    LIMIT 1
-  `;
+  const rows = await sql.unsafe(
+    `SELECT ${CASE_SELECT_COLS}
+     FROM eval_cases
+     WHERE run_id = $1 AND case_id = $2
+     LIMIT 1`,
+    [runId, caseId],
+  );
   return rows[0] ? decodeCaseJsonb(rows[0]) : null;
 }
 
@@ -173,6 +246,100 @@ export async function deleteEvalRuns(runIds: string[]): Promise<number> {
   return rows.length;
 }
 
+// ── Agents aggregation ──────────────────────────────────────────────────────
+
+export interface AgentRow {
+  agent_id: string | null;
+  run_count: number;
+  last_run_at: string;
+  avg_pass_rate: number;
+  last_pass_rate: number;
+  ttft_p95_ms: number | null;
+  ttfb_p95_ms: number | null;
+  total_cases: number;
+  total_passed: number;
+  total_failed: number;
+  framework: string | null;
+  trend: Array<{ started_at: string; pass_rate: number; run_id: string }>;
+}
+
+export async function listEvalAgents(): Promise<AgentRow[]> {
+  // Aggregate per agent_id (NULL → '__unknown__'), join a lateral subquery
+  // for the last-10-run pass-rate trend.
+  const rows = await sql.unsafe(
+    `
+    WITH agg AS (
+      SELECT
+        agent_id,
+        COUNT(*)::int                                                AS run_count,
+        MAX(started_at)                                              AS last_run_at,
+        AVG(CASE WHEN total > 0 THEN passed::float / total ELSE 0 END) * 100 AS avg_pass_rate,
+        SUM(total)::int                                              AS total_cases,
+        SUM(passed)::int                                             AS total_passed,
+        SUM(failed + errored)::int                                   AS total_failed,
+        AVG(ttft_p95_ms)                                             AS ttft_p95_ms,
+        AVG(ttfb_p95_ms)                                             AS ttfb_p95_ms
+      FROM eval_runs
+      GROUP BY agent_id
+    )
+    SELECT
+      agg.agent_id,
+      agg.run_count,
+      agg.last_run_at,
+      agg.avg_pass_rate,
+      agg.total_cases,
+      agg.total_passed,
+      agg.total_failed,
+      agg.ttft_p95_ms,
+      agg.ttfb_p95_ms,
+      last_run.framework,
+      last_run.last_pass_rate,
+      COALESCE(trend.trend, '[]'::json) AS trend
+    FROM agg
+    LEFT JOIN LATERAL (
+      SELECT framework,
+             CASE WHEN total > 0 THEN (passed::float / total) * 100 ELSE 0 END AS last_pass_rate
+      FROM eval_runs r
+      WHERE r.agent_id IS NOT DISTINCT FROM agg.agent_id
+      ORDER BY r.started_at DESC
+      LIMIT 1
+    ) last_run ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT json_agg(t) AS trend FROM (
+        SELECT started_at,
+               CASE WHEN total > 0 THEN (passed::float / total) * 100 ELSE 0 END AS pass_rate,
+               run_id
+        FROM eval_runs r
+        WHERE r.agent_id IS NOT DISTINCT FROM agg.agent_id
+        ORDER BY r.started_at DESC
+        LIMIT 10
+      ) t
+    ) trend ON TRUE
+    ORDER BY agg.last_run_at DESC
+    `,
+    [],
+  );
+
+  return rows.map((r: any) => ({
+    agent_id: r.agent_id,
+    run_count: r.run_count,
+    last_run_at: r.last_run_at instanceof Date ? r.last_run_at.toISOString() : r.last_run_at,
+    avg_pass_rate: r.avg_pass_rate != null ? Number(r.avg_pass_rate) : 0,
+    last_pass_rate: r.last_pass_rate != null ? Number(r.last_pass_rate) : 0,
+    ttft_p95_ms: r.ttft_p95_ms != null ? Number(r.ttft_p95_ms) : null,
+    ttfb_p95_ms: r.ttfb_p95_ms != null ? Number(r.ttfb_p95_ms) : null,
+    total_cases: r.total_cases ?? 0,
+    total_passed: r.total_passed ?? 0,
+    total_failed: r.total_failed ?? 0,
+    framework: r.framework ?? null,
+    trend: Array.isArray(r.trend)
+      ? r.trend
+      : typeof r.trend === "string"
+        ? JSON.parse(r.trend)
+        : [],
+  }));
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params: unknown[] } {
@@ -186,7 +353,9 @@ function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params
     predicates.push(`LOWER(account_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.accountId.toLowerCase())}%`);
   }
-  if (opts.agentId) {
+  if (opts.agentId === UNKNOWN_AGENT_ID) {
+    predicates.push(`agent_id IS NULL`);
+  } else if (opts.agentId) {
     predicates.push(`LOWER(agent_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.agentId.toLowerCase())}%`);
   }

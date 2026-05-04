@@ -255,6 +255,16 @@ export interface EvalRunRow {
   skipped: number
   ci: CiMetadata | null
   created_at: string
+  ttft_p50_ms: number | null
+  ttft_p95_ms: number | null
+  ttft_avg_ms: number | null
+  ttfb_p50_ms: number | null
+  ttfb_p95_ms: number | null
+  ttfb_avg_ms: number | null
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  estimated_cost_usd: number | null
 }
 
 export interface EvalCaseRow {
@@ -269,6 +279,21 @@ export interface EvalCaseRow {
   judgments: JudgmentResult[]
   failure: Failure | null
   created_at: string
+  ttft_p50_ms: number | null
+  ttft_p95_ms: number | null
+  ttft_avg_ms: number | null
+  ttfb_p50_ms: number | null
+  ttfb_p95_ms: number | null
+  ttfb_avg_ms: number | null
+  turn_count: number | null
+  tool_call_count: number | null
+  interruption_count: number | null
+  agent_handoff_count: number | null
+  ttft_sample_count: number | null
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  estimated_cost_usd: number | null
 }
 
 export interface EvalRunDetail extends EvalRunRow {

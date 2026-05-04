@@ -1,4 +1,5 @@
 import type {
+  AgentRow,
   AgentSessionRow,
   EvalCaseRow,
   EvalRunDetail,
@@ -64,6 +65,11 @@ export function createObservabilityApi(baseUrl: string) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run_ids: runIds }),
       }),
+
+    getEvalAgents: () =>
+      fetchJson<{ api_id: string; meta: { total_count: number }; objects: AgentRow[] }>(
+        `/evals/agents`,
+      ),
   }
 }
 

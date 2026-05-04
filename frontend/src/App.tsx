@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, CheckCheck, List, Moon, RefreshCw, Sun } from 'lucide-react'
+import { Activity, CheckCheck, List, Moon, RefreshCw, Search, Sun, Zap } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
-import { EvalsPage } from '@/components/evals-page'
+import { AgentsPage } from '@/components/agents-page'
+import { AgentRunsPage } from '@/components/agent-runs-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
+import { EvalRunComparePage } from '@/components/eval-run-compare-page'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { ActivityPage } from '@/components/activity-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -43,7 +46,8 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   // Sessions tab (at `/`) would lose its highlight on `/sessions/:id`. Compute
   // active state ourselves: each tab claims its detail routes too.
   const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
-  const isEvalsActive = pathname.startsWith('/evals')
+  const isActivityActive = pathname.startsWith('/activity')
+  const isEvalsActive = pathname.startsWith('/evals') && !isActivityActive
 
   return (
     <div className="obs-app">
@@ -59,9 +63,17 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
             <CheckCheck size={14} /> Evals
           </Link>
+          <Link to="/activity" className={`obs-tab${isActivityActive ? ' active' : ''}`}>
+            <Zap size={14} /> Activity
+          </Link>
         </div>
         <div className="obs-nav-spacer" />
         <div className="obs-nav-right">
+          <button type="button" className="obs-cmdk">
+            <Search size={14} />
+            <span>Search agents, runs, cases...</span>
+            <span className="obs-kbd">⌘K</span>
+          </button>
           <button
             type="button"
             className="obs-iconbtn"
@@ -87,6 +99,16 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
+function ActivityRoute() {
+  const navigate = useNavigate()
+  return (
+    <ActivityPage
+      onOpenRun={(_agentId, runId) => navigate(`/evals/runs/${runId}`)}
+      onOpenAgent={(agentId) => navigate(`/evals/agents/${encodeURIComponent(agentId)}`)}
+    />
+  )
+}
+
 function SessionsRoute() {
   const navigate = useNavigate()
   return <SessionsPage onSessionClick={(id) => navigate(`/sessions/${id}`)} />
@@ -102,9 +124,48 @@ function SessionDetailRoute() {
   )
 }
 
-function EvalsRoute() {
+function AgentsRoute() {
   const navigate = useNavigate()
-  return <EvalsPage onRunClick={(runId) => navigate(`/evals/${runId}`)} />
+  return (
+    <AgentsPage
+      onAgentClick={(agentId) => navigate(`/evals/agents/${encodeURIComponent(agentId)}`)}
+    />
+  )
+}
+
+function AgentRunsRoute() {
+  const { agentId } = useParams<{ agentId: string }>()
+  const navigate = useNavigate()
+  if (!agentId) return null
+  return (
+    <AgentRunsPage
+      agentId={decodeURIComponent(agentId)}
+      onBack={() => navigate('/evals')}
+      onRunClick={(runId) => navigate(`/evals/runs/${runId}`)}
+      onCompare={(runIdA, runIdB) => {
+        const encodedAgentId = encodeURIComponent(decodeURIComponent(agentId))
+        navigate(`/evals/agents/${encodedAgentId}/compare?runA=${runIdA}&runB=${runIdB}`)
+      }}
+    />
+  )
+}
+
+function EvalRunCompareRoute() {
+  const { agentId } = useParams<{ agentId: string }>()
+  const navigate = useNavigate()
+  const params = new URLSearchParams(useLocation().search)
+  const runIdA = params.get('runA') ?? undefined
+  const runIdB = params.get('runB') ?? undefined
+  if (!agentId) return null
+  return (
+    <EvalRunComparePage
+      agentId={decodeURIComponent(agentId)}
+      runIdA={runIdA}
+      runIdB={runIdB}
+      onBack={() => navigate(`/evals/agents/${agentId}`)}
+      onOpenRun={(runId) => navigate(`/evals/runs/${runId}`)}
+    />
+  )
 }
 
 function EvalRunDetailRoute() {
@@ -115,7 +176,7 @@ function EvalRunDetailRoute() {
   return (
     <EvalRunDetailPage
       runId={runId}
-      onBack={() => navigate('/evals')}
+      onBack={() => navigate(-1)}
     />
   )
 }
@@ -128,7 +189,7 @@ function EvalCaseDetailRoute() {
     <EvalCaseDetailPage
       runId={runId}
       caseId={caseId}
-      onBack={() => navigate(`/evals/${runId}`)}
+      onBack={() => navigate(`/evals/runs/${runId}`)}
     />
   )
 }
@@ -142,9 +203,12 @@ export default function App() {
             <Routes>
               <Route path="/" element={<SessionsRoute />} />
               <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
-              <Route path="/evals" element={<EvalsRoute />} />
-              <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
-              <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
+              <Route path="/evals" element={<AgentsRoute />} />
+              <Route path="/evals/agents/:agentId" element={<AgentRunsRoute />} />
+              <Route path="/evals/agents/:agentId/compare" element={<EvalRunCompareRoute />} />
+              <Route path="/evals/runs/:runId" element={<EvalRunDetailRoute />} />
+              <Route path="/evals/runs/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
+              <Route path="/activity" element={<ActivityRoute />} />
               <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AgentObservabilityProvider>

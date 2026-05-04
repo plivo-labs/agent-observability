@@ -19,6 +19,18 @@ export const formatDuration = (ms: number | null): string => {
   return `${seconds}s`
 }
 
+export const formatTokens = (tokens: number | null | undefined): string => {
+  if (!tokens || tokens <= 0) return '—'
+  if (tokens < 1000) return tokens.toLocaleString()
+  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(1)}k`
+  return `${(tokens / 1_000_000).toFixed(2)}M`
+}
+
+export const formatCost = (cost: number | null | undefined): string => {
+  if (cost == null) return '—'
+  return `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+}
+
 export const formatDate = (iso: string | null): string => {
   if (!iso) return '—'
   return dayjs(iso).format('MMM D, YYYY h:mm A')

@@ -8,6 +8,7 @@ import {
   listEvalCases,
   getEvalCase,
   deleteEvalRuns,
+  listEvalAgents,
 } from "./db.js";
 import {
   buildListResponse,
@@ -146,6 +147,19 @@ export function registerEvalRoutes(app: Hono) {
     }
     const deleted = await deleteEvalRuns(runIds as string[]);
     return c.json({ api_id: newApiId(), deleted });
+  });
+
+  // ── Agents aggregation ───────────────────────────────────────────────────
+  // Registered before `/api/evals/:run_id` so the literal `/agents` segment
+  // wins the route match.
+
+  app.get("/api/evals/agents", async (c) => {
+    const agents = await listEvalAgents();
+    return c.json({
+      api_id: newApiId(),
+      meta: { total_count: agents.length },
+      objects: agents,
+    });
   });
 
   // ── Run detail (includes cases) ──────────────────────────────────────────

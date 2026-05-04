@@ -12,6 +12,7 @@ const mockGetEvalCase = mock((_runId: string, _caseId: string) =>
   Promise.resolve(null as any),
 );
 const mockDeleteEvalRuns = mock((_runIds: string[]) => Promise.resolve(0));
+const mockListEvalAgents = mock(() => Promise.resolve([] as any[]));
 
 const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 mockSql.unsafe = mockSql;
@@ -46,6 +47,7 @@ mock.module("../src/evals/db.js", () => ({
   listEvalCases: mockListEvalCases,
   getEvalCase: mockGetEvalCase,
   deleteEvalRuns: mockDeleteEvalRuns,
+  listEvalAgents: mockListEvalAgents,
 }));
 
 mock.module("../src/migrate.js", () => ({

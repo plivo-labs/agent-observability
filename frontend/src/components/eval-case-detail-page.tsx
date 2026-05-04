@@ -42,6 +42,14 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
   }
 }
 
+function formatTokens(tokens: number): string {
+  return tokens > 0 ? tokens.toLocaleString() : '—'
+}
+
+function formatCost(cost: number | null): string {
+  return cost == null ? '—' : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+}
+
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
     'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
@@ -245,6 +253,18 @@ export const EvalCaseDetailPage = ({
             <>
               <span> · </span>
               <span>Avg TTFT {formatMs(summary.avgTtftMs)}</span>
+            </>
+          )}
+          {evalCase.total_tokens > 0 && (
+            <>
+              <span> · </span>
+              <span>{formatTokens(evalCase.total_tokens)} tokens</span>
+            </>
+          )}
+          {evalCase.estimated_cost_usd != null && (
+            <>
+              <span> · </span>
+              <span>Est. cost {formatCost(evalCase.estimated_cost_usd)}</span>
             </>
           )}
         </div>

@@ -39,6 +39,14 @@ function durationToneClass(ms: number | null): string {
   return 'text-[hsl(var(--destructive))]'
 }
 
+function formatTokens(tokens: number): string {
+  return tokens > 0 ? tokens.toLocaleString() : '—'
+}
+
+function formatCost(cost: number | null): string {
+  return cost == null ? '—' : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+}
+
 const STATUS_TONE: Record<CaseStatus, string> = {
   passed:
     'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
@@ -267,6 +275,28 @@ export const EvalRunDetailPage = ({
         },
       },
       {
+        id: 'total_tokens',
+        accessorKey: 'total_tokens',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Tokens" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
+            {formatTokens(row.original.total_tokens)}
+          </span>
+        ),
+        meta: { label: 'Tokens' },
+      },
+      {
+        id: 'estimated_cost_usd',
+        accessorKey: 'estimated_cost_usd',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Est. cost" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
+            {formatCost(row.original.estimated_cost_usd)}
+          </span>
+        ),
+        meta: { label: 'Est. cost' },
+      },
+      {
         id: 'judgments',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Judgments" />,
         cell: ({ row }) => {
@@ -321,8 +351,8 @@ export const EvalRunDetailPage = ({
     return (
       <div className="flex flex-col gap-5 p-6" aria-busy="true">
         <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+          {Array.from({ length: 7 }).map((_, i) => (
             <Skeleton key={i} className="h-[110px] rounded-xl" />
           ))}
         </div>
@@ -393,7 +423,7 @@ export const EvalRunDetailPage = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-3">
         <StatCard
           label="Pass rate"
           value={stats.passRate}
@@ -427,6 +457,16 @@ export const EvalRunDetailPage = ({
           label="Avg TTFT"
           value={stats.avgTtftMs != null ? formatMs(stats.avgTtftMs) : '—'}
           tone={stats.avgTtftMs == null ? 'zero' : 'default'}
+        />
+        <StatCard
+          label="Tokens"
+          value={formatTokens(run.total_tokens)}
+          tone={run.total_tokens > 0 ? 'default' : 'zero'}
+        />
+        <StatCard
+          label="Est. cost"
+          value={formatCost(run.estimated_cost_usd)}
+          tone={run.estimated_cost_usd == null ? 'zero' : 'default'}
         />
       </div>
 
