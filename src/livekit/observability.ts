@@ -224,6 +224,20 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
       continue;
     }
 
+    // Runtime events agent-transport emits to compensate for the SDK's
+    // _upload_session_report skipping session._recorded_events. Each record
+    // carries the serialized SDK event (agent_state_changed, user_state_changed,
+    // user_input_transcribed, function_tools_executed, etc.) under
+    // attributes.event. Append straight to raw_report.events; downstream
+    // session-events parsing already understands these `type` discriminators.
+    if (body === "runtime event") {
+      const event = asRecord(log.attributes.event);
+      if (event) {
+        mergeRawReportPatch(rawReportPatches, sessionId, { events: [event] });
+      }
+      continue;
+    }
+
     if (body === "tag") {
       const tag = asRecord(log.attributes.tag);
       const name = asString(tag?.name);
