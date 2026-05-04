@@ -66,25 +66,17 @@ function StatusChip({ status }: { status: CaseStatus }) {
 }
 
 // Stringifies a tool-call argument or a tool-result output for display.
-// - Already-an-object → pretty-print with 2-space indent.
-// - String that looks like JSON (starts with `{` or `[`) → parse + restringify.
-// - Plain string → return as-is so non-JSON outputs (e.g. "shipped") aren't
-//   wrapped in extra quotes.
-// - null/undefined → empty string (caller decides how to render the empty case).
+// Try to parse strings as JSON; on failure, return the string as-is so plain
+// text outputs (e.g. "shipped") render cleanly. Non-strings are stringified
+// directly.
 function formatToolValue(value: unknown): string {
   if (value == null) return ''
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (trimmed && (trimmed[0] === '{' || trimmed[0] === '[')) {
-      try {
-        return JSON.stringify(JSON.parse(value), null, 2)
-      } catch {
-        return value
-      }
-    }
+  if (typeof value !== 'string') return JSON.stringify(value, null, 2)
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
     return value
   }
-  return JSON.stringify(value, null, 2)
 }
 
 function MessageRow({ event, index }: { event: RunEventMessage; index: number }) {
