@@ -252,17 +252,23 @@ function EventMessage({ event }: { event: SessionEvent }) {
         // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
         // agent_handoff items. Older payloads (and the eval path) use
         // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
-        // Render `—` for a missing source (the first handoff in a session
-        // has no previous agent) — `unknown` is misleading there.
         const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
         const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
-        return (
-          <>
-            handoff: <b>{from == null ? '—' : String(from)}</b>
-            <span className="arrow"> → </span>
-            {to == null ? '—' : String(to)}
-          </>
-        )
+        // Drop the arrow entirely when one side is missing — the first
+        // handoff in a session has no previous agent, so `handoff to: X`
+        // reads more naturally than `— → X`.
+        if (from != null && to != null) {
+          return (
+            <>
+              handoff: <b>{String(from)}</b>
+              <span className="arrow"> → </span>
+              {String(to)}
+            </>
+          )
+        }
+        if (to != null) return <>handoff to: <b>{String(to)}</b></>
+        if (from != null) return <>handoff from: <b>{String(from)}</b></>
+        // Shouldn't happen — fall through to the generic item renderer.
       }
       return (
         <>
