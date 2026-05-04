@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Activity, AudioLines, BarChart3, ChevronRight, Settings2 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -14,9 +15,11 @@ import { SessionHeader } from '@/components/session-header'
 import { SessionTimeline } from '@/components/session-timeline/session-timeline'
 import { SessionConfig } from '@/components/session-config'
 import { SessionEvents } from '@/components/session-events'
+import { SessionEvaluationsDrawer } from '@/components/session-evaluations-drawer'
 
 export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
   const { session, loading, error } = useSession()
+  const [evaluationsOpen, setEvaluationsOpen] = useState(false)
 
   if (loading) {
     return (
@@ -47,6 +50,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
   const metrics = session.session_metrics
   const turnCount = metrics?.turns?.length ?? session.turn_count ?? 0
   const eventCount = session.events?.length ?? 0
+  const hasRecording = Boolean(session.record_url)
 
   return (
     <ScrollArea className="h-[calc(100vh-53px)]">
@@ -66,8 +70,12 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
         )}
 
         {/* Auto-connected — these components use hooks internally */}
-        <SessionHeader />
+        <SessionHeader onEvaluationsClick={() => setEvaluationsOpen(true)} />
         <MetricSummaryCards />
+        <SessionEvaluationsDrawer
+          open={evaluationsOpen}
+          onOpenChange={setEvaluationsOpen}
+        />
 
         <Tabs defaultValue="session" className="w-full min-w-0">
           <TabsList className="sticky top-0 z-10 max-w-full overflow-x-auto bg-background">
@@ -91,8 +99,12 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
           <TabsContent value="session" className="mt-4 min-w-0">
             <div className="rounded-lg border p-5">
-              <SessionTimeline />
-              <Separator className="my-5" />
+              {hasRecording && (
+                <>
+                  <SessionTimeline />
+                  <Separator className="my-5" />
+                </>
+              )}
               <TurnTranscriptSection embedded />
             </div>
           </TabsContent>

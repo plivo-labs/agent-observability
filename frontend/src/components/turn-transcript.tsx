@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { Bot, Code2, MessageSquare, User, Zap } from 'lucide-react'
-import { formatMs } from '@/lib/observability-format'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { Bot, ChevronRight, Code2, MessageSquare, User, Zap } from 'lucide-react'
+import { formatMs, formatToolValue } from '@/lib/observability-format'
 import type { ChatItem, SessionMetrics, TurnRecord } from '@/lib/observability-types'
 import { useTranscript } from '@/lib/observability-hooks'
 
@@ -124,34 +129,48 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
               order matches the causal order: user asked → agent called tool
               → agent replied with the result. */}
           {turn.tool_calls?.map((tc, i) => (
-            <div key={i} className={`rounded-lg border bg-muted/30 overflow-hidden w-fit max-w-[85%] ${isChat ? 'self-end mr-7' : ''}`}>
-              <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b">
+            <Collapsible
+              key={i}
+              className={`rounded-lg border bg-muted/30 overflow-hidden w-fit max-w-[85%] ${isChat ? 'self-end mr-7' : ''}`}
+            >
+              <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 bg-muted/50 cursor-pointer hover:bg-muted/70 data-[state=open]:border-b">
+                <ChevronRight size={12} className="text-muted-foreground shrink-0 transition-transform group-data-[state=open]:rotate-90" />
                 <Code2 size={12} className="text-primary shrink-0" />
                 <span className="text-xs font-semibold text-primary">{tc.name}</span>
-                {tc.is_error && <span className="text-[10px] text-foreground font-semibold uppercase tracking-wider">failed</span>}
-              </div>
-              <div className="px-3 py-2 space-y-1.5">
-                <div>
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Arguments</span>
-                  <div className="mt-1 text-xs font-mono space-y-0.5">
-                    {Object.entries(tc.arguments).map(([key, val]) => (
-                      <div key={key} className="flex gap-2">
-                        <span className="text-muted-foreground shrink-0">{key}:</span>
-                        <span className="text-foreground">{typeof val === 'string' ? val : JSON.stringify(val)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                {tc.output != null && (
-                  <div>
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Output</span>
-                    <pre className={`mt-1 text-xs font-mono whitespace-pre-wrap break-all ${tc.is_error ? 'text-foreground font-semibold' : 'text-foreground'}`}>
-                      {tc.output}
-                    </pre>
-                  </div>
+                {tc.is_error && (
+                  <span className="text-[10px] text-foreground font-semibold uppercase tracking-wider">
+                    failed
+                  </span>
                 )}
-              </div>
-            </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                <div className="px-3 py-2 space-y-1.5">
+                  <div>
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                      Arguments
+                    </span>
+                    <div className="mt-1 text-xs font-mono space-y-0.5">
+                      {Object.entries(tc.arguments).map(([key, val]) => (
+                        <div key={key} className="flex gap-2">
+                          <span className="text-muted-foreground shrink-0">{key}:</span>
+                          <span className="text-foreground">{typeof val === 'string' ? val : JSON.stringify(val)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {tc.output != null && (
+                    <div>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                        Output
+                      </span>
+                      <pre className={`mt-1 text-xs font-mono whitespace-pre-wrap break-all ${tc.is_error ? 'text-foreground font-semibold' : 'text-foreground'}`}>
+                        {formatToolValue(tc.output)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           ))}
 
           {turn.agent_text && (

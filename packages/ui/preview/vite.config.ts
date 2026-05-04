@@ -78,6 +78,7 @@ export default defineConfig({
       { find: '@/components/turn-transcript', replacement: reg('turn-transcript/turn-transcript.tsx') },
       { find: '@/components/session-timeline', replacement: reg('session-timeline') },
       { find: '@/components/session-events', replacement: reg('session-events/session-events.tsx') },
+      { find: '@/components/session-evaluations-drawer', replacement: reg('session-evaluations-drawer/session-evaluations-drawer.tsx') },
       { find: '@/components/session-config', replacement: reg('session-config/session-config.tsx') },
       { find: '@/components/sessions-page', replacement: reg('sessions-page/sessions-page.tsx') },
       { find: '@/components/session-detail-page', replacement: reg('session-detail-page/session-detail-page.tsx') },

@@ -1094,7 +1094,7 @@
       "name": "session-detail-page",
       "type": "registry:block",
       "title": "Session Detail Page",
-      "description": "Full session detail with Session, Performance, Events, and Config tabs. Requires shadcn primitives: badge, button, card, collapsible, scroll-area, separator, tabs. Uses react-router and lucide-react.",
+      "description": "Full session detail with Session, Performance, Events, Config tabs, and post-session evaluations drawer. Requires shadcn primitives: badge, button, card, collapsible, scroll-area, separator, sheet, tabs. Uses react-router and lucide-react.",
       "dependencies": [
         "lucide-react",
         "recharts",
@@ -1109,6 +1109,7 @@
         "collapsible",
         "scroll-area",
         "separator",
+        "sheet",
         "skeleton",
         "tabs"
       ],
@@ -1202,6 +1203,11 @@
           "path": "registry/new-york/session-events/session-events.tsx",
           "type": "registry:component",
           "target": "components/session-events.tsx"
+        },
+        {
+          "path": "registry/new-york/session-evaluations-drawer/session-evaluations-drawer.tsx",
+          "type": "registry:component",
+          "target": "components/session-evaluations-drawer.tsx"
         },
         {
           "path": "registry/new-york/session-config/session-config.tsx",

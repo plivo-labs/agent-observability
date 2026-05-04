@@ -108,7 +108,7 @@ export interface SessionMetrics {
   summary: MetricsSummary
 }
 
-export type Transport = 'sip' | 'audio_stream'
+export type Transport = 'sip' | 'audio_stream' | 'text' | 'terminal_text' | string
 
 export interface SessionsFilters {
   accountId?: string
@@ -116,6 +116,39 @@ export interface SessionsFilters {
   startedTo?: string
   /** Multi-value — server accepts comma-separated list. */
   transport?: string[]
+}
+
+export type SessionEvaluationVerdict = 'pass' | 'fail' | 'maybe' | string
+
+export interface SessionTag {
+  name: string
+  metadata: Record<string, unknown> | null
+  source: string
+  observed_at: string | null
+  created_at: string
+  updated_at?: string
+}
+
+export interface SessionExternalEvaluation {
+  source: string
+  judge_name: string
+  tag: string | null
+  verdict: SessionEvaluationVerdict | null
+  reasoning: string | null
+  instructions: string | null
+  raw: Record<string, unknown> | null
+  observed_at: string | null
+  created_at: string
+}
+
+export interface SessionOutcome {
+  source: string
+  outcome: string
+  reason: string | null
+  raw: Record<string, unknown> | null
+  observed_at: string | null
+  created_at: string
+  updated_at?: string
 }
 
 export interface AgentSessionRow {
@@ -135,6 +168,9 @@ export interface AgentSessionRow {
   session_metrics: SessionMetrics | null
   events: SessionEvent[] | null
   options: Record<string, unknown> | null
+  tags?: SessionTag[]
+  evaluations?: SessionExternalEvaluation[]
+  outcome?: SessionOutcome | null
   record_url: string | null
   created_at: string
 }
