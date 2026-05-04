@@ -1,3 +1,5 @@
+import { ClipboardCheck } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import type { AgentSessionRow } from '@/lib/observability-types'
 import { useSession } from '@/lib/observability-hooks'
@@ -9,26 +11,52 @@ const Row = ({ label, children }: { label: string; children: React.ReactNode }) 
   </div>
 )
 
-export const SessionHeader = ({ session: sessionProp }: { session?: AgentSessionRow }) => {
+interface SessionHeaderProps {
+  session?: AgentSessionRow
+  onEvaluationsClick?: () => void
+}
+
+function isTextOnlySession(session: AgentSessionRow): boolean {
+  const transport = String(session.transport ?? '')
+  return transport === 'text' ||
+    transport === 'terminal_text' ||
+    Boolean(session.tags?.some((tag) => tag.name === 'transport:text' || tag.name === 'transport:terminal_text'))
+}
+
+export const SessionHeader = ({
+  session: sessionProp,
+  onEvaluationsClick,
+}: SessionHeaderProps) => {
   const { session: hookSession } = useSession()
   const session = sessionProp ?? hookSession
 
   if (!session) return null
 
+  const textOnly = isTextOnlySession(session)
   const capabilities = [
-    session.has_stt && 'STT',
+    !textOnly && session.has_stt && 'STT',
     session.has_llm && 'LLM',
-    session.has_tts && 'TTS',
+    !textOnly && session.has_tts && 'TTS',
   ].filter(Boolean)
+  const evaluationCount = session.evaluations?.length ?? 0
 
   return (
     <div className="rounded-lg border bg-card">
       {/* Title row */}
-      <div className="flex items-center justify-between px-5 py-4 border-b">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b">
         <span className="text-p-400 font-medium">Session</span>
-        <span className="text-p-400 font-medium tabular-nums">
-          {formatDuration(session.duration_ms)}
-        </span>
+        <div className="flex items-center gap-3">
+          {onEvaluationsClick && (
+            <Button variant="outline" size="sm" onClick={onEvaluationsClick}>
+              <ClipboardCheck size={13} />
+              Evaluation
+              {evaluationCount > 0 && <span>({evaluationCount})</span>}
+            </Button>
+          )}
+          <span className="text-p-400 font-medium tabular-nums">
+            {formatDuration(session.duration_ms)}
+          </span>
+        </div>
       </div>
 
       {/* Two-column key-value grid */}

@@ -7,6 +7,11 @@ export const envSchema = z.object({
   AGENT_OBSERVABILITY_USER: z.string().optional(),
   AGENT_OBSERVABILITY_PASS: z.string().optional(),
 
+  // LiveKit native observability upload auth. The SDK signs Bearer JWTs with
+  // these values and includes an observability.write grant.
+  LIVEKIT_API_KEY: z.string().optional(),
+  LIVEKIT_API_SECRET: z.string().optional(),
+
   // Postgres
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   AUTO_MIGRATE: z
