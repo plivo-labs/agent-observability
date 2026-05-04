@@ -210,7 +210,14 @@ function summarize(event: SessionEvent): string {
       }
       const handoff = item.type === 'agent_handoff' ? item : asRecord(item.agent_handoff)
       if (handoff) {
-        return `handoff: ${handoff.from_agent ?? 'unknown'} → ${handoff.to_agent ?? 'unknown'}`
+        // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
+        // agent_handoff items. Older payloads (and the eval path) use
+        // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
+        // Render `—` for a missing source — the first handoff in a session
+        // has no previous agent, and `unknown` is misleading there.
+        const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
+        const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
+        return `handoff: ${from == null ? '—' : from} → ${to == null ? '—' : to}`
       }
       return `item: ${item.type ?? 'unknown'}`
     }
