@@ -154,7 +154,7 @@ export function AgentRunsPage({
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
           <thead>
             <tr>
-              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cache', 'Cost', 'Branch', 'Commit', ''].map((h, i) => (
+              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cache', 'Cost', 'Commit', ''].map((h, i) => (
                 <th key={i} style={{
                   padding: '10px 14px', textAlign: 'left', fontWeight: 500,
                   color: 'hsl(var(--muted-foreground))', fontSize: 11,
@@ -168,7 +168,7 @@ export function AgentRunsPage({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={14} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                   Loading runs…
                 </td>
               </tr>
@@ -235,12 +235,6 @@ export function AgentRunsPage({
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
                     {formatCost(r.estimated_cost_usd)}
                   </td>
-                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'hsl(var(--muted-foreground))', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <GitBranch size={12} />
-                      {r.ci?.git_branch ?? '—'}
-                    </span>
-                  </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>
                     {!sha && <span style={{ color: 'hsl(var(--muted-foreground))' }}>—</span>}
                     {sha && commitUrl && (
@@ -250,13 +244,16 @@ export function AgentRunsPage({
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
                         style={{ color: 'hsl(var(--foreground))', textDecoration: 'none' }}
-                        title={sha}
+                        title={r.ci?.git_branch ? `${sha}\nbranch: ${String(r.ci.git_branch)}` : sha}
                       >
                         {sha.slice(0, 7)}
                       </a>
                     )}
                     {sha && !commitUrl && (
-                      <span title={sha} style={{ color: 'hsl(var(--muted-foreground))', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        title={r.ci?.git_branch ? `${sha}\nbranch: ${String(r.ci.git_branch)}` : sha}
+                        style={{ color: 'hsl(var(--muted-foreground))', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      >
                         {sha.slice(0, 7)}
                         <span style={{
                           fontSize: 10,
@@ -270,6 +267,12 @@ export function AgentRunsPage({
                         </span>
                       </span>
                     )}
+                    {!sha && r.ci?.git_branch && (
+                      <span style={{ color: 'hsl(var(--muted-foreground))', display: 'inline-flex', alignItems: 'center', gap: 4 }} title={`branch: ${String(r.ci.git_branch)}`}>
+                        <GitBranch size={12} />
+                        <span style={{ fontSize: 11 }}>{String(r.ci.git_branch)}</span>
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', width: 24, color: 'hsl(var(--muted-foreground))' }}>
                     <ChevronRight size={14} />
@@ -279,7 +282,7 @@ export function AgentRunsPage({
             })}
             {!loading && runs.length === 0 && (
               <tr>
-                <td colSpan={14} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
                   No runs found.
                 </td>
               </tr>
