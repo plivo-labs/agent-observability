@@ -185,7 +185,7 @@ export const AgentsPage = ({ onAgentClick }: { onAgentClick?: (agentId: string) 
     <div className="w-full p-6 flex flex-col gap-0 min-w-0">
       <div className="flex items-center justify-between" style={{ marginBottom: 20 }}>
         <div>
-          <h1 style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em' }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em' }}>
             Evals
           </h1>
           <div style={{ color: 'hsl(var(--muted-foreground))', fontSize: 13, marginTop: 4 }}>

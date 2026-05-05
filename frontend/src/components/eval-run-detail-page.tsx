@@ -191,7 +191,7 @@ function Panel({
   return (
     <div className="rounded-lg border bg-card p-4 flex flex-col">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[13px] font-medium">{title}</span>
+        <span data-slot="panel-title" className="text-[13px] font-medium">{title}</span>
         {legend && (
           <div className="flex items-center gap-3">
             {legend.map((l) => (
@@ -593,18 +593,28 @@ export const EvalRunDetailPage = ({
           }
           valueTone={stats.totalToolCalls === 0 ? 'mute' : 'default'}
         />
-        <Kpi
-          label="ASR conf."
-          value={stats.avgAsr != null ? (stats.avgAsr * 100).toFixed(1) : '—'}
-          unit={stats.avgAsr != null ? '%' : undefined}
-          valueTone={asrTone(stats.avgAsr)}
-          hint={
-            stats.totalInterrupts > 0
-              ? `${stats.totalInterrupts} interrupt${stats.totalInterrupts === 1 ? '' : 's'}`
-              : undefined
-          }
-          hintTone={stats.totalInterrupts > 0 ? 'warn' : 'mute'}
-        />
+        {run.prompt_tokens > 0 && (
+          <Kpi
+            label="Cache %"
+            value={((run.cached_prompt_tokens / run.prompt_tokens) * 100).toFixed(1)}
+            unit="%"
+            hint={`${formatTokens(run.cached_prompt_tokens)} / ${formatTokens(run.prompt_tokens)}`}
+          />
+        )}
+        {stats.avgAsr != null && (
+          <Kpi
+            label="ASR conf."
+            value={(stats.avgAsr * 100).toFixed(1)}
+            unit="%"
+            valueTone={asrTone(stats.avgAsr)}
+            hint={
+              stats.totalInterrupts > 0
+                ? `${stats.totalInterrupts} interrupt${stats.totalInterrupts === 1 ? '' : 's'}`
+                : undefined
+            }
+            hintTone={stats.totalInterrupts > 0 ? 'warn' : 'mute'}
+          />
+        )}
       </div>
 
       {overCasesData.length > 0 && (
@@ -874,6 +884,7 @@ export const EvalRunDetailPage = ({
                   { k: 'ttft', label: 'TTFT' },
                   ...(stats.hasTtfb ? [{ k: 'ttfb', label: 'TTFB' }] : []),
                   { k: 'tokens', label: 'Tokens' },
+                  { k: 'cache', label: 'Cache %' },
                   { k: 'cost', label: 'Cost' },
                   { k: 'tools', label: 'Tools' },
                   { k: 'asr', label: 'ASR conf.' },
@@ -958,6 +969,11 @@ export const EvalRunDetailPage = ({
                       {formatTokens(c.total_tokens)}
                     </td>
                     <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
+                      {c.prompt_tokens > 0
+                        ? `${Math.round((c.cached_prompt_tokens / c.prompt_tokens) * 100)}%`
+                        : '—'}
+                    </td>
+                    <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
                       {formatCost(c.estimated_cost_usd)}
                     </td>
                     <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
@@ -1002,7 +1018,7 @@ export const EvalRunDetailPage = ({
               {filteredCases.length === 0 && (
                 <tr>
                   <td
-                    colSpan={12}
+                    colSpan={stats.hasTtfb ? 14 : 13}
                     className="px-4 py-10 text-center text-muted-foreground"
                   >
                     No cases match.
