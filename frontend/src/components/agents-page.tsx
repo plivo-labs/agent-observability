@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Bot, Play, GitCompareArrows, ChevronRight, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { Bot, ChevronRight, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { useEvalAgents } from '@/lib/observability-hooks'
 import { formatDate, formatMs } from '@/lib/observability-format'
 import type { AgentRow } from '@/lib/observability-types'
@@ -191,14 +191,6 @@ export const AgentsPage = ({ onAgentClick }: { onAgentClick?: (agentId: string) 
           <div style={{ color: 'hsl(var(--muted-foreground))', fontSize: 13, marginTop: 4 }}>
             {agents.length} agents under test · {stats.totalRuns} runs
           </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="eval-action-btn">
-            <GitCompareArrows size={14} /> Compare
-          </button>
-          <button type="button" className="eval-action-btn eval-action-btn--primary">
-            <Play size={14} /> Run all
-          </button>
         </div>
       </div>
 
