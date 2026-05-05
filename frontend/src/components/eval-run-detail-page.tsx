@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { parseAsString, useQueryState } from 'nuqs'
-import { Bot, ExternalLink, FlaskConical, GitBranch, GitCommit, Trash2 } from 'lucide-react'
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  GitBranch,
+  Trash2,
+} from 'lucide-react'
 import { Link } from 'react-router'
 import {
   Bar,
@@ -11,13 +17,12 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -35,124 +40,229 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { formatDate, formatDuration, formatMs } from '@/lib/observability-format'
+import {
+  formatCost,
+  formatDate,
+  formatDuration,
+  formatMs,
+  formatTokens,
+} from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
-import type { CaseStatus } from '@/lib/observability-types'
-import { ChartCard } from '@/components/observability-chart-shared'
+import type { CaseStatus, EvalCaseRow, RunEvent } from '@/lib/observability-types'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 
-function formatTokens(tokens: number): string {
-  return tokens > 0 ? tokens.toLocaleString() : '—'
+// Split a ms value into a numeric part and unit so callers can render the
+// unit subdued without re-parsing the formatted string.
+function fmtMsParts(ms: number | null | undefined): { value: string; unit: string | null } {
+  if (ms == null) return { value: '—', unit: null }
+  if (ms < 1) return { value: '<1', unit: 'ms' }
+  if (ms < 1000) return { value: String(Math.round(ms)), unit: 'ms' }
+  return { value: (ms / 1000).toFixed(2), unit: 's' }
 }
 
-function formatCost(cost: number | null): string {
-  return cost == null ? '—' : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+function caseAsrConfidence(events: RunEvent[]): number | null {
+  const vals: number[] = []
+  for (const ev of events) {
+    if (ev.type !== 'message') continue
+    const m = ev.metrics
+    if (!m) continue
+    for (const k of Object.keys(m)) {
+      if (
+        k === 'user_transcript_confidence' ||
+        k === 'stt_confidence' ||
+        k === 'asr_confidence'
+      ) {
+        const v = m[k]
+        if (typeof v === 'number' && Number.isFinite(v)) vals.push(v)
+      }
+    }
+  }
+  if (vals.length === 0) return null
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length
+  return avg > 1 ? avg / 100 : avg
 }
 
-const STATUS_TONE: Record<CaseStatus, string> = {
-  passed:
-    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
-  failed:
-    'bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))]',
-  errored:
-    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
-  skipped: 'bg-muted text-muted-foreground border-border',
+type ValueTone = 'default' | 'good' | 'warn' | 'bad' | 'mute'
+const valueToneClass: Record<ValueTone, string> = {
+  default: 'text-foreground',
+  good: 'text-[hsl(var(--success-fg,var(--success)))]',
+  warn: 'text-[hsl(var(--warning-fg,var(--warning)))]',
+  bad: 'text-[hsl(var(--destructive))]',
+  mute: 'text-muted-foreground',
 }
 
-const CHART_COLORS = {
-  ttft: 'hsl(var(--accent-purple))',
-  ttfb: 'hsl(var(--success))',
-}
-
-function StatusChip({ status }: { status: CaseStatus }) {
+function Kpi({
+  label,
+  value,
+  unit,
+  hint,
+  hintTone = 'mute',
+  valueTone = 'default',
+}: {
+  label: string
+  value: string | number
+  unit?: string
+  hint?: string
+  hintTone?: ValueTone
+  valueTone?: ValueTone
+}) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center h-[22px] px-2 rounded-full border text-xxs-600 capitalize',
-        STATUS_TONE[status],
+    <div className="rounded-lg border bg-card px-4 py-3.5 flex flex-col gap-1.5 min-w-0">
+      <span className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+        {label}
+      </span>
+      <div className="flex items-baseline gap-1.5">
+        <span
+          className={cn(
+            'text-[28px] leading-none font-semibold tabular-nums tracking-tight',
+            valueToneClass[valueTone],
+          )}
+        >
+          {value}
+        </span>
+        {unit && (
+          <span className="text-[12px] text-muted-foreground tabular-nums">{unit}</span>
+        )}
+      </div>
+      {hint && (
+        <span className={cn('text-[11px] tabular-nums', valueToneClass[hintTone])}>
+          {hint}
+        </span>
       )}
-    >
+    </div>
+  )
+}
+
+const STATUS_DOT: Record<CaseStatus, { dot: string; text: string }> = {
+  passed: {
+    dot: 'bg-[hsl(var(--success-fg,var(--success)))]',
+    text: 'text-[hsl(var(--success-fg,var(--success)))]',
+  },
+  failed: {
+    dot: 'bg-[hsl(var(--destructive))]',
+    text: 'text-[hsl(var(--destructive))]',
+  },
+  errored: {
+    dot: 'bg-[hsl(var(--warning-fg,var(--warning)))]',
+    text: 'text-[hsl(var(--warning-fg,var(--warning)))]',
+  },
+  skipped: { dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
+}
+
+function StatusDot({ status }: { status: CaseStatus }) {
+  const { dot, text } = STATUS_DOT[status]
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 text-[12px]', text)}>
+      <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
       {status}
     </span>
   )
 }
 
-type StatTone = 'good' | 'warn' | 'bad' | 'zero' | 'default'
-
-/** Card tones mirror the session-detail metric tiles: good/warn/bad pick
- * up the semantic token family (success / warning / destructive). `zero`
- * mutes the value so 0 counts don't compete with real signals. */
-function StatCard({
-  label,
-  value,
-  suffix,
-  tone = 'default',
-  meterPct,
-}: {
-  label: string
-  value: string | number
-  suffix?: string
-  tone?: StatTone
-  meterPct?: number
-}) {
-  const valueClass =
-    tone === 'good'
-      ? 'text-[hsl(var(--success-fg,var(--success)))]'
-      : tone === 'warn'
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
-        : tone === 'bad'
-          ? 'text-[hsl(var(--destructive))]'
-          : tone === 'zero'
-            ? 'text-muted-foreground'
-            : ''
-  const borderClass =
-    tone === 'good'
-      ? 'border-[hsl(var(--success-border))]'
-      : tone === 'warn'
-        ? 'border-[hsl(var(--warning-border))]'
-        : tone === 'bad'
-          ? 'border-[hsl(var(--destructive-border))]'
-          : ''
-  const meterClass =
-    tone === 'good'
-      ? 'bg-[hsl(var(--success-fg,var(--success)))]'
-      : tone === 'warn'
-        ? 'bg-[hsl(var(--warning-fg,var(--warning)))]'
-        : tone === 'bad'
-          ? 'bg-[hsl(var(--destructive))]'
-          : 'bg-foreground'
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
   return (
-    <Card className={cn('relative overflow-hidden', borderClass)}>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs-600 uppercase tracking-wide text-muted-foreground">
-          {label}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className={cn('text-h1-600 font-semibold tabular-nums flex items-baseline gap-2', valueClass)}>
-          {value}
-          {suffix && <span className="text-p-500 text-muted-foreground">{suffix}</span>}
-        </div>
-        {meterPct != null && (
-          <div className="absolute left-0 right-0 bottom-0 h-[3px] bg-muted">
-            <div
-              className={cn('h-full', meterClass)}
-              style={{ width: `${Math.max(0, Math.min(100, meterPct))}%` }}
-            />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        navigator.clipboard?.writeText(text)
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1100)
+      }}
+      className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted transition"
+      aria-label="Copy run id"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+    </button>
   )
 }
 
-/** Pass-rate card tone matches the session-detail latency scale:
- * 100% good, ≥ 70% warn, below bad. */
-function passRateTone(pct: number): StatTone {
-  if (pct >= 100) return 'good'
-  if (pct >= 70) return 'warn'
-  return 'bad'
+function Panel({
+  title,
+  legend,
+  children,
+}: {
+  title: string
+  legend?: { color: string; label: string }[]
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[13px] font-medium">{title}</span>
+        {legend && (
+          <div className="flex items-center gap-3">
+            {legend.map((l) => (
+              <span
+                key={l.label}
+                className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              >
+                <span
+                  className="inline-block h-2 w-2 rounded-sm"
+                  style={{ background: l.color }}
+                />
+                {l.label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="h-[180px] -mx-1">{children}</div>
+    </div>
+  )
+}
+
+const TTFT_BAD_MS = 10_000
+const TTFB_BAD_MS = 1_500
+const ASR_BAD = 0.88
+const ASR_WARN = 0.92
+
+const COLOR_TTFT = 'hsl(var(--accent-purple))'
+const COLOR_TTFB = 'hsl(var(--success-fg,var(--success)))'
+
+const latencyTone = (ms: number | null, badMs: number): ValueTone =>
+  ms == null ? 'mute' : ms > badMs ? 'bad' : 'default'
+
+const asrTone = (avg: number | null): ValueTone => {
+  if (avg == null) return 'mute'
+  if (avg < ASR_BAD) return 'bad'
+  if (avg < ASR_WARN) return 'warn'
+  return 'good'
+}
+
+const passRateTone = (pct: number): ValueTone =>
+  pct >= 90 ? 'good' : pct >= 70 ? 'warn' : 'bad'
+
+type StatusFilter = CaseStatus | 'all'
+function FilterPill({
+  active,
+  onChange,
+}: {
+  active: StatusFilter
+  onChange: (s: StatusFilter) => void
+}) {
+  const items: StatusFilter[] = ['all', 'passed', 'failed', 'errored']
+  return (
+    <div className="inline-flex h-8 items-center rounded-md border bg-card p-0.5 text-[12px]">
+      {items.map((it) => (
+        <button
+          key={it}
+          type="button"
+          onClick={() => onChange(it)}
+          className={cn(
+            'px-3 h-full rounded-[5px] transition capitalize',
+            active === it
+              ? 'bg-foreground text-background font-medium'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {it}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export const EvalRunDetailPage = ({
@@ -169,6 +279,7 @@ export const EvalRunDetailPage = ({
   const [localOpenCaseId, setLocalOpenCaseId] = useState<string | null>(null)
   const drawerCaseId = openCaseId ?? localOpenCaseId
   const [caseSearch, setCaseSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const { api } = useObservabilityContext()
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([])
   const [deletedCaseIds, setDeletedCaseIds] = useState<string[]>([])
@@ -193,47 +304,88 @@ export const EvalRunDetailPage = ({
     setLocalOpenCaseId(null)
   }
 
+  type EnrichedCase = EvalCaseRow & {
+    asr: number | null
+    judgePass: number
+    judgeFail: number
+    ttftBad: boolean
+    ttfbBad: boolean
+    asrBad: boolean
+    asrWarn: boolean
+    hasInterrupt: boolean
+  }
+  const enriched: EnrichedCase[] = useMemo(() => {
+    if (!run) return []
+    return run.cases.map((c) => {
+      const asr = caseAsrConfidence(c.events)
+      let judgePass = 0
+      let judgeFail = 0
+      for (const j of c.judgments) {
+        if (j.verdict === 'pass') judgePass += 1
+        else if (j.verdict === 'fail') judgeFail += 1
+      }
+      return {
+        ...c,
+        asr,
+        judgePass,
+        judgeFail,
+        ttftBad: c.ttft_avg_ms != null && c.ttft_avg_ms > TTFT_BAD_MS,
+        ttfbBad: c.ttfb_avg_ms != null && c.ttfb_avg_ms > TTFB_BAD_MS,
+        asrBad: asr != null && asr < ASR_BAD,
+        asrWarn: asr != null && asr >= ASR_BAD && asr < ASR_WARN,
+        hasInterrupt: (c.interruption_count ?? 0) > 0,
+      }
+    })
+  }, [run])
+
   const stats = useMemo(() => {
     if (!run) return null
-    const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
-    const totalToolCalls = run.cases.reduce((sum, c) => sum + (c.tool_call_count ?? 0), 0)
+    const passRate = run.total > 0 ? (run.passed / run.total) * 100 : 0
+    let totalToolCalls = 0
+    let totalInterrupts = 0
+    let asrSum = 0
+    let asrCount = 0
+    for (const c of enriched) {
+      totalToolCalls += c.tool_call_count ?? 0
+      totalInterrupts += c.interruption_count ?? 0
+      if (c.asr != null) {
+        asrSum += c.asr
+        asrCount += 1
+      }
+    }
+    const avgAsr = asrCount > 0 ? asrSum / asrCount : null
     return {
       passRate,
-      hasAnyFailure: run.failed > 0 || run.errored > 0,
-      passedPct: run.total > 0 ? (run.passed / run.total) * 100 : 0,
-      failedPct: run.total > 0 ? (run.failed / run.total) * 100 : 0,
       totalToolCalls,
-      avgToolCallsPerCase: run.total > 0 ? (totalToolCalls / run.total).toFixed(1) : null,
-      avgTokensPerCase: run.total > 0 ? Math.round(run.total_tokens / run.total) : null,
-      avgCostPerCase: run.total > 0 && run.estimated_cost_usd != null
-        ? run.estimated_cost_usd / run.total
-        : null,
+      totalInterrupts,
+      avgToolCallsPerCase: run.total > 0 ? totalToolCalls / run.total : 0,
+      avgTokensPerCase: run.total > 0 ? Math.round(run.total_tokens / run.total) : 0,
+      avgCostPerCase:
+        run.total > 0 && run.estimated_cost_usd != null
+          ? run.estimated_cost_usd / run.total
+          : null,
+      avgAsr,
     }
-  }, [run])
+  }, [run, enriched])
 
-  const percentilesData = useMemo(() => {
-    if (!run) return []
-    return [
-      { name: 'TTFT', avg: run.ttft_avg_ms ?? 0, p50: run.ttft_p50_ms ?? 0, p95: run.ttft_p95_ms ?? 0 },
-      { name: 'TTFB', avg: run.ttfb_avg_ms ?? 0, p50: run.ttfb_p50_ms ?? 0, p95: run.ttfb_p95_ms ?? 0 },
-    ].filter((d) => d.avg > 0 || d.p50 > 0 || d.p95 > 0)
-  }, [run])
-
-  const overCasesData = useMemo(() => {
-    if (!run) return []
-    return run.cases.map((c, i) => ({
-      idx: i + 1,
-      ttft: c.ttft_avg_ms,
-      ttfb: c.ttfb_avg_ms,
-    }))
-  }, [run])
+  const overCasesData = useMemo(
+    () =>
+      enriched.map((c, i) => ({
+        idx: i + 1,
+        ttft: c.ttft_avg_ms,
+        ttfb: c.ttfb_avg_ms,
+      })),
+    [enriched],
+  )
 
   const filteredCases = useMemo(() => {
     const deletedIds = new Set(deletedCaseIds)
-    const cases = (run?.cases ?? []).filter((c) => !deletedIds.has(c.case_id))
+    let cases = enriched.filter((c) => !deletedIds.has(c.case_id))
+    if (statusFilter !== 'all') cases = cases.filter((c) => c.status === statusFilter)
     const q = caseSearch.trim().toLowerCase()
-    return q ? cases.filter((c) => c.name.toLowerCase().includes(q)) : cases
-  }, [run, caseSearch, deletedCaseIds])
+    if (q) cases = cases.filter((c) => c.name.toLowerCase().includes(q))
+    return cases
+  }, [enriched, caseSearch, deletedCaseIds, statusFilter])
 
   const selectedSet = useMemo(() => new Set(selectedCaseIds), [selectedCaseIds])
   const selectedCount = selectedCaseIds.length
@@ -241,7 +393,8 @@ export const EvalRunDetailPage = ({
     (count, c) => count + (selectedSet.has(c.case_id) ? 1 : 0),
     0,
   )
-  const allVisibleSelected = filteredCases.length > 0 && selectedInViewCount === filteredCases.length
+  const allVisibleSelected =
+    filteredCases.length > 0 && selectedInViewCount === filteredCases.length
 
   const toggleCaseSelected = (caseId: string, checked: boolean) => {
     setSelectedCaseIds((prev) => {
@@ -249,15 +402,14 @@ export const EvalRunDetailPage = ({
       return prev.filter((id) => id !== caseId)
     })
   }
-
   const toggleAllVisibleSelected = (checked: boolean) => {
     setSelectedCaseIds((prev) => {
       if (checked) {
         const next = new Set(prev)
-        for (const evalCase of filteredCases) next.add(evalCase.case_id)
+        for (const c of filteredCases) next.add(c.case_id)
         return Array.from(next)
       }
-      const visibleIds = new Set(filteredCases.map((evalCase) => evalCase.case_id))
+      const visibleIds = new Set(filteredCases.map((c) => c.case_id))
       return prev.filter((id) => !visibleIds.has(id))
     })
   }
@@ -278,17 +430,20 @@ export const EvalRunDetailPage = ({
     }
   }
 
-
   if (loading) {
     return (
       <div className="flex flex-col gap-5 p-6" aria-busy="true">
         <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-[110px] rounded-xl" />
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2.5">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-[88px] rounded-lg" />
           ))}
         </div>
-        <Skeleton className="h-[300px] w-full rounded-xl" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <Skeleton className="h-[230px] rounded-lg" />
+          <Skeleton className="h-[230px] rounded-lg" />
+          <Skeleton className="h-[230px] rounded-lg" />
+        </div>
       </div>
     )
   }
@@ -297,250 +452,327 @@ export const EvalRunDetailPage = ({
     return (
       <div className="p-12 text-center text-foreground">
         <p>Failed to load eval run: {error ?? 'not found'}</p>
-        <div className="eval-breadcrumbs mt-4 justify-center">
-          <Link to="/evals">Evals</Link>
+        <div className="mt-4">
+          <Link to="/evals" className="text-link underline">
+            Evals
+          </Link>
         </div>
       </div>
     )
   }
 
-  return (
-    <div className="p-6 flex flex-col gap-5 relative">
-      <div className="eval-breadcrumbs">
-        <Link to="/evals">Evals</Link>
-        {run.agent_id && (
-          <>
-            <span className="eval-breadcrumbs__sep">/</span>
-            <Link to={`/evals/agents/${encodeURIComponent(run.agent_id)}`}>{run.agent_id}</Link>
-          </>
-        )}
-        <span className="eval-breadcrumbs__sep">/</span>
-        <span className="eval-breadcrumbs__current">{run.name ?? runId.slice(0, 8)}</span>
-      </div>
+  const ttftParts = fmtMsParts(run.ttft_p95_ms)
+  const ttfbParts = fmtMsParts(run.ttfb_p95_ms)
 
+  const branch = run.ci?.git_branch ? String(run.ci.git_branch) : null
+  const sha = run.ci?.git_sha ? String(run.ci.git_sha).slice(0, 7) : null
+  const runShort = `${run.run_id.slice(0, 8)}…${run.run_id.slice(-4)}`
+
+  const displayName = run.name ?? run.agent_id ?? run.run_id.slice(0, 8)
+
+  return (
+    <div className="p-6 flex flex-col gap-4 relative">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-3">
-            <h1 className="text-h2-600 font-semibold m-0">
-              {run.name ?? run.agent_id ?? <span className="text-muted-foreground">—</span>}
-            </h1>
-            {run.framework && (
-              <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
-                <Bot className="h-3 w-3 shrink-0 text-muted-foreground" />
-                {run.framework}
-                {run.framework_version && (
-                  <span className="text-muted-foreground font-mono text-[11px]">
-                    {run.framework_version}
-                  </span>
-                )}
-              </span>
-            )}
-            <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
-              <FlaskConical className="h-3 w-3 shrink-0 text-muted-foreground" />
-              {run.testing_framework}
-              {run.testing_framework_version && (
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  {run.testing_framework_version}
-                </span>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Link
+            to={
+              run.agent_id ? `/evals/agents/${encodeURIComponent(run.agent_id)}` : '/evals'
+            }
+            className="text-[13px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+          >
+            <span className="text-[11px]">‹</span> Runs
+          </Link>
+          <span className="text-muted-foreground/60 text-[13px]">/</span>
+          <span className="font-mono text-[14px] font-semibold tracking-tight truncate max-w-[420px]">
+            {displayName}
+          </span>
+          {run.framework && (
+            <span className="ml-1 inline-flex shrink-0 items-center gap-1.5 px-2 h-6 rounded-full border bg-card text-[11px] text-muted-foreground">
+              <span className="h-1.5 w-1.5 rounded-full border border-current" />
+              {run.framework}
+              {run.framework_version && (
+                <span className="font-mono">{run.framework_version}</span>
               )}
             </span>
-          </div>
-          <div className="font-mono text-xs-400 text-muted-foreground">{run.run_id}</div>
+          )}
         </div>
-        <div className="text-right text-xs text-muted-foreground">
-          <b className="block text-foreground text-s-600">
-            Started {formatDate(run.started_at)}
-          </b>
-          <span>Duration {formatDuration(run.duration_ms)}</span>
+        <div className="flex items-center gap-4 text-[12px] text-muted-foreground tabular-nums">
+          <span className="inline-flex items-center gap-1 font-mono">
+            {runShort}
+            <CopyButton text={run.run_id} />
+          </span>
+          {branch && (
+            <span className="inline-flex items-center gap-1 font-mono">
+              <GitBranch className="h-3 w-3" />
+              {branch}
+              {sha && <span className="text-muted-foreground/70">@{sha}</span>}
+            </span>
+          )}
+          <span>
+            <span className="text-muted-foreground/70">dur</span>{' '}
+            <span className="text-foreground">{formatDuration(run.duration_ms)}</span>
+          </span>
+          <span className="text-muted-foreground/70">·</span>
+          <span>{formatDate(run.started_at)}</span>
+          {run.ci?.run_url && (
+            <a
+              href={String(run.ci.run_url)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-link hover:underline"
+            >
+              CI <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-5 gap-3">
-        <StatCard
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+        <Kpi
           label="Pass rate"
-          value={stats.passRate}
-          suffix="%"
-          tone={passRateTone(stats.passRate)}
-          meterPct={stats.passRate}
+          value={stats.passRate.toFixed(0)}
+          unit="%"
+          valueTone={passRateTone(stats.passRate)}
+          hint={`${run.passed}✓ ${run.failed > 0 ? ` · ${run.failed}✗` : ''}`}
         />
-        <StatCard
-          label="Passed"
-          value={run.passed}
-          tone={run.passed > 0 ? 'good' : 'zero'}
-          meterPct={stats.passedPct}
+        <Kpi
+          label="Cases"
+          value={run.total}
+          hint={`${run.passed}✓${run.failed ? ` · ${run.failed}✗` : ''}${run.errored ? ` · ${run.errored}!` : ''}`}
         />
-        <StatCard
-          label="Failed"
-          value={run.failed}
-          tone={run.failed > 0 ? 'bad' : 'zero'}
-          meterPct={stats.failedPct}
+        <Kpi
+          label="P95 TTFT"
+          value={ttftParts.value}
+          unit={ttftParts.unit ?? undefined}
+          valueTone={latencyTone(run.ttft_p95_ms, TTFT_BAD_MS)}
+          hint={run.ttft_avg_ms != null ? `avg ${formatMs(run.ttft_avg_ms)}` : undefined}
         />
-        <StatCard
-          label="Errored"
-          value={run.errored}
-          tone={run.errored > 0 ? 'bad' : 'zero'}
+        <Kpi
+          label="P95 TTFB"
+          value={ttfbParts.value}
+          unit={ttfbParts.unit ?? undefined}
+          valueTone={latencyTone(run.ttfb_p95_ms, TTFB_BAD_MS)}
+          hint={run.ttfb_avg_ms != null ? `avg ${formatMs(run.ttfb_avg_ms)}` : undefined}
         />
-        <StatCard
-          label="Cache %"
-          value={run.prompt_tokens > 0 ? Math.round((run.cached_prompt_tokens / run.prompt_tokens) * 100) + '%' : '—'}
-          tone={run.prompt_tokens === 0 ? 'zero' : 'default'}
-        />
-        <StatCard
-          label="p95 TTFT"
-          value={run.ttft_p95_ms != null ? formatMs(run.ttft_p95_ms) : '—'}
-          tone={run.ttft_p95_ms == null ? 'zero' : 'default'}
-        />
-        <StatCard
-          label="p95 TTFB"
-          value={run.ttfb_p95_ms != null ? formatMs(run.ttfb_p95_ms) : '—'}
-          tone={run.ttfb_p95_ms == null ? 'zero' : 'default'}
-        />
-        <StatCard
-          label="Tool calls"
-          value={stats.totalToolCalls > 0 ? stats.totalToolCalls : '—'}
-          suffix={stats.avgToolCallsPerCase != null && stats.totalToolCalls > 0 ? `${stats.avgToolCallsPerCase} avg/case` : undefined}
-          tone={stats.totalToolCalls > 0 ? 'default' : 'zero'}
-        />
-        <StatCard
+        <Kpi
           label="Tokens"
           value={formatTokens(run.total_tokens)}
-          suffix={stats.avgTokensPerCase != null && run.total_tokens > 0 ? `${stats.avgTokensPerCase.toLocaleString()} avg/case` : undefined}
-          tone={run.total_tokens > 0 ? 'default' : 'zero'}
+          hint={
+            run.total_tokens > 0
+              ? `${stats.avgTokensPerCase.toLocaleString()} avg/case`
+              : undefined
+          }
+          valueTone={run.total_tokens === 0 ? 'mute' : 'default'}
         />
-        <StatCard
-          label="Est. cost"
+        <Kpi
+          label="Cost"
           value={formatCost(run.estimated_cost_usd)}
-          suffix={stats.avgCostPerCase != null ? `$${stats.avgCostPerCase.toFixed(4)}/case` : undefined}
-          tone={run.estimated_cost_usd == null ? 'zero' : 'default'}
+          hint={
+            stats.avgCostPerCase != null
+              ? `$${stats.avgCostPerCase.toFixed(4)}/case`
+              : undefined
+          }
+          valueTone={run.estimated_cost_usd == null ? 'mute' : 'default'}
+        />
+        <Kpi
+          label="Tool calls"
+          value={stats.totalToolCalls > 0 ? stats.totalToolCalls : '—'}
+          hint={
+            stats.totalToolCalls > 0
+              ? `${stats.avgToolCallsPerCase.toFixed(1)} avg/case`
+              : undefined
+          }
+          valueTone={stats.totalToolCalls === 0 ? 'mute' : 'default'}
+        />
+        <Kpi
+          label="ASR conf."
+          value={stats.avgAsr != null ? (stats.avgAsr * 100).toFixed(1) : '—'}
+          unit={stats.avgAsr != null ? '%' : undefined}
+          valueTone={asrTone(stats.avgAsr)}
+          hint={
+            stats.totalInterrupts > 0
+              ? `${stats.totalInterrupts} interrupt${stats.totalInterrupts === 1 ? '' : 's'}`
+              : undefined
+          }
+          hintTone={stats.totalInterrupts > 0 ? 'warn' : 'mute'}
         />
       </div>
 
-      {(percentilesData.length > 0 || overCasesData.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {percentilesData.length > 0 && (
-            <ChartCard
-              title="Latency Percentiles"
-              legend={[
-                { color: 'hsl(var(--primary) / 0.3)', label: 'Avg' },
-                { color: 'hsl(var(--primary) / 0.6)', label: 'P50' },
-                { color: 'hsl(var(--primary))', label: 'P95' },
-              ]}
-            >
-              <BarChart data={percentilesData} barCategoryGap="20%">
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  stroke="hsl(var(--st2))"
-                />
-                <YAxis
-                  tickFormatter={(v: number) => formatMs(v)}
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  stroke="hsl(var(--st2))"
-                />
-                <Tooltip
-                  formatter={(v: unknown) => formatMs(Number(v))}
-                  contentStyle={{
-                    background: 'hsl(var(--background))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: 8,
-                  }}
-                />
-                <Bar dataKey="avg" name="Avg" fill="hsl(var(--primary) / 0.3)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="p50" name="P50" fill="hsl(var(--primary) / 0.6)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="p95" name="P95" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ChartCard>
-          )}
-
-          {overCasesData.length > 0 && (
-            <ChartCard
-              title="Latency Over Cases"
-              subtitle="Avg TTFT and TTFB across cases in order"
-              legend={[
-                { color: CHART_COLORS.ttft, label: 'TTFT' },
-                { color: CHART_COLORS.ttfb, label: 'TTFB' },
-              ]}
-            >
-              <LineChart data={overCasesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+      {overCasesData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          {/* Latency over cases (line) */}
+          <Panel
+            title="Latency over cases"
+            legend={[
+              { color: COLOR_TTFT, label: 'TTFT' },
+              { color: COLOR_TTFB, label: 'TTFB' },
+            ]}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={overCasesData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis
                   dataKey="idx"
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  stroke="hsl(var(--st2))"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  stroke="hsl(var(--border))"
+                  tickLine={false}
                 />
                 <YAxis
                   tickFormatter={(v: number) => formatMs(v)}
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  stroke="hsl(var(--st2))"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  stroke="hsl(var(--border))"
+                  tickLine={false}
+                  width={42}
                 />
                 <Tooltip
                   formatter={(v: unknown) => formatMs(Number(v))}
                   contentStyle={{
-                    background: 'hsl(var(--background))',
+                    background: 'hsl(var(--popover))',
                     border: '1px solid hsl(var(--border))',
-                    borderRadius: 8,
+                    borderRadius: 6,
+                    fontSize: 11,
                   }}
                 />
-                <Line type="monotone" dataKey="ttft" name="TTFT" stroke={CHART_COLORS.ttft} dot={false} strokeWidth={2} connectNulls />
-                <Line type="monotone" dataKey="ttfb" name="TTFB" stroke={CHART_COLORS.ttfb} dot={false} strokeWidth={2} connectNulls />
+                <Line
+                  type="monotone"
+                  dataKey="ttft"
+                  name="TTFT"
+                  stroke={COLOR_TTFT}
+                  strokeWidth={1.75}
+                  dot={{ r: 2.5, strokeWidth: 0, fill: COLOR_TTFT }}
+                  activeDot={{ r: 4 }}
+                  connectNulls
+                />
+                <Line
+                  type="monotone"
+                  dataKey="ttfb"
+                  name="TTFB"
+                  stroke={COLOR_TTFB}
+                  strokeWidth={1.75}
+                  dot={false}
+                  connectNulls
+                />
               </LineChart>
-            </ChartCard>
-          )}
+            </ResponsiveContainer>
+          </Panel>
 
-        </div>
-      )}
+          {/* Pipeline breakdown (stacked bars) */}
+          <Panel
+            title="Pipeline breakdown"
+            legend={[
+              { color: COLOR_TTFT, label: 'TTFT' },
+              { color: COLOR_TTFB, label: 'TTFB' },
+            ]}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={overCasesData}
+                margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+                barCategoryGap={3}
+              >
+                <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis
+                  dataKey="idx"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  stroke="hsl(var(--border))"
+                  tickLine={false}
+                />
+                <YAxis
+                  tickFormatter={(v: number) => formatMs(v)}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  stroke="hsl(var(--border))"
+                  tickLine={false}
+                  width={42}
+                />
+                <Tooltip
+                  formatter={(v: unknown) => formatMs(Number(v))}
+                  contentStyle={{
+                    background: 'hsl(var(--popover))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: 6,
+                    fontSize: 11,
+                  }}
+                />
+                <Bar dataKey="ttft" stackId="lat" fill={COLOR_TTFT} radius={[0, 0, 0, 0]} />
+                <Bar dataKey="ttfb" stackId="lat" fill={COLOR_TTFB} radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Panel>
 
-      {run.total_tokens > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rounded-lg border bg-card p-5">
-            <span className="text-p-400 font-medium">Token &amp; cost</span>
-            <p className="text-xs text-muted-foreground mt-0.5">Prompt vs completion split</p>
-            <div className="mt-3 flex items-center gap-6">
-              <div className="relative h-32 w-32 shrink-0">
-                <PieChart width={128} height={128}>
-                  <Pie
-                    data={[
-                      { name: 'prompt', value: run.prompt_tokens },
-                      { name: 'completion', value: run.completion_tokens },
-                    ].filter((d) => d.value > 0)}
-                    dataKey="value"
-                    cx={64}
-                    cy={64}
-                    outerRadius={55}
-                    innerRadius={32}
-                    strokeWidth={0}
-                  >
-                    <Cell fill="hsl(var(--accent-purple))" />
-                    <Cell fill="hsl(var(--success))" />
-                  </Pie>
-                </PieChart>
+          {/* Token & cost (donut) */}
+          <div className="rounded-lg border bg-card p-4 flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[13px] font-medium">Token &amp; cost</span>
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="inline-block h-2 w-2 rounded-sm"
+                    style={{ background: COLOR_TTFT }}
+                  />
+                  prompt
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
+                  <span className="inline-block h-2 w-2 rounded-sm border border-current" />
+                  compl.
+                </span>
+              </div>
+            </div>
+            <div className="flex-1 flex items-center gap-5 min-h-[180px]">
+              <div className="relative h-[140px] w-[140px] shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: 'prompt', value: run.prompt_tokens },
+                        { name: 'completion', value: run.completion_tokens },
+                      ].filter((d) => d.value > 0)}
+                      dataKey="value"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={42}
+                      outerRadius={62}
+                      strokeWidth={0}
+                      startAngle={90}
+                      endAngle={-270}
+                    >
+                      <Cell fill={COLOR_TTFT} />
+                      <Cell fill="hsl(var(--muted))" />
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-xs-600 font-semibold tabular-nums">
-                    {(run.total_tokens / 1000).toFixed(1)}k
+                  <span className="text-[18px] font-semibold tabular-nums leading-none">
+                    {formatTokens(run.total_tokens)}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">tokens</span>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">tokens</span>
                 </div>
               </div>
-              <div className="flex-1 space-y-1.5 text-xs">
-                <div className="flex justify-between">
+              <div className="flex-1 space-y-1.5 text-[12px]">
+                <div className="flex items-center justify-between gap-3">
                   <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                    <span className="inline-block h-2 w-2 rounded-sm bg-[hsl(var(--accent-purple))]" />
+                    <span
+                      className="inline-block h-2 w-2 rounded-sm"
+                      style={{ background: COLOR_TTFT }}
+                    />
                     prompt
                   </span>
-                  <span className="font-medium tabular-nums">{run.prompt_tokens.toLocaleString()}</span>
+                  <span className="font-medium tabular-nums">
+                    {formatTokens(run.prompt_tokens)}
+                  </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                    <span className="inline-block h-2 w-2 rounded-sm bg-[hsl(var(--success))]" />
+                    <span className="inline-block h-2 w-2 rounded-sm border border-current" />
                     completion
                   </span>
-                  <span className="tabular-nums">{run.completion_tokens.toLocaleString()}</span>
+                  <span className="tabular-nums">{formatTokens(run.completion_tokens)}</span>
                 </div>
                 {run.estimated_cost_usd != null && (
-                  <div className="flex justify-between pt-1 border-t">
+                  <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-border">
                     <span className="text-muted-foreground">est. cost</span>
-                    <span className="tabular-nums">{formatCost(run.estimated_cost_usd)}</span>
+                    <span className="tabular-nums font-medium">
+                      {formatCost(run.estimated_cost_usd)}
+                    </span>
                   </div>
                 )}
               </div>
@@ -549,49 +781,11 @@ export const EvalRunDetailPage = ({
         </div>
       )}
 
-      {run.ci && (
-        <Card>
-          <CardContent className="flex flex-wrap items-center gap-4 py-3">
-            <span className="text-xs-600 text-muted-foreground uppercase tracking-wider">CI</span>
-            {run.ci.provider && (
-              <span className="text-xs capitalize">{String(run.ci.provider)}</span>
-            )}
-            {run.ci.git_branch && (
-              <span className="inline-flex items-center gap-1 text-xs">
-                <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-                {String(run.ci.git_branch)}
-              </span>
-            )}
-            {run.ci.git_sha && (
-              <span className="inline-flex items-center gap-1 text-xs font-mono">
-                <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
-                {String(run.ci.git_sha).slice(0, 7)}
-              </span>
-            )}
-            {run.ci.run_url && (
-              <a
-                href={String(run.ci.run_url)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                View run <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-            {run.ci.commit_message && (
-              <span className="text-xs text-muted-foreground italic truncate max-w-[40ch]">
-                "{String(run.ci.commit_message)}"
-              </span>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       <div>
-        <div className="flex items-center justify-between mb-3 gap-3">
-          <h2 className="text-h4-600 font-semibold">
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 className="text-[14px] font-semibold tracking-tight">
             Cases{' '}
-            <span className="text-muted-foreground text-xs">
+            <span className="text-muted-foreground font-normal text-[12px]">
               ({filteredCases.length} of {run.cases.length})
             </span>
           </h2>
@@ -600,10 +794,10 @@ export const EvalRunDetailPage = ({
               <Button
                 variant="outline"
                 size="sm"
-                className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+                className="h-8 text-[hsl(var(--destructive))] [&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
                 onClick={() => setConfirmOpen(true)}
               >
-                <Trash2 /> Delete
+                <Trash2 /> Delete {selectedCount}
               </Button>
             )}
             <input
@@ -611,115 +805,172 @@ export const EvalRunDetailPage = ({
               placeholder="Search name…"
               value={caseSearch}
               onChange={(e) => setCaseSearch(e.target.value)}
-              className="h-8 w-64 rounded-md border border-border bg-background px-3 text-xs outline-none focus:ring-1 focus:ring-ring"
+              className="h-8 w-56 rounded-md border border-border bg-card px-3 text-[12px] outline-none focus:ring-1 focus:ring-ring"
             />
+            <FilterPill active={statusFilter} onChange={setStatusFilter} />
           </div>
         </div>
-        <div style={{ borderRadius: 10, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
+
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <table className="w-full text-[12px] border-collapse">
             <thead>
-              <tr>
-                {['', 'Name', 'Status', 'Duration', 'TTFT', 'TTFB', 'Tokens', 'Cache', 'Cost', 'Tools', 'Judgments', 'Events'].map((h, i) => (
-                  <th key={i} style={{
-                    padding: '10px 14px', textAlign: 'left', fontWeight: 500,
-                    color: 'hsl(var(--muted-foreground))', fontSize: 11,
-                    textTransform: 'uppercase', letterSpacing: '0.06em',
-                    borderBottom: '1px solid hsl(var(--border))',
-                    background: 'hsl(var(--card))', whiteSpace: 'nowrap',
-                  }}>
-                    {i === 0 ? (
+              <tr className="text-muted-foreground">
+                {[
+                  { k: 'sel', label: '' },
+                  { k: 'name', label: 'Name', cls: 'text-left' },
+                  { k: 'status', label: 'Status' },
+                  { k: 'duration', label: 'Duration' },
+                  { k: 'ttft', label: 'TTFT' },
+                  { k: 'ttfb', label: 'TTFB' },
+                  { k: 'tokens', label: 'Tokens' },
+                  { k: 'cost', label: 'Cost' },
+                  { k: 'tools', label: 'Tools' },
+                  { k: 'asr', label: 'ASR conf.' },
+                  { k: 'judg', label: 'Judgments' },
+                  { k: 'events', label: 'Events' },
+                  { k: 'chev', label: '' },
+                ].map((h) => (
+                  <th
+                    key={h.k}
+                    className={cn(
+                      'h-9 px-3.5 text-[10px] font-semibold tracking-[0.12em] uppercase border-b border-border bg-card whitespace-nowrap',
+                      h.cls ?? 'text-left',
+                    )}
+                  >
+                    {h.k === 'sel' ? (
                       <Checkbox
                         checked={allVisibleSelected}
-                        onCheckedChange={(checked) => toggleAllVisibleSelected(checked === true)}
+                        onCheckedChange={(checked) =>
+                          toggleAllVisibleSelected(checked === true)
+                        }
                         aria-label="Select all visible cases"
                       />
-                    ) : h}
+                    ) : (
+                      h.label
+                    )}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filteredCases.map((c) => {
-                const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
-                const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
+                const { judgePass, judgeFail, ttftBad, ttfbBad, asrBad, asrWarn, hasInterrupt } = c
                 return (
                   <tr
                     key={c.case_id}
                     onClick={() => handleRowClick(c.case_id)}
-                    style={{ cursor: 'pointer', transition: 'background 100ms ease' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'hsl(var(--muted))' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = '' }}
+                    className="cursor-pointer transition-colors hover:bg-muted/40"
                   >
                     <td
-                      style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}
+                      className="h-10 px-3.5 border-b border-border"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Checkbox
                         checked={selectedSet.has(c.case_id)}
-                        onCheckedChange={(checked) => toggleCaseSelected(c.case_id, checked === true)}
+                        onCheckedChange={(checked) =>
+                          toggleCaseSelected(c.case_id, checked === true)
+                        }
                         aria-label={`Select case ${c.name}`}
                       />
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                    <td className="h-10 px-3.5 border-b border-border font-mono text-[12px] truncate max-w-[420px]">
                       {c.name}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}>
-                      <StatusChip status={c.status} />
+                    <td className="h-10 px-3.5 border-b border-border">
+                      <StatusDot status={c.status} />
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                    <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
                       {formatDuration(c.duration_ms)}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                    <td
+                      className={cn(
+                        'h-10 px-3.5 border-b border-border font-mono tabular-nums',
+                        ttftBad
+                          ? 'text-[hsl(var(--destructive))]'
+                          : 'text-foreground/85',
+                      )}
+                    >
                       {c.ttft_avg_ms != null ? formatMs(c.ttft_avg_ms) : '—'}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                    <td
+                      className={cn(
+                        'h-10 px-3.5 border-b border-border font-mono tabular-nums',
+                        ttfbBad
+                          ? 'text-[hsl(var(--destructive))]'
+                          : 'text-foreground/85',
+                      )}
+                    >
                       {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                    <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
                       {formatTokens(c.total_tokens)}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'hsl(var(--muted-foreground))' }}>
-                      {c.prompt_tokens > 0 ? Math.round((c.cached_prompt_tokens / c.prompt_tokens) * 100) + '%' : '—'}
-                    </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                    <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
                       {formatCost(c.estimated_cost_usd)}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
-                      {c.tool_call_count ?? '—'}
+                    <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
+                      {c.tool_call_count != null && c.tool_call_count > 0
+                        ? c.tool_call_count
+                        : '—'}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontSize: 12 }}>
-                      {c.judgments.length === 0 ? (
-                        <span style={{ color: 'hsl(var(--muted-foreground))' }}>—</span>
+                    <td className="h-10 px-3.5 border-b border-border">
+                      {c.asr == null ? (
+                        <span className="text-muted-foreground">—</span>
                       ) : (
-                        <span className="inline-flex items-center gap-2">
-                          {judgePass > 0 && (
-                            <span className="text-[hsl(var(--success-fg,var(--success)))] text-xs-600">
-                              ✓ {judgePass} pass
+                        <span className="inline-flex items-center gap-1.5">
+                          <span
+                            className={cn(
+                              'font-mono tabular-nums',
+                              asrBad
+                                ? 'text-[hsl(var(--destructive))]'
+                                : asrWarn
+                                  ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
+                                  : 'text-[hsl(var(--success-fg,var(--success)))]',
+                            )}
+                          >
+                            {(c.asr * 100).toFixed(1)}%
+                          </span>
+                          {hasInterrupt && (
+                            <span className="inline-flex items-center px-1.5 h-[18px] rounded bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border border-[hsl(var(--warning-border))] text-[10px] font-medium tracking-wide">
+                              intr
                             </span>
-                          )}
-                          {judgePass > 0 && judgeFail > 0 && (
-                            <span className="text-muted-foreground">·</span>
-                          )}
-                          {judgeFail > 0 && (
-                            <Badge
-                              variant="outline"
-                              className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] uppercase tracking-wider"
-                            >
-                              {judgeFail} fail
-                            </Badge>
                           )}
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                    <td className="h-10 px-3.5 border-b border-border">
+                      {c.judgments.length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5">
+                          {judgePass > 0 && (
+                            <span className="inline-flex items-center px-1.5 h-[20px] rounded bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border border-[hsl(var(--success-border))] text-[10.5px] font-medium tracking-wide uppercase">
+                              {judgePass} pass
+                            </span>
+                          )}
+                          {judgeFail > 0 && (
+                            <span className="inline-flex items-center px-1.5 h-[20px] rounded bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive-border))] text-[10.5px] font-semibold tracking-wide uppercase">
+                              {judgeFail} fail
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </td>
+                    <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
                       {c.events.length}
+                    </td>
+                    <td className="h-10 px-3.5 border-b border-border text-muted-foreground/60">
+                      ›
                     </td>
                   </tr>
                 )
               })}
               {filteredCases.length === 0 && (
                 <tr>
-                  <td colSpan={12} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                  <td
+                    colSpan={13}
+                    className="px-4 py-10 text-center text-muted-foreground"
+                  >
                     No cases match.
                   </td>
                 </tr>
@@ -732,9 +983,13 @@ export const EvalRunDetailPage = ({
       <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {selectedCount} case{selectedCount === 1 ? '' : 's'}?</DialogTitle>
+            <DialogTitle>
+              Delete {selectedCount} case{selectedCount === 1 ? '' : 's'}?
+            </DialogTitle>
             <DialogDescription>
-              This permanently removes the selected case{selectedCount === 1 ? '' : 's'} and every event and judgment captured under {selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.
+              This permanently removes the selected case
+              {selectedCount === 1 ? '' : 's'} and every event and judgment captured under{' '}
+              {selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           {deleteError && (
