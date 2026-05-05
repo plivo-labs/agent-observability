@@ -10,6 +10,7 @@ import {
   deleteEvalRuns,
   deleteEvalCases,
   listEvalAgents,
+  getEvalRunsStats,
 } from "./db.js";
 import {
   buildListResponse,
@@ -84,6 +85,7 @@ export function registerEvalRoutes(app: Hono) {
     const offset = Math.max(0, Number(c.req.query("offset")) || 0);
     const accountId = c.req.query("account_id") || null;
     const agentId = c.req.query("agent_id") || null;
+    const agentIdExact = c.req.query("agent_id_exact") || null;
     const splitCsv = (raw: string | undefined) =>
       raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : null;
     // `?framework=` filters on agent framework (livekit/pipecat).
@@ -96,6 +98,7 @@ export function registerEvalRoutes(app: Hono) {
     const extraParams: Record<string, string> = {};
     if (accountId) extraParams.account_id = accountId;
     if (agentId) extraParams.agent_id = agentId;
+    if (agentIdExact) extraParams.agent_id_exact = agentIdExact;
     if (frameworks && frameworks.length) extraParams.framework = frameworks.join(",");
     if (testingFrameworks && testingFrameworks.length)
       extraParams.testing_framework = testingFrameworks.join(",");
@@ -107,6 +110,7 @@ export function registerEvalRoutes(app: Hono) {
       offset,
       accountId,
       agentId,
+      agentIdExact,
       frameworks,
       testingFrameworks,
       startedFrom,
@@ -184,11 +188,12 @@ export function registerEvalRoutes(app: Hono) {
   // wins the route match.
 
   app.get("/api/evals/agents", async (c) => {
-    const agents = await listEvalAgents();
+    const [agents, stats] = await Promise.all([listEvalAgents(), getEvalRunsStats()]);
     return c.json({
       api_id: newApiId(),
       meta: { total_count: agents.length },
       objects: agents,
+      stats,
     });
   });
 

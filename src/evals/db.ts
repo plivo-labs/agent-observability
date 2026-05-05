@@ -186,6 +186,7 @@ export interface ListEvalRunsOpts {
   offset: number;
   accountId?: string | null;
   agentId?: string | null;
+  agentIdExact?: string | null;
   /** Multi-value — `framework IN (...)` when non-empty. Filters on the
    *  agent framework (`livekit` / `pipecat` / …). */
   frameworks?: string[] | null;
@@ -368,6 +369,31 @@ export async function sweepStaleRuns(): Promise<number> {
 
 // ── Agents aggregation ──────────────────────────────────────────────────────
 
+export interface EvalRunsStats {
+  runs_24h: number;
+  runs_prev_24h: number;
+}
+
+export async function getEvalRunsStats(): Promise<EvalRunsStats> {
+  const rows = await sql.unsafe(
+    `
+    SELECT
+      COUNT(*) FILTER (WHERE started_at > NOW() - INTERVAL '24 hours')::int AS runs_24h,
+      COUNT(*) FILTER (
+        WHERE started_at > NOW() - INTERVAL '48 hours'
+          AND started_at <= NOW() - INTERVAL '24 hours'
+      )::int AS runs_prev_24h
+    FROM eval_runs
+    `,
+    [],
+  );
+  const r = rows[0] ?? {};
+  return {
+    runs_24h: r.runs_24h ?? 0,
+    runs_prev_24h: r.runs_prev_24h ?? 0,
+  };
+}
+
 export interface AgentRow {
   agent_id: string | null;
   run_count: number;
@@ -508,8 +534,12 @@ function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params
     predicates.push(`LOWER(eval_runs.account_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.accountId.toLowerCase())}%`);
   }
-  if (opts.agentId === UNKNOWN_AGENT_ID) {
+  const agentId = opts.agentIdExact ?? opts.agentId;
+  if (agentId === UNKNOWN_AGENT_ID) {
     predicates.push(`eval_runs.agent_id IS NULL`);
+  } else if (opts.agentIdExact) {
+    predicates.push(`eval_runs.agent_id = $${params.length + 1}`);
+    params.push(opts.agentIdExact);
   } else if (opts.agentId) {
     predicates.push(`LOWER(eval_runs.agent_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.agentId.toLowerCase())}%`);

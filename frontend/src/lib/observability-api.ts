@@ -4,6 +4,7 @@ import type {
   EvalCaseRow,
   EvalRunDetail,
   EvalRunRow,
+  EvalRunsStats,
   EvalsFilters,
   PlivoListResponse,
   SessionsFilters,
@@ -41,6 +42,7 @@ export function createObservabilityApi(baseUrl: string) {
     listEvalRuns: (limit = 20, offset = 0, filters?: EvalsFilters) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
       if (filters?.agentId) params.set('agent_id', filters.agentId)
+      if (filters?.agentIdExact) params.set('agent_id_exact', filters.agentIdExact)
       if (filters?.framework && filters.framework.length) {
         params.set('framework', filters.framework.join(','))
       }
@@ -74,9 +76,12 @@ export function createObservabilityApi(baseUrl: string) {
       }),
 
     getEvalAgents: () =>
-      fetchJson<{ api_id: string; meta: { total_count: number }; objects: AgentRow[] }>(
-        `/evals/agents`,
-      ),
+      fetchJson<{
+        api_id: string
+        meta: { total_count: number }
+        objects: AgentRow[]
+        stats?: EvalRunsStats
+      }>(`/evals/agents`),
   }
 }
 

@@ -303,6 +303,11 @@ export interface EvalCaseRow {
   estimated_cost_usd: number | null
 }
 
+export interface EvalRunsStats {
+  runs_24h: number
+  runs_prev_24h: number
+}
+
 export interface AgentRow {
   agent_id: string | null
   run_count: number
@@ -325,6 +330,7 @@ export interface EvalRunDetail extends EvalRunRow {
 
 export interface EvalsFilters {
   agentId?: string
+  agentIdExact?: string
   /** Multi-value agent-framework filter (`livekit` / `pipecat` / …). */
   framework?: string[]
   /** Multi-value test-framework filter (`pytest` / `vitest` / …). */

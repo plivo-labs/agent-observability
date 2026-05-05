@@ -3,6 +3,7 @@ import { useObservabilityContext } from '@/lib/observability-provider'
 import { sortEventsByCreatedAt } from '@/lib/observability-events'
 import type {
   AgentRow,
+  EvalRunsStats,
   AgentSessionRow,
   ChatItem,
   EvalCaseRow,
@@ -174,7 +175,7 @@ export function useEvalRuns(
   const hasLoadedOnceRef = useRef(false)
   const lastFetchContextKeyRef = useRef<string | null>(null)
 
-  const { agentId, framework, testingFramework, accountId, startedFrom, startedTo } = filters ?? {}
+  const { agentId, agentIdExact, framework, testingFramework, accountId, startedFrom, startedTo } = filters ?? {}
   // Stable string keys for the array filters so effect deps don't churn
   // on new-but-equal-array identities every render.
   const frameworkKey = (framework ?? []).slice().sort().join(',')
@@ -183,6 +184,7 @@ export function useEvalRuns(
     limit,
     offset,
     agentId ?? '',
+    agentIdExact ?? '',
     frameworkKey,
     testingFrameworkKey,
     accountId ?? '',
@@ -199,7 +201,7 @@ export function useEvalRuns(
 
   useEffect(() => {
     setOffset(0)
-  }, [agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
+  }, [agentId, agentIdExact, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo])
 
   useEffect(() => {
     let cancelled = false
@@ -213,6 +215,7 @@ export function useEvalRuns(
     api
       .listEvalRuns(limit, offset, {
         agentId,
+        agentIdExact,
         framework: framework && framework.length ? framework : undefined,
         testingFramework:
           testingFramework && testingFramework.length ? testingFramework : undefined,
@@ -230,7 +233,7 @@ export function useEvalRuns(
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo, fetchContextKey, refetchTick])
+  }, [api, limit, offset, agentId, agentIdExact, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo, fetchContextKey, refetchTick])
 
   return { runs, meta, loading, error, offset, setOffset, refetch }
 }
@@ -271,6 +274,7 @@ export function useEvalRun(runId: string | undefined) {
 export function useEvalAgents() {
   const { api } = useObservabilityContext()
   const [agents, setAgents] = useState<AgentRow[]>([])
+  const [stats, setStats] = useState<EvalRunsStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refetchTick, setRefetchTick] = useState(0)
@@ -282,13 +286,17 @@ export function useEvalAgents() {
     setError(null)
     api
       .getEvalAgents()
-      .then((res) => !cancelled && setAgents(res.objects))
+      .then((res) => {
+        if (cancelled) return
+        setAgents(res.objects)
+        setStats(res.stats ?? null)
+      })
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
   }, [api, refetchTick])
 
-  return { agents, loading, error, refetch }
+  return { agents, stats, loading, error, refetch }
 }
 
 export function useEvalCase(runId: string | undefined, caseId: string | undefined) {
