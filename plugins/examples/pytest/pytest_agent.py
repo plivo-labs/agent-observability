@@ -1,3 +1,17 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pytest>=7.0",
+#     "pytest-asyncio>=0.21",
+#     "pytest-agent-observability",
+#     "livekit-agents>=1.5",
+#     "livekit-plugins-openai>=1.5",
+# ]
+#
+# # Local override — uncomment to test against the in-tree plugin.
+# # [tool.uv.sources]
+# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# ///
 """Example LiveKit agent + pytest evals.
 
 Demonstrates the shape of tests that `pytest-agent-observability` will ingest:
