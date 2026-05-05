@@ -90,7 +90,10 @@ export interface EvalRun {
   /** Version of the test framework. */
   testing_framework_version: string | null;
   started_at: number;
-  finished_at: number;
+  /** Null when the run is still in progress. */
+  finished_at: number | null;
+  /** Run lifecycle state. Server treats null finished_at as "running". */
+  status?: "queued" | "running" | "completed" | "failed" | "cancelled" | null;
   ci?: CiMetadata | null;
 }
 
@@ -111,4 +114,10 @@ export interface ReporterOptions {
   timeoutMs?: number;
   maxRetries?: number;
   fallbackDir?: string | null;
+  /** Stream individual cases as they finish. Default: true. */
+  liveStreaming?: boolean;
+  /** Flush interval in ms. Default: 3000. */
+  flushIntervalMs?: number;
+  /** Heartbeat interval in ms — send empty POST when idle. Default: 10000. */
+  heartbeatIntervalMs?: number;
 }

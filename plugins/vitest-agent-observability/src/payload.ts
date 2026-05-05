@@ -32,9 +32,10 @@ export function buildPayload(opts: {
   agentId?: string | null;
   accountId?: string | null;
   runName?: string | null;
-  finishedAt: number;
+  finishedAt?: number | null;
+  status?: "queued" | "running" | "completed" | "failed" | "cancelled";
 }): EvalPayloadV0 {
-  const { collector, agentId, accountId, runName, finishedAt } = opts;
+  const { collector, agentId, accountId, runName, finishedAt = null, status } = opts;
   const framework = detectFramework();
   return {
     version: "v0",
@@ -49,6 +50,7 @@ export function buildPayload(opts: {
       testing_framework_version: pkgVersion("vitest") ?? null,
       started_at: collector.started_at,
       finished_at: finishedAt,
+      ...(status !== undefined ? { status } : {}),
       ci: (collector.ci as any) ?? null,
     },
     cases: collector.cases.slice(),

@@ -28,9 +28,10 @@
 import path from "node:path";
 import { detectCi } from "./ci.js";
 import * as collector from "./collector.js";
-import { buildPayload } from "./payload.js";
+import { buildPayload, detectFramework, TESTING_FRAMEWORK } from "./payload.js";
 import {
   upload,
+  bestEffortPost,
   configFromEnv,
   type UploadConfig,
   type Logger,
@@ -40,6 +41,7 @@ import { installJudgeWrapper } from "./judge.js";
 import { installAutocaptureWrapper } from "./autocapture.js";
 import type {
   EvalCase,
+  EvalRun,
   Failure,
   ReporterOptions,
   CaseStatus,
@@ -92,28 +94,77 @@ export default class AgentObservabilityReporter {
   private restoreAutocapture: (() => void) | null = null;
   private logger: Logger;
 
+  // live streaming state
+  private pending: Map<string, EvalCase> = new Map();
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private lastFlushAt = 0;
+  private liveStreaming: boolean;
+  private flushIntervalMs: number;
+  private heartbeatIntervalMs: number;
+
   constructor(opts: ReporterOptions = {}) {
     this.opts = opts;
     this.logger = defaultLogger;
     this.uploadConfig = this.resolveConfig(opts);
+    this.liveStreaming = opts.liveStreaming ?? true;
+    this.flushIntervalMs = opts.flushIntervalMs ?? 3_000;
+    this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 10_000;
   }
 
   async onInit(_ctx: unknown): Promise<void> {
     if (!this.uploadConfig) return;
     this.collector = collector.newRun(Date.now() / 1000, detectCi());
-    // The setup file also installs these in each worker (where tests
-    // actually run); installing here is a belt-and-suspenders for users
-    // who skip the setupFile entry — both installers are idempotent.
     this.restoreJudge = await installJudgeWrapper(this.logger);
     this.restoreAutocapture = await installAutocaptureWrapper(this.logger);
+
+    if (this.liveStreaming) {
+      // start-of-run stub POST
+      const stub = this.buildRunPayload(null, "running");
+      bestEffortPost(stub, this.uploadConfig, this.logger).catch(() => {});
+
+      this.lastFlushAt = Date.now();
+      this.flushTimer = setInterval(() => {
+        void this.flushTick();
+      }, this.flushIntervalMs);
+      // unref so the timer doesn't keep Node alive after tests finish
+      if (this.flushTimer.unref) this.flushTimer.unref();
+    }
+  }
+
+  /** Called by Vitest when a task (test) changes state. */
+  onTaskUpdate(packs: Array<[string, TaskLike["result"], TaskLike]>): void {
+    if (!this.liveStreaming || !this.collector) return;
+    for (const [_id, result, task] of packs) {
+      const state = result?.state;
+      if (
+        state === "pass" ||
+        state === "fail" ||
+        state === "skip" ||
+        state === "todo"
+      ) {
+        if (task.type === "test" || task.type === "benchmark") {
+          const file: FileLike = task.file
+            ? { name: task.file.filepath ?? "", type: "suite", filepath: task.file.filepath }
+            : { name: "", type: "suite" };
+          const ec = this.buildCase(task, file);
+          this.pending.set(ec.case_id, ec);
+        }
+      }
+    }
   }
 
   async onFinished(
     files: FileLike[] | undefined,
-    _errors: unknown[] | undefined,
+    errors: unknown[] | undefined,
   ): Promise<void> {
     try {
       if (!this.uploadConfig || !this.collector) return;
+
+      // stop the interval
+      if (this.flushTimer !== null) {
+        clearInterval(this.flushTimer);
+        this.flushTimer = null;
+      }
 
       const cases: EvalCase[] = [];
       walkFiles(files ?? [], (test, file) => {
@@ -121,12 +172,15 @@ export default class AgentObservabilityReporter {
       });
       this.collector.cases = cases;
 
+      const hasErrors = errors && errors.length > 0;
+      const status = hasErrors ? "failed" : "completed";
       const payload = buildPayload({
         collector: this.collector,
         agentId: this.opts.agentId ?? process.env.AGENT_OBSERVABILITY_AGENT_ID ?? null,
         accountId: this.opts.accountId ?? process.env.AGENT_OBSERVABILITY_ACCOUNT_ID ?? null,
         runName: this.opts.runName ?? process.env.AGENT_OBSERVABILITY_RUN_NAME ?? null,
         finishedAt: Date.now() / 1000,
+        status,
       });
 
       const fallbackDir =
@@ -147,6 +201,40 @@ export default class AgentObservabilityReporter {
         this.restoreAutocapture = null;
       }
     }
+  }
+
+  // ── Live streaming helpers ────────────────────────────────────────────────
+
+  private async flushTick(): Promise<void> {
+    if (!this.uploadConfig || !this.collector) return;
+    const now = Date.now();
+    if (this.pending.size > 0) {
+      const cases = Array.from(this.pending.values());
+      this.pending.clear();
+      this.lastFlushAt = now;
+      const payload = this.buildRunPayload(cases, "running");
+      await bestEffortPost(payload, this.uploadConfig, this.logger);
+    } else if (now - this.lastFlushAt >= this.heartbeatIntervalMs) {
+      this.lastFlushAt = now;
+      const payload = this.buildRunPayload([], "running");
+      await bestEffortPost(payload, this.uploadConfig, this.logger);
+    }
+  }
+
+  /** Build a live payload with the current run header. `cases=null` is a start stub. */
+  private buildRunPayload(
+    cases: EvalCase[] | null,
+    status: EvalRun["status"],
+  ): import("./types.js").EvalPayloadV0 {
+    const c = this.collector!;
+    const payload = buildPayload({
+      collector: { ...c, cases: cases ?? [] },
+      agentId: this.opts.agentId ?? process.env.AGENT_OBSERVABILITY_AGENT_ID ?? null,
+      accountId: this.opts.accountId ?? process.env.AGENT_OBSERVABILITY_ACCOUNT_ID ?? null,
+      runName: this.opts.runName ?? process.env.AGENT_OBSERVABILITY_RUN_NAME ?? null,
+      status: status ?? undefined,
+    });
+    return payload;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

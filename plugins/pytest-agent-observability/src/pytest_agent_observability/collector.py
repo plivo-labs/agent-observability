@@ -149,5 +149,11 @@ class RunCollector:
         run_id = os.getenv("AGENT_OBSERVABILITY_RUN_ID") or str(uuid.uuid4())
         return cls(run_id=run_id, started_at=started_at, ci=ci)
 
+    # Attached by the plugin after the flusher thread is started.
+    _case_queue: "Optional[Any]" = field(default=None, repr=False, compare=False)
+
     def add_case(self, case: CaseRecord) -> None:
         self.cases.append(case)
+        # Push to streaming queue if one is attached (set by plugin flusher).
+        if self._case_queue is not None:
+            self._case_queue.put_nowait(case)

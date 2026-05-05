@@ -9,6 +9,22 @@ export interface UploadConfig {
   maxRetries: number;
 }
 
+function buildRequest(
+  payload: EvalPayloadV0,
+  config: UploadConfig,
+): { endpoint: string; headers: Record<string, string>; body: string } {
+  const endpoint = `${stripTrailingSlash(config.url)}/observability/evals/v0`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (config.basicAuth) {
+    const token = Buffer.from(
+      `${config.basicAuth.user}:${config.basicAuth.pass}`,
+      "utf8",
+    ).toString("base64");
+    headers["Authorization"] = `Basic ${token}`;
+  }
+  return { endpoint, headers, body: JSON.stringify(payload) };
+}
+
 /**
  * POST the payload to `{url}/observability/evals/v0`.
  * Returns true on success. Never throws.
@@ -19,18 +35,7 @@ export async function upload(
   opts: { fallbackDir?: string | null; logger?: Logger } = {},
 ): Promise<boolean> {
   const { fallbackDir, logger = defaultLogger } = opts;
-  const endpoint = `${stripTrailingSlash(config.url)}/observability/evals/v0`;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (config.basicAuth) {
-    const token = Buffer.from(
-      `${config.basicAuth.user}:${config.basicAuth.pass}`,
-      "utf8",
-    ).toString("base64");
-    headers["Authorization"] = `Basic ${token}`;
-  }
-
-  const body = JSON.stringify(payload);
+  const { endpoint, headers, body } = buildRequest(payload, config);
   let lastErr = "";
 
   for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
@@ -66,6 +71,32 @@ export async function upload(
   );
   if (fallbackDir) await writeFallback(payload, fallbackDir, logger);
   return false;
+}
+
+/**
+ * Best-effort POST — 1 retry, no fallback file, never throws.
+ * Used for live streaming and heartbeats.
+ */
+export async function bestEffortPost(
+  payload: EvalPayloadV0,
+  config: UploadConfig,
+  logger: Logger = defaultLogger,
+): Promise<void> {
+  const { endpoint, headers, body } = buildRequest(payload, config);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    try {
+      const res = await fetch(endpoint, { method: "POST", headers, body, signal: controller.signal });
+      if (res.ok || (res.status >= 400 && res.status < 500)) return;
+    } catch {
+      // swallow
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < 2) await sleep(500);
+  }
+  logger.warn("agent-observability live POST failed (best-effort, skipping)");
 }
 
 async function writeFallback(

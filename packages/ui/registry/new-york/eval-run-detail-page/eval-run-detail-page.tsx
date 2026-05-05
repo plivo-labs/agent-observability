@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { parseAsString, useQueryState } from 'nuqs'
 import { ArrowLeft, Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
@@ -168,10 +168,17 @@ export const EvalRunDetailPage = ({
   onBack?: () => void
   onCaseClick?: (caseId: string) => void
 }) => {
-  const { run, loading, error } = useEvalRun(runId)
+  const { run, loading, error, refetch } = useEvalRun(runId)
   const [openCaseId, setOpenCaseId] = useQueryState('case', parseAsString)
   const [localOpenCaseId, setLocalOpenCaseId] = useState<string | null>(null)
   const drawerCaseId = openCaseId ?? localOpenCaseId
+  const hasRunningRun = run?.status === 'running'
+
+  useEffect(() => {
+    if (!hasRunningRun) return
+    const id = window.setInterval(() => refetch(), 1500)
+    return () => window.clearInterval(id)
+  }, [hasRunningRun, refetch])
 
   const handleRowClick = (caseId: string) => {
     if (onCaseClick) onCaseClick(caseId)

@@ -32,6 +32,15 @@ class UploadConfig:
         self.max_retries = max_retries
 
 
+def _build_request(payload: dict, config: UploadConfig) -> tuple[str, dict, str]:
+    """Return (endpoint, headers, json_body) for a POST to the evals endpoint."""
+    import json as _json
+    endpoint = f"{config.url}/observability/evals/v0"
+    headers = {"Content-Type": "application/json"}
+    body = _json.dumps(payload)
+    return endpoint, headers, body
+
+
 def upload(payload: dict, config: UploadConfig, *, fallback_dir: Optional[Path] = None) -> bool:
     """POST the payload to `{url}/observability/evals/v0`.
 
@@ -39,7 +48,7 @@ def upload(payload: dict, config: UploadConfig, *, fallback_dir: Optional[Path] 
     the payload to `fallback_dir/<run_id>.json` if provided and returns False.
     Never raises — the plugin must not break tests.
     """
-    endpoint = f"{config.url}/observability/evals/v0"
+    endpoint, _headers, _body = _build_request(payload, config)
     auth = config.basic_auth
 
     last_err: Optional[str] = None
@@ -72,6 +81,32 @@ def upload(payload: dict, config: UploadConfig, *, fallback_dir: Optional[Path] 
     )
     if fallback_dir is not None:
         _write_fallback(payload, fallback_dir)
+    return False
+
+
+def best_effort_post(payload: dict, config: UploadConfig) -> bool:
+    """POST once (one retry on 5xx). No fallback file."""
+    endpoint, _headers, _body = _build_request(payload, config)
+    for attempt in range(1, 3):  # max 2 attempts
+        try:
+            with httpx.Client(timeout=config.timeout_s) as client:
+                resp = client.post(
+                    endpoint,
+                    json=payload,
+                    auth=config.basic_auth,
+                    headers={"Content-Type": "application/json"},
+                )
+            if 200 <= resp.status_code < 300:
+                return True
+            if 400 <= resp.status_code < 500:
+                logger.debug("live POST 4xx %s, skipping", resp.status_code)
+                return False
+            # 5xx — retry once
+        except Exception as e:
+            logger.debug("live POST error: %s: %s", type(e).__name__, e)
+            return False
+        if attempt == 1:
+            time.sleep(1)
     return False
 
 

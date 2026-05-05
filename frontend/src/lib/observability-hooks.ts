@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useObservabilityContext } from '@/lib/observability-provider'
 import { sortEventsByCreatedAt } from '@/lib/observability-events'
 import type {
@@ -171,12 +171,24 @@ export function useEvalRuns(
   const [offset, setOffset] = useState(initialOffset)
   const [refetchTick, setRefetchTick] = useState(0)
   const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
+  const hasLoadedOnceRef = useRef(false)
+  const lastFetchContextKeyRef = useRef<string | null>(null)
 
   const { agentId, framework, testingFramework, accountId, startedFrom, startedTo } = filters ?? {}
   // Stable string keys for the array filters so effect deps don't churn
   // on new-but-equal-array identities every render.
   const frameworkKey = (framework ?? []).slice().sort().join(',')
   const testingFrameworkKey = (testingFramework ?? []).slice().sort().join(',')
+  const fetchContextKey = [
+    limit,
+    offset,
+    agentId ?? '',
+    frameworkKey,
+    testingFrameworkKey,
+    accountId ?? '',
+    startedFrom ?? '',
+    startedTo ?? '',
+  ].join('|')
 
   // Sync offset when the caller passes a live initialOffset (e.g. from URL
   // state). Callers who drive pagination via setOffset pass a stable 0 and
@@ -191,7 +203,12 @@ export function useEvalRuns(
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    const isBackgroundRefetch =
+      refetchTick > 0 &&
+      hasLoadedOnceRef.current &&
+      lastFetchContextKeyRef.current === fetchContextKey
+    if (!isBackgroundRefetch) setLoading(true)
+    lastFetchContextKeyRef.current = fetchContextKey
     setError(null)
     api
       .listEvalRuns(limit, offset, {
@@ -205,6 +222,7 @@ export function useEvalRuns(
       })
       .then((res) => {
         if (cancelled) return
+        hasLoadedOnceRef.current = true
         setRuns(res.objects)
         setMeta(res.meta)
       })
@@ -212,7 +230,7 @@ export function useEvalRuns(
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo, refetchTick])
+  }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo, fetchContextKey, refetchTick])
 
   return { runs, meta, loading, error, offset, setOffset, refetch }
 }
@@ -222,21 +240,32 @@ export function useEvalRun(runId: string | undefined) {
   const [run, setRun] = useState<EvalRunDetail | null>(null)
   const [loading, setLoading] = useState(!!runId)
   const [error, setError] = useState<string | null>(null)
+  const [refetchTick, setRefetchTick] = useState(0)
+  const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
+  const hasLoadedOnceRef = useRef(false)
+  const lastRunIdRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     if (!runId) return
     let cancelled = false
-    setLoading(true)
+    const isBackgroundRefetch =
+      refetchTick > 0 && hasLoadedOnceRef.current && lastRunIdRef.current === runId
+    if (!isBackgroundRefetch) setLoading(true)
+    lastRunIdRef.current = runId
     setError(null)
     api
       .getEvalRun(runId)
-      .then((res) => !cancelled && setRun(res))
+      .then((res) => {
+        if (cancelled) return
+        hasLoadedOnceRef.current = true
+        setRun(res)
+      })
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
-  }, [api, runId])
+  }, [api, runId, refetchTick])
 
-  return { run, loading, error }
+  return { run, loading, error, refetch }
 }
 
 export function useEvalAgents() {

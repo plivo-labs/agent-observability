@@ -5,18 +5,26 @@ import type {
   EvalPayloadV0,
   CaseStatus,
 } from "./schema.js";
-import { summarize, computeCaseMetrics, percentile, avg, ensurePricesLoaded } from "./summarize.js";
+import { computeCaseMetrics, ensurePricesLoaded } from "./summarize.js";
 export { summarize } from "./summarize.js";
 export type { RunSummary } from "./summarize.js";
 
 // Sentinel value used in the URL/agents endpoint to represent rows with NULL agent_id.
 export const UNKNOWN_AGENT_ID = "__unknown__";
 
+// Source of truth for run status values — mirrors the status enum in schema.ts.
+const RUN_STATUS = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  queued: "queued",
+} as const;
+
 // ── Insert ──────────────────────────────────────────────────────────────────
 
 export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const { run, cases } = payload;
-  const summary = summarize(cases);
 
   const startedAt = new Date(run.started_at * 1000);
   const finishedAt = run.finished_at != null ? new Date(run.finished_at * 1000) : null;
@@ -29,29 +37,6 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
 
   await ensurePricesLoaded();
   const caseMetrics = cases.map((c) => computeCaseMetrics(c.events ?? []));
-
-  const allTtfts: number[] = [];
-  const allTtfbs: number[] = [];
-  let runPromptTokens = 0;
-  let runCachedPromptTokens = 0;
-  let runCompletionTokens = 0;
-  let runCost: number | null = 0;
-  for (const m of caseMetrics) {
-    allTtfts.push(...m.ttfts_ms);
-    allTtfbs.push(...m.ttfbs_ms);
-    runPromptTokens += m.prompt_tokens;
-    runCachedPromptTokens += m.cached_prompt_tokens;
-    runCompletionTokens += m.completion_tokens;
-    if (m.estimated_cost_usd == null && m.total_tokens > 0) runCost = null;
-    else if (runCost != null) runCost += m.estimated_cost_usd ?? 0;
-  }
-
-  const runTtftP50 = percentile(allTtfts, 50);
-  const runTtftP95 = percentile(allTtfts, 95);
-  const runTtftAvg = avg(allTtfts);
-  const runTtfbP50 = percentile(allTtfbs, 50);
-  const runTtfbP95 = percentile(allTtfbs, 95);
-  const runTtfbAvg = avg(allTtfbs);
 
   await sql.begin(async (tx: any) => {
     await tx`
@@ -79,24 +64,12 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${durationMs},
         ${runStatus},
         ${lastHeartbeatAt},
-        ${summary.total},
-        ${summary.passed},
-        ${summary.failed},
-        ${summary.errored},
-        ${summary.skipped},
+        0, 0, 0, 0, 0,
         ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
         ${JSON.stringify(payload)}::jsonb,
-        ${runTtftP50},
-        ${runTtftP95},
-        ${runTtftAvg},
-        ${runTtfbP50},
-        ${runTtfbP95},
-        ${runTtfbAvg},
-        ${runPromptTokens},
-        ${runCachedPromptTokens},
-        ${runCompletionTokens},
-        ${runPromptTokens + runCompletionTokens},
-        ${runCost == null ? null : Number(runCost.toFixed(6))}
+        NULL, NULL, NULL,
+        NULL, NULL, NULL,
+        0, 0, 0, 0, NULL
       )
       ON CONFLICT (run_id) DO UPDATE SET
         started_at        = LEAST(eval_runs.started_at, EXCLUDED.started_at),
@@ -110,6 +83,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           WHEN EXCLUDED.duration_ms IS NULL THEN eval_runs.duration_ms
           ELSE GREATEST(eval_runs.duration_ms, EXCLUDED.duration_ms)
         END,
+        -- Status literals below must match RUN_STATUS const (source of truth: schema.ts enum).
         status            = CASE
           WHEN eval_runs.status IN ('completed', 'failed', 'cancelled')
             AND EXCLUDED.status IN ('queued', 'running')
@@ -117,32 +91,17 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ELSE EXCLUDED.status
         END,
         last_heartbeat_at = EXCLUDED.last_heartbeat_at,
-        total             = eval_runs.total   + EXCLUDED.total,
-        passed            = eval_runs.passed  + EXCLUDED.passed,
-        failed            = eval_runs.failed  + EXCLUDED.failed,
-        errored           = eval_runs.errored + EXCLUDED.errored,
-        skipped           = eval_runs.skipped + EXCLUDED.skipped,
-        prompt_tokens         = eval_runs.prompt_tokens         + EXCLUDED.prompt_tokens,
-        cached_prompt_tokens  = eval_runs.cached_prompt_tokens  + EXCLUDED.cached_prompt_tokens,
-        completion_tokens     = eval_runs.completion_tokens     + EXCLUDED.completion_tokens,
-        total_tokens      = eval_runs.total_tokens      + EXCLUDED.total_tokens,
-        estimated_cost_usd = CASE
-          WHEN eval_runs.estimated_cost_usd IS NULL OR EXCLUDED.estimated_cost_usd IS NULL THEN NULL
-          ELSE eval_runs.estimated_cost_usd + EXCLUDED.estimated_cost_usd
-        END,
-        -- Latency percentiles can't be merged exactly without raw samples; average
-        -- the per-shard values. Workers under xdist receive similarly-sized slices,
-        -- so the mean of two p95s approximates the overall p95 well enough for the
-        -- dashboard. Recompute exactly from eval_cases if precision matters.
-        ttft_p50_ms = COALESCE((eval_runs.ttft_p50_ms + EXCLUDED.ttft_p50_ms) / 2, EXCLUDED.ttft_p50_ms, eval_runs.ttft_p50_ms),
-        ttft_p95_ms = COALESCE((eval_runs.ttft_p95_ms + EXCLUDED.ttft_p95_ms) / 2, EXCLUDED.ttft_p95_ms, eval_runs.ttft_p95_ms),
-        ttft_avg_ms = COALESCE((eval_runs.ttft_avg_ms + EXCLUDED.ttft_avg_ms) / 2, EXCLUDED.ttft_avg_ms, eval_runs.ttft_avg_ms),
-        ttfb_p50_ms = COALESCE((eval_runs.ttfb_p50_ms + EXCLUDED.ttfb_p50_ms) / 2, EXCLUDED.ttfb_p50_ms, eval_runs.ttfb_p50_ms),
-        ttfb_p95_ms = COALESCE((eval_runs.ttfb_p95_ms + EXCLUDED.ttfb_p95_ms) / 2, EXCLUDED.ttfb_p95_ms, eval_runs.ttfb_p95_ms),
-        ttfb_avg_ms = COALESCE((eval_runs.ttfb_avg_ms + EXCLUDED.ttfb_avg_ms) / 2, EXCLUDED.ttfb_avg_ms, eval_runs.ttfb_avg_ms)
-        -- name, account_id, agent_id, framework*, testing_framework*, ci, raw_payload:
-        -- first writer wins. These are run-level identifiers/labels and are
-        -- identical across xdist workers anyway.
+        -- first writer wins for identity/metadata fields
+        name                       = COALESCE(eval_runs.name, EXCLUDED.name),
+        account_id                 = COALESCE(eval_runs.account_id, EXCLUDED.account_id),
+        agent_id                   = COALESCE(eval_runs.agent_id, EXCLUDED.agent_id),
+        framework                  = COALESCE(eval_runs.framework, EXCLUDED.framework),
+        framework_version          = COALESCE(eval_runs.framework_version, EXCLUDED.framework_version),
+        testing_framework          = COALESCE(eval_runs.testing_framework, EXCLUDED.testing_framework),
+        testing_framework_version  = COALESCE(eval_runs.testing_framework_version, EXCLUDED.testing_framework_version),
+        ci                         = COALESCE(eval_runs.ci, EXCLUDED.ci),
+        raw_payload                = COALESCE(eval_runs.raw_payload, EXCLUDED.raw_payload)
+        -- counters/metrics are no longer maintained here; computed on read from eval_cases
     `;
 
     for (let i = 0; i < cases.length; i++) {
@@ -190,6 +149,31 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${m.total_tokens},
           ${m.estimated_cost_usd}
         )
+        ON CONFLICT (case_id) DO UPDATE SET
+          name                 = EXCLUDED.name,
+          file                 = EXCLUDED.file,
+          status               = EXCLUDED.status,
+          duration_ms          = EXCLUDED.duration_ms,
+          user_input           = EXCLUDED.user_input,
+          events               = EXCLUDED.events,
+          judgments            = EXCLUDED.judgments,
+          failure              = EXCLUDED.failure,
+          ttft_p50_ms          = EXCLUDED.ttft_p50_ms,
+          ttft_p95_ms          = EXCLUDED.ttft_p95_ms,
+          ttft_avg_ms          = EXCLUDED.ttft_avg_ms,
+          ttfb_p50_ms          = EXCLUDED.ttfb_p50_ms,
+          ttfb_p95_ms          = EXCLUDED.ttfb_p95_ms,
+          ttfb_avg_ms          = EXCLUDED.ttfb_avg_ms,
+          turn_count           = EXCLUDED.turn_count,
+          tool_call_count      = EXCLUDED.tool_call_count,
+          interruption_count   = EXCLUDED.interruption_count,
+          agent_handoff_count  = EXCLUDED.agent_handoff_count,
+          ttft_sample_count    = EXCLUDED.ttft_sample_count,
+          prompt_tokens        = EXCLUDED.prompt_tokens,
+          cached_prompt_tokens = EXCLUDED.cached_prompt_tokens,
+          completion_tokens    = EXCLUDED.completion_tokens,
+          total_tokens         = EXCLUDED.total_tokens,
+          estimated_cost_usd   = EXCLUDED.estimated_cost_usd
       `;
     }
   });
@@ -239,14 +223,48 @@ function parseCaseRow(row: any): any {
   return row;
 }
 
-const RUN_SELECT_COLS =
-  "run_id, name, account_id, agent_id, " +
-  "framework, framework_version, testing_framework, testing_framework_version, " +
-  "started_at, finished_at, duration_ms, status, last_heartbeat_at, " +
-  "total, passed, failed, errored, skipped, ci, created_at, " +
-  "ttft_p50_ms, ttft_p95_ms, ttft_avg_ms, " +
-  "ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms, " +
-  "prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
+// Counters and latency/cost metrics are derived from eval_cases on read.
+// Run-level ttft/ttfb percentiles are approximations (PERCENTILE over per-case averages).
+const DERIVED_COLS = `
+  LEFT JOIN LATERAL (
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE c.status = 'passed' AND NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(c.judgments) = 'array' THEN c.judgments ELSE '[]'::jsonb END
+        ) j WHERE j->>'verdict' = 'fail'
+      ))::int AS passed,
+      COUNT(*) FILTER (WHERE c.status = 'failed')::int AS failed,
+      COUNT(*) FILTER (WHERE c.status = 'errored')::int AS errored,
+      COUNT(*) FILTER (WHERE c.status = 'skipped')::int AS skipped,
+      COALESCE(SUM(c.prompt_tokens), 0)::bigint AS prompt_tokens,
+      COALESCE(SUM(c.cached_prompt_tokens), 0)::bigint AS cached_prompt_tokens,
+      COALESCE(SUM(c.completion_tokens), 0)::bigint AS completion_tokens,
+      COALESCE(SUM(c.total_tokens), 0)::bigint AS total_tokens,
+      SUM(c.estimated_cost_usd) AS estimated_cost_usd,
+      AVG(c.ttft_avg_ms) AS ttft_avg_ms,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY c.ttft_avg_ms) AS ttft_p50_ms,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY c.ttft_avg_ms) AS ttft_p95_ms,
+      AVG(c.ttfb_avg_ms) AS ttfb_avg_ms,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY c.ttfb_avg_ms) AS ttfb_p50_ms,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY c.ttfb_avg_ms) AS ttfb_p95_ms
+    FROM eval_cases c
+    WHERE c.run_id = eval_runs.run_id
+  ) derived ON true`;
+
+const RUN_BASE_COLS =
+  "eval_runs.run_id, eval_runs.name, eval_runs.account_id, eval_runs.agent_id, " +
+  "eval_runs.framework, eval_runs.framework_version, eval_runs.testing_framework, eval_runs.testing_framework_version, " +
+  "eval_runs.started_at, eval_runs.finished_at, eval_runs.duration_ms, eval_runs.status, eval_runs.last_heartbeat_at, " +
+  "eval_runs.ci, eval_runs.created_at";
+
+const RUN_DERIVED_COLS =
+  "derived.total, derived.passed, derived.failed, derived.errored, derived.skipped, " +
+  "derived.ttft_p50_ms, derived.ttft_p95_ms, derived.ttft_avg_ms, " +
+  "derived.ttfb_p50_ms, derived.ttfb_p95_ms, derived.ttfb_avg_ms, " +
+  "derived.prompt_tokens, derived.cached_prompt_tokens, derived.completion_tokens, derived.total_tokens, derived.estimated_cost_usd";
+
+const RUN_SELECT_COLS = `${RUN_BASE_COLS}, ${RUN_DERIVED_COLS}`;
 
 const CASE_SELECT_COLS =
   "case_id, run_id, name, file, status, duration_ms, user_input, " +
@@ -263,8 +281,9 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
   const rows = await sql.unsafe(
     `SELECT ${RUN_SELECT_COLS}
      FROM eval_runs
+     ${DERIVED_COLS}
      ${whereClause}
-     ORDER BY started_at DESC
+     ORDER BY eval_runs.started_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, opts.limit, opts.offset],
   );
@@ -275,7 +294,8 @@ export async function getEvalRun(runId: string): Promise<any | null> {
   const rows = await sql.unsafe(
     `SELECT ${RUN_SELECT_COLS}
      FROM eval_runs
-     WHERE run_id = $1
+     ${DERIVED_COLS}
+     WHERE eval_runs.run_id = $1
      LIMIT 1`,
     [runId],
   );
@@ -321,6 +341,31 @@ export async function deleteEvalRuns(runIds: string[]): Promise<number> {
   return rows.length;
 }
 
+export async function deleteEvalCases(runId: string, caseIds: string[]): Promise<number> {
+  if (caseIds.length === 0) return 0;
+  const placeholders = caseIds.map((_, i) => `$${i + 2}`).join(", ");
+  const rows = await sql.unsafe(
+    `DELETE FROM eval_cases
+     WHERE run_id = $1 AND case_id IN (${placeholders})
+     RETURNING case_id`,
+    [runId, ...caseIds],
+  );
+  return rows.length;
+}
+
+// ── Stale-run sweeper ────────────────────────────────────────────────────────
+
+export async function sweepStaleRuns(): Promise<number> {
+  const rows = await sql.unsafe(
+    `UPDATE eval_runs
+     SET status = $1, finished_at = COALESCE(finished_at, now())
+     WHERE status = $2 AND last_heartbeat_at < now() - interval '60 seconds'
+     RETURNING run_id`,
+    [RUN_STATUS.failed, RUN_STATUS.running],
+  );
+  return rows.length;
+}
+
 // ── Agents aggregation ──────────────────────────────────────────────────────
 
 export interface AgentRow {
@@ -340,10 +385,41 @@ export interface AgentRow {
 
 export async function listEvalAgents(): Promise<AgentRow[]> {
   // Aggregate per agent_id (NULL → '__unknown__'), join a lateral subquery
-  // for the last-10-run pass-rate trend.
+  // for the last-10-run pass-rate trend. Counters derived from eval_cases.
   const rows = await sql.unsafe(
     `
-    WITH agg AS (
+    WITH run_stats AS (
+      SELECT
+        r.run_id,
+        r.agent_id,
+        r.started_at,
+        r.framework,
+        derived.total,
+        derived.passed,
+        derived.failed,
+        derived.errored,
+        derived.ttft_p95_ms,
+        derived.ttfb_p95_ms
+      FROM eval_runs r
+      -- Subset of DERIVED_COLS (no tokens/cost); kept separate because DERIVED_COLS
+      -- references eval_runs.run_id by name and cannot be reused inside a CTE alias.
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE c.status = 'passed' AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(c.judgments) = 'array' THEN c.judgments ELSE '[]'::jsonb END
+            ) j WHERE j->>'verdict' = 'fail'
+          ))::int AS passed,
+          COUNT(*) FILTER (WHERE c.status = 'failed')::int AS failed,
+          COUNT(*) FILTER (WHERE c.status = 'errored')::int AS errored,
+          PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY c.ttft_avg_ms) AS ttft_p95_ms,
+          PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY c.ttfb_avg_ms) AS ttfb_p95_ms
+        FROM eval_cases c
+        WHERE c.run_id = r.run_id
+      ) derived ON true
+    ),
+    agg AS (
       SELECT
         agent_id,
         COUNT(*)::int                                                AS run_count,
@@ -355,9 +431,10 @@ export async function listEvalAgents(): Promise<AgentRow[]> {
         SUM(total)::int                                              AS total_cases,
         SUM(passed)::int                                             AS total_passed,
         SUM(failed + errored)::int                                   AS total_failed,
+        -- TODO(perf): collapse per-run percentile then AVG into single GROUP BY over eval_cases
         AVG(ttft_p95_ms)                                             AS ttft_p95_ms,
         AVG(ttfb_p95_ms)                                             AS ttfb_p95_ms
-      FROM eval_runs
+      FROM run_stats
       GROUP BY agent_id
     )
     SELECT
@@ -377,7 +454,7 @@ export async function listEvalAgents(): Promise<AgentRow[]> {
     LEFT JOIN LATERAL (
       SELECT framework,
              CASE WHEN total > 0 THEN (passed::float / total) * 100 ELSE 0 END AS last_pass_rate
-      FROM eval_runs r
+      FROM run_stats r
       WHERE r.agent_id IS NOT DISTINCT FROM agg.agent_id
       ORDER BY r.started_at DESC
       LIMIT 1
@@ -387,7 +464,7 @@ export async function listEvalAgents(): Promise<AgentRow[]> {
         SELECT started_at,
                CASE WHEN total > 0 THEN (passed::float / total) * 100 ELSE 0 END AS pass_rate,
                run_id
-        FROM eval_runs r
+        FROM run_stats r
         WHERE r.agent_id IS NOT DISTINCT FROM agg.agent_id
         ORDER BY r.started_at DESC
         LIMIT 10
@@ -428,35 +505,35 @@ function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params
   // `agent_id`; revisit with a pg_trgm GIN index if filter latency
   // matters at higher row counts.
   if (opts.accountId) {
-    predicates.push(`LOWER(account_id) LIKE $${params.length + 1}`);
+    predicates.push(`LOWER(eval_runs.account_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.accountId.toLowerCase())}%`);
   }
   if (opts.agentId === UNKNOWN_AGENT_ID) {
-    predicates.push(`agent_id IS NULL`);
+    predicates.push(`eval_runs.agent_id IS NULL`);
   } else if (opts.agentId) {
-    predicates.push(`LOWER(agent_id) LIKE $${params.length + 1}`);
+    predicates.push(`LOWER(eval_runs.agent_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.agentId.toLowerCase())}%`);
   }
   if (opts.frameworks && opts.frameworks.length > 0) {
     const placeholders = opts.frameworks.map(
       (_, i) => `$${params.length + i + 1}`,
     );
-    predicates.push(`framework IN (${placeholders.join(", ")})`);
+    predicates.push(`eval_runs.framework IN (${placeholders.join(", ")})`);
     params.push(...opts.frameworks);
   }
   if (opts.testingFrameworks && opts.testingFrameworks.length > 0) {
     const placeholders = opts.testingFrameworks.map(
       (_, i) => `$${params.length + i + 1}`,
     );
-    predicates.push(`testing_framework IN (${placeholders.join(", ")})`);
+    predicates.push(`eval_runs.testing_framework IN (${placeholders.join(", ")})`);
     params.push(...opts.testingFrameworks);
   }
   if (opts.startedFrom) {
-    predicates.push(`started_at >= $${params.length + 1}`);
+    predicates.push(`eval_runs.started_at >= $${params.length + 1}`);
     params.push(opts.startedFrom);
   }
   if (opts.startedTo) {
-    predicates.push(`started_at <= $${params.length + 1}`);
+    predicates.push(`eval_runs.started_at <= $${params.length + 1}`);
     params.push(opts.startedTo);
   }
   return { predicates, params };

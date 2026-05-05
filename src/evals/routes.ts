@@ -8,6 +8,7 @@ import {
   listEvalCases,
   getEvalCase,
   deleteEvalRuns,
+  deleteEvalCases,
   listEvalAgents,
 } from "./db.js";
 import {
@@ -146,6 +147,35 @@ export function registerEvalRoutes(app: Hono) {
       );
     }
     const deleted = await deleteEvalRuns(runIds as string[]);
+    return c.json({ api_id: newApiId(), deleted });
+  });
+
+  app.delete("/api/evals/:run_id/cases", async (c) => {
+    const runId = c.req.param("run_id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+    }
+    const caseIds = (body as { case_ids?: unknown })?.case_ids;
+    if (
+      !Array.isArray(caseIds) ||
+      caseIds.length === 0 ||
+      !caseIds.every((s) => typeof s === "string" && s.trim().length > 0)
+    ) {
+      return c.json(
+        buildErrorResponse("invalid_payload", "case_ids must be a non-empty array of strings"),
+        400,
+      );
+    }
+    if (caseIds.length > 200) {
+      return c.json(
+        buildErrorResponse("too_many", "Cannot delete more than 200 cases at once"),
+        400,
+      );
+    }
+    const deleted = await deleteEvalCases(runId, caseIds as string[]);
     return c.json({ api_id: newApiId(), deleted });
   });
 

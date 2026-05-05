@@ -37,26 +37,32 @@ def build_payload(
     collector: RunCollector,
     agent_id: Optional[str],
     account_id: Optional[str],
-    finished_at: float,
+    finished_at: Optional[float],
     run_name: Optional[str] = None,
+    status: Optional[str] = None,
+    cases: Optional[list] = None,
 ) -> dict:
     framework = detect_framework()
+    run: dict = {
+        "run_id": collector.run_id,
+        "name": run_name,
+        "account_id": account_id,
+        "agent_id": agent_id,
+        "framework": framework[0] if framework else None,
+        "framework_version": framework[1] if framework else None,
+        "testing_framework": TESTING_FRAMEWORK,
+        "testing_framework_version": _pkg_version("pytest"),
+        "started_at": collector.started_at,
+        "finished_at": finished_at,
+        "ci": collector.ci,
+    }
+    if status is not None:
+        run["status"] = status
+    case_list = cases if cases is not None else collector.cases
     return {
         "version": "v0",
-        "run": {
-            "run_id": collector.run_id,
-            "name": run_name,
-            "account_id": account_id,
-            "agent_id": agent_id,
-            "framework": framework[0] if framework else None,
-            "framework_version": framework[1] if framework else None,
-            "testing_framework": TESTING_FRAMEWORK,
-            "testing_framework_version": _pkg_version("pytest"),
-            "started_at": collector.started_at,
-            "finished_at": finished_at,
-            "ci": collector.ci,
-        },
-        "cases": [_case_to_dict(c) for c in collector.cases],
+        "run": run,
+        "cases": [_case_to_dict(c) for c in case_list],
     }
 
 

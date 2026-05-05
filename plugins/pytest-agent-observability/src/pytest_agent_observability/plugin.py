@@ -5,6 +5,8 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import queue
+import threading
 import time
 import traceback
 import uuid
@@ -39,6 +41,11 @@ class _State:
     # run_id (and clickable dashboard URL) alongside the normal pytest summary.
     _last_run_id: Optional[str] = None
     _last_upload_ok: bool = False
+    # Live streaming
+    live_streaming: bool = True
+    heartbeat_interval: float = 10.0
+    _flusher_thread: Optional[threading.Thread] = None
+    _stop_event: Optional[threading.Event] = None
 
 
 _state = _State()
@@ -104,6 +111,25 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Directory to write failed-upload payloads to. Defaults to the "
             "pytest cache (.pytest_cache/agent-observability). "
             "Overrides AGENT_OBSERVABILITY_FALLBACK_DIR."
+        ),
+    )
+    group.addoption(
+        "--agent-observability-live-streaming",
+        dest="agent_observability_live_streaming",
+        default=None,
+        help=(
+            "Enable live case streaming (true/false). Default true. "
+            "Overrides AGENT_OBSERVABILITY_LIVE_STREAMING."
+        ),
+    )
+    group.addoption(
+        "--agent-observability-heartbeat-interval",
+        dest="agent_observability_heartbeat_interval",
+        default=None,
+        type=float,
+        help=(
+            "Heartbeat POST interval in seconds. Default 10. "
+            "Overrides AGENT_OBSERVABILITY_HEARTBEAT_INTERVAL."
         ),
     )
 
@@ -172,6 +198,18 @@ def pytest_configure(config: pytest.Config) -> None:
         else:
             _state.fallback_dir = Path(".pytest_cache") / "agent-observability"
 
+    # Live streaming config
+    live_raw = (
+        config.getoption("agent_observability_live_streaming")
+        or os.getenv("AGENT_OBSERVABILITY_LIVE_STREAMING", "true")
+    )
+    _state.live_streaming = str(live_raw).lower() not in ("false", "0", "no")
+
+    _state.heartbeat_interval = float(
+        config.getoption("agent_observability_heartbeat_interval")
+        or up._env_float("AGENT_OBSERVABILITY_HEARTBEAT_INTERVAL", 10.0)
+    )
+
     _install_judge_wrapper()
     _install_autocapture_wrapper()
 
@@ -186,6 +224,8 @@ def pytest_unconfigure(config: pytest.Config) -> None:
                 pass
             setattr(_state, attr, None)
     _state.enabled = False
+    _state._flusher_thread = None
+    _state._stop_event = None
     col.clear_all_state()
     _state._test_tokens.clear()
 
@@ -198,10 +238,118 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         return
     _state.collector = col.RunCollector.new(started_at=time.time(), ci=detect_ci())
 
+    assert _state.upload_config is not None
+    _start_payload = pl.build_payload(
+        collector=_state.collector,
+        agent_id=_state.agent_id,
+        account_id=_state.account_id,
+        run_name=_state.run_name,
+        finished_at=None,
+        status="running",
+        cases=[],
+    )
+    try:
+        up.best_effort_post(_start_payload, _state.upload_config)
+    except Exception as e:
+        logger.warning("start-of-run POST failed: %s", e)
+
+    if _state.live_streaming:
+        _start_flusher()
+
+
+def _start_flusher() -> None:
+    """Start the background flusher thread."""
+    q: "queue.Queue[col.CaseRecord]" = queue.Queue()
+    stop = threading.Event()
+    _state._stop_event = stop
+    assert _state.collector is not None
+    _state.collector._case_queue = q
+
+    t = threading.Thread(
+        target=_flusher_loop,
+        args=(q, stop, _state.upload_config, _state.collector, _state.agent_id,
+              _state.account_id, _state.run_name, _state.heartbeat_interval),
+        daemon=True,
+        name="agent-observability-flusher",
+    )
+    t.start()
+    _state._flusher_thread = t
+
+
+def _flusher_loop(
+    q: "queue.Queue[col.CaseRecord]",
+    stop: threading.Event,
+    config: up.UploadConfig,
+    collector: col.RunCollector,
+    agent_id: Optional[str],
+    account_id: Optional[str],
+    run_name: Optional[str],
+    heartbeat_interval: float,
+) -> None:
+    """Drain queue and POST; send heartbeat when idle too long."""
+    last_posted_at = time.monotonic()
+    drain_timeout = 3.0  # seconds to wait for next case before checking
+
+    while not stop.is_set():
+        cases: list[col.CaseRecord] = []
+        # Drain all available cases (blocking up to drain_timeout on first item).
+        try:
+            cases.append(q.get(timeout=drain_timeout))
+            # Drain remaining without blocking.
+            while True:
+                cases.append(q.get_nowait())
+        except queue.Empty:
+            pass
+
+        if cases:
+            payload = pl.build_payload(
+                collector=collector,
+                agent_id=agent_id,
+                account_id=account_id,
+                run_name=run_name,
+                finished_at=None,
+                status="running",
+                cases=cases,
+            )
+            try:
+                up.best_effort_post(payload, config)
+            except Exception as e:
+                logger.debug("live POST error: %s", e)
+            last_posted_at = time.monotonic()
+        elif time.monotonic() - last_posted_at >= heartbeat_interval:
+            # Send heartbeat: empty cases refreshes last_heartbeat_at on server.
+            heartbeat = pl.build_payload(
+                collector=collector,
+                agent_id=agent_id,
+                account_id=account_id,
+                run_name=run_name,
+                finished_at=None,
+                status="running",
+                cases=[],
+            )
+            try:
+                up.best_effort_post(heartbeat, config)
+            except Exception as e:
+                logger.debug("heartbeat POST error: %s", e)
+            last_posted_at = time.monotonic()
+
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if not _state.enabled or _state.collector is None:
         return
+
+    # Stop flusher and drain residual cases from queue.
+    if _state._stop_event is not None:
+        _state._stop_event.set()
+    if _state._flusher_thread is not None:
+        _state._flusher_thread.join(timeout=5.0)
+
+    _state.collector._case_queue = None
+
+    # Determine final run status from pytest exitstatus.
+    # exitstatus 0=OK, 1=tests failed, 2=interrupted, 3=internal error,
+    # 4=cmdline error, 5=no tests collected
+    run_status = "completed" if exitstatus in (0, 1, 5) else "failed"
 
     payload = pl.build_payload(
         collector=_state.collector,
@@ -209,6 +357,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         account_id=_state.account_id,
         run_name=_state.run_name,
         finished_at=time.time(),
+        status=run_status,
     )
 
     _state._last_run_id = _state.collector.run_id

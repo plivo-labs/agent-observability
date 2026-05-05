@@ -12,6 +12,7 @@ const mockGetEvalCase = mock((_runId: string, _caseId: string) =>
   Promise.resolve(null as any),
 );
 const mockDeleteEvalRuns = mock((_runIds: string[]) => Promise.resolve(0));
+const mockDeleteEvalCases = mock((_runId: string, _caseIds: string[]) => Promise.resolve(0));
 const mockListEvalAgents = mock(() => Promise.resolve([] as any[]));
 
 const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
@@ -47,6 +48,7 @@ mock.module("../src/evals/db.js", () => ({
   listEvalCases: mockListEvalCases,
   getEvalCase: mockGetEvalCase,
   deleteEvalRuns: mockDeleteEvalRuns,
+  deleteEvalCases: mockDeleteEvalCases,
   listEvalAgents: mockListEvalAgents,
 }));
 
@@ -591,5 +593,90 @@ describe("DELETE /api/evals", () => {
     expect(body.deleted).toBe(2);
     expect(body.api_id).toBeDefined();
     expect(mockDeleteEvalRuns).toHaveBeenCalledWith(ids);
+  });
+});
+
+describe("DELETE /api/evals/:run_id/cases", () => {
+  const runId = randomUUID();
+
+  beforeEach(() => {
+    mockDeleteEvalCases.mockClear();
+  });
+
+  test("rejects without auth", async () => {
+    const res = await server.fetch(
+      makeRequest(`/api/evals/${runId}/cases`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_ids: ["case-1"] }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("400 when body is not JSON", async () => {
+    const res = await server.fetch(
+      makeRequest(`/api/evals/${runId}/cases`, {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: "{",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_json");
+  });
+
+  test("400 when case_ids is empty", async () => {
+    const res = await server.fetch(
+      makeRequest(`/api/evals/${runId}/cases`, {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ case_ids: [] }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_payload");
+  });
+
+  test("400 when case_ids contains empty value", async () => {
+    const res = await server.fetch(
+      makeRequest(`/api/evals/${runId}/cases`, {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ case_ids: [""] }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_payload");
+  });
+
+  test("400 when more than 200 ids", async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `case-${i}`);
+    const res = await server.fetch(
+      makeRequest(`/api/evals/${runId}/cases`, {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ case_ids: ids }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("too_many");
+  });
+
+  test("calls deleteEvalCases and returns deleted count", async () => {
+    const ids = ["case-1", "case-2"];
+    mockDeleteEvalCases.mockResolvedValueOnce(2);
+    const res = await server.fetch(
+      makeRequest(`/api/evals/${runId}/cases`, {
+        method: "DELETE",
+        headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ case_ids: ids }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deleted).toBe(2);
+    expect(body.api_id).toBeDefined();
+    expect(mockDeleteEvalCases).toHaveBeenCalledWith(runId, ids);
   });
 });

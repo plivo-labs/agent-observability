@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, GitBranch, Play, Scale } from 'lucide-react'
+import { ChevronRight, GitBranch, Play, Scale, Trash2 } from 'lucide-react'
 import { Link } from 'react-router'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import { formatDate, formatDuration, formatMs, formatTokens, formatCost } from '@/lib/observability-format'
+import { useObservabilityContext } from '@/lib/observability-provider'
 import type { CiMetadata } from '@/lib/observability-types'
 
 function getCommitLink(ci: CiMetadata | null, sha: string | undefined): string | null {
@@ -65,9 +67,20 @@ export function AgentRunsPage({
   onCompare?: (runIdA: string, runIdB: string) => void
 }) {
   const { runs, loading, error, refetch } = useEvalRuns(50, 0, { agentId })
+  const { api } = useObservabilityContext()
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [runSearch, setRunSearch] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   const validRuns = useMemo(() => runs.filter(r => r.total > 0), [runs])
+  const filteredRuns = useMemo(() => {
+    const q = runSearch.trim().toLowerCase()
+    if (!q) return runs
+    return runs.filter((r) => {
+      const name = (r.name ?? '').toLowerCase()
+      return name.includes(q) || r.run_id.toLowerCase().includes(q)
+    })
+  }, [runs, runSearch])
 
   const stats = useMemo(() => {
     const avgPass = validRuns.length
@@ -92,6 +105,20 @@ export function AgentRunsPage({
   const selArray = [...selected]
   const canCompare = selected.size === 2
   const hasRunningRun = runs.some((run) => run.status === 'running')
+
+  const handleDeleteSelected = async () => {
+    if (selected.size === 0 || deleting) return
+    const ok = window.confirm(`Delete ${selected.size} selected run${selected.size === 1 ? '' : 's'}? This cannot be undone.`)
+    if (!ok) return
+    setDeleting(true)
+    try {
+      await api.deleteEvalRuns([...selected])
+      setSelected(new Set())
+      refetch()
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   useEffect(() => {
     if (!hasRunningRun) return
@@ -124,11 +151,6 @@ export function AgentRunsPage({
               <Scale size={14} /> Compare 2 runs
             </button>
           )}
-          {selected.size > 0 && !canCompare && (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'hsl(var(--muted-foreground))' }}>
-              {selected.size} selected · pick 2 to compare
-            </span>
-          )}
           {validRuns.length >= 2 && selected.size === 0 && (
             <button
               type="button"
@@ -157,6 +179,26 @@ export function AgentRunsPage({
         </div>
       )}
 
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        {selected.size > 0 && (
+          <button
+            type="button"
+            className="eval-action-btn"
+            onClick={handleDeleteSelected}
+            disabled={deleting}
+          >
+            <Trash2 size={14} /> {deleting ? 'Deleting...' : 'Delete'}
+          </button>
+        )}
+        <input
+          type="text"
+          placeholder="Search name or run id..."
+          value={runSearch}
+          onChange={(e) => setRunSearch(e.target.value)}
+          className="h-8 w-64 rounded-md border border-border bg-background px-3 text-xs outline-none focus:ring-1 focus:ring-ring"
+        />
+      </div>
+
       <div style={{ borderRadius: 10, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
           <thead>
@@ -180,7 +222,7 @@ export function AgentRunsPage({
                 </td>
               </tr>
             )}
-            {!loading && runs.map(r => {
+            {!loading && filteredRuns.map(r => {
               const isEmpty = r.total === 0
               const isSel = selected.has(r.run_id)
               const sha = r.ci?.git_sha ? String(r.ci.git_sha) : null
@@ -197,14 +239,15 @@ export function AgentRunsPage({
                   onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'hsl(var(--muted))' }}
                   onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = '' }}
                 >
-                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', width: 32 }}
-                    onClick={e => { e.stopPropagation(); toggleSel(r.run_id) }}>
-                    <input
-                      type="checkbox"
-                      checked={isSel}
-                      onChange={() => toggleSel(r.run_id)}
-                      style={{ accentColor: 'hsl(270 60% 55%)', cursor: 'pointer' }}
-                    />
+                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', width: 32 }} onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSel}
+                        onCheckedChange={(checked) => {
+                          const shouldSelect = checked === true
+                          if (shouldSelect !== isSel) toggleSel(r.run_id)
+                        }}
+                        aria-label={`Select run ${r.run_id}`}
+                      />
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -290,10 +333,10 @@ export function AgentRunsPage({
                 </tr>
               )
             })}
-            {!loading && runs.length === 0 && (
+            {!loading && filteredRuns.length === 0 && (
               <tr>
                 <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
-                  No runs found.
+                  No runs match.
                 </td>
               </tr>
             )}

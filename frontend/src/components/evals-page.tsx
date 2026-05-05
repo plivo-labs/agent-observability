@@ -361,8 +361,20 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           <h1 className="text-h2-600 font-semibold m-0">Evals</h1>
           <div className="text-s-400 text-muted-foreground">Test runs across your agents.</div>
         </div>
-        <div className="text-s-400 text-muted-foreground">
-          <b className="text-foreground">{totalCount}</b> total
+        <div className="flex items-center gap-2">
+          {selectedCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={() => setConfirmOpen(true)}
+            >
+              <Trash2 /> Delete
+            </Button>
+          )}
+          <div className="text-s-400 text-muted-foreground">
+            <b className="text-foreground">{totalCount}</b> total
+          </div>
         </div>
       </div>
 
@@ -372,31 +384,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           className="border border-border bg-muted text-foreground px-4 py-2.5 rounded-lg text-s-400"
         >
           Failed to load eval runs: {error}
-        </div>
-      )}
-
-      {selectedCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-card">
-          <span className="text-s-500">
-            <b>{selectedCount}</b> selected
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => table.resetRowSelection()}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
-              onClick={() => setConfirmOpen(true)}
-            >
-              <Trash2 /> Delete
-            </Button>
-          </div>
         </div>
       )}
 

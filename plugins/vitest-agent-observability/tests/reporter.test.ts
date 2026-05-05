@@ -47,6 +47,7 @@ describe("AgentObservabilityReporter", () => {
       agentId: "support-bot",
       runName: "prompt-v2",
       fallbackDir: null as any,
+      liveStreaming: false,
     });
     (reporter as any).logger = silentLogger;
     await reporter.onInit({});
@@ -85,6 +86,7 @@ describe("AgentObservabilityReporter", () => {
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
       fallbackDir: null as any,
+      liveStreaming: false,
     });
     (reporter as any).logger = silentLogger;
     await reporter.onInit({});
@@ -114,6 +116,7 @@ describe("AgentObservabilityReporter", () => {
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
       fallbackDir: null as any,
+      liveStreaming: false,
     });
     (reporter as any).logger = silentLogger;
     await reporter.onInit({});
@@ -144,6 +147,7 @@ describe("AgentObservabilityReporter", () => {
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
       fallbackDir: null as any,
+      liveStreaming: false,
     });
     (reporter as any).logger = {
       info: (m: string) => infos.push(m),
@@ -165,6 +169,7 @@ describe("AgentObservabilityReporter", () => {
       url: "http://stub:9090",
       fallbackDir: "/tmp/vitest-ao-fallback",
       maxRetries: 1,
+      liveStreaming: false,
     });
     (reporter as any).logger = {
       info: () => {},
@@ -183,6 +188,7 @@ describe("AgentObservabilityReporter", () => {
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
       fallbackDir: null as any,
+      liveStreaming: false,
     });
     (reporter as any).logger = silentLogger;
     await reporter.onInit({});
@@ -201,5 +207,166 @@ describe("AgentObservabilityReporter", () => {
     await reporter.onFinished([file], []);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.cases.map((c: any) => c.name).sort()).toEqual(["greets", "refuses"]);
+  });
+
+  // ── Live streaming tests ───────────────────────────────────────────────────
+
+  test("start POST fires before any case completes", async () => {
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+      liveStreaming: true,
+      flushIntervalMs: 60_000, // prevent flush during test
+    });
+    (reporter as any).logger = silentLogger;
+    await reporter.onInit({});
+
+    // stub POST should have fired immediately in onInit
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://stub:9090/observability/evals/v0");
+    const body = JSON.parse(init.body as string);
+    expect(body.run.status).toBe("running");
+    expect(body.run.finished_at).toBeNull();
+    expect(body.cases).toEqual([]);
+
+    // clean up timer
+    await reporter.onFinished([], []);
+  });
+
+  test("per-case stream contains only newly-finished cases (not cumulative)", async () => {
+    vi.useFakeTimers();
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+      liveStreaming: true,
+      flushIntervalMs: 100,
+      heartbeatIntervalMs: 60_000,
+    });
+    (reporter as any).logger = silentLogger;
+    await reporter.onInit({});
+
+    // call[0] = start stub
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // simulate two tests completing
+    const t1 = makeTest("t1", { state: "pass" });
+    const t2 = makeTest("t2", { state: "fail", errors: [{ name: "Error", message: "bad" }] });
+    reporter.onTaskUpdate([
+      ["id1", t1.result, t1],
+      ["id2", t2.result, t2],
+    ]);
+
+    // advance timer to trigger flush
+    await vi.advanceTimersByTimeAsync(150);
+
+    // call[1] = live flush with the 2 cases
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const liveBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(liveBody.run.status).toBe("running");
+    expect(liveBody.run.finished_at).toBeNull();
+    expect(liveBody.cases).toHaveLength(2);
+
+    // advance again — no new cases, so no flush (heartbeat not due yet)
+    await vi.advanceTimersByTimeAsync(150);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await reporter.onFinished([], []);
+    vi.useRealTimers();
+  });
+
+  test("heartbeat POST fires when idle past interval", async () => {
+    vi.useFakeTimers();
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+      liveStreaming: true,
+      flushIntervalMs: 100,
+      heartbeatIntervalMs: 200,
+    });
+    (reporter as any).logger = silentLogger;
+    await reporter.onInit({});
+    // call[0] = start stub; lastFlushAt set to now
+
+    // advance past heartbeat interval with no new cases
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const hbBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(hbBody.cases).toEqual([]);
+    expect(hbBody.run.finished_at).toBeNull();
+
+    await reporter.onFinished([], []);
+    vi.useRealTimers();
+  });
+
+  test("final POST has all cases and status=completed", async () => {
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+      liveStreaming: true,
+      flushIntervalMs: 60_000,
+    });
+    (reporter as any).logger = silentLogger;
+    await reporter.onInit({});
+
+    const file = makeFile("a.test.ts", [
+      makeTest("t1", { state: "pass" }),
+      makeTest("t2", { state: "pass" }),
+    ]);
+    await reporter.onFinished([file], []);
+
+    // call[0]=start stub, call[1]=final
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const finalBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(finalBody.run.status).toBe("completed");
+    expect(finalBody.run.finished_at).toBeGreaterThan(0);
+    expect(finalBody.cases).toHaveLength(2);
+  });
+
+  test("final POST has status=failed when errors present", async () => {
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+      liveStreaming: true,
+      flushIntervalMs: 60_000,
+    });
+    (reporter as any).logger = silentLogger;
+    await reporter.onInit({});
+    await reporter.onFinished([], [new Error("suite error")]);
+
+    const finalBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(finalBody.run.status).toBe("failed");
+  });
+
+  test("live POST error does not crash reporter", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 201 })) // start stub ok
+      .mockRejectedValue(new TypeError("network error")); // all subsequent fail
+
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      fallbackDir: null as any,
+      liveStreaming: true,
+      flushIntervalMs: 100,
+      heartbeatIntervalMs: 200,
+    });
+    (reporter as any).logger = silentLogger;
+
+    // should not throw
+    await expect(reporter.onInit({})).resolves.toBeUndefined();
+
+    const t1 = makeTest("t1", { state: "pass" });
+    reporter.onTaskUpdate([["id1", t1.result, t1]]);
+
+    // flush tick will call bestEffortPost which catches the error — just must not throw
+    await vi.advanceTimersByTimeAsync(150);
+
+    // reporter still alive — onFinished should complete without throwing
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    await expect(reporter.onFinished([], [])).resolves.toBeUndefined();
+
+    vi.useRealTimers();
   });
 });

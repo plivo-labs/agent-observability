@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { parseAsString, useQueryState } from 'nuqs'
-import { Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
+import { Bot, ExternalLink, FlaskConical, GitBranch, GitCommit, Trash2 } from 'lucide-react'
 import { Link } from 'react-router'
 import {
   Bar,
@@ -16,7 +16,17 @@ import {
   YAxis,
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Sheet,
   SheetContent,
@@ -27,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
+import { useObservabilityContext } from '@/lib/observability-provider'
 import type { CaseStatus } from '@/lib/observability-types'
 import { ChartCard } from '@/components/observability-chart-shared'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
@@ -153,11 +164,24 @@ export const EvalRunDetailPage = ({
   onBack?: () => void
   onCaseClick?: (caseId: string) => void
 }) => {
-  const { run, loading, error } = useEvalRun(runId)
+  const { run, loading, error, refetch } = useEvalRun(runId)
   const [openCaseId, setOpenCaseId] = useQueryState('case', parseAsString)
   const [localOpenCaseId, setLocalOpenCaseId] = useState<string | null>(null)
   const drawerCaseId = openCaseId ?? localOpenCaseId
   const [caseSearch, setCaseSearch] = useState('')
+  const { api } = useObservabilityContext()
+  const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([])
+  const [deletedCaseIds, setDeletedCaseIds] = useState<string[]>([])
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const hasRunningRun = run?.status === 'running'
+
+  useEffect(() => {
+    if (!hasRunningRun) return
+    const id = window.setInterval(() => refetch(), 1500)
+    return () => window.clearInterval(id)
+  }, [hasRunningRun, refetch])
 
   const handleRowClick = (caseId: string) => {
     if (onCaseClick) onCaseClick(caseId)
@@ -205,10 +229,54 @@ export const EvalRunDetailPage = ({
   }, [run])
 
   const filteredCases = useMemo(() => {
-    const cases = run?.cases ?? []
+    const deletedIds = new Set(deletedCaseIds)
+    const cases = (run?.cases ?? []).filter((c) => !deletedIds.has(c.case_id))
     const q = caseSearch.trim().toLowerCase()
     return q ? cases.filter((c) => c.name.toLowerCase().includes(q)) : cases
-  }, [run, caseSearch])
+  }, [run, caseSearch, deletedCaseIds])
+
+  const selectedSet = useMemo(() => new Set(selectedCaseIds), [selectedCaseIds])
+  const selectedCount = selectedCaseIds.length
+  const selectedInViewCount = filteredCases.reduce(
+    (count, c) => count + (selectedSet.has(c.case_id) ? 1 : 0),
+    0,
+  )
+  const allVisibleSelected = filteredCases.length > 0 && selectedInViewCount === filteredCases.length
+
+  const toggleCaseSelected = (caseId: string, checked: boolean) => {
+    setSelectedCaseIds((prev) => {
+      if (checked) return prev.includes(caseId) ? prev : [...prev, caseId]
+      return prev.filter((id) => id !== caseId)
+    })
+  }
+
+  const toggleAllVisibleSelected = (checked: boolean) => {
+    setSelectedCaseIds((prev) => {
+      if (checked) {
+        const next = new Set(prev)
+        for (const evalCase of filteredCases) next.add(evalCase.case_id)
+        return Array.from(next)
+      }
+      const visibleIds = new Set(filteredCases.map((evalCase) => evalCase.case_id))
+      return prev.filter((id) => !visibleIds.has(id))
+    })
+  }
+
+  const handleDeleteCases = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deleteEvalCases(runId, selectedCaseIds)
+      setDeletedCaseIds((prev) => [...prev, ...selectedCaseIds])
+      setSelectedCaseIds([])
+      setConfirmOpen(false)
+      closeDrawer()
+    } catch (e) {
+      setDeleteError((e as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
 
   if (loading) {
@@ -527,26 +595,46 @@ export const EvalRunDetailPage = ({
               ({filteredCases.length} of {run.cases.length})
             </span>
           </h2>
-          <input
-            type="text"
-            placeholder="Search name…"
-            value={caseSearch}
-            onChange={(e) => setCaseSearch(e.target.value)}
-            className="h-8 w-64 rounded-md border border-border bg-background px-3 text-xs outline-none focus:ring-1 focus:ring-ring"
-          />
+          <div className="flex items-center gap-2">
+            {selectedCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+                onClick={() => setConfirmOpen(true)}
+              >
+                <Trash2 /> Delete
+              </Button>
+            )}
+            <input
+              type="text"
+              placeholder="Search name…"
+              value={caseSearch}
+              onChange={(e) => setCaseSearch(e.target.value)}
+              className="h-8 w-64 rounded-md border border-border bg-background px-3 text-xs outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
         </div>
         <div style={{ borderRadius: 10, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
             <thead>
               <tr>
-                {['Name', 'Status', 'Duration', 'TTFT', 'TTFB', 'Tokens', 'Cache', 'Cost', 'Tools', 'Judgments', 'Events'].map((h, i) => (
+                {['', 'Name', 'Status', 'Duration', 'TTFT', 'TTFB', 'Tokens', 'Cache', 'Cost', 'Tools', 'Judgments', 'Events'].map((h, i) => (
                   <th key={i} style={{
                     padding: '10px 14px', textAlign: 'left', fontWeight: 500,
                     color: 'hsl(var(--muted-foreground))', fontSize: 11,
                     textTransform: 'uppercase', letterSpacing: '0.06em',
                     borderBottom: '1px solid hsl(var(--border))',
                     background: 'hsl(var(--card))', whiteSpace: 'nowrap',
-                  }}>{h}</th>
+                  }}>
+                    {i === 0 ? (
+                      <Checkbox
+                        checked={allVisibleSelected}
+                        onCheckedChange={(checked) => toggleAllVisibleSelected(checked === true)}
+                        aria-label="Select all visible cases"
+                      />
+                    ) : h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -562,6 +650,16 @@ export const EvalRunDetailPage = ({
                     onMouseEnter={(e) => { e.currentTarget.style.background = 'hsl(var(--muted))' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = '' }}
                   >
+                    <td
+                      style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={selectedSet.has(c.case_id)}
+                        onCheckedChange={(checked) => toggleCaseSelected(c.case_id, checked === true)}
+                        aria-label={`Select case ${c.name}`}
+                      />
+                    </td>
                     <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                       {c.name}
                     </td>
@@ -621,7 +719,7 @@ export const EvalRunDetailPage = ({
               })}
               {filteredCases.length === 0 && (
                 <tr>
-                  <td colSpan={11} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                  <td colSpan={12} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
                     No cases match.
                   </td>
                 </tr>
@@ -630,6 +728,35 @@ export const EvalRunDetailPage = ({
           </table>
         </div>
       </div>
+
+      <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedCount} case{selectedCount === 1 ? '' : 's'}?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the selected case{selectedCount === 1 ? '' : 's'} and every event and judgment captured under {selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="text-s-400 text-[hsl(var(--destructive))]">
+              Failed to delete: {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={handleDeleteCases}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : `Delete ${selectedCount}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {!onCaseClick && (
         <Sheet

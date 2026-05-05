@@ -13,6 +13,7 @@ import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { ensurePricesLoaded } from "./evals/summarize.js";
+import { sweepStaleRuns } from "./evals/db.js";
 import { sortSessionEvents } from "./events.js";
 
 // Run migrations on startup if enabled
@@ -22,6 +23,14 @@ if (config.AUTO_MIGRATE) {
 
 // Kick off model-pricing fetch in background; ingest path also awaits.
 ensurePricesLoaded();
+
+// Sweep stale runs (no heartbeat for >60 s) every 30 s.
+if (process.env.NODE_ENV !== "test" && !process.env.STALE_SWEEPER_DISABLE) {
+  setInterval(async () => {
+    const swept = await sweepStaleRuns();
+    if (swept > 0) console.log(`[sweeper] marked ${swept} stale run(s) as failed`);
+  }, 30_000);
+}
 
 const app = new Hono();
 
