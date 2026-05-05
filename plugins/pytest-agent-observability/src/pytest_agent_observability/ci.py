@@ -7,6 +7,7 @@ are simply not emitted — the dashboard renders whatever is present.
 from __future__ import annotations
 
 import os
+import subprocess
 from typing import Optional
 
 
@@ -19,7 +20,27 @@ def detect_ci() -> Optional[dict]:
         return _circleci()
     if os.getenv("BUILDKITE") == "true":
         return _buildkite()
-    return None
+    return _local_git()
+
+
+def _local_git() -> Optional[dict]:
+    def _git(*args: str) -> Optional[str]:
+        try:
+            return subprocess.check_output(
+                ["git", *args], text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+
+    sha = _git("rev-parse", "HEAD")
+    if not sha:
+        return None
+    return _clean({
+        "provider": "local",
+        "git_sha": sha,
+        "git_branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+        "commit_message": _git("log", "-1", "--pretty=%s"),
+    })
 
 
 def _github() -> dict:
