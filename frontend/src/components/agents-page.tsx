@@ -201,26 +201,20 @@ export const AgentsPage = ({ onAgentClick }: { onAgentClick?: (agentId: string) 
           unit="%"
           sparkValues={stats.passSeries}
           sparkColor="hsl(142 70% 28%)"
-          barPct={stats.avgPass}
-          barVariant="pass"
         />
         <KpiTile
           label="p95 TTFT"
           value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'}
           sparkValues={stats.p95Series}
           sparkColor="hsl(210 90% 42%)"
-          barPct={64}
-          barVariant="info"
         />
         <KpiTile
           label="Runs"
           value={stats.totalRuns.toString()}
-          barPct={44}
         />
         <KpiTile
           label="Agents"
           value={agents.length.toString()}
-          barPct={agents.length}
         />
       </div>
 

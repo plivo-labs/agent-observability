@@ -139,10 +139,11 @@ export function AgentRunsPage({
       .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime())
       .map(r => r.estimated_cost_usd ?? 0)
     const maxCost = costSeries.length ? Math.max(...costSeries) : 0
+    const hasTtfb = runs.some(r => r.ttfb_p95_ms != null)
     return {
       avgPass, avgP95, totalCost,
       passSeries, p95Series, costSeries,
-      maxCost,
+      maxCost, hasTtfb,
     }
   }, [runs, validRuns])
 
@@ -218,35 +219,29 @@ export function AgentRunsPage({
         </div>
       </div>
 
-      <div className="eval-kpi-grid" style={{ gridTemplateColumns: 'repeat(4, minmax(0,1fr))' }}>
+      <div className="eval-kpi-grid">
         <KpiTile
           label="Pass rate (avg)"
           value={`${(stats.avgPass * 100).toFixed(1)}`}
           unit="%"
           sparkValues={stats.passSeries}
           sparkColor="hsl(142 70% 28%)"
-          barPct={stats.avgPass * 100}
-          barVariant="pass"
         />
         <KpiTile
           label="p95 TTFT"
           value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'}
           sparkValues={stats.p95Series}
           sparkColor="hsl(210 90% 42%)"
-          barPct={stats.avgP95 != null ? Math.min(100, (stats.avgP95 / 10000) * 100) : 0}
-          barVariant="info"
         />
         <KpiTile
           label="Total cost"
           value={formatCost(stats.totalCost)}
           sparkValues={stats.costSeries}
           sparkColor="hsl(35 90% 45%)"
-          barPct={stats.maxCost > 0 ? Math.min(100, (stats.totalCost / (stats.maxCost * runs.length || 1)) * 100) : 0}
         />
         <KpiTile
           label="Total runs"
           value={String(runs.length)}
-          barPct={Math.min(100, runs.length * 2)}
         />
       </div>
 
@@ -280,7 +275,7 @@ export function AgentRunsPage({
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
           <thead>
             <tr>
-              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cache', 'Cost', 'Commit', ''].map((h, i) => (
+              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', ...(stats.hasTtfb ? ['p95 TTFB'] : []), 'Tokens', 'Cache', 'Cost', 'Commit', ''].map((h, i) => (
                 <th key={i} style={{
                   padding: '10px 14px', textAlign: 'left', fontWeight: 500,
                   color: 'hsl(var(--muted-foreground))', fontSize: 11,
@@ -294,7 +289,7 @@ export function AgentRunsPage({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                <td colSpan={stats.hasTtfb ? 13 : 12} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                   Loading runs…
                 </td>
               </tr>
@@ -353,9 +348,11 @@ export function AgentRunsPage({
                       ? <span style={{ color: r.ttft_p95_ms > 10000 ? 'hsl(var(--destructive))' : 'hsl(var(--foreground))' }}>{formatMs(r.ttft_p95_ms)}</span>
                       : <span style={{ color: 'hsl(var(--muted-foreground))' }}>—</span>}
                   </td>
-                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
-                    {r.ttfb_p95_ms != null ? formatMs(r.ttfb_p95_ms) : '—'}
-                  </td>
+                  {stats.hasTtfb && (
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {r.ttfb_p95_ms != null ? formatMs(r.ttfb_p95_ms) : '—'}
+                    </td>
+                  )}
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
                     {formatTokens(r.total_tokens)}
                   </td>
@@ -412,7 +409,7 @@ export function AgentRunsPage({
             })}
             {!loading && filteredRuns.length === 0 && (
               <tr>
-                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                <td colSpan={stats.hasTtfb ? 13 : 12} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
                   No runs match.
                 </td>
               </tr>

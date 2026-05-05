@@ -354,6 +354,10 @@ export const EvalRunDetailPage = ({
       }
     }
     const avgAsr = asrCount > 0 ? asrSum / asrCount : null
+    const hasTtfb =
+      run.ttfb_p95_ms != null ||
+      run.ttfb_avg_ms != null ||
+      enriched.some((c) => c.ttfb_avg_ms != null)
     return {
       passRate,
       totalToolCalls,
@@ -365,6 +369,7 @@ export const EvalRunDetailPage = ({
           ? run.estimated_cost_usd / run.total
           : null,
       avgAsr,
+      hasTtfb,
     }
   }, [run, enriched])
 
@@ -374,6 +379,8 @@ export const EvalRunDetailPage = ({
         idx: i + 1,
         ttft: c.ttft_avg_ms,
         ttfb: c.ttfb_avg_ms,
+        duration: c.duration_ms,
+        status: c.status,
       })),
     [enriched],
   )
@@ -434,7 +441,7 @@ export const EvalRunDetailPage = ({
     return (
       <div className="flex flex-col gap-5 p-6" aria-busy="true">
         <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2.5">
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="h-[88px] rounded-lg" />
           ))}
@@ -527,7 +534,7 @@ export const EvalRunDetailPage = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+      <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
         <Kpi
           label="Pass rate"
           value={stats.passRate.toFixed(0)}
@@ -547,13 +554,15 @@ export const EvalRunDetailPage = ({
           valueTone={latencyTone(run.ttft_p95_ms, TTFT_BAD_MS)}
           hint={run.ttft_avg_ms != null ? `avg ${formatMs(run.ttft_avg_ms)}` : undefined}
         />
-        <Kpi
-          label="P95 TTFB"
-          value={ttfbParts.value}
-          unit={ttfbParts.unit ?? undefined}
-          valueTone={latencyTone(run.ttfb_p95_ms, TTFB_BAD_MS)}
-          hint={run.ttfb_avg_ms != null ? `avg ${formatMs(run.ttfb_avg_ms)}` : undefined}
-        />
+        {stats.hasTtfb && (
+          <Kpi
+            label="P95 TTFB"
+            value={ttfbParts.value}
+            unit={ttfbParts.unit ?? undefined}
+            valueTone={latencyTone(run.ttfb_p95_ms, TTFB_BAD_MS)}
+            hint={run.ttfb_avg_ms != null ? `avg ${formatMs(run.ttfb_avg_ms)}` : undefined}
+          />
+        )}
         <Kpi
           label="Tokens"
           value={formatTokens(run.total_tokens)}
@@ -605,7 +614,7 @@ export const EvalRunDetailPage = ({
             title="Latency over cases"
             legend={[
               { color: COLOR_TTFT, label: 'TTFT' },
-              { color: COLOR_TTFB, label: 'TTFB' },
+              ...(stats.hasTtfb ? [{ color: COLOR_TTFB, label: 'TTFB' }] : []),
             ]}
           >
             <ResponsiveContainer width="100%" height="100%">
@@ -643,20 +652,23 @@ export const EvalRunDetailPage = ({
                   activeDot={{ r: 4 }}
                   connectNulls
                 />
-                <Line
-                  type="monotone"
-                  dataKey="ttfb"
-                  name="TTFB"
-                  stroke={COLOR_TTFB}
-                  strokeWidth={1.75}
-                  dot={false}
-                  connectNulls
-                />
+                {stats.hasTtfb && (
+                  <Line
+                    type="monotone"
+                    dataKey="ttfb"
+                    name="TTFB"
+                    stroke={COLOR_TTFB}
+                    strokeWidth={1.75}
+                    dot={false}
+                    connectNulls
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </Panel>
 
-          {/* Pipeline breakdown (stacked bars) */}
+          {/* Pipeline breakdown (stacked bars) — only meaningful with TTFB */}
+          {stats.hasTtfb ? (
           <Panel
             title="Pipeline breakdown"
             legend={[
@@ -698,6 +710,45 @@ export const EvalRunDetailPage = ({
               </BarChart>
             </ResponsiveContainer>
           </Panel>
+          ) : (
+          <Panel
+            title="Duration per case"
+            legend={[{ color: COLOR_TTFT, label: 'duration' }]}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={overCasesData}
+                margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+                barCategoryGap={3}
+              >
+                <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis
+                  dataKey="idx"
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  stroke="hsl(var(--border))"
+                  tickLine={false}
+                />
+                <YAxis
+                  tickFormatter={(v: number) => formatDuration(v)}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                  stroke="hsl(var(--border))"
+                  tickLine={false}
+                  width={48}
+                />
+                <Tooltip
+                  formatter={(v: unknown) => formatDuration(Number(v))}
+                  contentStyle={{
+                    background: 'hsl(var(--popover))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: 6,
+                    fontSize: 11,
+                  }}
+                />
+                <Bar dataKey="duration" fill={COLOR_TTFT} radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Panel>
+          )}
 
           {/* Token & cost (donut) */}
           <div className="rounded-lg border bg-card p-4 flex flex-col">
@@ -821,7 +872,7 @@ export const EvalRunDetailPage = ({
                   { k: 'status', label: 'Status' },
                   { k: 'duration', label: 'Duration' },
                   { k: 'ttft', label: 'TTFT' },
-                  { k: 'ttfb', label: 'TTFB' },
+                  ...(stats.hasTtfb ? [{ k: 'ttfb', label: 'TTFB' }] : []),
                   { k: 'tokens', label: 'Tokens' },
                   { k: 'cost', label: 'Cost' },
                   { k: 'tools', label: 'Tools' },
@@ -891,16 +942,18 @@ export const EvalRunDetailPage = ({
                     >
                       {c.ttft_avg_ms != null ? formatMs(c.ttft_avg_ms) : '—'}
                     </td>
-                    <td
-                      className={cn(
-                        'h-10 px-3.5 border-b border-border font-mono tabular-nums',
-                        ttfbBad
-                          ? 'text-[hsl(var(--destructive))]'
-                          : 'text-foreground/85',
-                      )}
-                    >
-                      {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
-                    </td>
+                    {stats.hasTtfb && (
+                      <td
+                        className={cn(
+                          'h-10 px-3.5 border-b border-border font-mono tabular-nums',
+                          ttfbBad
+                            ? 'text-[hsl(var(--destructive))]'
+                            : 'text-foreground/85',
+                        )}
+                      >
+                        {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
+                      </td>
+                    )}
                     <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
                       {formatTokens(c.total_tokens)}
                     </td>
