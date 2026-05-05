@@ -265,8 +265,8 @@ docker compose up --build`}
               </tr>
               <tr>
                 <td><code>AUTO_MIGRATE</code></td>
-                <td><code className="dflt">true</code></td>
-                <td>Run SQL migrations in <code className="type">migrations/</code> on startup. Set to <code className="type">false</code> if you manage migrations externally (e.g. goose).</td>
+                <td><code className="dflt">false</code></td>
+                <td>Run SQL migrations in <code className="type">migrations/</code> on startup. Set to <code className="type">true</code> to have the server apply them itself; the default leaves them alone so externally-managed migrations (e.g. goose) aren't double-applied.</td>
               </tr>
               <tr>
                 <td><code>AGENT_OBSERVABILITY_USER</code></td>
