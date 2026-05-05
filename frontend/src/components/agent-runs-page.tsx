@@ -43,7 +43,34 @@ function PassBar({ passed, total }: { passed: number; total: number }) {
   )
 }
 
-function KpiTile({ label, value, unit, sub }: { label: string; value: string; unit?: string; sub?: string }) {
+function Sparkline({ values, color = 'hsl(270 60% 55%)', width = 80, height = 26 }: {
+  values: number[]; color?: string; width?: number; height?: number
+}) {
+  if (!values || values.length < 2) return <svg width={width} height={height} />
+  const min = Math.min(...values), max = Math.max(...values)
+  const range = max - min || 1
+  const dx = width / (values.length - 1)
+  const pts = values.map((v, i): [number, number] => [
+    i * dx,
+    height - 2 - ((v - min) / range) * (height - 4)
+  ])
+  const path = pts.map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`)).join(' ')
+  const area = path + ` L${width},${height} L0,${height} Z`
+  return (
+    <svg width={width} height={height}>
+      <path d={area} fill={color} opacity={0.12} />
+      <path d={path} fill="none" stroke={color} strokeWidth="1.5" />
+      <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="2" fill={color} />
+    </svg>
+  )
+}
+
+function KpiTile({
+  label, value, unit, sub, sparkValues, sparkColor, barPct, barVariant,
+}: {
+  label: string; value: string; unit?: string; sub?: string
+  sparkValues?: number[]; sparkColor?: string; barPct?: number; barVariant?: string
+}) {
   return (
     <div className="eval-kpi">
       <div className="eval-kpi__label">{label}</div>
@@ -51,6 +78,16 @@ function KpiTile({ label, value, unit, sub }: { label: string; value: string; un
         {value}{unit && <span className="unit">{unit}</span>}
       </div>
       {sub && <div className="eval-kpi__delta">{sub}</div>}
+      {sparkValues && sparkValues.length >= 2 && (
+        <div className="eval-kpi__spark">
+          <Sparkline values={sparkValues} color={sparkColor || 'hsl(270 60% 55%)'} width={80} height={26} />
+        </div>
+      )}
+      {barPct != null && (
+        <div className={`eval-kpi__bar eval-kpi__bar--${barVariant || 'default'}`}>
+          <span style={{ width: `${Math.max(0, Math.min(100, barPct))}%` }} />
+        </div>
+      )}
     </div>
   )
 }
@@ -91,7 +128,22 @@ export function AgentRunsPage({
       ? p95Values.reduce((s, v) => s + v, 0) / p95Values.length
       : null
     const totalCost = runs.reduce((s, r) => s + (r.estimated_cost_usd ?? 0), 0)
-    return { avgPass, avgP95, totalCost }
+    const chrono = [...validRuns].sort(
+      (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+    )
+    const passSeries = chrono.map(r => (r.total > 0 ? (r.passed / r.total) * 100 : 0))
+    const p95Series = chrono
+      .map(r => r.ttft_p95_ms)
+      .filter((v): v is number => v != null)
+    const costSeries = [...runs]
+      .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime())
+      .map(r => r.estimated_cost_usd ?? 0)
+    const maxCost = costSeries.length ? Math.max(...costSeries) : 0
+    return {
+      avgPass, avgP95, totalCost,
+      passSeries, p95Series, costSeries,
+      maxCost,
+    }
   }, [runs, validRuns])
 
   const toggleSel = (id: string) => {
@@ -167,10 +219,35 @@ export function AgentRunsPage({
       </div>
 
       <div className="eval-kpi-grid" style={{ gridTemplateColumns: 'repeat(4, minmax(0,1fr))' }}>
-        <KpiTile label="Pass rate (avg)" value={`${(stats.avgPass * 100).toFixed(1)}`} unit="%" />
-        <KpiTile label="p95 TTFT" value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'} />
-        <KpiTile label="Total cost" value={formatCost(stats.totalCost)} />
-        <KpiTile label="Total runs" value={String(runs.length)} />
+        <KpiTile
+          label="Pass rate (avg)"
+          value={`${(stats.avgPass * 100).toFixed(1)}`}
+          unit="%"
+          sparkValues={stats.passSeries}
+          sparkColor="hsl(142 70% 28%)"
+          barPct={stats.avgPass * 100}
+          barVariant="pass"
+        />
+        <KpiTile
+          label="p95 TTFT"
+          value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'}
+          sparkValues={stats.p95Series}
+          sparkColor="hsl(210 90% 42%)"
+          barPct={stats.avgP95 != null ? Math.min(100, (stats.avgP95 / 10000) * 100) : 0}
+          barVariant="info"
+        />
+        <KpiTile
+          label="Total cost"
+          value={formatCost(stats.totalCost)}
+          sparkValues={stats.costSeries}
+          sparkColor="hsl(35 90% 45%)"
+          barPct={stats.maxCost > 0 ? Math.min(100, (stats.totalCost / (stats.maxCost * runs.length || 1)) * 100) : 0}
+        />
+        <KpiTile
+          label="Total runs"
+          value={String(runs.length)}
+          barPct={Math.min(100, runs.length * 2)}
+        />
       </div>
 
       {error && (

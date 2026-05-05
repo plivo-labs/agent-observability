@@ -826,7 +826,6 @@ export const EvalRunDetailPage = ({
                   { k: 'cost', label: 'Cost' },
                   { k: 'tools', label: 'Tools' },
                   { k: 'asr', label: 'ASR conf.' },
-                  { k: 'judg', label: 'Judgments' },
                   { k: 'events', label: 'Events' },
                   { k: 'chev', label: '' },
                 ].map((h) => (
@@ -854,7 +853,7 @@ export const EvalRunDetailPage = ({
             </thead>
             <tbody>
               {filteredCases.map((c) => {
-                const { judgePass, judgeFail, ttftBad, ttfbBad, asrBad, asrWarn, hasInterrupt } = c
+                const { ttftBad, ttfbBad, asrBad, asrWarn, hasInterrupt } = c
                 return (
                   <tr
                     key={c.case_id}
@@ -938,24 +937,6 @@ export const EvalRunDetailPage = ({
                         </span>
                       )}
                     </td>
-                    <td className="h-10 px-3.5 border-b border-border">
-                      {c.judgments.length === 0 ? (
-                        <span className="text-muted-foreground">—</span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5">
-                          {judgePass > 0 && (
-                            <span className="inline-flex items-center px-1.5 h-[20px] rounded bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border border-[hsl(var(--success-border))] text-[10.5px] font-medium tracking-wide uppercase">
-                              {judgePass} pass
-                            </span>
-                          )}
-                          {judgeFail > 0 && (
-                            <span className="inline-flex items-center px-1.5 h-[20px] rounded bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive-border))] text-[10.5px] font-semibold tracking-wide uppercase">
-                              {judgeFail} fail
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </td>
                     <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
                       {c.events.length}
                     </td>
@@ -968,7 +949,7 @@ export const EvalRunDetailPage = ({
               {filteredCases.length === 0 && (
                 <tr>
                   <td
-                    colSpan={13}
+                    colSpan={12}
                     className="px-4 py-10 text-center text-muted-foreground"
                   >
                     No cases match.
