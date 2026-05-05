@@ -3,6 +3,30 @@ import { ChevronRight, GitBranch, Play, Scale } from 'lucide-react'
 import { Link } from 'react-router'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import { formatDate, formatDuration, formatMs, formatTokens, formatCost } from '@/lib/observability-format'
+import type { CiMetadata } from '@/lib/observability-types'
+
+function getCommitLink(ci: CiMetadata | null, sha: string | undefined): string | null {
+  if (!ci || !sha) return null
+
+  const explicit = typeof ci.git_commit_url === 'string' ? ci.git_commit_url : null
+  if (explicit) return explicit
+
+  const runUrl = typeof ci.run_url === 'string' ? ci.run_url : null
+  if (!runUrl) return null
+
+  const provider = typeof ci.provider === 'string' ? ci.provider.toLowerCase() : ''
+  if (provider === 'github') {
+    const marker = '/actions/runs/'
+    const idx = runUrl.indexOf(marker)
+    if (idx > 0) return `${runUrl.slice(0, idx)}/commit/${sha}`
+  }
+  if (provider === 'gitlab') {
+    const marker = '/-/jobs/'
+    const idx = runUrl.indexOf(marker)
+    if (idx > 0) return `${runUrl.slice(0, idx)}/-/commit/${sha}`
+  }
+  return null
+}
 
 function PassBar({ passed, total }: { passed: number; total: number }) {
   const pct = total > 0 ? Math.round((passed / total) * 100) : 0
@@ -102,7 +126,7 @@ export function AgentRunsPage({
             <button
               type="button"
               className="eval-action-btn"
-              onClick={() => onCompare?.(validRuns[0].run_id, validRuns[1].run_id)}
+              onClick={() => onCompare?.(validRuns[1].run_id, validRuns[0].run_id)}
             >
               <Scale size={14} /> Compare last 2
             </button>
@@ -130,7 +154,7 @@ export function AgentRunsPage({
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
           <thead>
             <tr>
-              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cache', 'Cost', 'Branch', ''].map((h, i) => (
+              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cache', 'Cost', 'Branch', 'Commit', ''].map((h, i) => (
                 <th key={i} style={{
                   padding: '10px 14px', textAlign: 'left', fontWeight: 500,
                   color: 'hsl(var(--muted-foreground))', fontSize: 11,
@@ -144,7 +168,7 @@ export function AgentRunsPage({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                <td colSpan={14} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                   Loading runs…
                 </td>
               </tr>
@@ -152,6 +176,8 @@ export function AgentRunsPage({
             {!loading && runs.map(r => {
               const isEmpty = r.total === 0
               const isSel = selected.has(r.run_id)
+              const sha = r.ci?.git_sha ? String(r.ci.git_sha) : null
+              const commitUrl = getCommitLink(r.ci, sha ?? undefined)
               return (
                 <tr
                   key={r.run_id}
@@ -212,13 +238,38 @@ export function AgentRunsPage({
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'hsl(var(--muted-foreground))', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <GitBranch size={12} />
-                      {r.ci?.git_branch ?? 'main'}
-                      {r.ci?.git_sha && (
-                        <span style={{ color: 'hsl(var(--muted-foreground))', opacity: 0.7 }}>
-                          @{String(r.ci.git_sha).slice(0, 7)}
-                        </span>
-                      )}
+                      {r.ci?.git_branch ?? '—'}
                     </span>
+                  </td>
+                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>
+                    {!sha && <span style={{ color: 'hsl(var(--muted-foreground))' }}>—</span>}
+                    {sha && commitUrl && (
+                      <a
+                        href={commitUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ color: 'hsl(var(--foreground))', textDecoration: 'none' }}
+                        title={sha}
+                      >
+                        {sha.slice(0, 7)}
+                      </a>
+                    )}
+                    {sha && !commitUrl && (
+                      <span title={sha} style={{ color: 'hsl(var(--muted-foreground))', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {sha.slice(0, 7)}
+                        <span style={{
+                          fontSize: 10,
+                          lineHeight: 1,
+                          padding: '2px 5px',
+                          borderRadius: 999,
+                          border: '1px solid hsl(var(--border))',
+                          color: 'hsl(var(--muted-foreground))',
+                        }}>
+                          local
+                        </span>
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', width: 24, color: 'hsl(var(--muted-foreground))' }}>
                     <ChevronRight size={14} />
@@ -228,7 +279,7 @@ export function AgentRunsPage({
             })}
             {!loading && runs.length === 0 && (
               <tr>
-                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                <td colSpan={14} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
                   No runs found.
                 </td>
               </tr>

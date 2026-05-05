@@ -7,6 +7,8 @@ node_modules/
 # artifacts
 recordings/
 data/
+.omc/
+**/.omc/
 
 # frontend build
 frontend/dist/

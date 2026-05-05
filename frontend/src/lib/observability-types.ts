@@ -228,6 +228,7 @@ export type RunEvent =
 export interface CiMetadata {
   provider?: string
   run_url?: string
+  git_commit_url?: string
   git_sha?: string
   git_branch?: string
   commit_message?: string
