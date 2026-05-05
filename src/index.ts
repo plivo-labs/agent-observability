@@ -12,12 +12,16 @@ import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
+import { ensurePricesLoaded } from "./evals/summarize.js";
 import { sortSessionEvents } from "./events.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
   await migrate(sql);
 }
+
+// Kick off model-pricing fetch in background; ingest path also awaits.
+ensurePricesLoaded();
 
 const app = new Hono();
 

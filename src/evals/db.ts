@@ -5,7 +5,7 @@ import type {
   EvalPayloadV0,
   CaseStatus,
 } from "./schema.js";
-import { summarize, computeCaseMetrics, percentile, avg } from "./summarize.js";
+import { summarize, computeCaseMetrics, percentile, avg, ensurePricesLoaded } from "./summarize.js";
 export { summarize } from "./summarize.js";
 export type { RunSummary } from "./summarize.js";
 
@@ -22,17 +22,20 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const finishedAt = new Date(run.finished_at * 1000);
   const durationMs = Math.max(0, Math.round((run.finished_at - run.started_at) * 1000));
 
+  await ensurePricesLoaded();
   const caseMetrics = cases.map((c) => computeCaseMetrics(c.events ?? []));
 
   const allTtfts: number[] = [];
   const allTtfbs: number[] = [];
   let runPromptTokens = 0;
+  let runCachedPromptTokens = 0;
   let runCompletionTokens = 0;
   let runCost: number | null = 0;
   for (const m of caseMetrics) {
     allTtfts.push(...m.ttfts_ms);
     allTtfbs.push(...m.ttfbs_ms);
     runPromptTokens += m.prompt_tokens;
+    runCachedPromptTokens += m.cached_prompt_tokens;
     runCompletionTokens += m.completion_tokens;
     if (m.estimated_cost_usd == null && m.total_tokens > 0) runCost = null;
     else if (runCost != null) runCost += m.estimated_cost_usd ?? 0;
@@ -48,7 +51,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   await sql.begin(async (tx: any) => {
     await tx`
       INSERT INTO eval_runs (
-        run_id, account_id, agent_id,
+        run_id, name, account_id, agent_id,
         framework, framework_version,
         testing_framework, testing_framework_version,
         started_at, finished_at, duration_ms,
@@ -56,9 +59,10 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ci, raw_payload,
         ttft_p50_ms, ttft_p95_ms, ttft_avg_ms,
         ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms,
-        prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
+        prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
       ) VALUES (
         ${run.run_id},
+        ${run.name ?? null},
         ${run.account_id ?? null},
         ${run.agent_id ?? null},
         ${run.framework ?? null},
@@ -82,10 +86,41 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${runTtfbP95},
         ${runTtfbAvg},
         ${runPromptTokens},
+        ${runCachedPromptTokens},
         ${runCompletionTokens},
         ${runPromptTokens + runCompletionTokens},
         ${runCost == null ? null : Number(runCost.toFixed(6))}
       )
+      ON CONFLICT (run_id) DO UPDATE SET
+        started_at        = LEAST(eval_runs.started_at, EXCLUDED.started_at),
+        finished_at       = GREATEST(eval_runs.finished_at, EXCLUDED.finished_at),
+        duration_ms       = GREATEST(eval_runs.duration_ms, EXCLUDED.duration_ms),
+        total             = eval_runs.total   + EXCLUDED.total,
+        passed            = eval_runs.passed  + EXCLUDED.passed,
+        failed            = eval_runs.failed  + EXCLUDED.failed,
+        errored           = eval_runs.errored + EXCLUDED.errored,
+        skipped           = eval_runs.skipped + EXCLUDED.skipped,
+        prompt_tokens         = eval_runs.prompt_tokens         + EXCLUDED.prompt_tokens,
+        cached_prompt_tokens  = eval_runs.cached_prompt_tokens  + EXCLUDED.cached_prompt_tokens,
+        completion_tokens     = eval_runs.completion_tokens     + EXCLUDED.completion_tokens,
+        total_tokens      = eval_runs.total_tokens      + EXCLUDED.total_tokens,
+        estimated_cost_usd = CASE
+          WHEN eval_runs.estimated_cost_usd IS NULL OR EXCLUDED.estimated_cost_usd IS NULL THEN NULL
+          ELSE eval_runs.estimated_cost_usd + EXCLUDED.estimated_cost_usd
+        END,
+        -- Latency percentiles can't be merged exactly without raw samples; average
+        -- the per-shard values. Workers under xdist receive similarly-sized slices,
+        -- so the mean of two p95s approximates the overall p95 well enough for the
+        -- dashboard. Recompute exactly from eval_cases if precision matters.
+        ttft_p50_ms = COALESCE((eval_runs.ttft_p50_ms + EXCLUDED.ttft_p50_ms) / 2, EXCLUDED.ttft_p50_ms, eval_runs.ttft_p50_ms),
+        ttft_p95_ms = COALESCE((eval_runs.ttft_p95_ms + EXCLUDED.ttft_p95_ms) / 2, EXCLUDED.ttft_p95_ms, eval_runs.ttft_p95_ms),
+        ttft_avg_ms = COALESCE((eval_runs.ttft_avg_ms + EXCLUDED.ttft_avg_ms) / 2, EXCLUDED.ttft_avg_ms, eval_runs.ttft_avg_ms),
+        ttfb_p50_ms = COALESCE((eval_runs.ttfb_p50_ms + EXCLUDED.ttfb_p50_ms) / 2, EXCLUDED.ttfb_p50_ms, eval_runs.ttfb_p50_ms),
+        ttfb_p95_ms = COALESCE((eval_runs.ttfb_p95_ms + EXCLUDED.ttfb_p95_ms) / 2, EXCLUDED.ttfb_p95_ms, eval_runs.ttfb_p95_ms),
+        ttfb_avg_ms = COALESCE((eval_runs.ttfb_avg_ms + EXCLUDED.ttfb_avg_ms) / 2, EXCLUDED.ttfb_avg_ms, eval_runs.ttfb_avg_ms)
+        -- name, account_id, agent_id, framework*, testing_framework*, ci, raw_payload:
+        -- first writer wins. These are run-level identifiers/labels and are
+        -- identical across xdist workers anyway.
     `;
 
     for (let i = 0; i < cases.length; i++) {
@@ -104,7 +139,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms,
           turn_count, tool_call_count, interruption_count,
           agent_handoff_count, ttft_sample_count,
-          prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
+          prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
         ) VALUES (
           ${c.case_id},
           ${run.run_id},
@@ -128,6 +163,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${m.agent_handoff_count},
           ${m.ttft_sample_count},
           ${m.prompt_tokens},
+          ${m.cached_prompt_tokens},
           ${m.completion_tokens},
           ${m.total_tokens},
           ${m.estimated_cost_usd}
@@ -164,14 +200,31 @@ export async function countEvalRuns(opts: ListEvalRunsOpts): Promise<number> {
   return row.total;
 }
 
+const RUN_BIGINT_FIELDS = ["duration_ms", "prompt_tokens", "cached_prompt_tokens", "completion_tokens", "total_tokens"] as const;
+const CASE_BIGINT_FIELDS = ["duration_ms", "prompt_tokens", "cached_prompt_tokens", "completion_tokens", "total_tokens", "turn_count", "tool_call_count", "interruption_count", "agent_handoff_count", "ttft_sample_count"] as const;
+
+function parseRunRow(row: any): any {
+  for (const f of RUN_BIGINT_FIELDS) {
+    if (row[f] != null) row[f] = Number(row[f]);
+  }
+  return row;
+}
+
+function parseCaseRow(row: any): any {
+  for (const f of CASE_BIGINT_FIELDS) {
+    if (row[f] != null) row[f] = Number(row[f]);
+  }
+  return row;
+}
+
 const RUN_SELECT_COLS =
-  "run_id, account_id, agent_id, " +
+  "run_id, name, account_id, agent_id, " +
   "framework, framework_version, testing_framework, testing_framework_version, " +
   "started_at, finished_at, duration_ms, " +
   "total, passed, failed, errored, skipped, ci, created_at, " +
   "ttft_p50_ms, ttft_p95_ms, ttft_avg_ms, " +
   "ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms, " +
-  "prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
+  "prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
 
 const CASE_SELECT_COLS =
   "case_id, run_id, name, file, status, duration_ms, user_input, " +
@@ -180,7 +233,7 @@ const CASE_SELECT_COLS =
   "ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms, " +
   "turn_count, tool_call_count, interruption_count, " +
   "agent_handoff_count, ttft_sample_count, " +
-  "prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
+  "prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd";
 
 export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
   const { predicates, params } = buildPredicates(opts);
@@ -193,7 +246,7 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, opts.limit, opts.offset],
   );
-  return rows;
+  return rows.map(parseRunRow);
 }
 
 export async function getEvalRun(runId: string): Promise<any | null> {
@@ -204,7 +257,7 @@ export async function getEvalRun(runId: string): Promise<any | null> {
      LIMIT 1`,
     [runId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? parseRunRow(rows[0]) : null;
 }
 
 export async function listEvalCases(runId: string): Promise<any[]> {
@@ -215,7 +268,7 @@ export async function listEvalCases(runId: string): Promise<any[]> {
      ORDER BY created_at ASC`,
     [runId],
   );
-  return rows.map(decodeCaseJsonb);
+  return rows.map(decodeCaseJsonb).map(parseCaseRow);
 }
 
 export async function getEvalCase(runId: string, caseId: string): Promise<any | null> {
@@ -273,7 +326,10 @@ export async function listEvalAgents(): Promise<AgentRow[]> {
         agent_id,
         COUNT(*)::int                                                AS run_count,
         MAX(started_at)                                              AS last_run_at,
-        AVG(CASE WHEN total > 0 THEN passed::float / total ELSE 0 END) * 100 AS avg_pass_rate,
+        CASE WHEN SUM(total) > 0
+          THEN SUM(passed)::float / SUM(total) * 100
+          ELSE 0
+        END                                                          AS avg_pass_rate,
         SUM(total)::int                                              AS total_cases,
         SUM(passed)::int                                             AS total_passed,
         SUM(failed + errored)::int                                   AS total_failed,

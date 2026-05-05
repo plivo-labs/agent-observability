@@ -39,6 +39,7 @@ export interface CaseMetrics {
   ttfb_avg_ms: number | null;
   ttft_sample_count: number;
   prompt_tokens: number;
+  cached_prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   estimated_cost_usd: number | null;
@@ -48,25 +49,79 @@ interface UsageSample {
   provider: string | null;
   model: string | null;
   prompt_tokens: number;
+  cached_prompt_tokens: number;
   completion_tokens: number;
 }
 
 interface ModelPrice {
   input: number;
   output: number;
+  cache_read?: number;
 }
 
-const PRICES_PER_1M_TOKENS_USD: Record<string, ModelPrice> = {
+// Static seed used until the first models.dev fetch succeeds — keeps offline
+// builds and CI usable without network.
+let prices: Record<string, ModelPrice> = {
   "openai:gpt-4.1": { input: 2, output: 8 },
   "openai:gpt-4.1-mini": { input: 0.4, output: 1.6 },
-  "openai:gpt-4.1-nano": { input: 0.1, output: 0.4 },
   "openai:gpt-4o": { input: 2.5, output: 10 },
   "openai:gpt-4o-mini": { input: 0.15, output: 0.6 },
   "anthropic:claude-3-5-sonnet": { input: 3, output: 15 },
-  "anthropic:claude-3-7-sonnet": { input: 3, output: 15 },
   "anthropic:claude-sonnet-4": { input: 3, output: 15 },
   "anthropic:claude-opus-4": { input: 15, output: 75 },
 };
+
+const MODELS_DEV_URL = "https://models.dev/api.json";
+const REFRESH_MS = 6 * 60 * 60 * 1000;
+const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
+let lastAttempt = 0;
+let lastSuccess = 0;
+let loading: Promise<void> | null = null;
+
+export function ensurePricesLoaded(): Promise<void> {
+  if (loading) return loading;
+  const fresh = Date.now() - lastSuccess < REFRESH_MS && lastSuccess > 0;
+  const cooling = Date.now() - lastAttempt < FAILURE_BACKOFF_MS && lastAttempt > lastSuccess;
+  if (fresh || cooling) return Promise.resolve();
+  return reloadPrices();
+}
+
+export function reloadPrices(): Promise<void> {
+  if (loading) return loading;
+  loading = (async () => {
+    lastAttempt = Date.now();
+    try {
+      const res = await fetch(MODELS_DEV_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as Record<string, { models?: Record<string, { cost?: { input?: number; output?: number; cache_read?: number } }> }>;
+      const next: Record<string, ModelPrice> = {};
+      for (const [provider, providerData] of Object.entries(data)) {
+        const providerKey = normalizeProvider(provider);
+        for (const [modelId, model] of Object.entries(providerData.models ?? {})) {
+          const cost = model.cost;
+          if (typeof cost?.input !== "number" || typeof cost?.output !== "number") continue;
+          next[`${providerKey}:${normalizeModel(modelId)}`] = {
+            input: cost.input,
+            output: cost.output,
+            cache_read: typeof cost.cache_read === "number" ? cost.cache_read : undefined,
+          };
+        }
+      }
+      if (Object.keys(next).length > 0) {
+        prices = next;
+        lastSuccess = Date.now();
+        console.log(`[evals] loaded ${Object.keys(next).length} model prices from models.dev`);
+      } else {
+        throw new Error("no prices parsed");
+      }
+    } catch (e) {
+      console.warn(`[evals] models.dev pricing fetch failed: ${(e as Error).message} (using cached/seed prices)`);
+    } finally {
+      loading = null;
+    }
+  })();
+  return loading;
+}
 
 /** Walk events for a single case, extracting latency samples and counts. */
 export function computeCaseMetrics(events: unknown[]): CaseMetrics {
@@ -120,6 +175,7 @@ export function computeCaseMetrics(events: unknown[]): CaseMetrics {
     ttfb_avg_ms: avg(ttfbs),
     ttft_sample_count: ttfts.length,
     prompt_tokens: usage.prompt_tokens,
+    cached_prompt_tokens: usage.cached_prompt_tokens,
     completion_tokens: usage.completion_tokens,
     total_tokens: usage.total_tokens,
     estimated_cost_usd: usage.estimated_cost_usd,
@@ -132,11 +188,25 @@ function addUsageSample(samples: UsageSample[], raw: Record<string, unknown>): b
   const totalTokens = numberFrom(raw.llm_total_tokens ?? raw.total_tokens);
   if (promptTokens == null && completionTokens == null && totalTokens == null) return false;
 
+  // Cached prompt tokens — surfaced under several names depending on provider/SDK:
+  //   • OpenAI:    prompt_tokens_details.cached_tokens
+  //   • Anthropic: cache_read_input_tokens (top-level on usage)
+  //   • Generic:   cached_prompt_tokens / cached_tokens
+  const promptDetails = raw.prompt_tokens_details as Record<string, unknown> | null | undefined;
+  const cachedTokens = numberFrom(
+    raw.cached_prompt_tokens ??
+      raw.cache_read_input_tokens ??
+      raw.cached_tokens ??
+      promptDetails?.cached_tokens,
+  );
+
   const metadata = raw.llm_metadata as Record<string, unknown> | null | undefined;
+  const promptResolved = promptTokens ?? Math.max(0, (totalTokens ?? 0) - (completionTokens ?? 0));
   samples.push({
     provider: stringFrom(raw.provider ?? raw.model_provider ?? metadata?.model_provider),
     model: stringFrom(raw.model ?? raw.model_name ?? metadata?.model_name),
-    prompt_tokens: promptTokens ?? Math.max(0, (totalTokens ?? 0) - (completionTokens ?? 0)),
+    prompt_tokens: promptResolved,
+    cached_prompt_tokens: Math.min(promptResolved, Math.max(0, cachedTokens ?? 0)),
     completion_tokens: completionTokens ?? 0,
   });
   return true;
@@ -144,24 +214,33 @@ function addUsageSample(samples: UsageSample[], raw: Record<string, unknown>): b
 
 function summarizeUsage(samples: UsageSample[]) {
   let prompt_tokens = 0;
+  let cached_prompt_tokens = 0;
   let completion_tokens = 0;
   let cost: number | null = 0;
 
   for (const sample of samples) {
     prompt_tokens += sample.prompt_tokens;
+    cached_prompt_tokens += sample.cached_prompt_tokens;
     completion_tokens += sample.completion_tokens;
 
     const price = priceFor(sample.provider, sample.model);
     if (!price) {
       if (sample.prompt_tokens > 0 || sample.completion_tokens > 0) cost = null;
     } else if (cost != null) {
-      cost += (sample.prompt_tokens / 1_000_000) * price.input;
+      // Cached input tokens use cache_read price when the model exposes one;
+      // otherwise they fall back to the regular input price.
+      const cached = sample.cached_prompt_tokens;
+      const fresh = Math.max(0, sample.prompt_tokens - cached);
+      const cachedRate = price.cache_read ?? price.input;
+      cost += (fresh / 1_000_000) * price.input;
+      cost += (cached / 1_000_000) * cachedRate;
       cost += (sample.completion_tokens / 1_000_000) * price.output;
     }
   }
 
   return {
     prompt_tokens,
+    cached_prompt_tokens,
     completion_tokens,
     total_tokens: prompt_tokens + completion_tokens,
     estimated_cost_usd: cost == null ? null : Number(cost.toFixed(6)),
@@ -172,11 +251,17 @@ function priceFor(provider: string | null, model: string | null): ModelPrice | n
   if (!provider || !model) return null;
   const providerKey = normalizeProvider(provider);
   const modelKey = normalizeModel(model);
-  return PRICES_PER_1M_TOKENS_USD[`${providerKey}:${modelKey}`] ?? null;
+  return prices[`${providerKey}:${modelKey}`] ?? null;
 }
 
 function normalizeProvider(provider: string): string {
-  return provider.toLowerCase().replace(/^@/, "").replace(/[-_ ]/g, "");
+  return provider
+    .toLowerCase()
+    .replace(/^@/, "")
+    .replace(/^https?:\/\//, "")
+    .replace(/^api\./, "")
+    .replace(/\.(com|ai|io|net|cloud)$/, "")
+    .replace(/[-_ ]/g, "");
 }
 
 function normalizeModel(model: string): string {

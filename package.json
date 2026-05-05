@@ -5,7 +5,8 @@
     "dev:frontend": "cd frontend && bun run dev",
     "build:frontend": "cd frontend && bun install && bun run build",
     "start": "NODE_ENV=production bun run src/index.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "resummarize": "bun run src/evals/resummarize.ts"
   },
   "dependencies": {
     "hono": "^4.12.11",
