@@ -236,6 +236,8 @@ export interface CiMetadata {
 
 export interface EvalRunRow {
   run_id: string
+  /** Optional freeform label set by the user when the run was uploaded. */
+  name: string | null
   account_id: string | null
   agent_id: string | null
   /** Agent framework family — `livekit` / `pipecat` / …. Null when no
@@ -262,6 +264,7 @@ export interface EvalRunRow {
   ttfb_p95_ms: number | null
   ttfb_avg_ms: number | null
   prompt_tokens: number
+  cached_prompt_tokens: number
   completion_tokens: number
   total_tokens: number
   estimated_cost_usd: number | null
@@ -291,6 +294,7 @@ export interface EvalCaseRow {
   agent_handoff_count: number | null
   ttft_sample_count: number | null
   prompt_tokens: number
+  cached_prompt_tokens: number
   completion_tokens: number
   total_tokens: number
   estimated_cost_usd: number | null

@@ -38,12 +38,14 @@ def build_payload(
     agent_id: Optional[str],
     account_id: Optional[str],
     finished_at: float,
+    run_name: Optional[str] = None,
 ) -> dict:
     framework = detect_framework()
     return {
         "version": "v0",
         "run": {
             "run_id": collector.run_id,
+            "name": run_name,
             "account_id": account_id,
             "agent_id": agent_id,
             "framework": framework[0] if framework else None,

@@ -166,7 +166,12 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'run_id',
         accessorKey: 'run_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Run" />,
-        cell: ({ row }) => <span className="mono">{row.original.run_id.slice(0, 8)}</span>,
+        cell: ({ row }) =>
+          row.original.name ? (
+            <span className="font-medium">{row.original.name}</span>
+          ) : (
+            <span className="mono">{row.original.run_id.slice(0, 8)}</span>
+          ),
         enableSorting: false,
         meta: { label: 'Run' },
       },

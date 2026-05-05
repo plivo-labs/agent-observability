@@ -94,6 +94,7 @@ Judgment event in the dashboard.
 | `AGENT_OBSERVABILITY_URL` | `url` | Base URL of the server |
 | `AGENT_OBSERVABILITY_AGENT_ID` | `agentId` | Free-form agent identifier |
 | `AGENT_OBSERVABILITY_ACCOUNT_ID` | `accountId` | Multi-tenant account id |
+| `AGENT_OBSERVABILITY_RUN_NAME` | `runName` | Optional freeform label for this run (e.g. `v9.1-with-new-prompt`); shown in the dashboard instead of the run UUID |
 | `AGENT_OBSERVABILITY_USER` | `basicAuth.user` | Basic-auth user (when server enables auth) |
 | `AGENT_OBSERVABILITY_PASS` | `basicAuth.pass` | Basic-auth password |
 

@@ -1,20 +1,21 @@
 import { useMemo, useState } from 'react'
-import type { ColumnDef } from '@tanstack/react-table'
 import { parseAsString, useQueryState } from 'nuqs'
-import { ArrowLeft, Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
+import { Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
+import { Link } from 'react-router'
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
+  Cell,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Sheet,
@@ -23,33 +24,12 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
-import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
-import { ObsDataTable } from '@/components/data-table/obs-data-table'
-import { useDataTable } from '@/components/data-table/use-data-table'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
-import type { CaseStatus, EvalCaseRow } from '@/lib/observability-types'
+import type { CaseStatus } from '@/lib/observability-types'
 import { ChartCard } from '@/components/observability-chart-shared'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
-
-const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
-  { label: 'Passed', value: 'passed' },
-  { label: 'Failed', value: 'failed' },
-  { label: 'Errored', value: 'errored' },
-  { label: 'Skipped', value: 'skipped' },
-]
-
-/** Duration thresholds for eval cases: good ≤ 2s, okay 2–5s, bad > 5s.
- * Wider than voice latencies since eval cases often involve multi-turn
- * conversations or slow fixtures. */
-function durationToneClass(ms: number | null): string {
-  if (ms == null) return ''
-  if (ms <= 2000) return 'text-[hsl(var(--success-fg,var(--success)))]'
-  if (ms <= 5000) return 'text-[hsl(var(--warning-fg,var(--warning)))]'
-  return 'text-[hsl(var(--destructive))]'
-}
 
 function formatTokens(tokens: number): string {
   return tokens > 0 ? tokens.toLocaleString() : '—'
@@ -166,7 +146,7 @@ function passRateTone(pct: number): StatTone {
 
 export const EvalRunDetailPage = ({
   runId,
-  onBack,
+  onBack: _onBack,
   onCaseClick,
 }: {
   runId: string
@@ -177,6 +157,7 @@ export const EvalRunDetailPage = ({
   const [openCaseId, setOpenCaseId] = useQueryState('case', parseAsString)
   const [localOpenCaseId, setLocalOpenCaseId] = useState<string | null>(null)
   const drawerCaseId = openCaseId ?? localOpenCaseId
+  const [caseSearch, setCaseSearch] = useState('')
 
   const handleRowClick = (caseId: string) => {
     if (onCaseClick) onCaseClick(caseId)
@@ -191,11 +172,18 @@ export const EvalRunDetailPage = ({
   const stats = useMemo(() => {
     if (!run) return null
     const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
+    const totalToolCalls = run.cases.reduce((sum, c) => sum + (c.tool_call_count ?? 0), 0)
     return {
       passRate,
       hasAnyFailure: run.failed > 0 || run.errored > 0,
       passedPct: run.total > 0 ? (run.passed / run.total) * 100 : 0,
       failedPct: run.total > 0 ? (run.failed / run.total) * 100 : 0,
+      totalToolCalls,
+      avgToolCallsPerCase: run.total > 0 ? (totalToolCalls / run.total).toFixed(1) : null,
+      avgTokensPerCase: run.total > 0 ? Math.round(run.total_tokens / run.total) : null,
+      avgCostPerCase: run.total > 0 && run.estimated_cost_usd != null
+        ? run.estimated_cost_usd / run.total
+        : null,
     }
   }, [run])
 
@@ -207,17 +195,6 @@ export const EvalRunDetailPage = ({
     ].filter((d) => d.avg > 0 || d.p50 > 0 || d.p95 > 0)
   }, [run])
 
-  const pipelineData = useMemo(() => {
-    if (!run) return []
-    return run.cases
-      .filter((c) => c.ttft_avg_ms != null || c.ttfb_avg_ms != null)
-      .map((c, i) => ({
-        label: c.name.length > 20 ? `${c.name.slice(0, 18)}…` : c.name || `#${i + 1}`,
-        ttft: c.ttft_avg_ms ?? 0,
-        ttfb: c.ttfb_avg_ms ?? 0,
-      }))
-  }, [run])
-
   const overCasesData = useMemo(() => {
     if (!run) return []
     return run.cases.map((c, i) => ({
@@ -227,144 +204,12 @@ export const EvalRunDetailPage = ({
     }))
   }, [run])
 
-  const columns = useMemo<ColumnDef<EvalCaseRow>[]>(
-    () => [
-      {
-        id: 'name',
-        accessorKey: 'name',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Name" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400">{row.original.name}</span>
-        ),
-        enableColumnFilter: true,
-        meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
-      },
-      {
-        id: 'status',
-        accessorKey: 'status',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
-        cell: ({ row }) => <StatusChip status={row.original.status} />,
-        enableColumnFilter: true,
-        meta: {
-          label: 'Status',
-          variant: 'multiSelect',
-          options: STATUS_OPTIONS,
-        },
-        filterFn: (row, id, value) => {
-          if (!Array.isArray(value) || value.length === 0) return true
-          return value.includes(row.getValue(id))
-        },
-      },
-      {
-        id: 'duration_ms',
-        accessorKey: 'duration_ms',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
-        cell: ({ row }) => (
-          <span
-            className={cn(
-              'font-mono text-s-400 tabular-nums',
-              durationToneClass(row.original.duration_ms),
-            )}
-          >
-            {formatDuration(row.original.duration_ms)}
-          </span>
-        ),
-        meta: { label: 'Duration' },
-      },
-      {
-        id: 'avg_ttft_ms',
-        accessorFn: (row) => row.ttft_avg_ms,
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Avg TTFT" />,
-        cell: ({ getValue }) => {
-          const ms = getValue<number | null>()
-          return (
-            <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
-              {ms != null ? formatMs(ms) : '—'}
-            </span>
-          )
-        },
-        meta: { label: 'Avg TTFT' },
-        sortingFn: (a, b, id) => {
-          const av = a.getValue<number | null>(id)
-          const bv = b.getValue<number | null>(id)
-          if (av == null && bv == null) return 0
-          if (av == null) return 1
-          if (bv == null) return -1
-          return av - bv
-        },
-      },
-      {
-        id: 'total_tokens',
-        accessorKey: 'total_tokens',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Tokens" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
-            {formatTokens(row.original.total_tokens)}
-          </span>
-        ),
-        meta: { label: 'Tokens' },
-      },
-      {
-        id: 'estimated_cost_usd',
-        accessorKey: 'estimated_cost_usd',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Est. cost" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
-            {formatCost(row.original.estimated_cost_usd)}
-          </span>
-        ),
-        meta: { label: 'Est. cost' },
-      },
-      {
-        id: 'judgments',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Judgments" />,
-        cell: ({ row }) => {
-          const c = row.original
-          const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
-          const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
-          if (c.judgments.length === 0) return <span className="text-muted-foreground">—</span>
-          return (
-            <span className="inline-flex items-center gap-2 text-s-400">
-              {judgePass > 0 && (
-                <span className="text-[hsl(var(--success-fg,var(--success)))] text-xs-600">
-                  ✓ {judgePass} pass
-                </span>
-              )}
-              {judgePass > 0 && judgeFail > 0 && (
-                <span className="text-muted-foreground">·</span>
-              )}
-              {judgeFail > 0 && (
-                <Badge
-                  variant="outline"
-                  className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] uppercase tracking-wider"
-                >
-                  {judgeFail} fail
-                </Badge>
-              )}
-            </span>
-          )
-        },
-      },
-      {
-        id: 'events',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Events" />,
-        cell: ({ row }) => (
-          <span className="text-s-400 tabular-nums text-muted-foreground">
-            {row.original.events.length}
-          </span>
-        ),
-      },
-    ],
-    [],
-  )
+  const filteredCases = useMemo(() => {
+    const cases = run?.cases ?? []
+    const q = caseSearch.trim().toLowerCase()
+    return q ? cases.filter((c) => c.name.toLowerCase().includes(q)) : cases
+  }, [run, caseSearch])
 
-  const { table } = useDataTable({
-    data: run?.cases ?? [],
-    columns,
-    pageCount: 1,
-    initialState: { pagination: { pageIndex: 0, pageSize: 20 } },
-    getRowId: (row) => row.case_id,
-  })
 
   if (loading) {
     return (
@@ -384,32 +229,32 @@ export const EvalRunDetailPage = ({
     return (
       <div className="p-12 text-center text-foreground">
         <p>Failed to load eval run: {error ?? 'not found'}</p>
-        {onBack && (
-          <Button variant="ghost" size="sm" onClick={onBack} className="mt-4">
-            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
-          </Button>
-        )}
+        <div className="eval-breadcrumbs mt-4 justify-center">
+          <Link to="/evals">Evals</Link>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="p-6 flex flex-col gap-5 relative">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-s-500 text-muted-foreground hover:text-foreground transition-colors bg-transparent border-none p-0 w-fit cursor-pointer"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to evals
-        </button>
-      )}
+      <div className="eval-breadcrumbs">
+        <Link to="/evals">Evals</Link>
+        {run.agent_id && (
+          <>
+            <span className="eval-breadcrumbs__sep">/</span>
+            <Link to={`/evals/agents/${encodeURIComponent(run.agent_id)}`}>{run.agent_id}</Link>
+          </>
+        )}
+        <span className="eval-breadcrumbs__sep">/</span>
+        <span className="eval-breadcrumbs__current">{run.name ?? runId.slice(0, 8)}</span>
+      </div>
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-3">
             <h1 className="text-h2-600 font-semibold m-0">
-              {run.agent_id ?? <span className="text-muted-foreground">—</span>}
+              {run.name ?? run.agent_id ?? <span className="text-muted-foreground">—</span>}
             </h1>
             {run.framework && (
               <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
@@ -434,7 +279,7 @@ export const EvalRunDetailPage = ({
           </div>
           <div className="font-mono text-xs-400 text-muted-foreground">{run.run_id}</div>
         </div>
-        <div className="text-right text-s-400 text-muted-foreground">
+        <div className="text-right text-xs text-muted-foreground">
           <b className="block text-foreground text-s-600">
             Started {formatDate(run.started_at)}
           </b>
@@ -442,7 +287,7 @@ export const EvalRunDetailPage = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-5 gap-3">
         <StatCard
           label="Pass rate"
           value={stats.passRate}
@@ -468,9 +313,9 @@ export const EvalRunDetailPage = ({
           tone={run.errored > 0 ? 'bad' : 'zero'}
         />
         <StatCard
-          label="Skipped"
-          value={run.skipped}
-          tone={run.skipped > 0 ? 'warn' : 'zero'}
+          label="Cache %"
+          value={run.prompt_tokens > 0 ? Math.round((run.cached_prompt_tokens / run.prompt_tokens) * 100) + '%' : '—'}
+          tone={run.prompt_tokens === 0 ? 'zero' : 'default'}
         />
         <StatCard
           label="p95 TTFT"
@@ -483,18 +328,26 @@ export const EvalRunDetailPage = ({
           tone={run.ttfb_p95_ms == null ? 'zero' : 'default'}
         />
         <StatCard
+          label="Tool calls"
+          value={stats.totalToolCalls > 0 ? stats.totalToolCalls : '—'}
+          suffix={stats.avgToolCallsPerCase != null && stats.totalToolCalls > 0 ? `${stats.avgToolCallsPerCase} avg/case` : undefined}
+          tone={stats.totalToolCalls > 0 ? 'default' : 'zero'}
+        />
+        <StatCard
           label="Tokens"
           value={formatTokens(run.total_tokens)}
+          suffix={stats.avgTokensPerCase != null && run.total_tokens > 0 ? `${stats.avgTokensPerCase.toLocaleString()} avg/case` : undefined}
           tone={run.total_tokens > 0 ? 'default' : 'zero'}
         />
         <StatCard
           label="Est. cost"
           value={formatCost(run.estimated_cost_usd)}
+          suffix={stats.avgCostPerCase != null ? `$${stats.avgCostPerCase.toFixed(4)}/case` : undefined}
           tone={run.estimated_cost_usd == null ? 'zero' : 'default'}
         />
       </div>
 
-      {(percentilesData.length > 0 || pipelineData.length > 0 || overCasesData.length > 0) && (
+      {(percentilesData.length > 0 || overCasesData.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {percentilesData.length > 0 && (
             <ChartCard
@@ -528,46 +381,6 @@ export const EvalRunDetailPage = ({
                 <Bar dataKey="avg" name="Avg" fill="hsl(var(--primary) / 0.3)" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="p50" name="P50" fill="hsl(var(--primary) / 0.6)" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="p95" name="P95" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ChartCard>
-          )}
-
-          {pipelineData.length > 0 && (
-            <ChartCard
-              title="Pipeline Breakdown"
-              subtitle="Avg TTFT vs TTFB per case"
-              legend={[
-                { color: CHART_COLORS.ttft, label: 'TTFT' },
-                { color: CHART_COLORS.ttfb, label: 'TTFB' },
-              ]}
-            >
-              <BarChart data={pipelineData} barCategoryGap="20%">
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
-                <XAxis
-                  dataKey="label"
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                  stroke="hsl(var(--st2))"
-                  interval={0}
-                  angle={-25}
-                  textAnchor="end"
-                  height={60}
-                />
-                <YAxis
-                  tickFormatter={(v: number) => formatMs(v)}
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  stroke="hsl(var(--st2))"
-                />
-                <Tooltip
-                  formatter={(v: unknown) => formatMs(Number(v))}
-                  contentStyle={{
-                    background: 'hsl(var(--background))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: 8,
-                  }}
-                />
-                <Legend formatter={(v: string) => <span className="text-xs">{v}</span>} />
-                <Bar dataKey="ttft" name="TTFT" stackId="stack" fill={CHART_COLORS.ttft} />
-                <Bar dataKey="ttfb" name="TTFB" stackId="stack" fill={CHART_COLORS.ttfb} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartCard>
           )}
@@ -606,6 +419,65 @@ export const EvalRunDetailPage = ({
               </LineChart>
             </ChartCard>
           )}
+
+        </div>
+      )}
+
+      {run.total_tokens > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="rounded-lg border bg-card p-5">
+            <span className="text-p-400 font-medium">Token &amp; cost</span>
+            <p className="text-xs text-muted-foreground mt-0.5">Prompt vs completion split</p>
+            <div className="mt-3 flex items-center gap-6">
+              <div className="relative h-32 w-32 shrink-0">
+                <PieChart width={128} height={128}>
+                  <Pie
+                    data={[
+                      { name: 'prompt', value: run.prompt_tokens },
+                      { name: 'completion', value: run.completion_tokens },
+                    ].filter((d) => d.value > 0)}
+                    dataKey="value"
+                    cx={64}
+                    cy={64}
+                    outerRadius={55}
+                    innerRadius={32}
+                    strokeWidth={0}
+                  >
+                    <Cell fill="hsl(var(--accent-purple))" />
+                    <Cell fill="hsl(var(--success))" />
+                  </Pie>
+                </PieChart>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-xs-600 font-semibold tabular-nums">
+                    {(run.total_tokens / 1000).toFixed(1)}k
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">tokens</span>
+                </div>
+              </div>
+              <div className="flex-1 space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <span className="inline-block h-2 w-2 rounded-sm bg-[hsl(var(--accent-purple))]" />
+                    prompt
+                  </span>
+                  <span className="font-medium tabular-nums">{run.prompt_tokens.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <span className="inline-block h-2 w-2 rounded-sm bg-[hsl(var(--success))]" />
+                    completion
+                  </span>
+                  <span className="tabular-nums">{run.completion_tokens.toLocaleString()}</span>
+                </div>
+                {run.estimated_cost_usd != null && (
+                  <div className="flex justify-between pt-1 border-t">
+                    <span className="text-muted-foreground">est. cost</span>
+                    <span className="tabular-nums">{formatCost(run.estimated_cost_usd)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -614,16 +486,16 @@ export const EvalRunDetailPage = ({
           <CardContent className="flex flex-wrap items-center gap-4 py-3">
             <span className="text-xs-600 text-muted-foreground uppercase tracking-wider">CI</span>
             {run.ci.provider && (
-              <span className="text-s-400 capitalize">{String(run.ci.provider)}</span>
+              <span className="text-xs capitalize">{String(run.ci.provider)}</span>
             )}
             {run.ci.git_branch && (
-              <span className="inline-flex items-center gap-1 text-s-400">
+              <span className="inline-flex items-center gap-1 text-xs">
                 <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
                 {String(run.ci.git_branch)}
               </span>
             )}
             {run.ci.git_sha && (
-              <span className="inline-flex items-center gap-1 text-s-400 font-mono">
+              <span className="inline-flex items-center gap-1 text-xs font-mono">
                 <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
                 {String(run.ci.git_sha).slice(0, 7)}
               </span>
@@ -633,13 +505,13 @@ export const EvalRunDetailPage = ({
                 href={String(run.ci.run_url)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-s-400 text-primary hover:underline"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
               >
                 View run <ExternalLink className="h-3 w-3" />
               </a>
             )}
             {run.ci.commit_message && (
-              <span className="text-s-400 text-muted-foreground italic truncate max-w-[40ch]">
+              <span className="text-xs text-muted-foreground italic truncate max-w-[40ch]">
                 "{String(run.ci.commit_message)}"
               </span>
             )}
@@ -648,17 +520,115 @@ export const EvalRunDetailPage = ({
       )}
 
       <div>
-        <h2 className="text-h4-600 font-semibold mb-3">
-          Cases{' '}
-          <span className="text-muted-foreground text-s-400">
-            ({table.getFilteredRowModel().rows.length} of {run.cases.length})
-          </span>
-        </h2>
-        <ObsDataTable
-          table={table}
-          toolbar={<DataTableToolbar table={table} />}
-          onRowClick={(row) => handleRowClick(row.original.case_id)}
-        />
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <h2 className="text-h4-600 font-semibold">
+            Cases{' '}
+            <span className="text-muted-foreground text-xs">
+              ({filteredCases.length} of {run.cases.length})
+            </span>
+          </h2>
+          <input
+            type="text"
+            placeholder="Search name…"
+            value={caseSearch}
+            onChange={(e) => setCaseSearch(e.target.value)}
+            className="h-8 w-64 rounded-md border border-border bg-background px-3 text-xs outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+        <div style={{ borderRadius: 10, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))', overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                {['Name', 'Status', 'Duration', 'TTFT', 'TTFB', 'Tokens', 'Cache', 'Cost', 'Tools', 'Judgments', 'Events'].map((h, i) => (
+                  <th key={i} style={{
+                    padding: '10px 14px', textAlign: 'left', fontWeight: 500,
+                    color: 'hsl(var(--muted-foreground))', fontSize: 11,
+                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                    borderBottom: '1px solid hsl(var(--border))',
+                    background: 'hsl(var(--card))', whiteSpace: 'nowrap',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCases.map((c) => {
+                const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
+                const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
+                return (
+                  <tr
+                    key={c.case_id}
+                    onClick={() => handleRowClick(c.case_id)}
+                    style={{ cursor: 'pointer', transition: 'background 100ms ease' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'hsl(var(--muted))' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '' }}
+                  >
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                      {c.name}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}>
+                      <StatusChip status={c.status} />
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {formatDuration(c.duration_ms)}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {c.ttft_avg_ms != null ? formatMs(c.ttft_avg_ms) : '—'}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {formatTokens(c.total_tokens)}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'hsl(var(--muted-foreground))' }}>
+                      {c.prompt_tokens > 0 ? Math.round((c.cached_prompt_tokens / c.prompt_tokens) * 100) + '%' : '—'}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {formatCost(c.estimated_cost_usd)}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {c.tool_call_count ?? '—'}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontSize: 12 }}>
+                      {c.judgments.length === 0 ? (
+                        <span style={{ color: 'hsl(var(--muted-foreground))' }}>—</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-2">
+                          {judgePass > 0 && (
+                            <span className="text-[hsl(var(--success-fg,var(--success)))] text-xs-600">
+                              ✓ {judgePass} pass
+                            </span>
+                          )}
+                          {judgePass > 0 && judgeFail > 0 && (
+                            <span className="text-muted-foreground">·</span>
+                          )}
+                          {judgeFail > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] uppercase tracking-wider"
+                            >
+                              {judgeFail} fail
+                            </Badge>
+                          )}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
+                      {c.events.length}
+                    </td>
+                  </tr>
+                )
+              })}
+              {filteredCases.length === 0 && (
+                <tr>
+                  <td colSpan={11} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                    No cases match.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {!onCaseClick && (

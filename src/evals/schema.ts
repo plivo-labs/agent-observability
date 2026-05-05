@@ -73,6 +73,7 @@ const TESTING_FRAMEWORKS = new Set(["pytest", "vitest"]);
 
 const evalRunObjectSchema = z.object({
   run_id: z.string().uuid(),
+  name: z.string().min(1).max(255).nullable().optional(),
   account_id: z.string().nullable().optional(),
   agent_id: z.string().nullable().optional(),
   // Agent framework family (livekit / pipecat / …). Optional because it

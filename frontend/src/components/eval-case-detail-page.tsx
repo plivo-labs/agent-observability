@@ -23,10 +23,12 @@ import type {
 interface MetricsSummary {
   turnsWithMetrics: number
   avgTtftMs: number | null
+  avgTtfbMs: number | null
 }
 
 function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
   const ttfts: number[] = []
+  const ttfbs: number[] = []
   let turns = 0
   for (const ev of events) {
     if (ev.type !== 'message') continue
@@ -35,11 +37,117 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
     turns += 1
     const ttft = metrics.llm_node_ttft
     if (typeof ttft === 'number') ttfts.push(ttft * 1000)
+    const ttfb = metrics.llm_node_ttfb
+    if (typeof ttfb === 'number') ttfbs.push(ttfb * 1000)
   }
   return {
     turnsWithMetrics: turns,
     avgTtftMs: ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null,
+    avgTtfbMs: ttfbs.length ? ttfbs.reduce((a, b) => a + b, 0) / ttfbs.length : null,
   }
+}
+
+// ── Waterfall ────────────────────────────────────────────────────────────────
+
+interface WaterfallItem {
+  label: string
+  kind: 'user' | 'assistant' | 'function_call' | 'function_call_output'
+  durationMs: number
+  offsetPct: number
+  widthPct: number
+}
+
+const WATERFALL_COLORS: Record<WaterfallItem['kind'], string> = {
+  user: 'hsl(var(--muted-foreground))',
+  assistant: 'hsl(270 60% 55%)',
+  function_call: 'hsl(38 80% 40%)',
+  function_call_output: 'hsl(142 70% 28%)',
+}
+
+function buildWaterfallItems(events: RunEvent[]): WaterfallItem[] {
+  // Each event gets an equal slot. Pull durations from metrics where available.
+  const items: Array<{ label: string; kind: WaterfallItem['kind']; durationMs: number }> = []
+
+  for (const ev of events) {
+    if (ev.type === 'message') {
+      const m = ev as RunEventMessage
+      const metrics = m.metrics
+      // Use ttft as a proxy for duration when available; fallback to 1 slot unit
+      const ttft = metrics?.llm_node_ttft
+      const durationMs = typeof ttft === 'number' ? ttft * 1000 : 200
+      const kind: WaterfallItem['kind'] = m.role === 'user' ? 'user' : 'assistant'
+      items.push({ label: m.role ?? 'assistant', kind, durationMs })
+    } else if (ev.type === 'function_call') {
+      const f = ev as RunEventFunctionCall
+      items.push({ label: f.name ?? 'tool call', kind: 'function_call', durationMs: 200 })
+    } else if (ev.type === 'function_call_output') {
+      items.push({ label: 'tool result', kind: 'function_call_output', durationMs: 100 })
+    }
+  }
+
+  if (items.length === 0) return []
+
+  const total = items.reduce((s, it) => s + it.durationMs, 0)
+  if (total === 0) return []
+
+  const result: WaterfallItem[] = []
+  let cumulative = 0
+  for (const it of items) {
+    result.push({
+      ...it,
+      offsetPct: (cumulative / total) * 100,
+      widthPct: (it.durationMs / total) * 100,
+    })
+    cumulative += it.durationMs
+  }
+  return result
+}
+
+function WaterfallRow({ item }: { item: WaterfallItem }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '160px 1fr 60px',
+        gap: 8,
+        fontSize: 11,
+        alignItems: 'center',
+      }}
+    >
+      <span
+        className="font-mono text-muted-foreground truncate"
+        title={item.label}
+      >
+        {item.label}
+      </span>
+      <div className="h-[10px] bg-muted rounded-full relative">
+        <div
+          className="absolute h-full rounded-full"
+          style={{
+            left: `${item.offsetPct}%`,
+            width: `${Math.max(item.widthPct, 1)}%`,
+            backgroundColor: WATERFALL_COLORS[item.kind],
+          }}
+        />
+      </div>
+      <span className="text-right font-mono tabular-nums text-muted-foreground">
+        {item.durationMs < 1000
+          ? `${Math.round(item.durationMs)}ms`
+          : `${(item.durationMs / 1000).toFixed(1)}s`}
+      </span>
+    </div>
+  )
+}
+
+// ── Metrics grid ─────────────────────────────────────────────────────────────
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2.5 flex flex-col gap-0.5">
+      <div className="text-xxs-600 text-muted-foreground uppercase tracking-wider">{label}</div>
+      <div className="font-mono text-s-600 text-foreground tabular-nums">{value}</div>
+    </div>
+  )
 }
 
 function formatTokens(tokens: number): string {
@@ -176,6 +284,10 @@ export const EvalCaseDetailPage = ({
     () => (evalCase ? computeCaseMetrics(evalCase.events) : null),
     [evalCase],
   )
+  const waterfallItems = useMemo(
+    () => (evalCase ? buildWaterfallItems(evalCase.events) : []),
+    [evalCase],
+  )
 
   if (loading) {
     return (
@@ -269,6 +381,27 @@ export const EvalCaseDetailPage = ({
           )}
         </div>
 
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MetricTile
+            label="TTFT (avg)"
+            value={summary?.avgTtftMs != null ? formatMs(summary.avgTtftMs) : '—'}
+          />
+          <MetricTile
+            label="TTFB (avg)"
+            value={summary?.avgTtfbMs != null ? formatMs(summary.avgTtfbMs) : '—'}
+          />
+          <MetricTile
+            label="Tokens"
+            value={evalCase.total_tokens > 0 ? evalCase.total_tokens.toLocaleString() : '—'}
+          />
+          <MetricTile
+            label="Est. cost"
+            value={evalCase.estimated_cost_usd != null
+              ? `$${evalCase.estimated_cost_usd.toFixed(evalCase.estimated_cost_usd < 0.01 ? 4 : 2)}`
+              : '—'}
+          />
+        </div>
+
         {evalCase.user_input && (
           <div>
             <div className="text-xxs-600 text-muted-foreground uppercase tracking-wider mb-2">
@@ -276,6 +409,19 @@ export const EvalCaseDetailPage = ({
             </div>
             <div className="border border-l-4 border-l-muted-foreground rounded-md bg-muted/50 px-3 py-2.5 text-s-400">
               {evalCase.user_input}
+            </div>
+          </div>
+        )}
+
+        {waterfallItems.length > 0 && (
+          <div>
+            <div className="text-xxs-600 text-muted-foreground uppercase tracking-wider mb-2">
+              Latency waterfall
+            </div>
+            <div className="flex flex-col gap-[6px]">
+              {waterfallItems.map((item, i) => (
+                <WaterfallRow key={i} item={item} />
+              ))}
             </div>
           </div>
         )}

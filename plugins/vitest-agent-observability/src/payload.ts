@@ -31,14 +31,16 @@ export function buildPayload(opts: {
   collector: RunCollector;
   agentId?: string | null;
   accountId?: string | null;
+  runName?: string | null;
   finishedAt: number;
 }): EvalPayloadV0 {
-  const { collector, agentId, accountId, finishedAt } = opts;
+  const { collector, agentId, accountId, runName, finishedAt } = opts;
   const framework = detectFramework();
   return {
     version: "v0",
     run: {
       run_id: collector.run_id,
+      name: runName ?? null,
       account_id: accountId ?? null,
       agent_id: agentId ?? null,
       framework: framework?.name ?? null,

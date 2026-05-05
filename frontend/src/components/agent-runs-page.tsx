@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, GitBranch, Play, Scale } from 'lucide-react'
+import { ChevronRight, GitBranch, Play, Scale } from 'lucide-react'
+import { Link } from 'react-router'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import { formatDate, formatDuration, formatMs, formatTokens, formatCost } from '@/lib/observability-format'
 
@@ -30,7 +31,7 @@ function KpiTile({ label, value, unit, sub }: { label: string; value: string; un
 
 export function AgentRunsPage({
   agentId,
-  onBack,
+  onBack: _onBack,
   onRunClick,
   onCompare,
 }: {
@@ -69,9 +70,11 @@ export function AgentRunsPage({
 
   return (
     <div className="w-full p-6 flex flex-col gap-0 min-w-0">
-      <button type="button" className="eval-crumb" onClick={onBack}>
-        <ChevronLeft size={14} /><span>Back to agents</span>
-      </button>
+      <div className="eval-breadcrumbs">
+        <Link to="/evals">Evals</Link>
+        <span className="eval-breadcrumbs__sep">/</span>
+        <span className="eval-breadcrumbs__current">{agentId}</span>
+      </div>
 
       <div className="flex items-start justify-between" style={{ marginTop: 4, marginBottom: 20 }}>
         <div>
@@ -114,7 +117,7 @@ export function AgentRunsPage({
         <KpiTile label="Pass rate (avg)" value={`${(stats.avgPass * 100).toFixed(1)}`} unit="%" />
         <KpiTile label="p95 TTFT" value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'} />
         <KpiTile label="Total cost" value={formatCost(stats.totalCost)} />
-        <KpiTile label="Runs" value={String(runs.length)} />
+        <KpiTile label="Total runs" value={String(runs.length)} />
       </div>
 
       {error && (
@@ -127,7 +130,7 @@ export function AgentRunsPage({
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
           <thead>
             <tr>
-              {['', 'Started', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cost', 'Branch', ''].map((h, i) => (
+              {['', 'Started', 'Name', 'Pass rate', 'Cases', 'Duration', 'p95 TTFT', 'p95 TTFB', 'Tokens', 'Cache', 'Cost', 'Branch', ''].map((h, i) => (
                 <th key={i} style={{
                   padding: '10px 14px', textAlign: 'left', fontWeight: 500,
                   color: 'hsl(var(--muted-foreground))', fontSize: 11,
@@ -141,7 +144,7 @@ export function AgentRunsPage({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={11} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                   Loading runs…
                 </td>
               </tr>
@@ -173,6 +176,11 @@ export function AgentRunsPage({
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
                     {formatDate(r.started_at)}
                   </td>
+                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontSize: 12.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.name
+                      ? <span title={r.name}>{r.name}</span>
+                      : <span style={{ color: 'hsl(var(--muted-foreground))' }}>—</span>}
+                  </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))' }}>
                     {isEmpty
                       ? <span style={{ fontFamily: 'var(--font-mono)', color: 'hsl(var(--muted-foreground))' }}>—</span>
@@ -194,6 +202,9 @@ export function AgentRunsPage({
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
                     {formatTokens(r.total_tokens)}
+                  </td>
+                  <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'hsl(var(--muted-foreground))' }}>
+                    {r.prompt_tokens > 0 ? Math.round((r.cached_prompt_tokens / r.prompt_tokens) * 100) + '%' : '—'}
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
                     {formatCost(r.estimated_cost_usd)}
@@ -217,7 +228,7 @@ export function AgentRunsPage({
             })}
             {!loading && runs.length === 0 && (
               <tr>
-                <td colSpan={11} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+                <td colSpan={13} style={{ padding: '24px 14px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
                   No runs found.
                 </td>
               </tr>

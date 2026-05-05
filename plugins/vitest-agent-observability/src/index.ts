@@ -125,6 +125,7 @@ export default class AgentObservabilityReporter {
         collector: this.collector,
         agentId: this.opts.agentId ?? process.env.AGENT_OBSERVABILITY_AGENT_ID ?? null,
         accountId: this.opts.accountId ?? process.env.AGENT_OBSERVABILITY_ACCOUNT_ID ?? null,
+        runName: this.opts.runName ?? process.env.AGENT_OBSERVABILITY_RUN_NAME ?? null,
         finishedAt: Date.now() / 1000,
       });
 

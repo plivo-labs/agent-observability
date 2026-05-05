@@ -1,0 +1,2 @@
+ALTER TABLE eval_runs
+    ADD COLUMN IF NOT EXISTS name TEXT;

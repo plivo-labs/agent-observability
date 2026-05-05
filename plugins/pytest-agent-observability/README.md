@@ -74,6 +74,8 @@ Judgment event in the dashboard.
 | `AGENT_OBSERVABILITY_URL` | `--agent-observability-url` | Base URL of the server (required for upload) |
 | `AGENT_OBSERVABILITY_AGENT_ID` | `--agent-observability-agent-id` | Free-form agent identifier for the dashboard |
 | `AGENT_OBSERVABILITY_ACCOUNT_ID` | `--agent-observability-account-id` | Multi-tenant account id |
+| `AGENT_OBSERVABILITY_RUN_NAME` | `--agent-observability-run-name` | Optional freeform label for this run (e.g. `v9.1-with-new-prompt`); shown in the dashboard instead of the run UUID |
+| `AGENT_OBSERVABILITY_RUN_ID` | — | Explicit run UUID. Auto-managed under `pytest-xdist` so all `-n` workers share one run. Set manually to share a run across non-pytest workers (`AGENT_OBSERVABILITY_RUN_ID=$(uuidgen)`) |
 | `AGENT_OBSERVABILITY_USER` | — | Basic-auth user (when server enables auth) |
 | `AGENT_OBSERVABILITY_PASS` | — | Basic-auth password |
 | `AGENT_OBSERVABILITY_TIMEOUT` | `--agent-observability-timeout` | Upload request timeout in seconds (default `10`) |

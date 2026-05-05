@@ -276,7 +276,7 @@ body {
   padding: 28px 32px 40px;
 }
 .obs-page {
-  max-width: 1240px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 
@@ -2146,6 +2146,8 @@ body {
 .dark .eval-status-pill--pass { background: hsl(142 45% 10%); color: hsl(142 65% 70%); }
 .dark .eval-status-pill--fail { background: hsl(0 55% 12%); color: hsl(0 85% 70%); }
 .dark .eval-status-pill--warn { background: hsl(38 55% 11%); color: hsl(38 85% 72%); }
+.eval-status-pill--accent { color: hsl(270 60% 44%); background: hsl(270 60% 44% / 0.1); }
+.dark .eval-status-pill--accent { color: hsl(270 70% 70%); background: hsl(270 60% 44% / 0.2); }
 
 /* ── Revamp: Table header sort ──────────────────────────── */
 .eval-th-sort {
@@ -2346,6 +2348,20 @@ body {
 }
 .eval-compare-kpi-tile .delta--up { color: hsl(var(--success-fg, 142 70% 28%)); }
 .eval-compare-kpi-tile .delta--down { color: hsl(var(--destructive)); }
+.eval-compare-kpi-tile .bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 10px;
+}
+.eval-compare-kpi-tile .bar {
+  height: 3px;
+  border-radius: 2px;
+  min-width: 2px;
+  max-width: 100%;
+}
+.eval-compare-kpi-tile .bar--a { background: hsl(var(--muted-foreground) / 0.35); }
+.eval-compare-kpi-tile .bar--b { background: hsl(270 60% 55%); }
 
 .eval-diff-section { margin-top: 8px; }
 .eval-diff-section__head {
@@ -2501,6 +2517,38 @@ body {
 .eval-panel__title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .eval-panel__sub { font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 2px; }
 .eval-panel__body { padding: 16px; }
+
+/* ── Breadcrumbs ────────────────────────────────────────── */
+.eval-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+.eval-breadcrumbs a {
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.eval-breadcrumbs a:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+}
+.eval-breadcrumbs__sep {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.4;
+  user-select: none;
+  font-size: 11px;
+}
+.eval-breadcrumbs__current {
+  color: hsl(var(--foreground));
+  padding: 2px 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 
 /* ── Revamp: Crumb nav ──────────────────────────────────── */
 .eval-crumb {

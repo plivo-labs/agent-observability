@@ -13,6 +13,7 @@ during `pytest_runtest_protocol`.
 from __future__ import annotations
 
 import contextvars
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -43,6 +44,7 @@ def _reset_current_test(token: contextvars.Token) -> None:
 class CaseState:
     run_results: list[Any] = field(default_factory=list)
     judgments: list[dict] = field(default_factory=list)
+    sessions: list[Any] = field(default_factory=list)
     _seen_ids: set[int] = field(default_factory=set)
 
 
@@ -94,6 +96,16 @@ def capture(run_result: Any) -> Any:
     return run_result
 
 
+# ── Internal: session recording (for usage extraction) ─────────────────────
+
+
+def _record_session(session: Any) -> None:
+    test_id = _current_test.get()
+    if test_id is None:
+        return
+    _state_for(test_id).sessions.append(session)
+
+
 # ── Internal: judgment recording (called by the judge wrapper) ──────────────
 
 
@@ -134,7 +146,8 @@ class RunCollector:
 
     @classmethod
     def new(cls, *, started_at: float, ci: Optional[dict] = None) -> "RunCollector":
-        return cls(run_id=str(uuid.uuid4()), started_at=started_at, ci=ci)
+        run_id = os.getenv("AGENT_OBSERVABILITY_RUN_ID") or str(uuid.uuid4())
+        return cls(run_id=run_id, started_at=started_at, ci=ci)
 
     def add_case(self, case: CaseRecord) -> None:
         self.cases.append(case)

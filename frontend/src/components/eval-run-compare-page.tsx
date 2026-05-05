@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import { ChevronLeft, Download } from 'lucide-react'
+import { Download } from 'lucide-react'
+import { Link } from 'react-router'
 import { useEvalRun } from '@/lib/observability-hooks'
 import { formatMs, formatTokens, formatCost, formatDuration } from '@/lib/observability-format'
 import type { EvalCaseRow } from '@/lib/observability-types'
@@ -36,6 +37,9 @@ function KpiTile({ label, a, b, fmtFn, lowerIsBetter = false }: {
   lowerIsBetter?: boolean
 }) {
   const delta = metricDelta(a, b, lowerIsBetter)
+  const maxVal = Math.max(Math.abs(a ?? 0), Math.abs(b ?? 0))
+  const pctA = maxVal > 0 ? ((a ?? 0) / maxVal) * 100 : 0
+  const pctB = maxVal > 0 ? ((b ?? 0) / maxVal) * 100 : 0
   return (
     <div className="eval-compare-kpi-tile">
       <div className="lbl">{label}</div>
@@ -43,6 +47,10 @@ function KpiTile({ label, a, b, fmtFn, lowerIsBetter = false }: {
         <span className="val-a">{fmtFn(a)}</span>
         <span className="arrow">→</span>
         <span className="val-b">{fmtFn(b)}</span>
+      </div>
+      <div className="bars">
+        <span className="bar bar--a" style={{ width: `${pctA}%` }} />
+        <span className="bar bar--b" style={{ width: `${pctB}%` }} />
       </div>
       {delta && (
         <div className={`delta ${delta.good ? 'delta--up' : 'delta--down'}`}>
@@ -65,7 +73,7 @@ export function EvalRunComparePage({
   agentId,
   runIdA,
   runIdB,
-  onBack,
+  onBack: _onBack,
   onOpenRun,
 }: {
   agentId: string
@@ -112,19 +120,21 @@ export function EvalRunComparePage({
   const fixes = diffs.filter(d => d.kind === 'fixed')
   const stillFailing = diffs.filter(d => d.kind === 'failing')
   const unchanged = diffs.filter(d => d.kind === 'unchanged')
+  const newCases = diffs.filter(d => d.kind === 'new')
+  const removedCases = diffs.filter(d => d.kind === 'removed')
 
   const passRateA = runA && runA.total > 0 ? runA.passed / runA.total : 0
   const passRateB = runB && runB.total > 0 ? runB.passed / runB.total : 0
 
-  const verdictKind = regressions.length > fixes.length ? 'regress'
-    : fixes.length > regressions.length ? 'improve'
+  const verdictKind = passRateB < passRateA ? 'regress'
+    : passRateB > passRateA ? 'improve'
     : 'neutral'
   const verdictText = verdictKind === 'regress'
-    ? `${regressions.length} case${regressions.length === 1 ? '' : 's'} regressed`
+    ? `Pass rate dropped ${((passRateA - passRateB) * 100).toFixed(0)}pp`
     : verdictKind === 'improve'
-    ? `${fixes.length} case${fixes.length === 1 ? '' : 's'} fixed`
+    ? `Pass rate improved ${((passRateB - passRateA) * 100).toFixed(0)}pp`
     : 'No net change in pass rate'
-  const verdictSub = `${fixes.length} fixed · ${regressions.length} regressed · ${stillFailing.length} still failing · ${unchanged.length} unchanged`
+  const verdictSub = `${fixes.length} fixed · ${regressions.length} regressed · ${stillFailing.length} still failing · ${unchanged.length} unchanged${newCases.length ? ` · ${newCases.length} new` : ''}${removedCases.length ? ` · ${removedCases.length} removed` : ''}`
 
   function fmtStarted(iso: string | null): string {
     if (!iso) return '—'
@@ -166,7 +176,13 @@ export function EvalRunComparePage({
   if (loadingA || loadingB) {
     return (
       <div className="w-full p-6">
-        <button type="button" className="eval-crumb" onClick={onBack}><ChevronLeft size={14} /><span>Back to runs</span></button>
+        <div className="eval-breadcrumbs">
+          <Link to="/evals">Evals</Link>
+          <span className="eval-breadcrumbs__sep">/</span>
+          <Link to={`/evals/agents/${encodeURIComponent(agentId)}`}>{agentId}</Link>
+          <span className="eval-breadcrumbs__sep">/</span>
+          <span className="eval-breadcrumbs__current">Compare</span>
+        </div>
         <div style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--muted-foreground))', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
           Loading runs…
         </div>
@@ -177,7 +193,13 @@ export function EvalRunComparePage({
   if (!runA || !runB) {
     return (
       <div className="w-full p-6">
-        <button type="button" className="eval-crumb" onClick={onBack}><ChevronLeft size={14} /><span>Back to runs</span></button>
+        <div className="eval-breadcrumbs">
+          <Link to="/evals">Evals</Link>
+          <span className="eval-breadcrumbs__sep">/</span>
+          <Link to={`/evals/agents/${encodeURIComponent(agentId)}`}>{agentId}</Link>
+          <span className="eval-breadcrumbs__sep">/</span>
+          <span className="eval-breadcrumbs__current">Compare</span>
+        </div>
         <div style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
           {!runIdA || !runIdB ? 'Select two runs to compare.' : 'Failed to load one or both runs.'}
         </div>
@@ -187,15 +209,19 @@ export function EvalRunComparePage({
 
   return (
     <div className="w-full p-6 flex flex-col gap-0 min-w-0">
-      <button type="button" className="eval-crumb" onClick={onBack}>
-        <ChevronLeft size={14} /><span>Back to runs</span>
-      </button>
+      <div className="eval-breadcrumbs">
+        <Link to="/evals">Evals</Link>
+        <span className="eval-breadcrumbs__sep">/</span>
+        <Link to={`/evals/agents/${encodeURIComponent(agentId)}`}>{agentId}</Link>
+        <span className="eval-breadcrumbs__sep">/</span>
+        <span className="eval-breadcrumbs__current">Compare</span>
+      </div>
 
       <div className="flex items-start justify-between" style={{ marginTop: 4, marginBottom: 16 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
             <h1 style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 600 }}>{agentId}</h1>
-            <span className="eval-status-pill eval-status-pill--pass" style={{ fontFamily: 'var(--font-sans)' }}>Comparing runs</span>
+            <span className="eval-status-pill eval-status-pill--accent">Comparing runs</span>
           </div>
           <div style={{ color: 'hsl(var(--muted-foreground))', fontSize: 13 }}>
             Side-by-side diff · regressions pinned at top
@@ -292,6 +318,28 @@ export function EvalRunComparePage({
             {unchanged.map(d => <DiffRow key={d.key} d={d} />)}
           </div>
         </details>
+      )}
+
+      {newCases.length > 0 && (
+        <div className="eval-diff-section" style={{ marginTop: 8 }}>
+          <div className="eval-diff-section__head" style={{ borderColor: 'hsl(var(--muted-foreground) / 0.3)' }}>
+            <span>+ New cases</span>
+            <span className="count">{newCases.length}</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>only in run B</span>
+          </div>
+          {newCases.map(d => <DiffRow key={d.key} d={d} />)}
+        </div>
+      )}
+
+      {removedCases.length > 0 && (
+        <div className="eval-diff-section" style={{ marginTop: 8 }}>
+          <div className="eval-diff-section__head" style={{ borderColor: 'hsl(var(--muted-foreground) / 0.3)' }}>
+            <span>− Removed cases</span>
+            <span className="count">{removedCases.length}</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>only in run A</span>
+          </div>
+          {removedCases.map(d => <DiffRow key={d.key} d={d} />)}
+        </div>
       )}
 
       {diffs.length === 0 && (

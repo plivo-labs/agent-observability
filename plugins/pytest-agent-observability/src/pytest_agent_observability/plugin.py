@@ -30,6 +30,7 @@ class _State:
     upload_config: Optional[up.UploadConfig] = None
     agent_id: Optional[str] = None
     account_id: Optional[str] = None
+    run_name: Optional[str] = None
     fallback_dir: Optional[Path] = None
     _judge_restorer: Optional[Any] = None
     _autocapture_restorer: Optional[Any] = None
@@ -65,6 +66,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         dest="agent_observability_account_id",
         default=None,
         help="Account identifier for this test run. Overrides AGENT_OBSERVABILITY_ACCOUNT_ID.",
+    )
+    group.addoption(
+        "--agent-observability-run-name",
+        dest="agent_observability_run_name",
+        default=None,
+        help=(
+            "Optional freeform label for this run (e.g. 'v9.1-with-new-prompt'). "
+            "Overrides AGENT_OBSERVABILITY_RUN_NAME."
+        ),
     )
     group.addoption(
         "--agent-observability-timeout",
@@ -106,6 +116,13 @@ def pytest_configure(config: pytest.Config) -> None:
     if not url:
         return  # No-op when no server is configured.
 
+    # Under pytest-xdist each worker is a separate process and would otherwise
+    # mint its own run_id, fragmenting one logical pytest invocation across N
+    # run rows. The master generates the id once; workers inherit it via env
+    # (xdist forwards env to workers, and our collector reads the same var).
+    if not hasattr(config, "workerinput"):  # master / non-xdist
+        os.environ.setdefault("AGENT_OBSERVABILITY_RUN_ID", str(uuid.uuid4()))
+
     user = os.getenv("AGENT_OBSERVABILITY_USER")
     pw = os.getenv("AGENT_OBSERVABILITY_PASS")
     auth = (user, pw) if user and pw else None
@@ -133,6 +150,10 @@ def pytest_configure(config: pytest.Config) -> None:
     _state.account_id = (
         config.getoption("agent_observability_account_id")
         or os.getenv("AGENT_OBSERVABILITY_ACCOUNT_ID")
+    )
+    _state.run_name = (
+        config.getoption("agent_observability_run_name")
+        or os.getenv("AGENT_OBSERVABILITY_RUN_NAME")
     )
 
     override_dir = (
@@ -186,6 +207,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         collector=_state.collector,
         agent_id=_state.agent_id,
         account_id=_state.account_id,
+        run_name=_state.run_name,
         finished_at=time.time(),
     )
 
@@ -263,6 +285,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
         except Exception:
             ev_list = []
         events.extend(evt.serialize_events(ev_list))
+
+    # Append token usage from AgentSession.usage (one usage event per LLM model/provider).
+    sessions = state.sessions if state else []
+    for session in sessions:
+        events.extend(_extract_session_usage(session))
 
     case_status, failure = _derive_status(report, call, judgments)
 
@@ -384,6 +411,7 @@ def _install_autocapture_wrapper() -> None:
         result = original(self, *args, **kwargs)
         try:
             col.capture(result)
+            col._record_session(self)
         except Exception:
             pass
         return result
@@ -394,3 +422,38 @@ def _install_autocapture_wrapper() -> None:
         AgentSession.run = original  # type: ignore[method-assign]
 
     _state._autocapture_restorer = _restore
+
+
+def _extract_session_usage(session: Any) -> list[dict]:
+    """Read LLM token usage from AgentSession.usage and return as usage events.
+
+    AgentSession accumulates usage via ModelUsageCollector. We emit one
+    `usage` event per LLM provider/model combination so the server can
+    compute per-case token totals and estimated cost.
+    """
+    try:
+        agent_usage = session.usage  # AgentSessionUsage
+        model_usage_list = getattr(agent_usage, "model_usage", None) or []
+    except Exception:
+        return []
+
+    out: list[dict] = []
+    for mu in model_usage_list:
+        if getattr(mu, "type", None) != "llm_usage":
+            continue
+        prompt = int(getattr(mu, "input_tokens", 0) or 0)
+        completion = int(getattr(mu, "output_tokens", 0) or 0)
+        if prompt == 0 and completion == 0:
+            continue
+        cached = int(getattr(mu, "input_cached_tokens", 0) or 0)
+        entry: dict = {
+            "type": "usage",
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "provider": getattr(mu, "provider", None) or None,
+            "model": getattr(mu, "model", None) or None,
+        }
+        if cached > 0:
+            entry["cached_prompt_tokens"] = cached
+        out.append(entry)
+    return out

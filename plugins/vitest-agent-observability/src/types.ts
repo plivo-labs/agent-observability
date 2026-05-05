@@ -74,6 +74,10 @@ export interface CiMetadata {
 
 export interface EvalRun {
   run_id: string;
+  /** Optional freeform label for the run, set by the user via
+   *  `runName` reporter option or `AGENT_OBSERVABILITY_RUN_NAME`.
+   *  Surfaced in the dashboard to disambiguate same-agent runs. */
+  name?: string | null;
   account_id?: string | null;
   agent_id?: string | null;
   /** Agent framework family — `livekit` / `pipecat` / …. Null when no
@@ -100,6 +104,9 @@ export interface ReporterOptions {
   url?: string;
   agentId?: string | null;
   accountId?: string | null;
+  /** Optional freeform label for this run (e.g. "v9.1-with-new-prompt").
+   *  Falls back to `AGENT_OBSERVABILITY_RUN_NAME`. */
+  runName?: string | null;
   basicAuth?: { user: string; pass: string } | null;
   timeoutMs?: number;
   maxRetries?: number;
