@@ -73,6 +73,7 @@ const TESTING_FRAMEWORKS = new Set(["pytest", "vitest"]);
 
 const evalRunObjectSchema = z.object({
   run_id: z.string().uuid(),
+  status: z.enum(["queued", "running", "completed", "failed", "cancelled"]).optional(),
   name: z.string().min(1).max(255).nullable().optional(),
   account_id: z.string().nullable().optional(),
   agent_id: z.string().nullable().optional(),
@@ -84,7 +85,7 @@ const evalRunObjectSchema = z.object({
   testing_framework: z.string().min(1),
   testing_framework_version: z.string().nullable().optional(),
   started_at: z.number(),                 // unix seconds
-  finished_at: z.number(),
+  finished_at: z.number().nullable().optional(),
   ci: ciMetadataSchema.nullable().optional(),
 });
 

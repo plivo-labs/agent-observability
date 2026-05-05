@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Bot, FlaskConical, Trash2, type LucideIcon } from 'lucide-react'
@@ -131,6 +131,13 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
       startedTo: startedToIso,
     },
   )
+
+  const hasRunningRun = runs.some((run) => run.status === 'running')
+  useEffect(() => {
+    if (!hasRunningRun) return
+    const id = window.setInterval(() => refetch(), 1500)
+    return () => window.clearInterval(id)
+  }, [hasRunningRun, refetch])
 
   const columns = useMemo<ColumnDef<EvalRunRow>[]>(
     () => [
@@ -301,7 +308,8 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="inline-flex items-center gap-2 tnum" style={{ color: 'hsl(var(--secondary))' }}>
+            {row.original.status === 'running' && <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
             {formatDate(row.original.started_at)}
           </span>
         ),

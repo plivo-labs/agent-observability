@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, CheckCheck, List, Moon, RefreshCw, Search, Sun, Zap } from 'lucide-react'
+import { Activity, CheckCheck, List, Moon, RefreshCw, Search, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
@@ -10,7 +10,6 @@ import { AgentRunsPage } from '@/components/agent-runs-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
 import { EvalRunComparePage } from '@/components/eval-run-compare-page'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
-import { ActivityPage } from '@/components/activity-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -46,8 +45,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   // Sessions tab (at `/`) would lose its highlight on `/sessions/:id`. Compute
   // active state ourselves: each tab claims its detail routes too.
   const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
-  const isActivityActive = pathname.startsWith('/activity')
-  const isEvalsActive = pathname.startsWith('/evals') && !isActivityActive
+  const isEvalsActive = pathname.startsWith('/evals')
 
   return (
     <div className="obs-app">
@@ -62,9 +60,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           </Link>
           <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
             <CheckCheck size={14} /> Evals
-          </Link>
-          <Link to="/activity" className={`obs-tab${isActivityActive ? ' active' : ''}`}>
-            <Zap size={14} /> Activity
           </Link>
         </div>
         <div className="obs-nav-spacer" />
@@ -96,16 +91,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
         <div className="obs-page">{children}</div>
       </main>
     </div>
-  )
-}
-
-function ActivityRoute() {
-  const navigate = useNavigate()
-  return (
-    <ActivityPage
-      onOpenRun={(_agentId, runId) => navigate(`/evals/runs/${runId}`)}
-      onOpenAgent={(agentId) => navigate(`/evals/agents/${encodeURIComponent(agentId)}`)}
-    />
   )
 }
 
@@ -208,7 +193,6 @@ export default function App() {
               <Route path="/evals/agents/:agentId/compare" element={<EvalRunCompareRoute />} />
               <Route path="/evals/runs/:runId" element={<EvalRunDetailRoute />} />
               <Route path="/evals/runs/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
-              <Route path="/activity" element={<ActivityRoute />} />
               <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AgentObservabilityProvider>

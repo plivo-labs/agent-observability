@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight, GitBranch, Play, Scale } from 'lucide-react'
 import { Link } from 'react-router'
 import { useEvalRuns } from '@/lib/observability-hooks'
@@ -64,7 +64,7 @@ export function AgentRunsPage({
   onRunClick?: (runId: string) => void
   onCompare?: (runIdA: string, runIdB: string) => void
 }) {
-  const { runs, loading, error } = useEvalRuns(50, 0, { agentId })
+  const { runs, loading, error, refetch } = useEvalRuns(50, 0, { agentId })
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const validRuns = useMemo(() => runs.filter(r => r.total > 0), [runs])
@@ -91,6 +91,13 @@ export function AgentRunsPage({
 
   const selArray = [...selected]
   const canCompare = selected.size === 2
+  const hasRunningRun = runs.some((run) => run.status === 'running')
+
+  useEffect(() => {
+    if (!hasRunningRun) return
+    const id = window.setInterval(() => refetch(), 1500)
+    return () => window.clearInterval(id)
+  }, [hasRunningRun, refetch])
 
   return (
     <div className="w-full p-6 flex flex-col gap-0 min-w-0">
@@ -200,7 +207,10 @@ export function AgentRunsPage({
                     />
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'hsl(var(--muted-foreground))' }}>
-                    {formatDate(r.started_at)}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      {r.status === 'running' && <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
+                      {formatDate(r.started_at)}
+                    </span>
                   </td>
                   <td style={{ padding: '0 14px', height: 40, borderBottom: '1px solid hsl(var(--border))', fontSize: 12.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {r.name

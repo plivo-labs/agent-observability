@@ -237,6 +237,7 @@ export interface CiMetadata {
 
 export interface EvalRunRow {
   run_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
   /** Optional freeform label set by the user when the run was uploaded. */
   name: string | null
   account_id: string | null
@@ -249,7 +250,8 @@ export interface EvalRunRow {
   testing_framework: string
   testing_framework_version: string | null
   started_at: string
-  finished_at: string
+  finished_at: string | null
+  last_heartbeat_at: string | null
   duration_ms: number | null
   total: number
   passed: number

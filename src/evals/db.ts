@@ -19,8 +19,13 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const summary = summarize(cases);
 
   const startedAt = new Date(run.started_at * 1000);
-  const finishedAt = new Date(run.finished_at * 1000);
-  const durationMs = Math.max(0, Math.round((run.finished_at - run.started_at) * 1000));
+  const finishedAt = run.finished_at != null ? new Date(run.finished_at * 1000) : null;
+  const durationMs = run.finished_at != null
+    ? Math.max(0, Math.round((run.finished_at - run.started_at) * 1000))
+    : null;
+  const runStatus = run.status
+    ?? (run.finished_at != null ? "completed" : "running");
+  const lastHeartbeatAt = new Date();
 
   await ensurePricesLoaded();
   const caseMetrics = cases.map((c) => computeCaseMetrics(c.events ?? []));
@@ -54,7 +59,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         run_id, name, account_id, agent_id,
         framework, framework_version,
         testing_framework, testing_framework_version,
-        started_at, finished_at, duration_ms,
+        started_at, finished_at, duration_ms, status, last_heartbeat_at,
         total, passed, failed, errored, skipped,
         ci, raw_payload,
         ttft_p50_ms, ttft_p95_ms, ttft_avg_ms,
@@ -72,6 +77,8 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${startedAt},
         ${finishedAt},
         ${durationMs},
+        ${runStatus},
+        ${lastHeartbeatAt},
         ${summary.total},
         ${summary.passed},
         ${summary.failed},
@@ -93,8 +100,23 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
       )
       ON CONFLICT (run_id) DO UPDATE SET
         started_at        = LEAST(eval_runs.started_at, EXCLUDED.started_at),
-        finished_at       = GREATEST(eval_runs.finished_at, EXCLUDED.finished_at),
-        duration_ms       = GREATEST(eval_runs.duration_ms, EXCLUDED.duration_ms),
+        finished_at       = CASE
+          WHEN eval_runs.finished_at IS NULL THEN EXCLUDED.finished_at
+          WHEN EXCLUDED.finished_at IS NULL THEN eval_runs.finished_at
+          ELSE GREATEST(eval_runs.finished_at, EXCLUDED.finished_at)
+        END,
+        duration_ms       = CASE
+          WHEN eval_runs.duration_ms IS NULL THEN EXCLUDED.duration_ms
+          WHEN EXCLUDED.duration_ms IS NULL THEN eval_runs.duration_ms
+          ELSE GREATEST(eval_runs.duration_ms, EXCLUDED.duration_ms)
+        END,
+        status            = CASE
+          WHEN eval_runs.status IN ('completed', 'failed', 'cancelled')
+            AND EXCLUDED.status IN ('queued', 'running')
+            THEN eval_runs.status
+          ELSE EXCLUDED.status
+        END,
+        last_heartbeat_at = EXCLUDED.last_heartbeat_at,
         total             = eval_runs.total   + EXCLUDED.total,
         passed            = eval_runs.passed  + EXCLUDED.passed,
         failed            = eval_runs.failed  + EXCLUDED.failed,
@@ -220,7 +242,7 @@ function parseCaseRow(row: any): any {
 const RUN_SELECT_COLS =
   "run_id, name, account_id, agent_id, " +
   "framework, framework_version, testing_framework, testing_framework_version, " +
-  "started_at, finished_at, duration_ms, " +
+  "started_at, finished_at, duration_ms, status, last_heartbeat_at, " +
   "total, passed, failed, errored, skipped, ci, created_at, " +
   "ttft_p50_ms, ttft_p95_ms, ttft_avg_ms, " +
   "ttfb_p50_ms, ttfb_p95_ms, ttfb_avg_ms, " +
