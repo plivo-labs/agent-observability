@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 from pytest_agent_observability.ci import detect_ci
 
 
@@ -19,6 +21,40 @@ def _clear(monkeypatch):
 
 def test_no_ci(monkeypatch):
     _clear(monkeypatch)
+    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: "")
+    assert detect_ci() is None
+
+
+def test_local_git_fallback(monkeypatch):
+    _clear(monkeypatch)
+
+    def _check_output(cmd, **_kwargs):
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return "abc123\n"
+        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return "feature/x\n"
+        if cmd == ["git", "log", "-1", "--pretty=%s"]:
+            return "Add observability\n"
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "check_output", _check_output)
+
+    ci = detect_ci()
+    assert ci == {
+        "provider": "local",
+        "git_sha": "abc123",
+        "git_branch": "feature/x",
+        "commit_message": "Add observability",
+    }
+
+
+def test_local_git_fallback_handles_git_failure(monkeypatch):
+    _clear(monkeypatch)
+
+    def _check_output(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(1, "git")
+
+    monkeypatch.setattr(subprocess, "check_output", _check_output)
     assert detect_ci() is None
 
 

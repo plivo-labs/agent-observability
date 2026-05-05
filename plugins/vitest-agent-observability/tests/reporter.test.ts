@@ -45,6 +45,7 @@ describe("AgentObservabilityReporter", () => {
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
       agentId: "support-bot",
+      runName: "prompt-v2",
       fallbackDir: null as any,
     });
     (reporter as any).logger = silentLogger;
@@ -67,6 +68,7 @@ describe("AgentObservabilityReporter", () => {
     const body = JSON.parse(init.body as string);
     expect(body.version).toBe("v0");
     expect(body.run.testing_framework).toBe("vitest");
+    expect(body.run.name).toBe("prompt-v2");
     expect(body.run.agent_id).toBe("support-bot");
     expect(body.cases).toHaveLength(3);
 

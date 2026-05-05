@@ -78,6 +78,33 @@ def test_plugin_uploads_on_sessionfinish(pytester: pytest.Pytester, monkeypatch,
     assert by_name["test_skip"]["status"] == "skipped"
 
 
+def test_plugin_includes_run_name(pytester: pytest.Pytester, monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    monkeypatch.setenv("AGENT_OBSERVABILITY_RUN_NAME", "prompt-v2")
+    captured = tmp_path / "payload.json"
+
+    pytester.makeconftest(
+        f"""
+        from pytest_agent_observability import uploader
+        def _stub(payload, config, *, fallback_dir=None):
+            import json
+            from pathlib import Path
+            Path({str(captured)!r}).write_text(json.dumps(payload))
+            return True
+        uploader.upload = _stub
+        """
+    )
+    pytester.makepyfile(
+        """
+        def test_one(): pass
+        """
+    )
+    pytester.runpytest("-p", "agent_observability").assert_outcomes(passed=1)
+
+    payload = json.loads(captured.read_text())
+    assert payload["run"]["name"] == "prompt-v2"
+
+
 def test_plugin_records_failure(pytester: pytest.Pytester, monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
     captured = tmp_path / "payload.json"

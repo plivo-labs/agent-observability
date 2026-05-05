@@ -22,6 +22,7 @@ def test_build_payload_shape():
         collector=rc,
         agent_id="support-bot",
         account_id="acct-1",
+        run_name="prompt-v2",
         finished_at=200.0,
     )
 
@@ -30,6 +31,7 @@ def test_build_payload_shape():
     # testing_framework_version comes from `pytest`'s installed metadata —
     # the test is running under pytest so this must resolve.
     assert payload["run"]["testing_framework_version"] is not None
+    assert payload["run"]["name"] == "prompt-v2"
     assert payload["run"]["agent_id"] == "support-bot"
     assert payload["run"]["account_id"] == "acct-1"
     assert payload["run"]["started_at"] == 100.0

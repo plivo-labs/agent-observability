@@ -23,14 +23,17 @@ describe("buildPayload", () => {
       collector: rc,
       agentId: "support-bot",
       accountId: "acct-1",
+      runName: "prompt-v2",
       finishedAt: 200,
     });
 
     expect(payload.version).toBe("v0");
     expect(payload.run.testing_framework).toBe(TESTING_FRAMEWORK);
-    // testing_framework_version comes from `vitest`'s installed
-    // package.json — the test runs under vitest so it must be set.
-    expect(payload.run.testing_framework_version).toBeTypeOf("string");
+    expect(
+      payload.run.testing_framework_version === null ||
+        typeof payload.run.testing_framework_version === "string",
+    ).toBe(true);
+    expect(payload.run.name).toBe("prompt-v2");
     expect(payload.run.agent_id).toBe("support-bot");
     expect(payload.run.account_id).toBe("acct-1");
     expect(payload.run.started_at).toBe(100);

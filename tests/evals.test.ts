@@ -213,7 +213,9 @@ describe("POST /observability/evals/v0", () => {
   });
 
   test("accepts valid payload and calls insertEvalRun", async () => {
-    const payload = buildValidPayload();
+    const payload = buildValidPayload({
+      run: { name: "prompt-v2", status: "running" },
+    });
     const res = await server.fetch(
       makeRequest("/observability/evals/v0", {
         method: "POST",
@@ -231,7 +233,26 @@ describe("POST /observability/evals/v0", () => {
     expect(mockInsertEvalRun).toHaveBeenCalledTimes(1);
     const called = mockInsertEvalRun.mock.calls[0][0];
     expect(called.run.run_id).toBe(payload.run.run_id);
+    expect(called.run.name).toBe("prompt-v2");
+    expect(called.run.status).toBe("running");
     expect(called.cases).toHaveLength(2);
+  });
+
+  test("rejects invalid run status", async () => {
+    const payload = buildValidPayload({ run: { status: "bogus" } });
+    const res = await server.fetch(
+      makeRequest("/observability/evals/v0", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: basicAuthHeader(),
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("invalid_payload");
   });
 
   test("translates legacy payload (framework=vitest, sdk=livekit-agents)", async () => {
@@ -572,4 +593,3 @@ describe("DELETE /api/evals", () => {
     expect(mockDeleteEvalRuns).toHaveBeenCalledWith(ids);
   });
 });
-
