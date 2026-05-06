@@ -27,7 +27,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         testing_framework, testing_framework_version,
         started_at, finished_at, duration_ms,
         total, passed, failed, errored, skipped,
-        ci, raw_payload
+        ci
       ) VALUES (
         ${run.run_id},
         ${run.account_id ?? null},
@@ -44,8 +44,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.failed},
         ${summary.errored},
         ${summary.skipped},
-        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
-        ${JSON.stringify(payload)}::jsonb
+        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb
       )
     `;
 
