@@ -1,3 +1,17 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pytest>=7.0",
+#     "pytest-asyncio>=0.21",
+#     "pytest-agent-observability",
+#     "livekit-agents>=1.5",
+#     "livekit-plugins-openai>=1.5",
+# ]
+#
+# # Local override — uncomment to test against the in-tree plugin.
+# # [tool.uv.sources]
+# pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# ///
 """Example LiveKit agent + pytest evals.
 
 Demonstrates the shape of tests that `pytest-agent-observability` will ingest:
@@ -10,12 +24,16 @@ This mirrors the factoring pattern the plugin expects for agent-transport voice
 agents: the `Assistant` class has no SIP/audio-stream wiring — it's pure agent
 logic that `AgentSession.run(user_input=...)` can drive in text-only mode.
 
-To run against the plugin (once M2 ships):
+To run:
 
     export AGENT_OBSERVABILITY_URL=http://localhost:9090
-    export AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot
     export OPENAI_API_KEY=sk-...
-    uv run pytest plugins/examples/pytest_agent.py -v
+    uv run plugins/examples/pytest/pytest_agent.py
+
+The PEP 723 header above declares this file's deps so `uv run` resolves them
+into a one-shot venv. The `if __name__ == "__main__"` block at the bottom
+forwards to `pytest.main(__file__)`, so direct execution runs the suite.
+`AGENT_OBSERVABILITY_AGENT_ID` defaults to `demo-support-bot` if unset.
 
 Requires: livekit-agents>=1.5, livekit-plugins-openai. Swap the _judge_llm()
 body for `inference.LLM("openai/gpt-4.1-mini")` if you prefer LiveKit Inference
@@ -34,14 +52,15 @@ from livekit.agents import (
 )
 from livekit.plugins import openai
 
-
 # ── Model ────────────────────────────────────────────────────────────────────
+
 
 def _judge_llm() -> llm.LLM:
     return openai.LLM(model="gpt-4.1-mini")
 
 
 # ── Agents ──────────────────────────────────────────────────────────────────
+
 
 class SupportAgent(Agent):
     """Specialist agent that looks up order details."""
@@ -86,6 +105,7 @@ class GreeterAgent(Agent):
 
 
 # ── Tests ───────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_greeting_is_polite():
@@ -141,9 +161,7 @@ async def test_greeter_hands_off_to_support():
     """Greeter must transfer when the user mentions an order."""
     async with _judge_llm() as model, AgentSession(llm=model) as sess:
         await sess.start(GreeterAgent())
-        result = await sess.run(
-            user_input="Hi, I have a question about my order 12345"
-        )
+        result = await sess.run(user_input="Hi, I have a question about my order 12345")
 
         # Greeter calls the transfer tool, which returns a SupportAgent,
         # triggering a handoff event in the transcript.
@@ -167,3 +185,21 @@ async def test_refuses_off_task_request():
                 "conversation back to support topics."
             ),
         )
+
+
+# ── Entry point: `uv run pytest_agent.py` ───────────────────────────────────
+
+if __name__ == "__main__":
+    import os
+    import sys
+
+    # Default dashboard tag for this example. A shell export of
+    # AGENT_OBSERVABILITY_AGENT_ID still wins — this only sets it when unset,
+    # so each example file uploads under its own id without requiring the
+    # user to remember to re-export per file.
+    os.environ.setdefault("AGENT_OBSERVABILITY_AGENT_ID", "demo-support-bot")
+
+    # Forward any extra CLI args through to pytest. Run with
+    # `uv run pytest_agent.py --log-cli-level=warning` to surface the
+    # plugin's WARN-level upload-failure log inline.
+    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
