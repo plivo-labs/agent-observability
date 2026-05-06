@@ -230,9 +230,10 @@ export interface RunEventMessage {
   role?: string
   content?: string
   interrupted?: boolean
-  /** Per-turn metrics attached by LiveKit (e.g. llm_node_ttft, *_speaking_at).
-   * Shape is open — LiveKit may add keys; the UI renders numeric keys generically. */
-  metrics?: Record<string, number | string | null> | null
+  /** Per-turn metrics attached by LiveKit (e.g. llm_node_ttft, *_speaking_at,
+   * llm_metadata.model_name). Shape is open — LiveKit may add primitives or
+   * nested objects (`llm_metadata`); the UI renders numeric keys generically. */
+  metrics?: Record<string, unknown> | null
 }
 
 export interface RunEventFunctionCall {
