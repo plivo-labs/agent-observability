@@ -176,7 +176,7 @@ and `/run/scenarios` (bypasses Vitest, calls the scenario runner
 directly) lives at
 [`plugins/examples/vitest/bun_runner.ts`](../examples/vitest/bun_runner.ts).
 Its Python mirror using `pytest.main()` from FastAPI is at
-[`plugins/examples/pytest/fastapi_runner.py`](../examples/pytest/fastapi_runner.py).
+[`plugins/examples/pytest/livekit_fastapi_runner.py`](../examples/pytest/livekit_fastapi_runner.py).
 
 ## Development
 

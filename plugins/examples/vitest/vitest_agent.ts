@@ -1,7 +1,7 @@
 /**
  * Example LiveKit agent + Vitest evals.
  *
- * Mirrors `pytest_agent.py` for the Node SDK. Demonstrates the shape of tests
+ * Mirrors `livekit_agent.py` for the Node SDK. Demonstrates the shape of tests
  * that `vitest-agent-observability` will ingest:
  *   - Function-call + arguments assertions
  *   - Function-call-output assertions

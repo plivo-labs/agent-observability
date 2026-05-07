@@ -39,7 +39,7 @@ def build_payload(
     account_id: Optional[str],
     finished_at: float,
 ) -> dict:
-    framework = detect_framework()
+    framework = _framework_from_collector(collector) or detect_framework()
     return {
         "version": "v0",
         "run": {
@@ -79,3 +79,17 @@ def _pkg_version(name: str) -> Optional[str]:
         return None
     except Exception:
         return None
+
+
+def _framework_from_collector(collector: RunCollector) -> Optional[Tuple[str, Optional[str]]]:
+    frameworks = sorted(collector.frameworks)
+    if not frameworks:
+        return None
+    if len(frameworks) > 1:
+        return ("mixed", None)
+
+    name = frameworks[0]
+    for probe_name, pkg in _AGENT_FRAMEWORK_PROBES:
+        if probe_name == name:
+            return (name, _pkg_version(pkg))
+    return (name, None)

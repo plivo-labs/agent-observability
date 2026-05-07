@@ -250,6 +250,247 @@ def test_autocapture_via_session_run_wrapper(pytester: pytest.Pytester, monkeypa
     assert ev["interrupted"] is False
 
 
+def test_pipecat_evals_autocapture_and_judge(pytester: pytest.Pytester, monkeypatch, tmp_path):
+    """pipecat-evals results are captured without importing Pipecat itself."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    captured = tmp_path / "payload.json"
+
+    pytester.makeconftest(
+        f"""
+        from pytest_agent_observability import uploader
+        def _stub(payload, config, *, fallback_dir=None):
+            import json
+            from pathlib import Path
+            Path({str(captured)!r}).write_text(json.dumps(payload))
+            return True
+        uploader.upload = _stub
+
+        import sys, types
+        from dataclasses import dataclass
+
+        session_mod = types.ModuleType('pipecat_evals.session')
+        run_result_mod = types.ModuleType('pipecat_evals.run_result')
+        hooks_mod = types.ModuleType('pipecat_evals.hooks')
+        run_hooks = []
+        judgment_hooks = []
+
+        def register_run_result_hook(callback):
+            run_hooks.append(callback)
+            return lambda: run_hooks.remove(callback) if callback in run_hooks else None
+
+        def register_judgment_hook(callback):
+            judgment_hooks.append(callback)
+            return lambda: judgment_hooks.remove(callback) if callback in judgment_hooks else None
+
+        hooks_mod.register_run_result_hook = register_run_result_hook
+        hooks_mod.register_judgment_hook = register_judgment_hook
+
+        @dataclass
+        class FakeMsg:
+            role: str = 'assistant'
+            text_content: str = 'pipecat hi'
+            interrupted: bool = False
+            metrics: dict = None
+
+        @dataclass
+        class FakeEvent:
+            item: FakeMsg
+            type: str = 'message'
+
+        class FakeRunResult:
+            __pipecat_evals_run_result__ = True
+
+            def __init__(self, user_input):
+                self._user_input = user_input
+                self.user_input = user_input
+                self.events = [FakeEvent(item=FakeMsg(
+                    metrics={{'llm_node_ttft': 0.42}},
+                ))]
+
+        class AgentSession:
+            async def run(self, *, user_input, **_):
+                result = FakeRunResult(user_input=user_input)
+                for hook in list(run_hooks):
+                    hook(result)
+                return result
+
+        class JudgeResult:
+            def __init__(self, success=True, reasoning='ok'):
+                self.success = success
+                self.reasoning = reasoning
+                self.verdict = 'pass' if success else 'fail'
+
+        class ChatMessageAssert:
+            def __init__(self):
+                self.judgment = None
+
+            async def judge(self, _judge=None, *, intent):
+                self.judgment = JudgeResult(success=True, reasoning='looks good')
+                for hook in list(judgment_hooks):
+                    hook(intent, self.judgment)
+                return self
+
+        session_mod.AgentSession = AgentSession
+        session_mod.ORIGINAL_RUN = AgentSession.run
+        run_result_mod.ChatMessageAssert = ChatMessageAssert
+        run_result_mod.ORIGINAL_JUDGE = ChatMessageAssert.judge
+        pkg = types.ModuleType('pipecat_evals')
+        pkg.session = session_mod
+        pkg.run_result = run_result_mod
+        pkg.hooks = hooks_mod
+        sys.modules['pipecat_evals'] = pkg
+        sys.modules['pipecat_evals.session'] = session_mod
+        sys.modules['pipecat_evals.run_result'] = run_result_mod
+        sys.modules['pipecat_evals.hooks'] = hooks_mod
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+        from pipecat_evals.session import AgentSession
+        from pipecat_evals.run_result import ChatMessageAssert
+
+        @pytest.mark.asyncio
+        async def test_no_manual_capture_needed():
+            sess = AgentSession()
+            result = await sess.run(user_input="ping")
+            await ChatMessageAssert().judge(None, intent="greets via pipecat")
+            assert result is not None
+
+        def test_pipecat_integration_uses_hooks_not_monkeypatches():
+            import pipecat_evals.run_result as rr
+            import pipecat_evals.session as session
+            assert ChatMessageAssert.judge is rr.ORIGINAL_JUDGE
+            assert AgentSession.run is session.ORIGINAL_RUN
+        """
+    )
+    pytester.runpytest("-p", "agent_observability").assert_outcomes(passed=2)
+    payload = json.loads(captured.read_text())
+    assert payload["run"]["framework"] == "pipecat"
+    assert payload["run"]["testing_framework"] == "pytest"
+
+    case = {case["name"]: case for case in payload["cases"]}["test_no_manual_capture_needed"]
+    assert case["user_input"] == "ping"
+    assert case["events"][0]["content"] == "pipecat hi"
+    assert case["events"][0]["metrics"]["llm_node_ttft"] == 0.42
+    assert case["events"][0]["item"]["metrics"]["llm_node_ttft"] == 0.42
+    assert case["judgments"] == [{
+        "intent": "greets via pipecat",
+        "verdict": "pass",
+        "reasoning": "looks good",
+    }]
+
+
+def test_pipecat_evals_failed_judge_is_recorded(pytester: pytest.Pytester, monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    captured = tmp_path / "payload.json"
+
+    pytester.makeconftest(
+        f"""
+        from pytest_agent_observability import uploader
+        def _stub(payload, config, *, fallback_dir=None):
+            import json
+            from pathlib import Path
+            Path({str(captured)!r}).write_text(json.dumps(payload))
+            return True
+        uploader.upload = _stub
+
+        import sys, types
+        from dataclasses import dataclass
+
+        session_mod = types.ModuleType('pipecat_evals.session')
+        run_result_mod = types.ModuleType('pipecat_evals.run_result')
+        hooks_mod = types.ModuleType('pipecat_evals.hooks')
+        run_hooks = []
+        judgment_hooks = []
+
+        def register_run_result_hook(callback):
+            run_hooks.append(callback)
+            return lambda: run_hooks.remove(callback) if callback in run_hooks else None
+
+        def register_judgment_hook(callback):
+            judgment_hooks.append(callback)
+            return lambda: judgment_hooks.remove(callback) if callback in judgment_hooks else None
+
+        hooks_mod.register_run_result_hook = register_run_result_hook
+        hooks_mod.register_judgment_hook = register_judgment_hook
+
+        @dataclass
+        class FakeMsg:
+            role: str = 'assistant'
+            text_content: str = 'nope'
+            interrupted: bool = False
+
+        @dataclass
+        class FakeEvent:
+            item: FakeMsg
+            type: str = 'message'
+
+        class FakeRunResult:
+            __pipecat_evals_run_result__ = True
+            _user_input = 'ping'
+            events = [FakeEvent(item=FakeMsg())]
+
+        class AgentSession:
+            async def run(self, *, user_input, **_):
+                result = FakeRunResult()
+                result._user_input = user_input
+                result.user_input = user_input
+                for hook in list(run_hooks):
+                    hook(result)
+                return result
+
+        class JudgeResult:
+            success = False
+            verdict = 'fail'
+            reasoning = 'not good enough'
+
+        class ChatMessageAssert:
+            async def judge(self, _judge=None, *, intent):
+                for hook in list(judgment_hooks):
+                    hook(intent, JudgeResult())
+                raise AssertionError('Judgement failed: not good enough')
+
+        session_mod.AgentSession = AgentSession
+        run_result_mod.ChatMessageAssert = ChatMessageAssert
+        pkg = types.ModuleType('pipecat_evals')
+        pkg.session = session_mod
+        pkg.run_result = run_result_mod
+        pkg.hooks = hooks_mod
+        sys.modules['pipecat_evals'] = pkg
+        sys.modules['pipecat_evals.session'] = session_mod
+        sys.modules['pipecat_evals.run_result'] = run_result_mod
+        sys.modules['pipecat_evals.hooks'] = hooks_mod
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+        from pipecat_evals.session import AgentSession
+        from pipecat_evals.run_result import ChatMessageAssert
+
+        @pytest.mark.asyncio
+        async def test_failed_judge_is_uploaded():
+            sess = AgentSession()
+            await sess.run(user_input="ping")
+            await ChatMessageAssert().judge(None, intent="quality bar")
+        """
+    )
+
+    pytester.runpytest("-p", "agent_observability").assert_outcomes(failed=1)
+    payload = json.loads(captured.read_text())
+    assert payload["run"]["framework"] == "pipecat"
+
+    case = payload["cases"][0]
+    assert case["status"] == "failed"
+    assert case["failure"]["kind"] == "judge_failed"
+    assert case["judgments"] == [{
+        "intent": "quality bar",
+        "verdict": "fail",
+        "reasoning": "not good enough",
+    }]
+
+
 def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
     captured = tmp_path / "payload.json"

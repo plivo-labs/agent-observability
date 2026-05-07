@@ -1,7 +1,7 @@
 /**
  * Complex multi-agent example (Node/Vitest): a retail-banking voice assistant.
  *
- * Node mirror of `pytest_banking_agent.py`. Same five agents, same stubbed
+ * Node mirror of `livekit_banking_agent.py`. Same five agents, same stubbed
  * domain, same shape of assertions.
  *
  * Patterns worth copying:
@@ -554,7 +554,7 @@ describe("FirstBank complex agent", () => {
   });
 });
 
-// Export for reuse (parallel to pytest_banking_agent.py's structure).
+// Export for reuse (parallel to livekit_banking_agent.py's structure).
 export {
   BankAccountsAgent,
   BankAuthenticationAgent,

@@ -24,6 +24,21 @@ def test_capture_attaches_to_active_test():
         col._reset_current_test(token)
 
 
+def test_capture_records_framework_markers():
+    class PipecatRunResult:
+        __pipecat_evals_run_result__ = True
+
+    col.clear_all_state()
+    token = col._set_current_test("test::framework")
+    try:
+        col.capture(PipecatRunResult())
+        state = col.pop_state("test::framework")
+        assert state is not None
+        assert state.frameworks == {"pipecat"}
+    finally:
+        col._reset_current_test(token)
+
+
 def test_capture_is_idempotent_for_same_object():
     col.clear_all_state()
     token = col._set_current_test("test::dedup")
@@ -67,3 +82,6 @@ def test_run_collector_factory():
     assert rc.started_at == 1.0
     assert rc.ci == {"provider": "github"}
     assert rc.cases == []
+
+    rc.note_framework("pipecat")
+    assert rc.frameworks == {"pipecat"}

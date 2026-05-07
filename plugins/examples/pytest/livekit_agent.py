@@ -10,7 +10,7 @@
 #
 # # Local override — uncomment to test against the in-tree plugin.
 # # [tool.uv.sources]
-# pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
 # ///
 """Example LiveKit agent + pytest evals.
 
@@ -28,7 +28,7 @@ To run:
 
     export AGENT_OBSERVABILITY_URL=http://localhost:9090
     export OPENAI_API_KEY=sk-...
-    uv run plugins/examples/pytest/pytest_agent.py
+    uv run plugins/examples/pytest/livekit_agent.py
 
 The PEP 723 header above declares this file's deps so `uv run` resolves them
 into a one-shot venv. The `if __name__ == "__main__"` block at the bottom
@@ -187,7 +187,7 @@ async def test_refuses_off_task_request():
         )
 
 
-# ── Entry point: `uv run pytest_agent.py` ───────────────────────────────────
+# ── Entry point: `uv run livekit_agent.py` ─────────────────────────────────
 
 if __name__ == "__main__":
     import os
@@ -200,6 +200,6 @@ if __name__ == "__main__":
     os.environ.setdefault("AGENT_OBSERVABILITY_AGENT_ID", "demo-support-bot")
 
     # Forward any extra CLI args through to pytest. Run with
-    # `uv run pytest_agent.py --log-cli-level=warning` to surface the
+    # `uv run livekit_agent.py --log-cli-level=warning` to surface the
     # plugin's WARN-level upload-failure log inline.
     sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))

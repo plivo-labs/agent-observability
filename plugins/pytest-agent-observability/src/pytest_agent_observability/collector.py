@@ -43,6 +43,7 @@ def _reset_current_test(token: contextvars.Token) -> None:
 class CaseState:
     run_results: list[Any] = field(default_factory=list)
     judgments: list[dict] = field(default_factory=list)
+    frameworks: set[str] = field(default_factory=set)
     _seen_ids: set[int] = field(default_factory=set)
 
 
@@ -70,11 +71,11 @@ def clear_all_state() -> None:
 
 
 def capture(run_result: Any) -> Any:
-    """Attach a LiveKit RunResult to the currently-running test.
+    """Attach an agent eval RunResult to the currently-running test.
 
     Usually you don't need to call this — the plugin auto-captures every
-    RunResult returned from `AgentSession.run(...)`. Call it manually when
-    you have a RunResult from a source we don't intercept.
+    supported RunResult returned from `AgentSession.run(...)`. Call it manually
+    when you have a RunResult from a source we don't capture automatically.
 
     Returns the run_result unchanged, so you can write one-liners:
 
@@ -91,6 +92,9 @@ def capture(run_result: Any) -> Any:
         return run_result
     state._seen_ids.add(rid)
     state.run_results.append(run_result)
+    framework = _framework_for_run_result(run_result)
+    if framework is not None:
+        state.frameworks.add(framework)
     return run_result
 
 
@@ -130,6 +134,7 @@ class RunCollector:
     started_at: float  # unix seconds
     finished_at: Optional[float] = None
     ci: Optional[dict] = None
+    frameworks: set[str] = field(default_factory=set)
     cases: list[CaseRecord] = field(default_factory=list)
 
     @classmethod
@@ -138,3 +143,18 @@ class RunCollector:
 
     def add_case(self, case: CaseRecord) -> None:
         self.cases.append(case)
+
+    def note_framework(self, framework: str) -> None:
+        self.frameworks.add(framework)
+
+
+def _framework_for_run_result(run_result: Any) -> Optional[str]:
+    if getattr(run_result, "__pipecat_evals_run_result__", False):
+        return "pipecat"
+
+    module = getattr(type(run_result), "__module__", "")
+    if module.startswith("pipecat_evals"):
+        return "pipecat"
+    if module.startswith("livekit."):
+        return "livekit"
+    return None

@@ -142,6 +142,32 @@ def test_agent_handoff_uses_class_names():
     assert out[0]["to_agent"] == "FakeAgentB"
 
 
+def test_agent_handoff_keeps_string_names_from_pipecat_evals():
+    @dataclass
+    class Handoff:
+        from_agent: str
+        to_agent: str
+
+    @dataclass
+    class PipecatHandoffEvent:
+        item: Handoff
+        type: str = "agent_handoff"
+
+        @property
+        def from_agent(self) -> str:
+            return self.item.from_agent
+
+        @property
+        def to_agent(self) -> str:
+            return self.item.to_agent
+
+    out = serialize_events([
+        PipecatHandoffEvent(item=Handoff(from_agent="triage", to_agent="support"))
+    ])
+    assert out[0]["from_agent"] == "triage"
+    assert out[0]["to_agent"] == "support"
+
+
 def test_unknown_event_type_is_passed_through():
     """Unknown event kinds should land in the payload as-is so the dashboard
     can inspect their shape — no silent drops."""

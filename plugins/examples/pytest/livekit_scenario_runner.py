@@ -17,7 +17,7 @@ This module exposes a small, framework-agnostic API:
     scenarios = generate_scenarios(spec, n=10)
     results   = await run_scenarios(agent_factory, scenarios, judge_model)
 
-Both `pytest_generated_agent.py` (pytest wrapper) and `fastapi_runner.py`
+Both `livekit_generated_agent.py` (pytest wrapper) and `livekit_fastapi_runner.py`
 (HTTP endpoint) import and reuse these two functions — same agent, same
 evaluation, different transport.
 
