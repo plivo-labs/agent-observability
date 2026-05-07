@@ -10,7 +10,7 @@
 #
 # # Local override — uncomment to test against the in-tree plugin.
 # # [tool.uv.sources]
-# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# pytest-agent-observability = { path = "../../pytest-agent-observability" }
 # ///
 """Complex multi-agent example: a retail-banking voice assistant.
 

@@ -23,10 +23,19 @@ import type {
 interface MetricsSummary {
   turnsWithMetrics: number
   avgTtftMs: number | null
+  models: string[]
 }
 
+// LiveKit ships per-turn metrics on each message event (in seconds). Eval
+// runs today only populate `llm_node_ttft` — TTFB / E2E / transcription
+// require an audio pipeline (STT/TTS) which `AgentSession.run(user_input=…)`
+// runs in text-only mode never wires up. The per-turn chip strip in
+// `MessageRow` still auto-discovers any timing key via the suffix regex,
+// so if a future eval ships those keys they'll surface there without
+// touching this aggregate.
 function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
   const ttfts: number[] = []
+  const models = new Set<string>()
   let turns = 0
   for (const ev of events) {
     if (ev.type !== 'message') continue
@@ -35,10 +44,16 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
     turns += 1
     const ttft = metrics.llm_node_ttft
     if (typeof ttft === 'number') ttfts.push(ttft * 1000)
+    const meta = metrics.llm_metadata
+    if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+      const name = (meta as Record<string, unknown>).model_name
+      if (typeof name === 'string' && name) models.add(name)
+    }
   }
   return {
     turnsWithMetrics: turns,
     avgTtftMs: ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null,
+    models: [...models],
   }
 }
 
@@ -65,7 +80,89 @@ function StatusChip({ status }: { status: CaseStatus }) {
   )
 }
 
+// Friendly labels for the per-turn metric keys LiveKit ships. Anything not
+// listed here falls back to a generic title-cased rendering of the snake_case
+// key — so a future SDK metric shows up automatically without code changes.
+const TIMING_LABELS: Record<string, string> = {
+  llm_node_ttft: 'TTFT',
+  llm_node_ttfb: 'LLM TTFB',
+  tts_node_ttfb: 'TTS TTFB',
+  e2e_latency: 'E2E',
+  transcription_delay: 'Transcription',
+  endpointing_delay: 'Endpointing',
+  eou_delay: 'EOU',
+  playback_latency: 'Playback',
+}
+const TOKEN_LABELS: Record<string, string> = {
+  prompt_tokens: 'Prompt',
+  completion_tokens: 'Completion',
+  total_tokens: 'Total',
+  cached_tokens: 'Cached',
+}
+const TIMING_KEY_PATTERN = /(_ttft|_ttfb|_delay|_latency)$/
+// Unix-second timestamps add no value as raw numbers next to a turn — skip.
+const TIMESTAMP_KEYS = new Set(['started_speaking_at', 'stopped_speaking_at', 'created_at'])
+// Low-signal metric keys we deliberately hide. `playback_latency` is almost
+// always 0 in eval runs (no audio pipeline); `model_provider` duplicates
+// info the model name already implies.
+const HIDDEN_TURN_METRIC_KEYS = new Set(['playback_latency'])
+
+function humanize(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+interface MetricChip {
+  key: string
+  label: string
+  value: string
+}
+
+// Flatten the per-turn `metrics` dict into display chips. Top-level numeric
+// timings (seconds) become formatted ms; `llm_metadata` is expanded into
+// model + token chips. Unknown numeric keys still render generically so we
+// don't silently swallow new SDK fields.
+function buildMetricChips(metrics: Record<string, unknown>): MetricChip[] {
+  const chips: MetricChip[] = []
+
+  for (const [k, v] of Object.entries(metrics)) {
+    if (k === 'llm_metadata') continue
+    if (TIMESTAMP_KEYS.has(k)) continue
+    if (HIDDEN_TURN_METRIC_KEYS.has(k)) continue
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue
+
+    const isTiming = k in TIMING_LABELS || TIMING_KEY_PATTERN.test(k)
+    chips.push({
+      key: k,
+      label: TIMING_LABELS[k] ?? humanize(k),
+      value: isTiming ? formatMs(v * 1000) : String(v),
+    })
+  }
+
+  const meta = metrics.llm_metadata
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    const m = meta as Record<string, unknown>
+    if (typeof m.model_name === 'string' && m.model_name) {
+      chips.push({ key: 'model', label: 'Model', value: m.model_name })
+    }
+    for (const [tk, label] of Object.entries(TOKEN_LABELS)) {
+      const val = m[tk]
+      if (typeof val === 'number' && Number.isFinite(val)) {
+        chips.push({ key: tk, label, value: String(val) })
+      }
+    }
+  }
+
+  return chips
+}
+
 function MessageRow({ event, index }: { event: RunEventMessage; index: number }) {
+  const chips =
+    event.metrics && typeof event.metrics === 'object'
+      ? buildMetricChips(event.metrics as Record<string, unknown>)
+      : []
+
   return (
     <div className="border rounded-md overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-xs-600 text-muted-foreground border-b">
@@ -80,6 +177,16 @@ function MessageRow({ event, index }: { event: RunEventMessage; index: number })
         <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
       </div>
       <div className="p-3 text-s-400 whitespace-pre-wrap">{event.content ?? ''}</div>
+      {chips.length > 0 && (
+        <div className="border-t bg-muted/30 px-3 py-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xxs-400 font-mono tabular-nums">
+          {chips.map((c) => (
+            <span key={c.key} className="inline-flex items-baseline gap-1">
+              <span className="text-muted-foreground">{c.label}</span>
+              <span className="text-foreground">{c.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -281,10 +388,27 @@ export const EvalCaseDetailPage = ({
               </span>
             </>
           )}
-          {summary?.avgTtftMs != null && (
+          {/* Case-level aggregate is only meaningful when averaging across
+              ≥2 turns. For single-turn cases the per-turn chip strip
+              under the message already carries the same value, so the
+              aggregate would just duplicate it. */}
+          {summary && summary.turnsWithMetrics >= 2 && (
             <>
-              <span> · </span>
-              <span>Avg TTFT {formatMs(summary.avgTtftMs)}</span>
+              {summary.avgTtftMs != null && (
+                <>
+                  <span> · </span>
+                  <span>Avg TTFT {formatMs(summary.avgTtftMs)}</span>
+                </>
+              )}
+              {summary.models.length > 0 && (
+                <>
+                  <span> · </span>
+                  <span>
+                    {summary.models.length === 1 ? 'Model' : 'Models'}{' '}
+                    {summary.models.join(', ')}
+                  </span>
+                </>
+              )}
             </>
           )}
         </div>

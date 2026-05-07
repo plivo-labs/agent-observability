@@ -1,8 +1,7 @@
-import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
 import type { EvalPayloadV0 } from "./types.js";
 import type { RunCollector } from "./collector.js";
-
-const require = createRequire(import.meta.url);
 
 /** Test framework that ran this suite — `vitest`. Constant. */
 export const TESTING_FRAMEWORK = "vitest";
@@ -53,11 +52,31 @@ export function buildPayload(opts: {
   };
 }
 
+/**
+ * Walk up the directory tree from `process.cwd()` until we find a
+ * `node_modules/<name>/package.json`, then return its `version`.
+ *
+ * Why not `createRequire(import.meta.url)`: when the plugin is installed
+ * via a `file:` dep (common for in-tree dev), bun symlinks it back to the
+ * source directory, so `import.meta.url` lives outside the consumer's
+ * node_modules tree and the standard require lookup walks up the wrong
+ * branch. Why not `createRequire(process.cwd())` either: the user might
+ * invoke vitest from the repo root rather than the package dir, in which
+ * case the consumer's `node_modules` is several levels down. This walk
+ * is invariant to invocation cwd within the consumer's tree.
+ */
 function pkgVersion(name: string): string | null {
-  try {
-    const pkg = require(`${name}/package.json`);
-    return typeof pkg.version === "string" ? pkg.version : null;
-  } catch {
-    return null;
+  let dir = process.cwd();
+  while (true) {
+    const candidate = path.join(dir, "node_modules", name, "package.json");
+    try {
+      const pkg = JSON.parse(fs.readFileSync(candidate, "utf-8")) as { version?: unknown };
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+      /* not present here, walk up */
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
 }
