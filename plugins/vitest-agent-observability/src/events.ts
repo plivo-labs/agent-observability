@@ -10,6 +10,12 @@ import type { RunEvent } from "./types.js";
  * The only transforms we apply:
  *  - Convert the event (and its nested `item`) to a plain dict, preserving
  *    every field — including `item.metrics`, timestamps, IDs, etc.
+ *  - Recursively snake_case object keys so the wire format matches the
+ *    Python plugin's Pydantic projection. The obs dashboard reads
+ *    snake_case (`llm_node_ttft`, `created_at`, `is_error`, …) and the
+ *    Node SDK ships native camelCase, so without this normalizer
+ *    vitest payloads would render with empty metric chips and
+ *    inconsistent item fields.
  *  - For `function_call`, parse `arguments` from JSON string → object as a
  *    convenience (so the dashboard doesn't have to).
  *  - For `agent_handoff`, replace the `old_agent` / `new_agent` instance
@@ -21,7 +27,7 @@ export function serializeEvents(rawEvents: unknown[] | null | undefined): RunEve
   const out: RunEvent[] = [];
   for (const ev of rawEvents) {
     try {
-      out.push(serializeEvent(ev));
+      out.push(snakeifyKeys(serializeEvent(ev)) as RunEvent);
     } catch {
       out.push({
         type: String((ev as any)?.type ?? "unknown"),
@@ -31,6 +37,27 @@ export function serializeEvents(rawEvents: unknown[] | null | undefined): RunEve
     }
   }
   return out;
+}
+
+function camelToSnake(key: string): string {
+  return key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+}
+
+/**
+ * Recursively rewrite object keys from camelCase to snake_case. Arrays and
+ * primitives pass through untouched. Idempotent on already-snake_case input
+ * (no `[A-Z]` chars, so the regex is a no-op).
+ */
+function snakeifyKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snakeifyKeys);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[camelToSnake(k)] = snakeifyKeys(v);
+    }
+    return out;
+  }
+  return value;
 }
 
 function serializeEvent(ev: unknown): RunEvent {

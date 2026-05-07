@@ -240,7 +240,7 @@ docker compose up --build`}
     label: 'Environment',
     group: 'Server setup',
     description:
-      'Configuration comes from environment variables. Only DATABASE_URL is required; basic auth and S3 are opt-in and enable themselves when both vars in the pair are set.',
+      'Configuration comes from environment variables. Only DATABASE_URL is required; basic auth, LiveKit Bearer auth, and S3 are opt-in and enable themselves when both vars in their pair are set.',
     body: () => (
       <>
         <div className="docs-props">
@@ -276,7 +276,17 @@ docker compose up --build`}
               <tr>
                 <td><code>AGENT_OBSERVABILITY_PASS</code></td>
                 <td><span className="dash">—</span></td>
-                <td>Basic-auth password. When both user + pass are set, every route except <code className="type">/health</code> requires basic auth.</td>
+                <td>Basic-auth password. When both user + pass are set, the dashboard API (<code className="type">/api/*</code>) and the eval ingest route are gated; native ingest routes accept Basic credentials too (or a LiveKit Bearer JWT — see below).</td>
+              </tr>
+              <tr>
+                <td><code>LIVEKIT_API_KEY</code></td>
+                <td><span className="dash">—</span></td>
+                <td>LiveKit JWT issuer claim. Paired with <code className="type">_SECRET</code>.</td>
+              </tr>
+              <tr>
+                <td><code>LIVEKIT_API_SECRET</code></td>
+                <td><span className="dash">—</span></td>
+                <td>LiveKit JWT HS256 signing secret. When both <code className="type">LIVEKIT_API_KEY</code> and <code className="type">_SECRET</code> are set, native ingest routes (recordings, OTLP) accept Bearer JWTs minted with this pair (payload must carry <code className="type">observability.write === true</code>). Use the same pair the LiveKit SDK signs with on the agent side.</td>
               </tr>
               <tr>
                 <td><code>S3_BUCKET</code></td>

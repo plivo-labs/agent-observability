@@ -1,4 +1,4 @@
-name: Deploy Preview to Pages
+name: Deploy docs to Pages
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - 'packages/ui/registry/**'
       - 'packages/ui/package.json'
       - 'packages/ui/bun.lock'
+      - '.env.example'
       - '.github/workflows/deploy-preview.yml'
   workflow_dispatch: {}
 

@@ -94,7 +94,7 @@
       "--hv1": "210 40% 96%",
       "--hv2": "210 5% 92%",
       "--hv3": "210 4% 90%",
-      "--tertiary": "240 5% 65%",
+      "--tertiary": "240 5% 40%",
       "--bubble-agent": "210 90% 96%",
       "--bubble-user": "240 5% 97%",
       "--success-bg": "142 76% 96%",
@@ -234,7 +234,7 @@
       "--hv1": "240 5% 11%",
       "--hv2": "240 4% 16%",
       "--hv3": "240 4% 20%",
-      "--tertiary": "240 5% 40%",
+      "--tertiary": "240 5% 65%",
       "--bubble-agent": "210 40% 13%",
       "--bubble-user": "240 5% 11%",
       "--success-bg": "142 45% 10%",
@@ -370,7 +370,7 @@
       "padding": "0 10px",
       "border": "1px solid hsl(var(--input))",
       "border-radius": "6px",
-      "color": "hsl(var(--secondary))",
+      "color": "hsl(var(--muted-foreground))",
       "font": "var(--text-xs-500)",
       "background": "hsl(var(--card))",
       "cursor": "pointer"
@@ -423,7 +423,7 @@
       "font-family": "var(--mono)",
       "font-size": "11.5px",
       "line-height": "1.55",
-      "color": "hsl(var(--secondary))",
+      "color": "hsl(var(--muted-foreground))",
       "background": "hsl(var(--bg2) / 0.6)",
       "white-space": "pre-wrap",
       "word-break": "break-all",
@@ -437,7 +437,7 @@
       "white-space": "nowrap",
       "font-family": "var(--mono)",
       "font-size": "11.5px",
-      "color": "hsl(var(--secondary))",
+      "color": "hsl(var(--muted-foreground))",
       "font-feature-settings": "\"tnum\"",
       "text-align": "right"
     },
@@ -501,7 +501,7 @@
       "color": "hsl(var(--foreground))"
     },
     ":where(.ev-row .msg q)": {
-      "color": "hsl(var(--secondary))",
+      "color": "hsl(var(--muted-foreground))",
       "quotes": "\"\\\"\" \"\\\"\""
     }
   },

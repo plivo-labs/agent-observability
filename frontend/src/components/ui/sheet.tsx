@@ -58,7 +58,13 @@ function SheetContent({
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "fixed z-50 flex flex-col gap-4 bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
+          // `focus:outline-none focus-visible:outline-none` suppresses the
+          // browser's default focus ring on the Content wrapper. Radix
+          // auto-focuses Content on open (Dialog convention), and the
+          // resulting blue outline reads as a stray border in dark mode.
+          // Focusable elements *inside* the drawer keep their own
+          // focus-visible styling.
+          "fixed z-50 flex flex-col gap-4 bg-background shadow-lg transition ease-in-out focus:outline-none focus-visible:outline-none data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
           side === "right" &&
             "inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
           side === "left" &&

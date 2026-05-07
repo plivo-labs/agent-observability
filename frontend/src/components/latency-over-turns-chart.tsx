@@ -38,31 +38,45 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
   const { metrics: hookMetrics } = usePerformance()
   const metrics = metricsProp ?? hookMetrics
 
-  const chartData = useMemo<ChartEntry[]>(() => {
-    if (!metrics?.turns?.length) return []
-    return metrics.turns
-      .filter((t) => t.user_perceived_ms != null || t.llm_ttft_ms != null || t.tts_ttfb_ms != null)
-      .map((t) => ({
+  const chart = useMemo(() => {
+    if (!metrics?.turns?.length) {
+      return { data: [] as ChartEntry[], hasPerceived: false, hasLlm: false, hasTts: false }
+    }
+
+    const hasPerceived = metrics.turns.some((t) => t.user_perceived_ms != null)
+    const hasLlm = metrics.turns.some((t) => t.llm_ttft_ms != null)
+    const hasTts = metrics.turns.some((t) => t.tts_ttfb_ms != null)
+    const data = metrics.turns
+      .filter((t) =>
+        (hasPerceived && t.user_perceived_ms != null) ||
+        (hasLlm && t.llm_ttft_ms != null) ||
+        (hasTts && t.tts_ttfb_ms != null)
+      )
+      .map((t): ChartEntry => ({
         turn: t.turn_number,
-        perceived: t.user_perceived_ms,
-        llm: t.llm_ttft_ms,
-        tts: t.tts_ttfb_ms,
+        ...(hasPerceived ? { perceived: t.user_perceived_ms } : {}),
+        ...(hasLlm ? { llm: t.llm_ttft_ms } : {}),
+        ...(hasTts ? { tts: t.tts_ttfb_ms } : {}),
       }))
+
+    return { data, hasPerceived, hasLlm, hasTts }
   }, [metrics])
 
-  if (!chartData.length) return null
+  if (!chart.data.length) return null
+
+  const legend = [
+    chart.hasPerceived && { color: 'hsl(var(--primary))', label: 'User Perceived' },
+    chart.hasLlm && { color: 'hsl(var(--accent-purple))', label: 'LLM TTFT' },
+    chart.hasTts && { color: 'hsl(var(--success))', label: 'TTS TTFB' },
+  ].filter(Boolean) as Array<{ color: string; label: string }>
 
   return (
     <ChartCard
       title="Latency Over Turns"
       subtitle="How latency changes throughout the conversation"
-      legend={[
-        { color: 'hsl(var(--primary))', label: 'User Perceived' },
-        { color: 'hsl(var(--accent-purple))', label: 'LLM TTFT' },
-        { color: 'hsl(var(--success))', label: 'TTS TTFB' },
-      ]}
+      legend={legend}
     >
-      <LineChart data={chartData}>
+      <LineChart data={chart.data}>
         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
         <XAxis
           dataKey="turn"
@@ -75,9 +89,9 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
           stroke="hsl(var(--st2))"
         />
         <Tooltip content={<LatencyTooltip />} />
-        <Line type="monotone" dataKey="perceived" name="User Perceived" stroke="hsl(var(--primary))" dot={false} strokeWidth={2} connectNulls />
-        <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(var(--accent-purple))" dot={false} strokeWidth={2} connectNulls />
-        <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(var(--success))" dot={false} strokeWidth={2} connectNulls />
+        {chart.hasPerceived && <Line type="monotone" dataKey="perceived" name="User Perceived" stroke="hsl(var(--primary))" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasLlm && <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(var(--accent-purple))" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasTts && <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(var(--success))" dot={false} strokeWidth={2} connectNulls />}
       </LineChart>
     </ChartCard>
   )

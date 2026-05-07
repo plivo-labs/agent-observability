@@ -182,13 +182,16 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
       {
         id: 'capabilities',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Capabilities" />,
-        cell: ({ row }) => (
-          <CapsChips
-            stt={row.original.has_stt}
-            llm={row.original.has_llm}
-            tts={row.original.has_tts}
-          />
-        ),
+        cell: ({ row }) => {
+          const textOnly = row.original.transport === 'text' || row.original.transport === 'terminal_text'
+          return (
+            <CapsChips
+              stt={!textOnly && row.original.has_stt}
+              llm={row.original.has_llm}
+              tts={!textOnly && row.original.has_tts}
+            />
+          )
+        },
       },
     ],
     [],

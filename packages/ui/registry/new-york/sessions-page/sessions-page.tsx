@@ -205,13 +205,16 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
       {
         id: 'capabilities',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Capabilities" />,
-        cell: ({ row }) => (
-          <div className="flex gap-1">
-            {row.original.has_stt && <Badge variant="outline" className="text-xxs-400">STT</Badge>}
-            {row.original.has_llm && <Badge variant="outline" className="text-xxs-400">LLM</Badge>}
-            {row.original.has_tts && <Badge variant="outline" className="text-xxs-400">TTS</Badge>}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const textOnly = row.original.transport === 'text' || row.original.transport === 'terminal_text'
+          return (
+            <div className="flex gap-1">
+              {!textOnly && row.original.has_stt && <Badge variant="outline" className="text-xxs-400">STT</Badge>}
+              {row.original.has_llm && <Badge variant="outline" className="text-xxs-400">LLM</Badge>}
+              {!textOnly && row.original.has_tts && <Badge variant="outline" className="text-xxs-400">TTS</Badge>}
+            </div>
+          )
+        },
       },
     ],
     [],
