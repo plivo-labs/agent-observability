@@ -55,6 +55,31 @@ jobs:
         working-directory: plugins/vitest-agent-observability
         run: bunx vitest run
 
+  vitest-plugin-node:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install vitest plugin dependencies
+        working-directory: plugins/vitest-agent-observability
+        run: npm install
+
+      - name: Build vitest plugin
+        working-directory: plugins/vitest-agent-observability
+        run: npm run build
+
+      - name: Run vitest plugin tests
+        working-directory: plugins/vitest-agent-observability
+        run: npx vitest run
+
   pytest-plugin:
     runs-on: ubuntu-latest
     strategy:
