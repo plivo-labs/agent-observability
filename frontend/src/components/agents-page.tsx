@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Bot, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatDate, formatMs } from '@/lib/observability-format'
-import { useEvalAgents } from '@/lib/observability-hooks'
+import { useEvalAgents, useEvalRuns } from '@/lib/observability-hooks'
 import type { AgentRow } from '@/lib/observability-types'
 
 const UNKNOWN_AGENT_ID = '__unknown__'
@@ -59,18 +59,48 @@ function PassRateCell({ rate, prevRate }: { rate: number; prevRate?: number }) {
 	)
 }
 
+function Sparkline({ values, color = 'hsl(270 60% 55%)', width = 80, height = 26 }: {
+	values: number[]
+	color?: string
+	width?: number
+	height?: number
+}) {
+	if (!values || values.length < 2) return <svg width={width} height={height} />
+	const min = Math.min(...values)
+	const max = Math.max(...values)
+	const range = max - min || 1
+	const dx = width / (values.length - 1)
+	const pts = values.map((v, i): [number, number] => [
+		i * dx,
+		height - 2 - ((v - min) / range) * (height - 4),
+	])
+	const path = pts.map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`)).join(' ')
+	const area = `${path} L${width},${height} L0,${height} Z`
+	return (
+		<svg width={width} height={height}>
+			<path d={area} fill={color} opacity={0.12} />
+			<path d={path} fill="none" stroke={color} strokeWidth="1.5" />
+			<circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="2" fill={color} />
+		</svg>
+	)
+}
+
 function KpiTile({
 	label,
 	value,
 	unit,
 	subtitle,
 	subtitleTone,
+	sparkValues,
+	sparkColor,
 }: {
 	label: string
 	value: string
 	unit?: string
 	subtitle?: string
 	subtitleTone?: 'good' | 'bad' | 'muted'
+	sparkValues?: number[]
+	sparkColor?: string
 }) {
 	const toneColor =
 		subtitleTone === 'good'
@@ -91,6 +121,11 @@ function KpiTile({
 					style={{ color: toneColor }}
 				>
 					{subtitle}
+				</div>
+			)}
+			{sparkValues && sparkValues.length >= 2 && (
+				<div className="eval-kpi__spark">
+					<Sparkline values={sparkValues} color={sparkColor || 'hsl(270 60% 55%)'} width={80} height={26} />
 				</div>
 			)}
 		</div>
@@ -133,7 +168,8 @@ export const AgentsPage = ({
 }: {
 	onAgentClick?: (agentId: string) => void
 }) => {
-	const { agents, stats: runStats, loading, error } = useEvalAgents()
+	const { agents, loading, error } = useEvalAgents()
+	const { runs } = useEvalRuns(50, 0)
 	const [search, setSearch] = useState('')
 	const [frameworkFilter, setFrameworkFilter] = useState('all')
 
@@ -153,27 +189,29 @@ export const AgentsPage = ({
 
 	const stats = useMemo(() => {
 		const totalRuns = agents.reduce((s, a) => s + a.run_count, 0)
+		const avgPass = agents.length
+			? agents.reduce((s, a) => s + a.avg_pass_rate, 0) / agents.length
+			: 0
 		const p95Values = agents.map((a) => a.ttft_p95_ms).filter((v): v is number => v != null)
 		const avgP95 = p95Values.length
 			? p95Values.reduce((s, v) => s + v, 0) / p95Values.length
 			: null
 
-		// Regressions: agents whose latest run pass_rate dropped >5pts vs prior run.
-		// `trend` is newest-first.
-		const REGRESSION_THRESHOLD = 5
-		let regressions = 0
-		for (const a of agents) {
-			if (a.trend.length < 2) continue
-			const delta = a.trend[0].pass_rate - a.trend[1].pass_rate
-			if (delta < -REGRESSION_THRESHOLD) regressions++
-		}
-
-		return { totalRuns, avgP95, regressions }
+		return { totalRuns, avgPass, avgP95 }
 	}, [agents])
 
-	const runs24h = runStats?.runs_24h ?? 0
-	const runsPrev24h = runStats?.runs_prev_24h ?? 0
-	const runsDelta = runs24h - runsPrev24h
+	const kpiSeries = useMemo(() => {
+		const chrono = [...runs].sort(
+			(a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+		)
+		const passSeries = chrono
+			.filter((r) => r.total > 0)
+			.map((r) => (r.passed / r.total) * 100)
+		const p95Series = chrono
+			.map((r) => r.ttft_p95_ms)
+			.filter((v): v is number => v != null)
+		return { passSeries, p95Series }
+	}, [runs])
 
 	const headers: { k: string; label: string; cls?: string }[] = [
 		{ k: 'agent', label: 'Agent' },
@@ -190,7 +228,7 @@ export const AgentsPage = ({
 		<div className="w-full p-6 flex flex-col gap-4 min-w-0">
 			<div className="flex items-center justify-between">
 				<div>
-					<h1 className="text-h2-600 font-semibold m-0">Evals</h1>
+					<h1 className="text-[20px] leading-[28px] m-0">Evals</h1>
 					<div className="text-s-400 text-muted-foreground">
 						{agents.length} agents under test · {stats.totalRuns} runs
 					</div>
@@ -198,35 +236,21 @@ export const AgentsPage = ({
 			</div>
 
 			<div className="eval-kpi-grid">
-				<KpiTile label="Agents" value={agents.length.toString()} />
 				<KpiTile
-					label="Runs (24h)"
-					value={runs24h.toString()}
-					subtitle={
-						runStats == null
-							? undefined
-							: runsDelta === 0
-								? `→ vs prior 24h`
-								: `${runsDelta > 0 ? '▲' : '▼'}${Math.abs(runsDelta)} vs prior 24h`
-					}
-					subtitleTone={
-						runsDelta > 0 ? 'good' : runsDelta < 0 ? 'bad' : 'muted'
-					}
-				/>
-				<KpiTile
-					label="Regressions"
-					value={stats.regressions.toString()}
-					subtitle={
-						agents.length
-							? `agents ▼>5pts vs prior run`
-							: undefined
-					}
-					subtitleTone={stats.regressions > 0 ? 'bad' : 'muted'}
+					label="Avg pass rate"
+					value={stats.avgPass.toFixed(1)}
+					unit="%"
+					sparkValues={kpiSeries.passSeries}
+					sparkColor="hsl(142 70% 28%)"
 				/>
 				<KpiTile
 					label="p95 TTFT"
 					value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'}
+					sparkValues={kpiSeries.p95Series}
+					sparkColor="hsl(210 90% 42%)"
 				/>
+				<KpiTile label="Runs" value={stats.totalRuns.toString()} />
+				<KpiTile label="Agents" value={agents.length.toString()} />
 			</div>
 
 			{error && (
