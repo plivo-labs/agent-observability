@@ -36,6 +36,156 @@ function formatAbsolute(unixSeconds: number): string {
   return dayjs(unixSeconds * 1000).format('HH:mm:ss.SSS')
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function compactJson(value: unknown): string {
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value))
+    } catch {
+      return value
+    }
+  }
+  if (value == null) return ''
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function preview(value: unknown, max = 120): string {
+  const text = compactJson(value)
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+function prettyJson(value: unknown): string {
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2)
+    } catch {
+      return value
+    }
+  }
+  if (value == null) return '—'
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getConversationItem(event: SessionEvent): Record<string, unknown> | null {
+  const e = event as Record<string, unknown>
+  return event.type === 'conversation_item_added' ? asRecord(e.item) : null
+}
+
+function getFunctionCall(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'function_call' ? item : asRecord(item.function_call)
+}
+
+function getFunctionCallOutput(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'function_call_output' ? item : asRecord(item.function_call_output)
+}
+
+function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--tertiary))]">
+        {label}
+      </div>
+      <div className="min-w-0 text-[13px] text-[hsl(var(--foreground))]">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function CodeBlock({ value }: { value: unknown }) {
+  return (
+    <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 font-mono text-[12px] leading-relaxed text-[hsl(var(--secondary))]">
+      {prettyJson(value)}
+    </pre>
+  )
+}
+
+function EventDetail({ event }: { event: SessionEvent }) {
+  const item = getConversationItem(event)
+  const functionCall = getFunctionCall(item)
+  if (functionCall) {
+    return (
+      <div className="ev-detail">
+        <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--info))]">
+            Tool call
+          </span>
+          <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
+            {String(functionCall.name ?? 'unknown')}
+          </span>
+        </div>
+        <div className="grid gap-3">
+          {functionCall.call_id != null && (
+            <DetailField label="Call ID">
+              <code className="break-all rounded bg-[hsl(var(--bg2))] px-1.5 py-0.5 font-mono text-[12px]">
+                {String(functionCall.call_id)}
+              </code>
+            </DetailField>
+          )}
+          <DetailField label="Arguments">
+            <CodeBlock value={functionCall.arguments ?? {}} />
+          </DetailField>
+        </div>
+      </div>
+    )
+  }
+
+  const functionCallOutput = getFunctionCallOutput(item)
+  if (functionCallOutput) {
+    const output = functionCallOutput.output ?? functionCallOutput.result ?? functionCallOutput.error
+    const isError = Boolean(functionCallOutput.is_error)
+    return (
+      <div className="ev-detail">
+        <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+          <span className={`rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+            isError
+              ? 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]'
+              : 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]'
+          }`}>
+            Tool result
+          </span>
+          <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
+            {String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}
+          </span>
+        </div>
+        <div className="grid gap-3">
+          {functionCallOutput.call_id != null && (
+            <DetailField label="Call ID">
+              <code className="break-all rounded bg-[hsl(var(--bg2))] px-1.5 py-0.5 font-mono text-[12px]">
+                {String(functionCallOutput.call_id)}
+              </code>
+            </DetailField>
+          )}
+          <DetailField label={isError ? 'Error' : 'Output'}>
+            <CodeBlock value={output ?? '—'} />
+          </DetailField>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <pre className="ev-detail">
+      {JSON.stringify(event, null, 2)}
+    </pre>
+  )
+}
+
 /** Short one-line summary for an event — mirrors the design's ev-row message. */
 function EventMessage({ event }: { event: SessionEvent }) {
   const e = event as Record<string, unknown>
@@ -65,7 +215,7 @@ function EventMessage({ event }: { event: SessionEvent }) {
       )
     }
     case 'conversation_item_added': {
-      const item = (e.item ?? {}) as Record<string, unknown>
+      const item = getConversationItem(event) ?? {}
       if (item.type === 'message') {
         const content = Array.isArray(item.content)
           ? item.content.join(' ')
@@ -77,6 +227,48 @@ function EventMessage({ event }: { event: SessionEvent }) {
             {String(item.role ?? 'unknown')}: <q>{preview}{ellipsis}</q>
           </>
         )
+      }
+      const functionCall = getFunctionCall(item)
+      if (functionCall) {
+        const args = preview(functionCall.arguments)
+        return (
+          <>
+            tool call: <b>{String(functionCall.name ?? 'unknown')}</b>
+            {args && <> <code>{args}</code></>}
+          </>
+        )
+      }
+      const functionCallOutput = getFunctionCallOutput(item)
+      if (functionCallOutput) {
+        return (
+          <>
+            tool result: <b>{String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}</b>
+            {functionCallOutput.output != null && <> <q>{preview(functionCallOutput.output)}</q></>}
+          </>
+        )
+      }
+      const handoff = item.type === 'agent_handoff' ? item : asRecord(item.agent_handoff)
+      if (handoff) {
+        // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
+        // agent_handoff items. Older payloads (and the eval path) use
+        // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
+        const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
+        const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
+        // Drop the arrow entirely when one side is missing — the first
+        // handoff in a session has no previous agent, so `handoff to: X`
+        // reads more naturally than `— → X`.
+        if (from != null && to != null) {
+          return (
+            <>
+              handoff: <b>{String(from)}</b>
+              <span className="arrow"> → </span>
+              {String(to)}
+            </>
+          )
+        }
+        if (to != null) return <>handoff to: <b>{String(to)}</b></>
+        if (from != null) return <>handoff from: <b>{String(from)}</b></>
+        // Shouldn't happen — fall through to the generic item renderer.
       }
       return (
         <>
@@ -181,9 +373,7 @@ export const SessionEvents = () => {
                 <div className="msg"><EventMessage event={event} /></div>
               </div>
               {isOpen && (
-                <pre className={`ev-detail${timeMode === 'absolute' ? ' absolute-time' : ''}`}>
-                  {JSON.stringify(event, null, 2)}
-                </pre>
+                <EventDetail event={event} />
               )}
             </div>
           )

@@ -225,6 +225,7 @@ export const EvalRunDetailPage = ({
           <span className="font-mono text-s-400">{row.original.name}</span>
         ),
         enableColumnFilter: true,
+        enableSorting: false,
         meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
       },
       {
@@ -233,6 +234,7 @@ export const EvalRunDetailPage = ({
         header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
         cell: ({ row }) => <StatusChip status={row.original.status} />,
         enableColumnFilter: true,
+        enableSorting: false,
         meta: {
           label: 'Status',
           variant: 'multiSelect',
@@ -257,6 +259,7 @@ export const EvalRunDetailPage = ({
             {formatDuration(row.original.duration_ms)}
           </span>
         ),
+        enableSorting: false,
         meta: { label: 'Duration' },
       },
       {
@@ -271,15 +274,8 @@ export const EvalRunDetailPage = ({
             </span>
           )
         },
+        enableSorting: false,
         meta: { label: 'Avg TTFT' },
-        sortingFn: (a, b, id) => {
-          const av = a.getValue<number | null>(id)
-          const bv = b.getValue<number | null>(id)
-          if (av == null && bv == null) return 0
-          if (av == null) return 1
-          if (bv == null) return -1
-          return av - bv
-        },
       },
       {
         id: 'total_tokens',

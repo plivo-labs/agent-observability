@@ -12,8 +12,11 @@ import type {
   EvalsFilters,
   MetricsSummary,
   PlivoMeta,
+  SessionExternalEvaluation,
   SessionEvent,
   SessionMetrics,
+  SessionOutcome,
+  SessionTag,
   SessionsFilters,
   TurnRecord,
 } from '@/lib/observability-types'
@@ -147,6 +150,21 @@ export function useEvents(): SessionEvent[] | null {
 export function useOptions(): Record<string, unknown> | null {
   const { session } = useObservabilityContext()
   return session?.options ?? null
+}
+
+export function useSessionEvaluations(): SessionExternalEvaluation[] {
+  const { session } = useObservabilityContext()
+  return session?.evaluations ?? []
+}
+
+export function useSessionTags(): SessionTag[] {
+  const { session } = useObservabilityContext()
+  return session?.tags ?? []
+}
+
+export function useSessionOutcome(): SessionOutcome | null {
+  const { session } = useObservabilityContext()
+  return session?.outcome ?? null
 }
 
 // ---------------------------------------------------------------------------

@@ -10,11 +10,23 @@ import { formatDuration } from '@/lib/observability-format'
 export function CapsChips({
   stt, llm, tts,
 }: { stt: boolean; llm: boolean; tts: boolean }) {
+  const capabilities = [
+    stt && { label: 'STT', className: 'cap-stt' },
+    llm && { label: 'LLM', className: 'cap-llm' },
+    tts && { label: 'TTS', className: 'cap-tts' },
+  ].filter(Boolean) as Array<{ label: string; className: string }>
+
+  if (capabilities.length === 0) {
+    return <span className="muted">—</span>
+  }
+
   return (
     <div className="caps">
-      <span className={`cap ${stt ? 'cap-stt' : 'cap-off'}`}>STT</span>
-      <span className={`cap ${llm ? 'cap-llm' : 'cap-off'}`}>LLM</span>
-      <span className={`cap ${tts ? 'cap-tts' : 'cap-off'}`}>TTS</span>
+      {capabilities.map((capability) => (
+        <span key={capability.label} className={`cap ${capability.className}`}>
+          {capability.label}
+        </span>
+      ))}
     </div>
   )
 }

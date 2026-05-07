@@ -20,3 +20,7 @@ export const s3Enabled =
 export const basicAuthEnabled =
   !!config.AGENT_OBSERVABILITY_USER &&
   !!config.AGENT_OBSERVABILITY_PASS;
+
+export const liveKitAuthEnabled =
+  !!config.LIVEKIT_API_KEY &&
+  !!config.LIVEKIT_API_SECRET;

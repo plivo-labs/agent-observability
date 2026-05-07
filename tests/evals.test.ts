@@ -33,11 +33,17 @@ mock.module("../src/config.js", () => ({
   },
   s3Enabled: false,
   basicAuthEnabled: true,
+  liveKitAuthEnabled: false,
 }));
 
 mock.module("../src/db.js", () => ({
   sql: mockSql,
   insertSession: mock(() => Promise.resolve()),
+  applyStoredSessionTags: mock(() => Promise.resolve()),
+  upsertSessionTag: mock(() => Promise.resolve()),
+  insertLiveKitEvaluation: mock(() => Promise.resolve()),
+  upsertSessionOutcome: mock(() => Promise.resolve()),
+  applySessionTagMetadata: mock(() => Promise.resolve()),
 }));
 
 mock.module("../src/evals/db.js", () => ({

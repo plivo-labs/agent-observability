@@ -137,8 +137,10 @@ runners — live under [`plugins/examples/`](plugins/examples/README.md).
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | Postgres connection string |
-| `AGENT_OBSERVABILITY_USER` | No | Basic auth username — when set with `AGENT_OBSERVABILITY_PASS`, all routes except `/health` require basic auth |
+| `AGENT_OBSERVABILITY_USER` | No | Basic auth username — when set with `AGENT_OBSERVABILITY_PASS`, native ingest routes accept Basic credentials |
 | `AGENT_OBSERVABILITY_PASS` | No | Basic auth password (see above) |
+| `LIVEKIT_API_KEY` | No | LiveKit-issued JWT issuer claim — when set with `LIVEKIT_API_SECRET`, native ingest routes accept Bearer JWTs minted with this key. Use the same key/secret pair you give the LiveKit SDK on the agent side so its tokens validate. |
+| `LIVEKIT_API_SECRET` | No | HS256 signing secret paired with `LIVEKIT_API_KEY`. Both env vars are required to enable LiveKit Bearer auth. |
 | `AUTO_MIGRATE` | No | Run SQL migrations on startup (`true`/`false`, default: `false`) |
 | `PORT` | No | Server port (default: `9090`) |
 | `S3_BUCKET` | No | Enable S3 upload for audio recordings |
@@ -155,7 +157,10 @@ runners — live under [`plugins/examples/`](plugins/examples/README.md).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check (always unauthenticated) |
-| `POST` | `/observability/recordings/v0` | Session report callback (basic auth when configured) |
+| `POST` | `/observability/recordings/v0` | Session report (multipart with JSON or protobuf `MetricsRecordingHeader` + JSON `chat_history` + optional OGG audio). Accepts Basic auth or LiveKit Bearer JWT. |
+| `POST` | `/observability/logs/otlp/v0` | OTLP log records emitted by the LiveKit SDK Tagger or hand-built equivalents. Accepts JSON / protobuf, gzip-encoded or not. Persists tags, judge evaluations, outcomes, and session-report patches. |
+| `POST` | `/observability/traces/otlp/v0` | OTLP traces — accepted but not persisted yet (200 no-op). |
+| `POST` | `/observability/metrics/otlp/v0` | OTLP metrics — accepted but not persisted yet (200 no-op). Per-turn agent metrics ride on `chat_history` items in the recording payload, not here. |
 | `POST` | `/observability/evals/v0` | Eval run payload from the pytest / vitest plugins |
 
 ### Dashboard API
@@ -174,7 +179,7 @@ In production, the Vite-built frontend is served as static files from the same s
 
 ## Database
 
-Sessions are stored in the `agent_transport_sessions` table:
+### `agent_transport_sessions` (one row per call)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -191,6 +196,16 @@ Sessions are stored in the `agent_transport_sessions` table:
 | `session_metrics` | JSONB | Aggregated latency metrics |
 | `record_url` | TEXT | S3 URL for audio recording |
 
+### LiveKit OTLP-derived tables
+
+Populated by the OTLP logs ingest path; joined to a session via `session_id`.
+
+| Table | Purpose |
+|-------|---------|
+| `session_tags` | Tagger annotations (e.g. `agent.session`, `account_id:…`, `transport:sip`). Unique on `(session_id, name, source)`. |
+| `session_external_evals` | LiveKit `JudgeGroup` outcomes — one row per (session, judge): `judge_name`, `verdict`, `tag`, `reasoning`, `instructions`, `raw`. |
+| `session_outcomes` | High-level pass/fail outcome summaries. Unique on `(session_id, source)`. |
+
 Migrations run automatically when `AUTO_MIGRATE=true`.
 
 ## Agent-Transport Configuration
@@ -199,10 +214,21 @@ Set these in the agent process to enable session report upload:
 
 ```bash
 AGENT_OBSERVABILITY_URL=https://your-server:9090
-# Optional — only needed if the server requires basic auth
+
+# Option A — legacy basic auth (older agent-transport clients)
 AGENT_OBSERVABILITY_USER=your_user
 AGENT_OBSERVABILITY_PASS=your_pass
+
+# Option B — LiveKit-native auth (agent-transport >= 0.1.10)
+# The SDK mints Bearer JWTs signed with these. Use the same pair on the
+# server so it can verify them.
+LIVEKIT_API_KEY=your_livekit_api_key
+LIVEKIT_API_SECRET=your_livekit_api_secret
 ```
+
+The server accepts whichever auth header the client sends. Either option
+on its own is enough; configure both during a migration window if you have
+mixed clients.
 
 ## Project Structure
 

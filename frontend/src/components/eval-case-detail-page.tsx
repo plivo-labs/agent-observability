@@ -490,6 +490,116 @@ function formatCostInline(cost: number | null): string {
 	return cost == null ? "—" : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`;
 }
 
+// One row per logical tool invocation. A `function_call` and its matching
+// `function_call_output` (paired by `call_id` upstream) collapse into a single
+// accordion: the trigger shows just the tool name, and expanding reveals
+// Input + Output sections. An orphan output (no preceding call) renders with
+// only the Output section visible.
+function ToolInvocationRow({
+  call,
+  output,
+  index,
+}: {
+  call?: RunEventFunctionCall
+  output?: RunEventFunctionCallOutput
+  index: number
+}) {
+  const argsStr = call ? formatToolValue(call.arguments) : ''
+  const argsEmpty = argsStr.trim() === '' || argsStr.trim() === '{}' || argsStr.trim() === 'null'
+  const outputStr = output ? formatToolValue(output.output) : ''
+  const outputEmpty = outputStr.trim() === ''
+  const headerLabel = call ? `tool call · ${call.name ?? 'unknown'}` : 'tool result'
+
+  return (
+    <Collapsible className="border rounded-md overflow-hidden">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
+        <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+        {headerLabel}
+        {output?.is_error && (
+          <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
+            error
+          </Badge>
+        )}
+        <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+        {call && (
+          <>
+            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">
+              Input
+            </div>
+            {argsEmpty ? (
+              <div className="px-3 pb-3 text-xs-400 italic text-muted-foreground">
+                No arguments recorded.
+              </div>
+            ) : (
+              <pre className="px-3 pb-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
+                {argsStr}
+              </pre>
+            )}
+          </>
+        )}
+        {output && (
+          <>
+            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">
+              Output
+            </div>
+            {outputEmpty ? (
+              <div className="px-3 pb-3 text-s-400 italic text-muted-foreground">
+                No output recorded.
+              </div>
+            ) : (
+              <pre className="px-3 pb-3 text-s-400 font-mono whitespace-pre-wrap break-words">
+                {outputStr}
+              </pre>
+            )}
+          </>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+// Walks the event list and pairs each `function_call` with its matching
+// `function_call_output` by `call_id`, emitting one ToolInvocationRow per
+// pair. Outputs without a preceding call render as orphans. Messages and
+// unknown event types render through their own components.
+function renderTranscript(events: RunEvent[]): React.ReactNode {
+  const outputByCallId = new Map<string, RunEventFunctionCallOutput>()
+  for (const ev of events) {
+    if (ev.type === 'function_call_output') {
+      const o = ev as RunEventFunctionCallOutput
+      if (o.call_id) outputByCallId.set(o.call_id, o)
+    }
+  }
+
+  const consumed = new Set<string>()
+  return events.map((ev, i) => {
+    if (ev.type === 'message') {
+      return <MessageRow key={i} event={ev as RunEventMessage} index={i} />
+    }
+    if (ev.type === 'function_call') {
+      const call = ev as RunEventFunctionCall
+      const output = call.call_id ? outputByCallId.get(call.call_id) : undefined
+      if (output && call.call_id) consumed.add(call.call_id)
+      return <ToolInvocationRow key={i} call={call} output={output} index={i} />
+    }
+    if (ev.type === 'function_call_output') {
+      const out = ev as RunEventFunctionCallOutput
+      if (out.call_id && consumed.has(out.call_id)) return null
+      return <ToolInvocationRow key={i} output={out} index={i} />
+    }
+    return (
+      <div
+        key={i}
+        className="border rounded-md px-3 py-2 text-xs-400 text-muted-foreground"
+      >
+        {ev.type}
+      </div>
+    )
+  })
+}
+
 export const EvalCaseDetailPage = ({
 	runId,
 	caseId,

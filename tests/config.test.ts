@@ -16,6 +16,8 @@ describe("envSchema", () => {
       expect(result.data.S3_PREFIX).toBe("recordings");
       expect(result.data.AGENT_OBSERVABILITY_USER).toBeUndefined();
       expect(result.data.AGENT_OBSERVABILITY_PASS).toBeUndefined();
+      expect(result.data.LIVEKIT_API_KEY).toBeUndefined();
+      expect(result.data.LIVEKIT_API_SECRET).toBeUndefined();
     }
   });
 
@@ -35,6 +37,19 @@ describe("envSchema", () => {
   test("auth credentials are optional", () => {
     const result = envSchema.safeParse(validEnv);
     expect(result.success).toBe(true);
+  });
+
+  test("accepts LiveKit upload auth credentials", () => {
+    const result = envSchema.safeParse({
+      ...validEnv,
+      LIVEKIT_API_KEY: "plivo-labs-livekit-api-key",
+      LIVEKIT_API_SECRET: "plivo-labs-livekit-api-secret",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.LIVEKIT_API_KEY).toBe("plivo-labs-livekit-api-key");
+      expect(result.data.LIVEKIT_API_SECRET).toBe("plivo-labs-livekit-api-secret");
+    }
   });
 
   test("applies PORT default", () => {

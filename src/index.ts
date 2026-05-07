@@ -6,7 +6,7 @@ import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
 import { config, s3Enabled, basicAuthEnabled } from "./config.js";
 import { uploadRecording } from "./s3.js";
-import { sql, insertSession } from "./db.js";
+import { sql, insertSession, applyStoredSessionTags } from "./db.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
@@ -15,6 +15,10 @@ import { registerEvalRoutes } from "./evals/routes.js";
 import { ensurePricesLoaded } from "./evals/summarize.js";
 import { sweepStaleRuns } from "./evals/db.js";
 import { sortSessionEvents } from "./events.js";
+import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
+import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
+import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
+import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -44,9 +48,14 @@ if (basicAuthEnabled) {
     username: config.AGENT_OBSERVABILITY_USER!,
     password: config.AGENT_OBSERVABILITY_PASS!,
   });
-  app.use("/observability/*", auth);
+  app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
 }
+
+app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
+app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);
+app.use("/observability/traces/otlp/v0", nativeLiveKitUploadAuth);
+app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
 
 // ── Health check ────────────────────────────────────────────────────────────
 
@@ -61,7 +70,8 @@ registerEvalRoutes(app);
 // ── Session report endpoint ─────────────────────────────────────────────────
 
 app.post("/observability/recordings/v0", async (c) => {
-  // Auth is handled by middleware above
+  // Auth is handled by middleware above. Native LiveKit uploads use Bearer
+  // JWTs; Basic remains accepted here for the legacy JSON-header uploader.
 
   const formData = await c.req.formData();
 
@@ -70,11 +80,14 @@ app.post("/observability/recordings/v0", async (c) => {
   let accountId: string | null = null;
   let transport: string | null = null;
 
-  // Decode JSON header
+  // Decode either the legacy JSON header or LiveKit's native protobuf
+  // MetricsRecordingHeader.
   const header = formData.get("header");
   if (header && header instanceof Blob) {
+    const headerBytes = new Uint8Array(await header.arrayBuffer());
     try {
-      const json = JSON.parse(await header.text());
+      const headerText = new TextDecoder().decode(headerBytes);
+      const json = JSON.parse(headerText);
       sessionId = json.session_id ?? "";
       const startTime = json.start_time ?? 0;
       if (startTime > 0) {
@@ -82,7 +95,15 @@ app.post("/observability/recordings/v0", async (c) => {
       }
       accountId = json.room_tags?.account_id ?? null;
       transport = json.transport ?? null;
-    } catch {}
+    } catch {
+      try {
+        const decoded = decodeMetricsRecordingHeader(headerBytes);
+        sessionId = decoded.roomId;
+        startedAt = decoded.startedAt;
+        accountId = decoded.roomTags.account_id ?? null;
+        transport = decoded.roomTags.transport ?? null;
+      } catch {}
+    }
   }
 
   console.log(`Session report received: room_id=${sessionId} account_id=${accountId}`);
@@ -143,15 +164,46 @@ app.post("/observability/recordings/v0", async (c) => {
       hasTts,
       chatHistory: chatItems,
       sessionMetrics: { per_turn: metrics, usage: normalizeKeys(rawReport?.usage) ?? null },
-      rawReport: rawReport != null ? normalizeKeys(rawReport) : null,
+      rawReport: rawReport != null ? normalizeRawReport(normalizeKeys(rawReport)) : null,
       recordUrl,
     });
+    if (sessionId) {
+      await applyStoredSessionTags(sessionId);
+    }
     console.log(`Session saved: room_id=${sessionId} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
   } catch (e) {
     console.error(`Failed to save session room_id=${sessionId}: ${(e as Error).message}`);
   }
 
   return c.json({ api_id: newApiId(), message: "session report received" });
+});
+
+// ── Native LiveKit OTLP endpoints ───────────────────────────────────────────
+
+app.post("/observability/logs/otlp/v0", async (c) => {
+  try {
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    const logs = decodeOtlpLogsRequest(
+      bytes,
+      c.req.header("content-encoding"),
+      c.req.header("content-type"),
+    );
+    const persisted = await persistLiveKitOtlpLogs(logs);
+    return c.json({ api_id: newApiId(), accepted: logs.length, ...persisted });
+  } catch (e) {
+    console.error(`Failed to ingest LiveKit OTLP logs: ${(e as Error).message}`);
+    return c.json(buildErrorResponse("invalid_otlp_logs", "Could not decode OTLP logs payload"), 400);
+  }
+});
+
+app.post("/observability/traces/otlp/v0", async (c) => {
+  await c.req.arrayBuffer();
+  return c.body(null, 200);
+});
+
+app.post("/observability/metrics/otlp/v0", async (c) => {
+  await c.req.arrayBuffer();
+  return c.body(null, 200);
 });
 
 // ── REST API for the dashboard UI ───────────────────────────────────────────
@@ -272,16 +324,52 @@ app.get("/api/sessions/:id", async (c) => {
     return c.json(buildErrorResponse("not_found", "Session not found"), 404);
   }
 
+  const [tagRows, evaluationRows, outcomeRows] = await Promise.all([
+    sql`
+      SELECT name, metadata, source, observed_at, created_at, updated_at
+      FROM session_tags
+      WHERE session_id = ${sessionId}
+      ORDER BY COALESCE(observed_at, created_at) ASC, name ASC
+    `,
+    sql`
+      SELECT source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw, created_at
+      FROM session_external_evals
+      WHERE session_id = ${sessionId}
+      ORDER BY COALESCE(observed_at, created_at) ASC, id ASC
+    `,
+    sql`
+      SELECT source, outcome, reason, observed_at, raw, created_at, updated_at
+      FROM session_outcomes
+      WHERE session_id = ${sessionId}
+      ORDER BY COALESCE(observed_at, updated_at, created_at) DESC
+      LIMIT 1
+    `,
+  ]);
+
   const row = rows[0];
-  const chatHistory = typeof row.chat_history === "string" ? JSON.parse(row.chat_history) : row.chat_history;
-  const sessionMetrics = typeof row.session_metrics === "string" ? JSON.parse(row.session_metrics) : row.session_metrics;
-  const rawReport = typeof row.raw_report === "string" ? JSON.parse(row.raw_report) : row.raw_report;
+  const chatHistory = parseJsonValue(row.chat_history);
+  const sessionMetrics = parseJsonValue(row.session_metrics);
+  const rawReport = normalizeRawReport(row.raw_report);
 
   row.chat_history = chatHistory;
   row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count);
   row.raw_report = rawReport;
   row.events = sortSessionEvents(rawReport?.events ?? null);
   row.options = rawReport?.options ?? null;
+  row.tags = (tagRows ?? []).map((tag: any) => ({
+    ...tag,
+    metadata: typeof tag.metadata === "string" ? JSON.parse(tag.metadata) : tag.metadata,
+  }));
+  row.evaluations = (evaluationRows ?? []).map((evaluation: any) => ({
+    ...evaluation,
+    raw: typeof evaluation.raw === "string" ? JSON.parse(evaluation.raw) : evaluation.raw,
+  }));
+  row.outcome = outcomeRows?.[0]
+    ? {
+        ...outcomeRows[0],
+        raw: typeof outcomeRows[0].raw === "string" ? JSON.parse(outcomeRows[0].raw) : outcomeRows[0].raw,
+      }
+    : null;
   row.api_id = newApiId();
 
   return c.json(row);

@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { formatDuration, formatMs } from '@/lib/observability-format'
+import { formatDuration, formatMs, formatToolValue } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
 import type {
   CaseStatus,
@@ -73,93 +73,133 @@ function StatusChip({ status }: { status: CaseStatus }) {
   )
 }
 
-function EventRow({ event, index }: { event: RunEvent; index: number }) {
-  if (event.type === 'message') {
-    const m = event as RunEventMessage
-    return (
-      <div className="border rounded-md overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-xs-600 text-muted-foreground border-b">
-          <span className="inline-flex items-center px-1.5 py-0 rounded bg-muted text-foreground border border-border text-xxs-600 capitalize">
-            {m.role ?? 'assistant'}
-          </span>
-          {m.interrupted && (
-            <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
-              interrupted
-            </Badge>
-          )}
-          <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
-        </div>
-        <div className="p-3 text-s-400 whitespace-pre-wrap">{m.content ?? ''}</div>
-      </div>
-    )
-  }
-  if (event.type === 'function_call') {
-    const f = event as RunEventFunctionCall
-    const argsStr =
-      typeof f.arguments === 'string'
-        ? f.arguments
-        : f.arguments == null
-          ? ''
-          : JSON.stringify(f.arguments, null, 2)
-    // Treat empty string / `{}` / `null` / `undefined` as "no arguments"
-    // rather than leaving the <pre> blank.
-    const argsEmpty = argsStr.trim() === '' || argsStr.trim() === '{}' || argsStr.trim() === 'null'
-    return (
-      <Collapsible className="border rounded-md overflow-hidden">
-        <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
-          <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
-          tool call · {f.name ?? 'unknown'}
-          <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          {argsEmpty ? (
-            <div className="p-3 text-xs-400 italic text-muted-foreground">
-              No arguments recorded.
-            </div>
-          ) : (
-            <pre className="p-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
-              {argsStr}
-            </pre>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
-    )
-  }
-  if (event.type === 'function_call_output') {
-    const o = event as RunEventFunctionCallOutput
-    const out = o.output == null ? '' : String(o.output)
-    const outEmpty = out.trim() === ''
-    return (
-      <Collapsible className="border rounded-md overflow-hidden">
-        <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
-          <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
-          tool result
-          {o.is_error && (
-            <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
-              error
-            </Badge>
-          )}
-          <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          {outEmpty ? (
-            <div className="p-3 text-s-400 italic text-muted-foreground">
-              No output recorded.
-            </div>
-          ) : (
-            <div className="p-3 text-s-400 font-mono whitespace-pre-wrap break-words">
-              {out}
-            </div>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
-    )
-  }
+function MessageRow({ event, index }: { event: RunEventMessage; index: number }) {
   return (
-    <div className="border rounded-md px-3 py-2 text-xs-400 text-muted-foreground">
-      {event.type}
+    <div className="border rounded-md overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-xs-600 text-muted-foreground border-b">
+        <span className="inline-flex items-center px-1.5 py-0 rounded bg-muted text-foreground border border-border text-xxs-600 capitalize">
+          {event.role ?? 'assistant'}
+        </span>
+        {event.interrupted && (
+          <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
+            interrupted
+          </Badge>
+        )}
+        <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
+      </div>
+      <div className="p-3 text-s-400 whitespace-pre-wrap">{event.content ?? ''}</div>
     </div>
   )
+}
+
+// One row per logical tool invocation. A `function_call` and its matching
+// `function_call_output` (paired by `call_id` upstream) collapse into a single
+// accordion: the trigger shows just the tool name, and expanding reveals
+// Input + Output sections. An orphan output (no preceding call) renders with
+// only the Output section visible.
+function ToolInvocationRow({
+  call,
+  output,
+  index,
+}: {
+  call?: RunEventFunctionCall
+  output?: RunEventFunctionCallOutput
+  index: number
+}) {
+  const argsStr = call ? formatToolValue(call.arguments) : ''
+  const argsEmpty = argsStr.trim() === '' || argsStr.trim() === '{}' || argsStr.trim() === 'null'
+  const outputStr = output ? formatToolValue(output.output) : ''
+  const outputEmpty = outputStr.trim() === ''
+  const headerLabel = call ? `tool call · ${call.name ?? 'unknown'}` : 'tool result'
+
+  return (
+    <Collapsible className="border rounded-md overflow-hidden">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
+        <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+        {headerLabel}
+        {output?.is_error && (
+          <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
+            error
+          </Badge>
+        )}
+        <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+        {call && (
+          <>
+            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">
+              Input
+            </div>
+            {argsEmpty ? (
+              <div className="px-3 pb-3 text-xs-400 italic text-muted-foreground">
+                No arguments recorded.
+              </div>
+            ) : (
+              <pre className="px-3 pb-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
+                {argsStr}
+              </pre>
+            )}
+          </>
+        )}
+        {output && (
+          <>
+            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">
+              Output
+            </div>
+            {outputEmpty ? (
+              <div className="px-3 pb-3 text-s-400 italic text-muted-foreground">
+                No output recorded.
+              </div>
+            ) : (
+              <pre className="px-3 pb-3 text-s-400 font-mono whitespace-pre-wrap break-words">
+                {outputStr}
+              </pre>
+            )}
+          </>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+// Walks the event list and pairs each `function_call` with its matching
+// `function_call_output` by `call_id`, emitting one ToolInvocationRow per
+// pair. Outputs without a preceding call render as orphans. Messages and
+// unknown event types render through their own components.
+function renderTranscript(events: RunEvent[]): React.ReactNode {
+  const outputByCallId = new Map<string, RunEventFunctionCallOutput>()
+  for (const ev of events) {
+    if (ev.type === 'function_call_output') {
+      const o = ev as RunEventFunctionCallOutput
+      if (o.call_id) outputByCallId.set(o.call_id, o)
+    }
+  }
+
+  const consumed = new Set<string>()
+  return events.map((ev, i) => {
+    if (ev.type === 'message') {
+      return <MessageRow key={i} event={ev as RunEventMessage} index={i} />
+    }
+    if (ev.type === 'function_call') {
+      const call = ev as RunEventFunctionCall
+      const output = call.call_id ? outputByCallId.get(call.call_id) : undefined
+      if (output && call.call_id) consumed.add(call.call_id)
+      return <ToolInvocationRow key={i} call={call} output={output} index={i} />
+    }
+    if (ev.type === 'function_call_output') {
+      const out = ev as RunEventFunctionCallOutput
+      if (out.call_id && consumed.has(out.call_id)) return null
+      return <ToolInvocationRow key={i} output={out} index={i} />
+    }
+    return (
+      <div
+        key={i}
+        className="border rounded-md px-3 py-2 text-xs-400 text-muted-foreground"
+      >
+        {ev.type}
+      </div>
+    )
+  })
 }
 
 export const EvalCaseDetailPage = ({
@@ -285,9 +325,7 @@ export const EvalCaseDetailPage = ({
             Transcript
           </div>
           <div className="flex flex-col gap-2.5">
-            {evalCase.events.map((ev, i) => (
-              <EventRow key={i} event={ev} index={i} />
-            ))}
+            {renderTranscript(evalCase.events)}
           </div>
         </div>
 

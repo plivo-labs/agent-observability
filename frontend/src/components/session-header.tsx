@@ -1,4 +1,5 @@
-import { Download, Radio } from 'lucide-react'
+import { ClipboardCheck, Download, Radio } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import type { AgentSessionRow } from '@/lib/observability-types'
 import { useSession } from '@/lib/observability-hooks'
@@ -13,12 +14,35 @@ function KVRow({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-export const SessionHeader = ({ session: sessionProp }: { session?: AgentSessionRow }) => {
+interface SessionHeaderProps {
+  session?: AgentSessionRow
+  onEvaluationsClick?: () => void
+}
+
+function isTextOnlySession(session: AgentSessionRow): boolean {
+  const transport = String(session.transport ?? '')
+  return transport === 'text' ||
+    transport === 'terminal_text' ||
+    Boolean(session.tags?.some((tag) => tag.name === 'transport:text' || tag.name === 'transport:terminal_text'))
+}
+
+export const SessionHeader = ({
+  session: sessionProp,
+  onEvaluationsClick,
+}: SessionHeaderProps) => {
   const { session: hookSession } = useSession()
   const session = sessionProp ?? hookSession
   if (!session) return null
 
   const stateClass = session.state === 'ended' ? 'status-ended' : 'status-live'
+  const evaluationCount = session.evaluations?.length ?? 0
+  // `evaluations:enabled` is emitted by the Python adapter when judges are
+  // configured (or by callers passing `metadata.evaluations=true`). Surfacing
+  // the button on that signal lets users see "evaluations are coming" before
+  // judge results land. Node sessions never carry this tag.
+  const hasEvaluationFlag = session.tags?.some((tag) => tag.name === 'evaluations:enabled') ?? false
+  const hasEvaluationData = evaluationCount > 0 || session.outcome != null || hasEvaluationFlag
+  const textOnly = isTextOnlySession(session)
 
   return (
     <div className="obs-session-head">
@@ -30,7 +54,16 @@ export const SessionHeader = ({ session: sessionProp }: { session?: AgentSession
             {session.state ? session.state.charAt(0).toUpperCase() + session.state.slice(1) : 'Unknown'}
           </span>
         </div>
-        <div className="dur">{formatDuration(session.duration_ms)}</div>
+        <div className="session-actions">
+          {onEvaluationsClick && hasEvaluationData && (
+            <Button variant="outline" size="sm" onClick={onEvaluationsClick}>
+              <ClipboardCheck size={13} />
+              Evaluation
+              {evaluationCount > 0 && <span>({evaluationCount})</span>}
+            </Button>
+          )}
+          <div className="dur">{formatDuration(session.duration_ms)}</div>
+        </div>
       </div>
 
       <div className="obs-kv">
@@ -39,9 +72,9 @@ export const SessionHeader = ({ session: sessionProp }: { session?: AgentSession
         </KVRow>
         <KVRow label="Capabilities">
           <CapsChips
-            stt={session.has_stt}
+            stt={!textOnly && session.has_stt}
             llm={session.has_llm}
-            tts={session.has_tts}
+            tts={!textOnly && session.has_tts}
           />
         </KVRow>
         <KVRow label="Turns">{session.turn_count ?? '—'}</KVRow>
