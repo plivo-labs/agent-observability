@@ -23,14 +23,15 @@ function makeTest(
 
 describe("AgentObservabilityReporter", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
-    vi.stubGlobal("fetch", fetchMock);
+    (globalThis as any).fetch = fetchMock;
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
+    (globalThis as any).fetch = originalFetch;
   });
 
   test("no-op when no URL configured", async () => {
@@ -258,7 +259,8 @@ describe("AgentObservabilityReporter", () => {
     ]);
 
     // advance timer to trigger flush
-    await vi.advanceTimersByTimeAsync(150);
+    vi.advanceTimersByTime(150);
+    await Promise.resolve();
 
     // call[1] = live flush with the 2 cases
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -268,7 +270,8 @@ describe("AgentObservabilityReporter", () => {
     expect(liveBody.cases).toHaveLength(2);
 
     // advance again — no new cases, so no flush (heartbeat not due yet)
-    await vi.advanceTimersByTimeAsync(150);
+    vi.advanceTimersByTime(150);
+    await Promise.resolve();
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     await reporter.onFinished([], []);
@@ -289,7 +292,8 @@ describe("AgentObservabilityReporter", () => {
     // call[0] = start stub; lastFlushAt set to now
 
     // advance past heartbeat interval with no new cases
-    await vi.advanceTimersByTimeAsync(300);
+    vi.advanceTimersByTime(300);
+    await Promise.resolve();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const hbBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
@@ -361,7 +365,8 @@ describe("AgentObservabilityReporter", () => {
     reporter.onTaskUpdate([["id1", t1.result, t1]]);
 
     // flush tick will call bestEffortPost which catches the error — just must not throw
-    await vi.advanceTimersByTimeAsync(150);
+    vi.advanceTimersByTime(150);
+    await Promise.resolve();
 
     // reporter still alive — onFinished should complete without throwing
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));

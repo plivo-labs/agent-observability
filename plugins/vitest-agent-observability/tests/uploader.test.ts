@@ -22,14 +22,15 @@ function tmpDir(): string {
 
 describe("upload", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    (globalThis as any).fetch = fetchMock;
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
+    (globalThis as any).fetch = originalFetch;
   });
 
   test("success returns true and hits /observability/evals/v0", async () => {
@@ -48,18 +49,13 @@ describe("upload", () => {
     fetchMock
       .mockResolvedValueOnce(new Response("bad gateway", { status: 502 }))
       .mockResolvedValueOnce(new Response(null, { status: 201 }));
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const ok = await upload(
-        { version: "v0", run: { run_id: "r1" } } as any,
-        cfg({ maxRetries: 3 }),
-        { logger: silentLogger },
-      );
-      expect(ok).toBe(true);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    const ok = await upload(
+      { version: "v0", run: { run_id: "r1" } } as any,
+      cfg({ maxRetries: 2 }),
+      { logger: silentLogger },
+    );
+    expect(ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test("4xx does not retry and writes fallback", async () => {

@@ -28,12 +28,15 @@ sqlMock.begin = mock(async (fn: (tx: any) => Promise<void>) => {
   await fn(txMock);
 });
 
-mock.module("../src/db.js", () => ({ sql: sqlMock }));
-mock.module("../src/response.js", () => ({
-  escapeLikePattern: (s: string) => s,
-  newApiId: () => "test-id",
-  buildListResponse: () => ({}),
-  buildErrorResponse: () => ({}),
+mock.module("../src/db.js", () => ({
+  sql: sqlMock,
+  insertSession: mock(() => Promise.resolve()),
+  applyStoredSessionTags: mock(() => Promise.resolve()),
+  upsertSessionTag: mock(() => Promise.resolve()),
+  insertLiveKitEvaluation: mock(() => Promise.resolve()),
+  upsertSessionOutcome: mock(() => Promise.resolve()),
+  mergeSessionRawReport: mock(() => Promise.resolve()),
+  applySessionTagMetadata: mock(() => Promise.resolve()),
 }));
 mock.module("../src/evals/summarize.js", () => ({
   ensurePricesLoaded: () => Promise.resolve(),
@@ -176,8 +179,9 @@ describe("sweepStaleRuns", () => {
 
     const call = sqlMock.unsafe.mock.calls[0];
     expect(call[0]).toContain("UPDATE eval_runs");
-    expect(call[0]).toContain("status = 'failed'");
+    expect(call[0]).toContain("status = $1");
     expect(call[0]).toContain("last_heartbeat_at < now() - interval '60 seconds'");
+    expect(call[1]).toEqual(["failed", "running"]);
   });
 
   test("returns 0 when no stale rows", async () => {

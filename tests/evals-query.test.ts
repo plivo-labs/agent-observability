@@ -5,6 +5,13 @@ mockSql.unsafe = mock((_query: string, _params: unknown[]) => Promise.resolve([]
 
 mock.module("../src/db.js", () => ({
   sql: mockSql,
+  insertSession: mock(() => Promise.resolve()),
+  applyStoredSessionTags: mock(() => Promise.resolve()),
+  upsertSessionTag: mock(() => Promise.resolve()),
+  insertLiveKitEvaluation: mock(() => Promise.resolve()),
+  upsertSessionOutcome: mock(() => Promise.resolve()),
+  mergeSessionRawReport: mock(() => Promise.resolve()),
+  applySessionTagMetadata: mock(() => Promise.resolve()),
 }));
 
 const query = await import("../src/evals/query.js");
