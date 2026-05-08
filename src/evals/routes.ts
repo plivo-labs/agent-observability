@@ -2,16 +2,18 @@ import type { Hono } from "hono";
 import { evalPayloadV0Schema } from "./schema.js";
 import {
   insertEvalRun,
+  deleteEvalRuns,
+  deleteEvalCases,
+} from "./db.js";
+import {
   countEvalRuns,
   listEvalRuns,
   getEvalRun,
   listEvalCases,
   getEvalCase,
-  deleteEvalRuns,
-  deleteEvalCases,
   listEvalAgents,
   getEvalRunsStats,
-} from "./db.js";
+} from "./query.js";
 import {
   buildListResponse,
   buildErrorResponse,

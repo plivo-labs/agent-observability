@@ -14,6 +14,8 @@ const mockGetEvalCase = mock((_runId: string, _caseId: string) =>
 const mockDeleteEvalRuns = mock((_runIds: string[]) => Promise.resolve(0));
 const mockDeleteEvalCases = mock((_runId: string, _caseIds: string[]) => Promise.resolve(0));
 const mockListEvalAgents = mock(() => Promise.resolve([] as any[]));
+const mockGetEvalRunsStats = mock(() => Promise.resolve({} as any));
+const mockSweepStaleRuns = mock(() => Promise.resolve(0));
 
 const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 mockSql.unsafe = mockSql;
@@ -43,19 +45,25 @@ mock.module("../src/db.js", () => ({
   upsertSessionTag: mock(() => Promise.resolve()),
   insertLiveKitEvaluation: mock(() => Promise.resolve()),
   upsertSessionOutcome: mock(() => Promise.resolve()),
+  mergeSessionRawReport: mock(() => Promise.resolve()),
   applySessionTagMetadata: mock(() => Promise.resolve()),
 }));
 
 mock.module("../src/evals/db.js", () => ({
   insertEvalRun: mockInsertEvalRun,
+  deleteEvalRuns: mockDeleteEvalRuns,
+  deleteEvalCases: mockDeleteEvalCases,
+  sweepStaleRuns: mockSweepStaleRuns,
+}));
+
+mock.module("../src/evals/query.js", () => ({
   countEvalRuns: mockCountEvalRuns,
   listEvalRuns: mockListEvalRuns,
   getEvalRun: mockGetEvalRun,
   listEvalCases: mockListEvalCases,
   getEvalCase: mockGetEvalCase,
-  deleteEvalRuns: mockDeleteEvalRuns,
-  deleteEvalCases: mockDeleteEvalCases,
   listEvalAgents: mockListEvalAgents,
+  getEvalRunsStats: mockGetEvalRunsStats,
 }));
 
 mock.module("../src/migrate.js", () => ({
@@ -64,6 +72,10 @@ mock.module("../src/migrate.js", () => ({
 
 mock.module("../src/s3.js", () => ({
   uploadRecording: () => Promise.resolve("https://s3.example.com/recording.ogg"),
+}));
+
+mock.module("../src/livekit/auth.js", () => ({
+  nativeLiveKitUploadAuth: async (_c: any, next: any) => next(),
 }));
 
 const { default: server } = await import("../src/index.js");
@@ -372,16 +384,36 @@ describe("GET /api/evals", () => {
 
     const res = await server.fetch(
       makeRequest(
-        "/api/evals?agent_id=support-bot&framework=livekit&testing_framework=pytest&account_id=acct-1",
+        "/api/evals?agent_id=support-bot&agent_id_exact=support-bot-123&framework=livekit&testing_framework=pytest&account_id=acct-1&started_from=2026-01-01T00:00:00Z&started_to=2026-01-31T23:59:59Z",
         { headers: { Authorization: basicAuthHeader() } },
       ),
     );
     expect(res.status).toBe(200);
     const opts = mockListEvalRuns.mock.calls[0][0];
     expect(opts.agentId).toBe("support-bot");
+    expect(opts.agentIdExact).toBe("support-bot-123");
     expect(opts.frameworks).toEqual(["livekit"]);
     expect(opts.testingFrameworks).toEqual(["pytest"]);
     expect(opts.accountId).toBe("acct-1");
+    expect(opts.startedFrom).toBe("2026-01-01T00:00:00Z");
+    expect(opts.startedTo).toBe("2026-01-31T23:59:59Z");
+  });
+
+  test("applies current pagination fallback/clamp behavior", async () => {
+    mockCountEvalRuns.mockResolvedValueOnce(0 as any);
+    mockListEvalRuns.mockResolvedValueOnce([] as any);
+
+    const res = await server.fetch(
+      makeRequest("/api/evals?limit=0&offset=-3", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Current implementation treats limit=0 as falsy and falls back to default 20.
+    expect(body.meta.limit).toBe(20);
+    expect(body.meta.offset).toBe(0);
   });
 
   test("accepts multi-value framework filter (comma-separated)", async () => {
@@ -417,15 +449,56 @@ describe("GET /api/evals", () => {
     mockListEvalRuns.mockResolvedValueOnce([] as any);
 
     const res = await server.fetch(
-      makeRequest("/api/evals?limit=10&offset=10&agent_id=support-bot", {
+      makeRequest("/api/evals?limit=10&offset=10&agent_id=support-bot&agent_id_exact=support-bot-123&started_from=2026-01-01T00:00:00Z&started_to=2026-01-31T23:59:59Z", {
         headers: { Authorization: basicAuthHeader() },
       }),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta.next).toContain("agent_id=support-bot");
+    expect(body.meta.next).toContain("agent_id_exact=support-bot-123");
+    expect(body.meta.next).toContain("started_from=2026-01-01T00%3A00%3A00Z");
+    expect(body.meta.next).toContain("started_to=2026-01-31T23%3A59%3A59Z");
     expect(body.meta.next).toContain("offset=20");
     expect(body.meta.previous).toContain("agent_id=support-bot");
+  });
+});
+
+// ── GET /api/evals/agents ───────────────────────────────────────────────────
+
+describe("GET /api/evals/agents", () => {
+  beforeEach(() => {
+    mockListEvalAgents.mockClear();
+    mockGetEvalRunsStats.mockClear();
+  });
+
+  test("rejects without auth", async () => {
+    const res = await server.fetch(makeRequest("/api/evals/agents"));
+    expect(res.status).toBe(401);
+  });
+
+  test("returns agents payload with stats", async () => {
+    mockListEvalAgents.mockResolvedValueOnce([
+      { agent_id: "support-bot", total_runs: 12 },
+    ] as any);
+    mockGetEvalRunsStats.mockResolvedValueOnce({
+      total_runs: 12,
+      running_runs: 2,
+    } as any);
+
+    const res = await server.fetch(
+      makeRequest("/api/evals/agents", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.total_count).toBe(1);
+    expect(body.objects).toHaveLength(1);
+    expect(body.objects[0].agent_id).toBe("support-bot");
+    expect(body.stats.total_runs).toBe(12);
+    expect(mockListEvalAgents).toHaveBeenCalledTimes(1);
+    expect(mockGetEvalRunsStats).toHaveBeenCalledTimes(1);
   });
 });
 
