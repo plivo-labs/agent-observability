@@ -3,9 +3,21 @@
  * class-driven — the styles live in `styles/observability.css`.
  */
 
-import { AudioLines, FlaskConical, Phone, TriangleAlert } from 'lucide-react'
-import type { CaseStatus, Transport } from '@/lib/observability-types'
+import {
+  FlaskConical,
+  TriangleAlert,
+} from 'lucide-react'
+import type { CaseStatus, Modality, Transport } from '@/lib/observability-types'
+import { Badge } from '@/components/ui/badge'
 import { formatDuration } from '@/lib/observability-format'
+import {
+  MODALITY_ICONS,
+  MODALITY_LABELS,
+  modalityLabel,
+  TRANSPORT_LABELS,
+  transportIcon,
+  transportLabel,
+} from '@/lib/labels'
 
 export function CapsChips({
   stt, llm, tts,
@@ -31,23 +43,95 @@ export function CapsChips({
   )
 }
 
-export function TransportPill({ value }: { value: Transport | null }) {
-  if (value === 'sip') {
+/**
+ * Modality chip. Derived in SQL on agents from the set of session
+ * transports. Used both as a cell in the agents table and as the
+ * primary detail badge in the agent dashboard header — extracted here
+ * so the two surfaces stay visually identical.
+ */
+export function ModalityChip({
+  value,
+  size = 'sm',
+}: {
+  value: Modality
+  /** `sm` is the table-cell size; `md` is the agent-detail-header size. */
+  size?: 'sm' | 'md'
+}) {
+  if (!value) return <span className="muted">—</span>
+  const iconSize = size === 'sm' ? 12 : 14
+  const className =
+    size === 'sm'
+      ? 'gap-1 px-1.5 text-[10px]'
+      : 'gap-1 px-2 py-0.5 text-xs'
+  if (value === 'voice') {
+    const Icon = MODALITY_ICONS.voice
     return (
-      <span className="transport">
-        <Phone size={12} /> SIP
-      </span>
+      <Badge variant="outline" className={className}>
+        <Icon size={iconSize} /> {MODALITY_LABELS.voice}
+      </Badge>
     )
   }
-  if (value === 'audio_stream') {
+  if (value === 'text') {
+    const Icon = MODALITY_ICONS.text
     return (
-      <span className="transport">
-        <AudioLines size={12} /> Audio Stream
-      </span>
+      <Badge variant="outline" className={className}>
+        <Icon size={iconSize} /> {MODALITY_LABELS.text}
+      </Badge>
     )
   }
-  return <span className="muted">—</span>
+  // mixed — composite both modality icons so the chip visually
+  // says "voice + text". Label still flows through the registry.
+  const VoiceIcon = MODALITY_ICONS.voice
+  const TextIcon = MODALITY_ICONS.text
+  return (
+    <Badge variant="outline" className={className}>
+      <VoiceIcon size={iconSize} />
+      <TextIcon size={iconSize} /> {MODALITY_LABELS.mixed}
+    </Badge>
+  )
 }
+
+export function TransportPill({ value }: { value: Transport | null }) {
+  if (!value) return <span className="muted">—</span>
+  const Icon = transportIcon(value)
+  const label = transportLabel(value)
+  return (
+    <span className="transport">
+      {Icon && <Icon size={12} />} {label}
+    </span>
+  )
+}
+
+/**
+ * Outline-badge form of TransportPill. Used in compact contexts (agent
+ * detail header) where we want the same icon + label semantics but a
+ * filled-border badge instead of the `.transport` chip styling.
+ */
+export function TransportBadge({
+  value,
+  size = 'sm',
+}: {
+  value: Transport | string | null
+  size?: 'sm' | 'md'
+}) {
+  if (!value) return null
+  const Icon = transportIcon(value)
+  const label = transportLabel(value)
+  const iconSize = size === 'sm' ? 12 : 14
+  const className =
+    size === 'sm'
+      ? 'gap-1 px-1.5 text-[10px] font-normal'
+      : 'gap-1 px-2 py-0.5 text-xs font-normal'
+  return (
+    <Badge variant="outline" className={className}>
+      {Icon && <Icon size={iconSize} />} {label}
+    </Badge>
+  )
+}
+
+// Re-exported so callers that just want the string label don't have to
+// reach all the way into @/lib/labels.
+export { TRANSPORT_LABELS, transportLabel, modalityLabel }
 
 /**
  * Duration cell. Renders the formatted value in mono/tabular-nums when

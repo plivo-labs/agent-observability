@@ -17,7 +17,10 @@
  *
  *   export OPENAI_API_KEY=sk-...
  *   export AGENT_OBSERVABILITY_URL=http://localhost:9090     # optional
- *   export AGENT_OBSERVABILITY_AGENT_ID=demo-bank-bot         # optional
+ *   # `agent_id` is a stable opaque UUID4. The slug "demo-bank-bot"
+ *   # below is the human-facing label kept in this docstring; it is
+ *   # never sent to the server.
+ *   export AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c   # optional
  *   npx vitest run plugins/examples/vitest_banking_agent.ts
  */
 

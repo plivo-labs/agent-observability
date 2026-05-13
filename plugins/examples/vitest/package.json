@@ -7,9 +7,10 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:agent": "AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot vitest run vitest_agent.ts",
-    "test:banking": "AGENT_OBSERVABILITY_AGENT_ID=demo-banking-bot vitest run vitest_banking_agent.ts",
-    "test:generated": "AGENT_OBSERVABILITY_AGENT_ID=demo-pizza-bot vitest run vitest_generated_agent.ts",
+    "_comment_ids": "agent_id values are stable UUID4s. Human labels live in each example file's docstring: demo-judges-bot, demo-bank-bot, demo-pizza-bot.",
+    "test:agent": "AGENT_OBSERVABILITY_AGENT_ID=9a8efb7b-6aeb-4ed9-9334-d121f7c67bb5 vitest run vitest_agent.ts",
+    "test:banking": "AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c vitest run vitest_banking_agent.ts",
+    "test:generated": "AGENT_OBSERVABILITY_AGENT_ID=1906d7f7-eb95-4c00-a200-8a710aca85ee vitest run vitest_generated_agent.ts",
     "runner": "bun run bun_runner.ts"
   },
   "dependencies": {

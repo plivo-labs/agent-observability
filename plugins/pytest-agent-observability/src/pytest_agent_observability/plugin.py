@@ -29,6 +29,7 @@ class _State:
     collector: Optional[col.RunCollector] = None
     upload_config: Optional[up.UploadConfig] = None
     agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
     account_id: Optional[str] = None
     fallback_dir: Optional[Path] = None
     _judge_restorer: Optional[Any] = None
@@ -59,6 +60,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         dest="agent_observability_agent_id",
         default=None,
         help="Agent identifier for this test run. Overrides AGENT_OBSERVABILITY_AGENT_ID.",
+    )
+    group.addoption(
+        "--agent-observability-agent-name",
+        dest="agent_observability_agent_name",
+        default=None,
+        help=(
+            "Human-readable label for the agent (free-form text). "
+            "Overrides AGENT_OBSERVABILITY_AGENT_NAME."
+        ),
     )
     group.addoption(
         "--agent-observability-account-id",
@@ -130,6 +140,10 @@ def pytest_configure(config: pytest.Config) -> None:
         config.getoption("agent_observability_agent_id")
         or os.getenv("AGENT_OBSERVABILITY_AGENT_ID")
     )
+    _state.agent_name = (
+        config.getoption("agent_observability_agent_name")
+        or os.getenv("AGENT_OBSERVABILITY_AGENT_NAME")
+    )
     _state.account_id = (
         config.getoption("agent_observability_account_id")
         or os.getenv("AGENT_OBSERVABILITY_ACCOUNT_ID")
@@ -185,6 +199,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     payload = pl.build_payload(
         collector=_state.collector,
         agent_id=_state.agent_id,
+        agent_name=_state.agent_name,
         account_id=_state.account_id,
         finished_at=time.time(),
     )

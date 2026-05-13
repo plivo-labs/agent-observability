@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, CheckCheck, List, Moon, RefreshCw, Sun } from 'lucide-react'
+import { Activity, Moon, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
-import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
-import { EvalsPage } from '@/components/evals-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { AgentsPage } from '@/components/agents-page'
+import { AgentDetailPage } from '@/components/agent-detail-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -37,13 +37,6 @@ const useDarkMode = () => {
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
-  const { pathname } = useLocation()
-
-  // NavLink's `end` prop scopes the active match to a single path, so the
-  // Sessions tab (at `/`) would lose its highlight on `/sessions/:id`. Compute
-  // active state ourselves: each tab claims its detail routes too.
-  const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
-  const isEvalsActive = pathname.startsWith('/evals')
 
   return (
     <div className="obs-app">
@@ -52,14 +45,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <span className="dot"><Activity size={13} strokeWidth={2} /></span>
           Agent Observability
         </Link>
-        <div className="obs-nav-tabs">
-          <Link to="/" className={`obs-tab${isSessionsActive ? ' active' : ''}`}>
-            <List size={14} /> Sessions
-          </Link>
-          <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
-            <CheckCheck size={14} /> Evals
-          </Link>
-        </div>
         <div className="obs-nav-spacer" />
         <div className="obs-nav-right">
           <button
@@ -87,9 +72,30 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
-function SessionsRoute() {
+function AgentsRoute() {
   const navigate = useNavigate()
-  return <SessionsPage onSessionClick={(id) => navigate(`/sessions/${id}`)} />
+  return (
+    <AgentsPage
+      onAgentClick={(id) => navigate(`/agents/${encodeURIComponent(id)}`)}
+    />
+  )
+}
+
+function AgentDetailRoute() {
+  const { agentId } = useParams<{ agentId: string }>()
+  const navigate = useNavigate()
+  if (!agentId) return null
+  // URL carries only the agent_id. When the same agent_id exists under
+  // multiple accounts (rare; only when agent_ids are slugs rather than
+  // UUIDs), the server returns the most-recently-active row.
+  return (
+    <AgentDetailPage
+      agentId={decodeURIComponent(agentId)}
+      onBack={() => navigate('/')}
+      onSessionClick={(id) => navigate(`/sessions/${id}`)}
+      onRunClick={(runId) => navigate(`/evals/${runId}`)}
+    />
+  )
 }
 
 function SessionDetailRoute() {
@@ -97,14 +103,9 @@ function SessionDetailRoute() {
   const navigate = useNavigate()
   return (
     <AgentObservabilityProvider baseUrl="/api" sessionId={sessionId}>
-      <SessionDetailPage onBack={() => navigate('/')} />
+      <SessionDetailPage onBack={() => navigate(-1)} />
     </AgentObservabilityProvider>
   )
-}
-
-function EvalsRoute() {
-  const navigate = useNavigate()
-  return <EvalsPage onRunClick={(runId) => navigate(`/evals/${runId}`)} />
 }
 
 function EvalRunDetailRoute() {
@@ -115,7 +116,7 @@ function EvalRunDetailRoute() {
   return (
     <EvalRunDetailPage
       runId={runId}
-      onBack={() => navigate('/evals')}
+      onBack={() => navigate(-1)}
     />
   )
 }
@@ -140,9 +141,10 @@ export default function App() {
         <Layout>
           <AgentObservabilityProvider baseUrl="/api">
             <Routes>
-              <Route path="/" element={<SessionsRoute />} />
+              <Route path="/" element={<AgentsRoute />} />
+              <Route path="/agents" element={<AgentsRoute />} />
+              <Route path="/agents/:agentId" element={<AgentDetailRoute />} />
               <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
-              <Route path="/evals" element={<EvalsRoute />} />
               <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
               <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
               <Route path="*" element={<NotFoundPage />} />

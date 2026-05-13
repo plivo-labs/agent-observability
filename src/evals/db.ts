@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { upsertAgentTx } from "../agents/upsert.js";
 import { escapeLikePattern } from "../response.js";
 import type {
   EvalCase,
@@ -20,6 +21,16 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const durationMs = Math.max(0, Math.round((run.finished_at - run.started_at) * 1000));
 
   await sql.begin(async (tx: any) => {
+    // Upsert the agent first so the FK on (agent_id, account_id) is
+    // satisfied. Skipped when no agent_id was supplied — FK falls back
+    // to MATCH SIMPLE and accepts the NULL/'' pair.
+    if (run.agent_id) {
+      await upsertAgentTx(tx, {
+        agentId: run.agent_id,
+        accountId: run.account_id,
+        agentName: run.agent_name ?? null,
+      });
+    }
     await tx`
       INSERT INTO eval_runs (
         run_id, account_id, agent_id,
@@ -27,7 +38,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         testing_framework, testing_framework_version,
         started_at, finished_at, duration_ms,
         total, passed, failed, errored, skipped,
-        ci, raw_payload
+        ci
       ) VALUES (
         ${run.run_id},
         ${run.account_id ?? null},
@@ -44,8 +55,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.failed},
         ${summary.errored},
         ${summary.skipped},
-        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
-        ${JSON.stringify(payload)}::jsonb
+        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb
       )
     `;
 
@@ -97,26 +107,27 @@ export async function countEvalRuns(opts: ListEvalRunsOpts): Promise<number> {
   const { predicates, params } = buildPredicates(opts);
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
   const [row] = await sql.unsafe(
-    `SELECT count(*)::int AS total FROM eval_runs ${whereClause}`,
+    `SELECT count(*)::int AS total FROM eval_runs r ${whereClause}`,
     params,
   );
   return row.total;
 }
 
 const RUN_SELECT_COLS =
-  "run_id, account_id, agent_id, " +
-  "framework, framework_version, testing_framework, testing_framework_version, " +
-  "started_at, finished_at, duration_ms, " +
-  "total, passed, failed, errored, skipped, ci, created_at";
+  "r.run_id, r.account_id, r.agent_id, a.agent_name, " +
+  "r.framework, r.framework_version, r.testing_framework, r.testing_framework_version, " +
+  "r.started_at, r.finished_at, r.duration_ms, " +
+  "r.total, r.passed, r.failed, r.errored, r.skipped, r.ci, r.created_at";
 
 export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
   const { predicates, params } = buildPredicates(opts);
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
   const rows = await sql.unsafe(
     `SELECT ${RUN_SELECT_COLS}
-     FROM eval_runs
+     FROM eval_runs r
+     LEFT JOIN agents a ON a.agent_id = r.agent_id
      ${whereClause}
-     ORDER BY started_at DESC
+     ORDER BY r.started_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, opts.limit, opts.offset],
   );
@@ -126,8 +137,9 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
 export async function getEvalRun(runId: string): Promise<any | null> {
   const rows = await sql.unsafe(
     `SELECT ${RUN_SELECT_COLS}
-     FROM eval_runs
-     WHERE run_id = $1
+     FROM eval_runs r
+     LEFT JOIN agents a ON a.agent_id = r.agent_id
+     WHERE r.run_id = $1
      LIMIT 1`,
     [runId],
   );
@@ -183,33 +195,33 @@ function buildPredicates(opts: ListEvalRunsOpts): { predicates: string[]; params
   // `agent_id`; revisit with a pg_trgm GIN index if filter latency
   // matters at higher row counts.
   if (opts.accountId) {
-    predicates.push(`LOWER(account_id) LIKE $${params.length + 1}`);
+    predicates.push(`LOWER(r.account_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.accountId.toLowerCase())}%`);
   }
   if (opts.agentId) {
-    predicates.push(`LOWER(agent_id) LIKE $${params.length + 1}`);
+    predicates.push(`LOWER(r.agent_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(opts.agentId.toLowerCase())}%`);
   }
   if (opts.frameworks && opts.frameworks.length > 0) {
     const placeholders = opts.frameworks.map(
       (_, i) => `$${params.length + i + 1}`,
     );
-    predicates.push(`framework IN (${placeholders.join(", ")})`);
+    predicates.push(`r.framework IN (${placeholders.join(", ")})`);
     params.push(...opts.frameworks);
   }
   if (opts.testingFrameworks && opts.testingFrameworks.length > 0) {
     const placeholders = opts.testingFrameworks.map(
       (_, i) => `$${params.length + i + 1}`,
     );
-    predicates.push(`testing_framework IN (${placeholders.join(", ")})`);
+    predicates.push(`r.testing_framework IN (${placeholders.join(", ")})`);
     params.push(...opts.testingFrameworks);
   }
   if (opts.startedFrom) {
-    predicates.push(`started_at >= $${params.length + 1}`);
+    predicates.push(`r.started_at >= $${params.length + 1}`);
     params.push(opts.startedFrom);
   }
   if (opts.startedTo) {
-    predicates.push(`started_at <= $${params.length + 1}`);
+    predicates.push(`r.started_at <= $${params.length + 1}`);
     params.push(opts.startedTo);
   }
   return { predicates, params };

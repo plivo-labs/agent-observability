@@ -7,6 +7,12 @@ import {
   ListChecks,
   XCircle,
 } from 'lucide-react'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import { Badge } from '@/components/ui/badge'
 import {
   Sheet,
@@ -47,7 +53,7 @@ function resultTone(value: string | null | undefined) {
   return 'neutral'
 }
 
-function ResultBadge({ value }: { value: string | null | undefined }) {
+export function ResultBadge({ value }: { value: string | null | undefined }) {
   const tone = resultTone(value)
   const icon =
     tone === 'success' ? (
@@ -76,7 +82,7 @@ function ResultBadge({ value }: { value: string | null | undefined }) {
   )
 }
 
-function SummaryTile({
+export function SummaryTile({
   label,
   value,
   children,
@@ -94,7 +100,7 @@ function SummaryTile({
   )
 }
 
-function EvaluationDetail({
+export function EvaluationDetail({
   label,
   value,
   muted = false,
@@ -122,37 +128,85 @@ function EvaluationDetail({
   )
 }
 
-function EvaluationRow({ evaluation }: { evaluation: SessionExternalEvaluation }) {
-  const tone = resultTone(evaluation.verdict)
+/** Color-coded left-border class per verdict tone — same palette as
+ *  ResultBadge so the visual language of "this judge passed / failed /
+ *  uncertain" carries across the list. */
+function verdictBorderClass(verdict: string | null | undefined): string {
+  switch (resultTone(verdict)) {
+    case 'success':
+      return 'border-l-[hsl(var(--success-fg,var(--success)))]'
+    case 'fail':
+      return 'border-l-[hsl(var(--destructive))]'
+    case 'maybe':
+      return 'border-l-[hsl(var(--warning-fg,var(--warning)))]'
+    default:
+      return 'border-l-border'
+  }
+}
+
+/**
+ * Accordion list of judge results. Used by both the session-level
+ * evaluations drawer and the per-session conversation-eval drawer — the
+ * shared shape keeps the visual language consistent across surfaces.
+ *
+ * Each judge is one ``<AccordionItem>``. The trigger shows
+ * ``name · timestamp · verdict-badge`` at top level; the body reveals
+ * reasoning + instructions on expand. ``type="multiple"`` so several
+ * can be open at once when comparing reasoning across disagreeing
+ * judges.
+ */
+export function EvaluationsAccordion({
+  evaluations,
+}: {
+  evaluations: SessionExternalEvaluation[]
+}) {
+  if (evaluations.length === 0) return null
 
   return (
-    <div
-      className={cn(
-        'rounded-lg border border-l-4 bg-card p-4',
-        tone === 'success' && 'border-success-border border-l-success bg-success-bg',
-        tone === 'maybe' && 'border-warning-border border-l-warning bg-warning-bg',
-        tone === 'fail' && 'border-destructive-border border-l-destructive bg-destructive-bg',
-      )}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">
-            {evaluation.judge_name || 'Evaluation'}
-          </div>
-          {evaluation.observed_at && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              {formatDate(evaluation.observed_at)}
-            </div>
-          )}
-        </div>
-        <ResultBadge value={evaluation.verdict} />
-      </div>
-
-      <div className="mt-4 space-y-3">
-        <EvaluationDetail label="Reasoning" value={evaluation.reasoning} />
-        <EvaluationDetail label="Instructions" value={evaluation.instructions} muted />
-      </div>
-    </div>
+    <Accordion type="multiple" className="flex flex-col gap-2">
+      {evaluations.map((ev, index) => {
+        const itemValue = `${ev.judge_name ?? 'evaluation'}-${index}`
+        return (
+          <AccordionItem
+            key={itemValue}
+            value={itemValue}
+            className={cn(
+              // `last:border-b` cancels shadcn AccordionItem's default
+              // `last:border-b-0` so the bottom edge of the last card
+              // stays visible. twMerge deduplicates and keeps this.
+              'rounded-lg border border-l-4 last:border-b bg-card px-4',
+              verdictBorderClass(ev.verdict),
+            )}
+          >
+            <AccordionTrigger className="py-2 hover:no-underline">
+              <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1 pr-2">
+                <span className="text-sm font-medium">
+                  {ev.judge_name || 'Evaluation'}
+                </span>
+                {ev.observed_at && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {formatDate(ev.observed_at)}
+                  </span>
+                )}
+                <div className="ml-auto">
+                  <ResultBadge value={ev.verdict} />
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-3 pb-1">
+                <EvaluationDetail label="Reasoning" value={ev.reasoning} />
+                <EvaluationDetail
+                  label="Instructions"
+                  value={ev.instructions}
+                  muted
+                />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        )
+      })}
+    </Accordion>
   )
 }
 
@@ -181,17 +235,43 @@ export function SessionEvaluationsDrawer({
         </SheetHeader>
 
         <div className="flex flex-col gap-4 p-5">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <SummaryTile
-              label="Outcome"
-              value={outcome ? <ResultBadge value={outcome.outcome} /> : 'Pending'}
-            >
-              {outcome?.reason && (
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">{outcome.reason}</p>
-              )}
-            </SummaryTile>
-            <SummaryTile label="Evaluations" value={evaluations.length} />
-          </div>
+          {(() => {
+            const passCount = evaluations.filter((e) => resultTone(e.verdict) === 'success').length
+            const failCount = evaluations.filter((e) => resultTone(e.verdict) === 'fail').length
+            const maybeCount = evaluations.filter((e) => resultTone(e.verdict) === 'maybe').length
+            return (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <SummaryTile
+                  label="Outcome"
+                  value={
+                    outcome ? (
+                      <ResultBadge value={outcome.outcome.replace(/^lk\./, '')} />
+                    ) : (
+                      'Pending'
+                    )
+                  }
+                >
+                  {outcome?.reason && (
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{outcome.reason}</p>
+                  )}
+                </SummaryTile>
+                <SummaryTile
+                  label="Verdicts"
+                  value={
+                    <span className="tabular-nums">
+                      {passCount + failCount + maybeCount}
+                    </span>
+                  }
+                >
+                  <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+                    <span>pass {passCount}</span>
+                    <span>fail {failCount}</span>
+                    <span>maybe {maybeCount}</span>
+                  </div>
+                </SummaryTile>
+              </div>
+            )
+          })()}
 
           {!hasEvaluationData && (
             <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -205,12 +285,7 @@ export function SessionEvaluationsDrawer({
                 <ListChecks size={14} />
                 Judge results
               </div>
-              {evaluations.map((evaluation, index) => (
-                <EvaluationRow
-                  key={`${evaluation.source}-${evaluation.judge_name}-${evaluation.created_at}-${index}`}
-                  evaluation={evaluation}
-                />
-              ))}
+              <EvaluationsAccordion evaluations={evaluations} />
             </section>
           )}
         </div>

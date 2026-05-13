@@ -75,6 +75,7 @@ const evalRunObjectSchema = z.object({
   run_id: z.string().uuid(),
   account_id: z.string().nullable().optional(),
   agent_id: z.string().nullable().optional(),
+  agent_name: z.string().nullable().optional(),
   // Agent framework family (livekit / pipecat / …). Optional because it
   // may not be detectable in every environment.
   framework: z.string().nullable().optional(),

@@ -1,12 +1,16 @@
 import { SQL } from "bun";
 import { config } from "./config.js";
 import { normalizeRawReportPatch } from "./raw-report.js";
+import { upsertAgent } from "./agents/upsert.js";
 
 export const sql = new SQL(config.DATABASE_URL);
 
 interface SessionInsert {
   sessionId: string;
   accountId: string | null;
+  /** Stable developer-supplied identifier. Pairs with `agentName` (label). */
+  agentId: string | null;
+  agentName: string | null;
   transport: string | null;
   startedAt: Date | null;
   endedAt: Date;
@@ -58,11 +62,13 @@ interface SessionRawReportPatchInput {
 export async function insertSession(session: SessionInsert): Promise<void> {
   await sql`
     INSERT INTO agent_transport_sessions (
-      session_id, account_id, transport, started_at, ended_at, duration_ms, turn_count,
+      session_id, account_id, agent_id, agent_name, transport, started_at, ended_at, duration_ms, turn_count,
       has_stt, has_llm, has_tts, chat_history, session_metrics, raw_report, record_url
     ) VALUES (
       ${session.sessionId},
       ${session.accountId},
+      ${session.agentId},
+      ${session.agentName},
       ${session.transport},
       ${session.startedAt},
       ${session.endedAt},
@@ -142,6 +148,62 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     return;
   }
 
+  // Promote agent_id and agent_name from the patch into their indexed
+  // columns. The patch still carries them in raw_report (for fidelity);
+  // the columns power the /api/agents distinct-aggregate query and the
+  // sessions list filter. Mirrors how account_id is promoted via
+  // applySessionTagMetadata.
+  const agentId = typeof patch.agent_id === "string" && patch.agent_id.length > 0
+    ? patch.agent_id
+    : null;
+  const agentName = typeof patch.agent_name === "string" && patch.agent_name.length > 0
+    ? patch.agent_name
+    : null;
+  if (agentId) {
+    await sql`
+      UPDATE agent_transport_sessions
+      SET agent_id = ${agentId}
+      WHERE session_id = ${input.sessionId} AND agent_id IS NULL
+    `;
+  }
+  if (agentName) {
+    await sql`
+      UPDATE agent_transport_sessions
+      SET agent_name = ${agentName}
+      WHERE session_id = ${input.sessionId} AND agent_name IS NULL
+    `;
+  }
+
+  // Promote usage into session_metrics.usage when it arrives via the
+  // OTLP "session report" patch. The recording multipart route may have
+  // initialized session_metrics.usage to null because the chat_history
+  // JSON didn't carry usage; the real per-model usage typically arrives
+  // later on the OTLP channel. Without this back-fill, the session
+  // detail page's token totals stay at 0 even though raw_report has
+  // the data. Only writes when the current value is missing/empty so we
+  // don't clobber a fresher value from a different path.
+  if (Array.isArray(patch.usage) && patch.usage.length > 0) {
+    await sql`
+      UPDATE agent_transport_sessions
+      SET session_metrics = jsonb_set(
+        CASE
+          WHEN jsonb_typeof(session_metrics) = 'object'
+            THEN session_metrics
+          ELSE '{}'::jsonb
+        END,
+        '{usage}',
+        ${patch.usage}::jsonb,
+        true
+      )
+      WHERE session_id = ${input.sessionId}
+        AND (
+          session_metrics IS NULL
+          OR jsonb_typeof(session_metrics->'usage') <> 'array'
+          OR jsonb_array_length(session_metrics->'usage') = 0
+        )
+    `;
+  }
+
   const events = Array.isArray(patch.events) ? patch.events : null;
   if (events) {
     const rest = { ...patch };
@@ -201,20 +263,32 @@ export async function applySessionTagMetadata(
   tags: Array<{ name: string; metadata: Record<string, unknown> | null }>,
 ): Promise<void> {
   let accountId: string | null = null;
+  let agentId: string | null = null;
+  let agentName: string | null = null;
   let transport: string | null = null;
 
   for (const tag of tags) {
     accountId ??= tagValue(tag.name, "account_id:");
+    agentId ??= tagValue(tag.name, "agent_id:");
+    agentName ??= tagValue(tag.name, "agent_name:");
     transport ??= tagValue(tag.name, "transport:");
 
     if (tag.name === "agent.session") {
       accountId ??= stringFromMetadata(tag.metadata, "account_id");
+      agentId ??= stringFromMetadata(tag.metadata, "agent_id");
+      agentName ??= stringFromMetadata(tag.metadata, "agent_name");
       transport ??= stringFromMetadata(tag.metadata, "transport");
     }
   }
 
-  if (!accountId && !transport) {
+  if (!accountId && !agentId && !agentName && !transport) {
     return;
+  }
+
+  // Ensure the agent row exists before the session UPDATE sets the
+  // FK columns. Skipped when no agent_id was extracted from any tag.
+  if (agentId) {
+    await upsertAgent({ agentId, accountId, agentName });
   }
 
   const assignments: string[] = [];
@@ -222,6 +296,14 @@ export async function applySessionTagMetadata(
   if (accountId) {
     params.push(accountId);
     assignments.push(`account_id = $${params.length}`);
+  }
+  if (agentId) {
+    params.push(agentId);
+    assignments.push(`agent_id = $${params.length}`);
+  }
+  if (agentName) {
+    params.push(agentName);
+    assignments.push(`agent_name = $${params.length}`);
   }
   if (transport) {
     params.push(transport);

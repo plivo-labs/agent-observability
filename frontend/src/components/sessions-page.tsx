@@ -20,19 +20,35 @@ import { formatDate } from '@/lib/observability-format'
 import { useSessions } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
 import type { AgentSessionRow } from '@/lib/observability-types'
-import { CapsChips, DurationCell, TransportPill } from '@/components/obs-cells'
+import { DurationCell, TransportPill } from '@/components/obs-cells'
 
 const TRANSPORT_OPTIONS = [
   { label: 'SIP', value: 'sip' },
   { label: 'Audio Stream', value: 'audio_stream' },
+  { label: 'Text', value: 'text' },
+  { label: 'Terminal', value: 'terminal_text' },
 ]
 
-export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
+export const SessionsPage = ({
+  onSessionClick,
+  agentId,
+}: {
+  onSessionClick?: (sessionId: string) => void
+  /** When set, locks the list to this agent — every fetch includes
+   * `agent_id=<value>` so the page can be embedded inside the agent
+   * detail dashboard without an extra filter UI. */
+  agentId?: string
+}) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
-  // Column ids below (`account_id`, `transport`, `started_at`) become the URL keys.
+  // Column ids below (`agent_id`, `account_id`, `transport`, `started_at`)
+  // become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
   const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
+  const [agentIdQuery] = useQueryState('agent_id', parseAsString.withDefault(''))
+  // Prop wins so the embedded-in-agent-dashboard case is forced; falls
+  // back to URL-synced filter on the cross-agent /sessions route.
+  const effectiveAgentId = agentId ?? (agentIdQuery || undefined)
   const [transport] = useQueryState(
     'transport',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -63,6 +79,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     (page - 1) * perPage,
     {
       accountId: accountId || undefined,
+      agentId: effectiveAgentId,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
       transport: transport.length ? transport : undefined,
@@ -110,6 +127,36 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         meta: { label: 'Session ID' },
       },
       {
+        // Agent identity column. Primary line is the id (mono, copyable);
+        // secondary line is the human label when present. Filter chip
+        // routes through ?agent_id=... (exact match, same as the agent
+        // detail page URL).
+        id: 'agent_id',
+        accessorKey: 'agent_id',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Agent" />,
+        cell: ({ row }) => {
+          const id = row.original.agent_id
+          const name = row.original.agent_name
+          if (!id && !name) return <span className="muted">—</span>
+          return (
+            <div className="flex flex-col leading-tight">
+              {name ? (
+                <span className="text-xs-500">{name}</span>
+              ) : (
+                <span className="text-xs-500">{id}</span>
+              )}
+              {name && id && (
+                <span className="text-muted-foreground text-[11px]">
+                  {id}
+                </span>
+              )}
+            </div>
+          )
+        },
+        enableSorting: false,
+        meta: { label: 'Agent' },
+      },
+      {
         id: 'account_id',
         accessorKey: 'account_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
@@ -122,8 +169,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
             <span className="muted">—</span>
           ),
         enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
+        meta: { label: 'Account' },
       },
       {
         id: 'transport',
@@ -178,20 +224,6 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         cell: ({ row }) => <span className="tnum">{row.original.turn_count}</span>,
         enableSorting: false,
         meta: { label: 'Turns' },
-      },
-      {
-        id: 'capabilities',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Capabilities" />,
-        cell: ({ row }) => {
-          const textOnly = row.original.transport === 'text' || row.original.transport === 'terminal_text'
-          return (
-            <CapsChips
-              stt={!textOnly && row.original.has_stt}
-              llm={row.original.has_llm}
-              tts={!textOnly && row.original.has_tts}
-            />
-          )
-        },
       },
     ],
     [],

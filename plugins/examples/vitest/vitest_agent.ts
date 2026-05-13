@@ -15,7 +15,10 @@
  * To run against the plugin (once M3 ships):
  *
  *   export AGENT_OBSERVABILITY_URL=http://localhost:9090
- *   export AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot
+ *   # `agent_id` is a stable opaque UUID4. The slug "demo-judges-bot"
+ *   # below is the human-facing label kept in this docstring; it is
+ *   # never sent to the server.
+ *   export AGENT_OBSERVABILITY_AGENT_ID=9a8efb7b-6aeb-4ed9-9334-d121f7c67bb5
  *   export OPENAI_API_KEY=sk-...
  *   npx vitest run plugins/examples/vitest_agent.ts
  *

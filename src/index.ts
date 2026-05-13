@@ -7,11 +7,13 @@ import { serveStatic } from "hono/bun";
 import { config, s3Enabled, basicAuthEnabled } from "./config.js";
 import { uploadRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags } from "./db.js";
+import { upsertAgent } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
+import { registerAgentRoutes } from "./agents/routes.js";
 import { sortSessionEvents } from "./events.js";
 import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
 import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
@@ -53,6 +55,11 @@ app.get("/health", (c) => {
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
 
 registerEvalRoutes(app);
+
+// ── Agent endpoints (agent-oriented IA: virtual entity derived from
+//    distinct agent_name across sessions + eval_runs) ─────────────────────────
+
+registerAgentRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 
@@ -136,11 +143,90 @@ app.post("/observability/recordings/v0", async (c) => {
     durationMs = endedAt.getTime() - startedAt.getTime();
   }
 
+  // agent_id extraction. Two places it can live in the multipart
+  // payload, tried in order:
+  //   1. raw_report.agent_id  — if the SDK puts it at the top level.
+  //   2. raw_report.tags[]    — the SDK's tagger emits "agent_id:<uuid>"
+  //                             as a session tag; the tags array lands
+  //                             in raw_report verbatim.
+  // The column is NOT NULL (migration 011); pre-empt missing values
+  // with a clean 400 here rather than waiting for a 500 from INSERT.
+  //
+  // Only enforced when raw_report is present — partial uploads that
+  // only carry header+audio (no chat_history blob) fall through to
+  // insertSession with agent_id=null and will fail at the DB layer.
+  // Header-only requests are abnormal in production but appear in
+  // tests and aren't worth blocking here.
+  const extractAgentId = (rr: any): string | null => {
+    if (typeof rr?.agent_id === "string" && rr.agent_id.length > 0) {
+      return rr.agent_id;
+    }
+    if (Array.isArray(rr?.tags)) {
+      for (const tag of rr.tags) {
+        if (typeof tag === "string" && tag.startsWith("agent_id:")) {
+          const v = tag.slice("agent_id:".length);
+          if (v.length > 0) return v;
+        }
+      }
+    }
+    return null;
+  };
+  // Mirror of extractAgentId for account_id. The SDK's _ensure_transport_tags
+  // attaches `account_id:<value>` to tagger.tags, which arrives in the
+  // multipart's chat_history JSON via the to_dict monkey-patch.
+  const extractAccountId = (rr: any): string | null => {
+    if (typeof rr?.account_id === "string" && rr.account_id.length > 0) {
+      return rr.account_id;
+    }
+    if (Array.isArray(rr?.tags)) {
+      for (const tag of rr.tags) {
+        if (typeof tag === "string" && tag.startsWith("account_id:")) {
+          const v = tag.slice("account_id:".length);
+          if (v.length > 0) return v;
+        }
+      }
+    }
+    return null;
+  };
+  // Prefer header's account_id; fall back to rawReport.tags so the
+  // multipart's tagger-sourced tags are honored when the header didn't
+  // carry the value.
+  if (!accountId) {
+    accountId = extractAccountId(rawReport);
+  }
+  const agentId = extractAgentId(rawReport);
+  if (rawReport != null && !agentId) {
+    console.error(
+      `[recordings] missing agent_id for session=${sessionId} ` +
+        `(rawReport.agent_id=${typeof rawReport?.agent_id}, ` +
+        `rawReport.tags has agent_id:* = ` +
+        `${Array.isArray(rawReport?.tags) && rawReport.tags.some((t: any) => typeof t === "string" && t.startsWith("agent_id:"))})`,
+    );
+    return c.json(
+      buildErrorResponse(
+        "missing_agent_id",
+        "agent_id is required. The agent-transport SDK should put it in the multipart's chat_history JSON (top-level `agent_id` field) or as a session tag `agent_id:<uuid>`.",
+      ),
+      400,
+    );
+  }
+
+  const agentNameFromReport =
+    typeof rawReport?.agent_name === "string" && rawReport.agent_name.length > 0
+      ? rawReport.agent_name
+      : null;
+
   // Save to database
   try {
+    // The agent row must exist before INSERT INTO sessions (FK on agent).
+    if (agentId) {
+      await upsertAgent({ agentId, accountId, agentName: agentNameFromReport });
+    }
     await insertSession({
       sessionId,
       accountId,
+      agentId,
+      agentName: agentNameFromReport,
       transport,
       startedAt,
       endedAt,
@@ -199,6 +285,8 @@ app.get("/api/sessions", async (c) => {
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
   const accountId = c.req.query("account_id") || null;
+  const agentId = c.req.query("agent_id") || null;
+  const agentName = c.req.query("agent_name") || null;
   const startedFrom = c.req.query("started_from") || null;
   const startedTo = c.req.query("started_to") || null;
   const transportRaw = c.req.query("transport");
@@ -208,6 +296,8 @@ app.get("/api/sessions", async (c) => {
 
   const extraParams: Record<string, string> = {};
   if (accountId) extraParams.account_id = accountId;
+  if (agentId) extraParams.agent_id = agentId;
+  if (agentName) extraParams.agent_name = agentName;
   if (startedFrom) extraParams.started_from = startedFrom;
   if (startedTo) extraParams.started_to = startedTo;
   if (transports && transports.length) extraParams.transport = transports.join(",");
@@ -223,6 +313,18 @@ app.get("/api/sessions", async (c) => {
     // pg_trgm GIN index if filter latency starts mattering.
     predicates.push(`LOWER(account_id) LIKE $${params.length + 1}`);
     params.push(`%${escapeLikePattern(accountId.toLowerCase())}%`);
+  }
+  if (agentId) {
+    // Exact match: agent_id is the primary identifier — comes from the
+    // agent dashboard URL param. The btree index serves this.
+    predicates.push(`agent_id = $${params.length + 1}`);
+    params.push(agentId);
+  }
+  if (agentName) {
+    // Exact match too, for the case where the URL is built off the
+    // legacy agent_name path. Used for pre-agent_id sessions.
+    predicates.push(`agent_name = $${params.length + 1}`);
+    params.push(agentName);
   }
   if (startedFrom) {
     predicates.push(`started_at >= $${params.length + 1}`);
@@ -245,7 +347,7 @@ app.get("/api/sessions", async (c) => {
   );
 
   const rows = await sql.unsafe(
-    `SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
+    `SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
             turn_count, has_stt, has_llm, has_tts, record_url, created_at
      FROM agent_transport_sessions
      ${whereClause}
@@ -299,7 +401,7 @@ app.delete("/api/sessions", async (c) => {
 app.get("/api/sessions/:id", async (c) => {
   const sessionId = c.req.param("id");
   const rows = await sql`
-    SELECT id, session_id, account_id, transport, state, started_at, ended_at, duration_ms,
+    SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
            chat_history, session_metrics, raw_report, record_url, created_at
     FROM agent_transport_sessions
@@ -337,6 +439,23 @@ app.get("/api/sessions/:id", async (c) => {
   const chatHistory = parseJsonValue(row.chat_history);
   const sessionMetrics = parseJsonValue(row.session_metrics);
   const rawReport = normalizeRawReport(row.raw_report);
+
+  // Usage fallback: native LiveKit uploads land via two separate POSTs
+  // — the recording multipart creates the row with whatever usage was
+  // in the chat_history JSON (often missing), and the OTLP session-
+  // report log adds the real usage to raw_report afterward. Front-fill
+  // session_metrics.usage from raw_report.usage so the read path always
+  // has the merged view, even for rows where the OTLP merge happened
+  // after the initial insert.
+  if (
+    sessionMetrics &&
+    !Array.isArray(sessionMetrics) &&
+    (sessionMetrics.usage == null || (Array.isArray(sessionMetrics.usage) && sessionMetrics.usage.length === 0)) &&
+    Array.isArray(rawReport?.usage) &&
+    rawReport.usage.length > 0
+  ) {
+    sessionMetrics.usage = rawReport.usage;
+  }
 
   row.chat_history = chatHistory;
   row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count);

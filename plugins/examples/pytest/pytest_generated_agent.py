@@ -35,7 +35,10 @@ Reused from `scenario_runner.py`:
 Run (inline deps via PEP 723 — no prior install step needed):
 
     export OPENAI_API_KEY=sk-...
-    export AGENT_OBSERVABILITY_AGENT_ID=demo-pizza-bot   # optional
+    # `agent_id` is a stable opaque UUID4. The slug "demo-pizza-bot"
+    # below is the human-facing label kept in this docstring; it is
+    # never sent to the server.
+    export AGENT_OBSERVABILITY_AGENT_ID=1906d7f7-eb95-4c00-a200-8a710aca85ee   # optional
     export AGENT_OBSERVABILITY_GENERATED_N=10            # optional; default 10
     uv run plugins/examples/pytest_generated_agent.py
 """
@@ -250,8 +253,13 @@ def reload_scenarios(n: int | None = None) -> list[Scenario]:
 if __name__ == "__main__":
     import sys
 
-    # Default dashboard tag for this example. A shell export of
-    # AGENT_OBSERVABILITY_AGENT_ID still wins — this only sets it when unset.
-    os.environ.setdefault("AGENT_OBSERVABILITY_AGENT_ID", "demo-pizza-bot")
+    # Default agent identifier for this example. UUID4 is the stable id;
+    # "demo-pizza-bot" is the human label mentioned in the docstring. A
+    # shell export of AGENT_OBSERVABILITY_AGENT_ID still wins — this only
+    # sets it when unset.
+    os.environ.setdefault(
+        "AGENT_OBSERVABILITY_AGENT_ID",
+        "1906d7f7-eb95-4c00-a200-8a710aca85ee",
+    )
 
     sys.exit(pytest.main([__file__, "-v"]))

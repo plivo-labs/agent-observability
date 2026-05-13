@@ -39,7 +39,10 @@ Run (inline deps via PEP 723 — no prior install step needed):
 
     export OPENAI_API_KEY=sk-...
     export AGENT_OBSERVABILITY_URL=http://localhost:9090     # optional
-    export AGENT_OBSERVABILITY_AGENT_ID=demo-bank-bot         # optional
+    # `agent_id` is a stable opaque UUID4. The slug "demo-bank-bot"
+    # below is the human-facing label kept in this docstring; it is
+    # never sent to the server.
+    export AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c   # optional
     uv run plugins/examples/pytest_banking_agent.py
 """
 
@@ -597,10 +600,14 @@ if __name__ == "__main__":
     import os
     import sys
 
-    # Default dashboard tag for this example. A shell export of
-    # AGENT_OBSERVABILITY_AGENT_ID still wins — this only sets it when unset,
-    # so each example file uploads under its own id without requiring the
-    # user to remember to re-export per file.
-    os.environ.setdefault("AGENT_OBSERVABILITY_AGENT_ID", "demo-bank-bot")
+    # Default agent identifier for this example. UUID4 is the stable id;
+    # "demo-bank-bot" is the human label mentioned in the docstring. A
+    # shell export of AGENT_OBSERVABILITY_AGENT_ID still wins — this only
+    # sets it when unset, so each example file uploads under its own id
+    # without requiring the user to remember to re-export per file.
+    os.environ.setdefault(
+        "AGENT_OBSERVABILITY_AGENT_ID",
+        "348315ff-9d63-46f5-9415-53aabb72f56c",
+    )
 
     sys.exit(pytest.main([__file__, "-v"]))

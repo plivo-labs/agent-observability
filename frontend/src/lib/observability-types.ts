@@ -112,10 +112,107 @@ export type Transport = 'sip' | 'audio_stream' | 'text' | 'terminal_text' | stri
 
 export interface SessionsFilters {
   accountId?: string
+  /** Exact-match — comes from the agent dashboard URL param, not free-text. */
+  agentId?: string
+  /** Exact-match too; kept for legacy callers that scope by display name. */
+  agentName?: string
   startedFrom?: string
   startedTo?: string
   /** Multi-value — server accepts comma-separated list. */
   transport?: string[]
+}
+
+/**
+ * AgentRow — one row per distinct (agent_id, account_id) observed in
+ * either agent_transport_sessions or eval_runs. Agents are unique within
+ * an account, so the same agent_id under a different account is a
+ * different row.
+ *
+ * `agent_id` is the URL path param; `account_id` is the optional query
+ * disambiguator (?account_id=…) when an agent_id spans multiple accounts.
+ * `agent_name` is the human-readable label and may be null on agents
+ * that ship only via CI (the pytest/vitest plugins don't emit a name).
+ */
+/**
+ * Modality derived from the set of transports an agent has run across.
+ * `mixed` when the agent has both audio-bearing and text-bearing
+ * sessions; `null` when there are no sessions yet (CI-eval-only agent).
+ */
+export type Modality = 'voice' | 'text' | 'mixed' | null
+
+export interface AgentRow {
+  agent_id: string | null
+  account_id: string | null
+  agent_name: string | null
+  modality: Modality
+  /** Distinct transports observed across this agent's sessions. Empty
+   * for agents that only have eval runs. */
+  transports: string[]
+  session_count: number
+  session_count_24h: number
+  last_session_at: string | null
+  p95_duration_ms: number | null
+  eval_run_count: number
+  last_eval_run_at: string | null
+  /** 0..1 over all cases across all CI eval runs for this agent. */
+  eval_pass_rate: number | null
+}
+
+/**
+ * One row per session that has conversation-eval data — `evaluations` and
+ * `tags` are pulled inline so the table can render verdict counts +
+ * judge chips without a second fetch.
+ */
+export interface ConversationEvalSummary {
+  session_id: string
+  account_id: string | null
+  agent_id: string | null
+  agent_name: string | null
+  ended_at: string
+  duration_ms: number | null
+  pass_count: number
+  fail_count: number
+  maybe_count: number
+  judge_names: string[]
+  outcome: string | null
+  outcome_reason: string | null
+  evaluations: SessionExternalEvaluation[]
+  tags: Array<{ name: string; metadata: Record<string, unknown> | null }>
+}
+
+export interface AgentsFilters {
+  accountId?: string
+  /** Exact-match filter on agent_id. */
+  agentId?: string
+  /** Free-text case-insensitive substring filter on agent name. */
+  agentName?: string
+}
+
+export type AgentStatsRange = '24h' | '7d' | '30d'
+
+export interface AgentStatsBucket {
+  bucket_start: string
+  session_count: number
+  avg_duration_ms: number | null
+  p95_user_perceived_ms: number | null
+  total_tool_calls: number
+  total_interruptions: number
+}
+
+export interface AgentStats {
+  range: AgentStatsRange
+  total_sessions: number
+  total_llm_tokens: number
+  total_tool_calls: number
+  avg_turn_count: number | null
+  p50_user_perceived_ms: number | null
+  p95_user_perceived_ms: number | null
+  p99_user_perceived_ms: number | null
+  llm_pass_rate: number | null
+  ci_pass_rate: number | null
+  buckets: AgentStatsBucket[]
+  transport_breakdown: Array<{ transport: string | null; count: number }>
+  provider_breakdown: Array<{ provider: string; model: string; count: number }>
 }
 
 export type SessionEvaluationVerdict = 'pass' | 'fail' | 'maybe' | string
@@ -155,6 +252,14 @@ export interface AgentSessionRow {
   id: number
   session_id: string
   account_id: string | null
+  /** Developer-supplied stable identifier. The primary key for the agent
+   * dashboard's virtual entity; populated from `log.attributes.agent_id`
+   * on the OTLP session-report or an `agent_id:<value>` session tag. */
+  agent_id: string | null
+  /** Developer-supplied display label. Populated from the analogous
+   * `agent_name` attribute / tag. May lag the canonical id in the rare
+   * case where the producer renamed without re-emitting. */
+  agent_name: string | null
   state: string
   transport: Transport | null
   started_at: string | null
@@ -274,6 +379,10 @@ export interface EvalRunRow {
   run_id: string
   account_id: string | null
   agent_id: string | null
+  /** Human-readable agent label resolved from the agents table at read
+   * time (LEFT JOIN). Null when no agent row exists for the eval's
+   * agent_id (e.g. legacy data) or when agent_id itself is null. */
+  agent_name: string | null
   /** Agent framework family — `livekit` / `pipecat` / …. Null when no
    *  known agent-framework package was detected by the plugin. */
   framework: string | null

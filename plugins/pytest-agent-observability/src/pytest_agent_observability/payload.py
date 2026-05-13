@@ -36,6 +36,7 @@ def build_payload(
     *,
     collector: RunCollector,
     agent_id: Optional[str],
+    agent_name: Optional[str],
     account_id: Optional[str],
     finished_at: float,
 ) -> dict:
@@ -46,6 +47,7 @@ def build_payload(
             "run_id": collector.run_id,
             "account_id": account_id,
             "agent_id": agent_id,
+            "agent_name": agent_name,
             "framework": framework[0] if framework else None,
             "framework_version": framework[1] if framework else None,
             "testing_framework": TESTING_FRAMEWORK,

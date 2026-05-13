@@ -1,3 +1,4 @@
+import { upsertAgent } from "../agents/upsert.js";
 import {
   applySessionTagMetadata,
   insertLiveKitEvaluation,
@@ -18,6 +19,7 @@ interface RawReportPatch extends Record<string, unknown> {
   options?: Record<string, unknown>;
   events?: Array<Record<string, unknown>>;
   tags?: string[];
+  agent_id?: string;
   agent_name?: string;
   sdk_version?: string;
   usage?: unknown[];
@@ -197,13 +199,23 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
       const rawSessionReport = asRecord(log.attributes["session.report"]);
       const options = asRecord(log.attributes["session.options"]);
       const tags = asStringArray(log.attributes["session.tags"]);
+      const agentId = asString(log.attributes.agent_id);
       const agentName = asString(log.attributes.agent_name);
       const sdkVersion = asString(log.attributes.sdk_version);
       const usage = asArray(log.attributes.usage);
+      // Upsert the agent so the FK on (agent_id, account_id) is
+      // satisfied when the session row eventually lands. account_id
+      // isn't on this OTLP record; the '' bucket gets used here, and a
+      // subsequent OTLP "tag" with account_id:<value> or the multipart
+      // recording report can re-upsert with the real account.
+      if (agentId) {
+        await upsertAgent({ agentId, accountId: null, agentName });
+      }
       mergeRawReportPatch(rawReportPatches, sessionId, {
         ...(rawSessionReport ?? {}),
         ...(options ? { options } : {}),
         ...(tags.length > 0 ? { tags } : {}),
+        ...(agentId ? { agent_id: agentId } : {}),
         ...(agentName ? { agent_name: agentName } : {}),
         ...(sdkVersion ? { sdk_version: sdkVersion } : {}),
         ...(usage ? { usage } : {}),

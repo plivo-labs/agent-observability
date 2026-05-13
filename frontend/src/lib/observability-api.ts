@@ -1,5 +1,10 @@
 import type {
+  AgentRow,
   AgentSessionRow,
+  AgentStats,
+  AgentStatsRange,
+  AgentsFilters,
+  ConversationEvalSummary,
   EvalCaseRow,
   EvalRunDetail,
   EvalRunRow,
@@ -19,12 +24,63 @@ export function createObservabilityApi(baseUrl: string) {
     listSessions: (limit = 20, offset = 0, filters?: SessionsFilters) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
       if (filters?.accountId) params.set('account_id', filters.accountId)
+      if (filters?.agentId) params.set('agent_id', filters.agentId)
+      if (filters?.agentName) params.set('agent_name', filters.agentName)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)
       if (filters?.startedTo) params.set('started_to', filters.startedTo)
       if (filters?.transport && filters.transport.length) {
         params.set('transport', filters.transport.join(','))
       }
       return fetchJson<PlivoListResponse<AgentSessionRow>>(`/sessions?${params}`)
+    },
+
+    listAgents: (limit = 50, offset = 0, filters?: AgentsFilters) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+      })
+      if (filters?.accountId) params.set('account_id', filters.accountId)
+      if (filters?.agentId) params.set('agent_id', filters.agentId)
+      if (filters?.agentName) params.set('agent_name', filters.agentName)
+      return fetchJson<PlivoListResponse<AgentRow>>(`/agents?${params}`)
+    },
+
+    getAgent: (agentId: string, accountId?: string | null) => {
+      const params = new URLSearchParams()
+      if (accountId) params.set('account_id', accountId)
+      const qs = params.toString()
+      return fetchJson<AgentRow>(`/agents/${encodeURIComponent(agentId)}${qs ? `?${qs}` : ''}`)
+    },
+
+    getAgentStats: (
+      agentId: string,
+      range: AgentStatsRange = '24h',
+      accountId?: string | null,
+    ) => {
+      const params = new URLSearchParams({ range })
+      if (accountId) params.set('account_id', accountId)
+      return fetchJson<AgentStats>(
+        `/agents/${encodeURIComponent(agentId)}/stats?${params}`,
+      )
+    },
+
+    listConversationEvals: (
+      agentId: string,
+      limit = 50,
+      offset = 0,
+      filters?: {
+        accountId?: string | null
+        sessionId?: string | null
+        failedOnly?: boolean
+      },
+    ) => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (filters?.accountId) params.set('account_id', filters.accountId)
+      if (filters?.sessionId) params.set('session_id', filters.sessionId)
+      if (filters?.failedOnly) params.set('failed', 'true')
+      return fetchJson<PlivoListResponse<ConversationEvalSummary>>(
+        `/agents/${encodeURIComponent(agentId)}/conversation-evals?${params}`,
+      )
     },
 
     getSession: (id: string) =>

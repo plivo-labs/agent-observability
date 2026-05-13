@@ -76,12 +76,24 @@ function TestingFrameworkBadge({ name, version }: { name: string; version: strin
   return <FrameworkPill name={name} version={version} icon={FlaskConical} />
 }
 
-export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
+export const EvalsPage = ({
+  onRunClick,
+  agentId: agentIdProp,
+}: {
+  onRunClick?: (runId: string) => void
+  /** When set, locks the list to this agent — overrides the URL-synced
+   * `agent_id` filter so the page can be embedded inside the agent
+   * detail dashboard. */
+  agentId?: string
+}) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
   // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
-  const [agentId] = useQueryState('agent_id', parseAsString.withDefault(''))
+  const [agentIdQuery] = useQueryState('agent_id', parseAsString.withDefault(''))
+  // Prop wins so the embedded-in-agent-dashboard case is forced; falls
+  // back to URL-synced filter on the standalone cross-agent route.
+  const agentId = agentIdProp ?? agentIdQuery
   const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [framework] = useQueryState(
     'framework',
@@ -166,15 +178,21 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'agent_id',
         accessorKey: 'agent_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Agent" />,
-        cell: ({ row }) =>
-          row.original.agent_id ? (
-            <span style={{ font: 'var(--text-p-500)' }}>{row.original.agent_id}</span>
-          ) : (
-            <span className="muted">—</span>
-          ),
+        cell: ({ row }) => {
+          const id = row.original.agent_id
+          const name = row.original.agent_name
+          if (!id && !name) return <span className="muted">—</span>
+          return (
+            <div className="flex flex-col leading-tight">
+              <span style={{ font: 'var(--text-p-500)' }}>{name || id}</span>
+              {name && id && (
+                <span className="text-muted-foreground text-[11px]">{id}</span>
+              )}
+            </div>
+          )
+        },
         enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Agent', placeholder: 'Filter by agent', variant: 'text' },
+        meta: { label: 'Agent' },
       },
       {
         id: 'framework',
@@ -227,8 +245,7 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
             <span className="muted">—</span>
           ),
         enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
+        meta: { label: 'Account' },
       },
       {
         id: 'pass_rate',
