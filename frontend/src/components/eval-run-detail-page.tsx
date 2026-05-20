@@ -577,7 +577,7 @@ export const EvalRunDetailPage = ({
           valueTone={run.total_tokens === 0 ? 'mute' : 'default'}
         />
         <Kpi
-          label="Cost"
+          label="LLM cost"
           value={formatCost(run.estimated_cost_usd)}
           hint={
             stats.avgCostPerCase != null

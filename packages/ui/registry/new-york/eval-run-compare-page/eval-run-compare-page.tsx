@@ -264,7 +264,7 @@ export function EvalRunComparePage({
         <KpiTile label="Pass rate" a={passRateA * 100} b={passRateB * 100} fmtFn={v => v != null ? `${v.toFixed(0)}%` : '—'} />
         <KpiTile label="p95 TTFT" a={runA.ttft_p95_ms} b={runB.ttft_p95_ms} fmtFn={v => v != null ? formatMs(v) : '—'} lowerIsBetter />
         <KpiTile label="Tokens" a={runA.total_tokens} b={runB.total_tokens} fmtFn={v => v != null ? formatTokens(v) : '—'} lowerIsBetter />
-        <KpiTile label="Cost" a={runA.estimated_cost_usd} b={runB.estimated_cost_usd} fmtFn={v => v != null ? formatCost(v) : '—'} lowerIsBetter />
+        <KpiTile label="LLM cost" a={runA.estimated_cost_usd} b={runB.estimated_cost_usd} fmtFn={v => v != null ? formatCost(v) : '—'} lowerIsBetter />
       </div>
 
       {/* Diff sections */}

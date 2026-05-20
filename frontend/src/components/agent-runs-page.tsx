@@ -434,7 +434,7 @@ export function AgentRunsPage({
           sparkColor="hsl(210 90% 42%)"
         />
         <KpiTile
-          label="Total cost"
+          label="Total LLM cost"
           value={formatCost(stats.totalCost)}
           sub={`across ${runs.length} run${runs.length === 1 ? '' : 's'}`}
           sparkValues={stats.costSeries}

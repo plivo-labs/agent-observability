@@ -291,9 +291,9 @@ export const SessionsPage = ({
           sparkColor="hsl(35 90% 45%)"
         />
         <KpiTile
-          label="Total cost"
+          label="Total LLM cost"
           value={formatCost(agentStats?.total_estimated_cost_usd ?? null)}
-          sub={`priced on LLM usage · ${range}`}
+          sub={`priced on token usage · ${range}`}
           sparkValues={kpiSeries.cost}
           sparkColor="hsl(0 70% 50%)"
         />

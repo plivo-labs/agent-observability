@@ -96,9 +96,9 @@ export const MetricSummaryCards = ({
       />
       <MetricTile
         icon={<DollarSign size={12} />}
-        label="Cost"
+        label="LLM cost"
         value={cost != null ? formatCost(cost) : '—'}
-        sub={cost != null ? 'LLM usage' : 'no priceable usage'}
+        sub={cost != null ? 'token usage' : 'no priceable usage'}
       />
     </div>
   )

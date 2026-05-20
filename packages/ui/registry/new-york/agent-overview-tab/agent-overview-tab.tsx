@@ -144,9 +144,9 @@ export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
           sparkColor="hsl(270 60% 55%)"
         />
         <KpiTile
-          label="Total cost"
+          label="Total LLM cost"
           value={formatCost(stats.total_estimated_cost_usd)}
-          sub={`priced on LLM usage · ${range}`}
+          sub={`priced on token usage · ${range}`}
           sparkValues={costSeries}
           sparkColor="hsl(35 90% 45%)"
         />
