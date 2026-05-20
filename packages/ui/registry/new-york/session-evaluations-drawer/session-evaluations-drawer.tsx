@@ -80,7 +80,7 @@ export function ResultBadge({ value }: { value: string | null | undefined }) {
       )}
     >
       {icon}
-      {labelFor(value, 'Pending')}
+      {labelFor(value, '—')}
     </Badge>
   )
 }
@@ -254,7 +254,10 @@ export function SessionEvaluationsDrawer({
                     outcome ? (
                       <ResultBadge value={outcome.outcome.replace(/^lk\./, '')} />
                     ) : (
-                      'Pending'
+                      // Match the conversation-evals drawer + table column:
+                      // a session without an outcome isn't "pending", it
+                      // just has no value. Use the same muted "—" everywhere.
+                      <span className="text-muted-foreground">—</span>
                     )
                   }
                 >
