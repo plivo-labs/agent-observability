@@ -28,3 +28,9 @@ plugins/vitest-agent-observability/dist/
 # SDK build / lock output
 plugins/agent-observability-sdk/dist/
 plugins/agent-observability-sdk/uv.lock
+
+# TypeScript compile artifacts (sources are .ts/.tsx; .js are stale outputs)
+tests/**/*.test.js
+packages/ui/tests/**/*.test.js
+plugins/examples/vitest/*.js
+tsconfig.tsbuildinfo
