@@ -139,7 +139,7 @@ runners — live under [`plugins/examples/`](plugins/examples/README.md).
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `AGENT_OBSERVABILITY_USER` | No | Basic auth username — when set with `AGENT_OBSERVABILITY_PASS`, native ingest routes accept Basic credentials |
 | `AGENT_OBSERVABILITY_PASS` | No | Basic auth password (see above) |
-| `LIVEKIT_API_KEY` | No | LiveKit-issued JWT issuer claim — when set with `LIVEKIT_API_SECRET`, native ingest routes accept Bearer JWTs minted with this key. Use the same key/secret pair you give the LiveKit SDK on the agent side so its tokens validate. |
+| `LIVEKIT_API_KEY` | No | Issuer identifier for LiveKit Bearer JWTs. The LiveKit SDK requires this pair to initialize and signs every observability payload (recordings, OTLP) with it — the observability server must verify against the same pair, since that's the credential the SDK signs with. You generate the pair yourself; see [Generating a LiveKit API key/secret](#generating-a-livekit-api-keysecret). |
 | `LIVEKIT_API_SECRET` | No | HS256 signing secret paired with `LIVEKIT_API_KEY`. Both env vars are required to enable LiveKit Bearer auth. |
 | `AUTO_MIGRATE` | No | Run SQL migrations on startup (`true`/`false`, default: `false`) |
 | `PORT` | No | Server port (default: `9090`) |
@@ -220,8 +220,11 @@ AGENT_OBSERVABILITY_USER=your_user
 AGENT_OBSERVABILITY_PASS=your_pass
 
 # Option B — LiveKit-native auth (agent-transport >= 0.1.10)
-# The SDK mints Bearer JWTs signed with these. Use the same pair on the
-# server so it can verify them.
+# The LiveKit SDK requires this pair to initialize and signs every payload
+# it emits (recordings, OTLP logs/traces) with it. The observability server
+# verifies against the same pair because that is the only credential the SDK
+# signs with. See "Generating a LiveKit API key/secret" below for how to
+# create the values.
 LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
 ```
@@ -229,6 +232,33 @@ LIVEKIT_API_SECRET=your_livekit_api_secret
 The server accepts whichever auth header the client sends. Either option
 on its own is enough; configure both during a migration window if you have
 mixed clients.
+
+### Generating a LiveKit API key/secret
+
+`LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` are not issued by a LiveKit
+cloud service — they are an HS256 keypair you generate locally and
+configure on both sides:
+
+- The agent process passes them to the LiveKit SDK, which signs Bearer
+  JWTs (and the OTLP payloads) with the secret using the key as the
+  `iss` claim.
+- The observability server reads the same pair from its env and verifies
+  incoming JWT signatures against the secret, requiring `iss` to equal
+  the key.
+
+Generate them once with `openssl` (or any source of cryptographic
+randomness) and store them in your secrets manager:
+
+```bash
+LIVEKIT_API_KEY="API$(openssl rand -hex 6)"        # short identifier, e.g. APIa1b2c3d4e5f6
+LIVEKIT_API_SECRET="$(openssl rand -base64 48)"    # high-entropy HS256 signing secret
+```
+
+Distribute the same values to every agent process and to the
+observability server. Rotating the pair is a coordinated change: update
+the secret store, redeploy the agents (so the SDK picks up the new
+signing key), and redeploy the observability server (so it verifies
+against the new key) within the same window.
 
 ## Project Structure
 
