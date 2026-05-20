@@ -151,14 +151,36 @@ describe("buildSessionMetrics", () => {
 
   // ── TTS character tracking ───────────────────────────────────────────────
 
-  test("counts TTS characters from agent text length", () => {
+  test("counts TTS characters from agent text length when audio pipeline ran", () => {
+    // tts_characters is the count of chars actually synthesized to
+    // speech, so it only fires when the audio pipeline ran for this
+    // turn. Signal: tts_node_ttfb on per-turn metrics, or tts_metadata
+    // on the assistant item. (Without that gate, text-only sessions
+    // would surface a meaningless agent_text length as "TTS chars".)
     const chat = [
       { id: "u1", type: "message", role: "user", content: "hi" },
-      { id: "a1", type: "message", role: "assistant", content: "hello there" },
+      {
+        id: "a1",
+        type: "message",
+        role: "assistant",
+        content: "hello there",
+        metrics: { tts_node_ttfb: 0.08 },
+      },
     ];
     const result = buildSessionMetrics(chat, null, 1)!;
     expect(result.turns[0].tts_characters).toBe(11);
     expect(result.summary.total_tts_characters).toBe(11);
+  });
+
+  test("does not emit tts_characters on a text-only session (no TTS pipeline)", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hi" },
+      // No tts_node_ttfb / tts_metadata → audio pipeline didn't run.
+      { id: "a1", type: "message", role: "assistant", content: "hello there" },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].tts_characters).toBeUndefined();
+    expect(result.summary.total_tts_characters).toBe(0);
   });
 
   // ── Tool calls ───────────────────────────────────────────────────────────
@@ -370,7 +392,15 @@ describe("buildSessionMetrics", () => {
   test("extracts tokens from session-level usage when per-turn tokens missing", () => {
     const chat = [
       { id: "u1", type: "message", role: "user", content: "hi" },
-      { id: "a1", type: "message", role: "assistant", content: "hey" },
+      // tts_metadata present → audio pipeline ran for this turn, so
+      // tts_characters reads agent_text.length (3 = "hey".length).
+      {
+        id: "a1",
+        type: "message",
+        role: "assistant",
+        content: "hey",
+        metrics: { tts_metadata: { model_name: "tts-1", model_provider: "openai" } },
+      },
     ];
     const sessionMetrics = {
       per_turn: [],
@@ -383,8 +413,8 @@ describe("buildSessionMetrics", () => {
     expect(result.summary.total_llm_tokens).toBe(810);
     expect(result.summary.total_llm_prompt_tokens).toBe(787);
     expect(result.summary.total_llm_completion_tokens).toBe(23);
-    // TTS characters come from text length (3 = "hey".length), not usage
-    // Usage fallback only applies when per-turn total is 0
+    // TTS characters come from agent text length (3 = "hey".length),
+    // gated on the audio pipeline running.
     expect(result.summary.total_tts_characters).toBe(3);
   });
 

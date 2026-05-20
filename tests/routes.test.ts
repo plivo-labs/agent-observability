@@ -482,7 +482,10 @@ describe("POST /observability/recordings/v0", () => {
     // Verify insertSession was called with parsed data
     expect(mockInsertSession).toHaveBeenCalledTimes(1);
     const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
-    expect(call.turnCount).toBe(2);
+    // 1 assistant message → 1 turn (logical user→assistant pair).
+    // parse.ts counts only assistant items so this column agrees with
+    // metrics.ts:summary.total_turns on the same dialog.
+    expect(call.turnCount).toBe(1);
     expect(call.hasStt).toBe(true);
     expect(call.hasLlm).toBe(true);
     expect(call.hasTts).toBe(true);

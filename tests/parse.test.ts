@@ -27,26 +27,46 @@ describe("parseChatHistory", () => {
   });
 
   // ── Turn counting ───────────────────────────────────────────────────────
+  //
+  // A turn is a logical user→assistant pair — incremented when the
+  // assistant replies. metrics.ts agrees (it only bumps turnNumber on
+  // assistant messages); pinning the same semantics here keeps the
+  // sessions-list `turn_count` column and the session-detail KPI tile's
+  // `total_turns` from disagreeing on the same dialog.
 
-  test("counts message-type items as turns", () => {
+  test("counts assistant messages as turns", () => {
     const result = parseChatHistory({
       items: [
         { type: "message", role: "user" },
         { type: "message", role: "assistant" },
       ],
     });
-    expect(result.turnCount).toBe(2);
+    expect(result.turnCount).toBe(1);
   });
 
-  test("does not count non-message items as turns", () => {
+  test("does not count user-only or non-message items as turns", () => {
+    const result = parseChatHistory({
+      items: [
+        { type: "message", role: "user" },          // user-only, no turn yet
+        { type: "function_call", role: "assistant" }, // not a message
+        { type: "function_call_output" },             // not a message
+      ],
+    });
+    expect(result.turnCount).toBe(0);
+  });
+
+  test("counts one turn per assistant reply across a multi-turn dialog", () => {
     const result = parseChatHistory({
       items: [
         { type: "message", role: "user" },
-        { type: "function_call", role: "assistant" },
+        { type: "message", role: "assistant" },
+        { type: "message", role: "user" },
+        { type: "function_call", role: "assistant" },   // not a message — skipped
         { type: "function_call_output" },
+        { type: "message", role: "assistant" },
       ],
     });
-    expect(result.turnCount).toBe(1);
+    expect(result.turnCount).toBe(2);
   });
 
   // ── STT detection ───────────────────────────────────────────────────────
@@ -107,10 +127,17 @@ describe("parseChatHistory", () => {
   // ── Role fallback ──────────────────────────────────────────────────────
 
   test("falls back to message.role when top-level role is missing", () => {
+    // Two items so we can prove the role fallback fires AND a turn is
+    // counted for the assistant reply. A lone user-only item would still
+    // be a 0-turn dialog under the new semantics.
     const result = parseChatHistory({
-      items: [{ type: "message", message: { role: "user" } }],
+      items: [
+        { type: "message", message: { role: "user" } },
+        { type: "message", message: { role: "assistant" } },
+      ],
     });
     expect(result.hasStt).toBe(true);
+    expect(result.hasTts).toBe(true);
     expect(result.turnCount).toBe(1);
   });
 
@@ -192,7 +219,9 @@ describe("parseChatHistory", () => {
       ],
     });
 
-    expect(result.turnCount).toBe(4);
+    // 2 assistant messages → 2 turns (one per logical user→assistant
+    // pair); the function_call/output items in between don't count.
+    expect(result.turnCount).toBe(2);
     expect(result.hasStt).toBe(true);
     expect(result.hasLlm).toBe(true);
     expect(result.hasTts).toBe(true);
@@ -213,7 +242,7 @@ describe("parseChatHistory", () => {
       usage: [{ provider: "openai", model: "gpt-4", input_tokens: 100 }],
     });
     expect(result.chatItems).toHaveLength(2);
-    expect(result.turnCount).toBe(2);
+    expect(result.turnCount).toBe(1);
   });
 
   // ── camelCase normalization (Node SDK) ──────────────────────────────────
