@@ -13,7 +13,11 @@
     "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-api.json",
     "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
     "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/kpi.json",
-    "checkbox"
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
+    "badge",
+    "button",
+    "checkbox",
+    "dialog"
   ],
   "files": [
     {

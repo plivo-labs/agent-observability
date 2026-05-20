@@ -476,6 +476,12 @@ export interface ListConversationEvalsOpts {
   accountId?: string | null;
   limit?: number;
   offset?: number;
+  /** Free-text case-insensitive substring filter on `session_id`. */
+  sessionId?: string | null;
+  /** When true, restrict results to sessions with at least one
+   *  failing external eval verdict or a session_outcomes row whose
+   *  outcome is "fail" / "lk.fail". */
+  failedOnly?: boolean;
 }
 
 export async function listConversationEvals(
@@ -484,7 +490,12 @@ export async function listConversationEvals(
   const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
   const offset = Math.max(0, opts.offset ?? 0);
   const accountId = opts.accountId ?? null;
-  const sessionId = opts.sessionId && opts.sessionId.length > 0 ? opts.sessionId : null;
+  // Escape `%` / `_` / `\` so a user-typed underscore in the search box
+  // doesn't get interpreted as a LIKE wildcard. Mirrors how listAgents +
+  // listEvalRuns handle their substring filters.
+  const sessionIdLike = opts.sessionId && opts.sessionId.length > 0
+    ? `%${escapeLike(opts.sessionId.toLowerCase())}%`
+    : null;
   const failedOnly = opts.failedOnly === true;
 
   // The base set: sessions for the agent that have at least one related
@@ -498,7 +509,7 @@ export async function listConversationEvals(
        FROM agent_transport_sessions s
        WHERE s.agent_id = $1
          AND ($2::text IS NULL OR s.account_id = $2)
-         AND ($5::text IS NULL OR LOWER(s.session_id) LIKE '%' || LOWER($5) || '%')
+         AND ($5::text IS NULL OR LOWER(s.session_id) LIKE $5)
          AND (
            EXISTS (SELECT 1 FROM session_external_evals e
                    WHERE e.session_id = s.session_id)
@@ -568,7 +579,7 @@ export async function listConversationEvals(
      LEFT JOIN ev USING (session_id)
      LEFT JOIN oc USING (session_id)
      ORDER BY p.ended_at DESC`,
-    [opts.agentId, accountId, limit, offset, sessionId, failedOnly],
+    [opts.agentId, accountId, limit, offset, sessionIdLike, failedOnly],
   );
 
   const total = result.length > 0 ? Number(result[0].total_count) : 0;

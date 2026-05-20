@@ -158,7 +158,7 @@ function SessionsListPreview() {
 function SessionDetailPreview() {
   return (
     <AgentObservabilityProvider baseUrl="/api" sessionId={SESSION_ID}>
-      <SessionDetailPage onBack={() => {}} />
+      <SessionDetailPage />
     </AgentObservabilityProvider>
   )
 }
@@ -168,7 +168,7 @@ function EvalsListPreview() {
 }
 
 function EvalRunDetailPreview() {
-  return <EvalRunDetailPage runId={EVAL_RUN_ID} onBack={() => {}} />
+  return <EvalRunDetailPage runId={EVAL_RUN_ID} />
 }
 
 function EvalCaseDetailPreview() {
@@ -447,7 +447,7 @@ export function App({ sessionId }: { sessionId: string }) {
       baseUrl="https://observability.example.com/api"
       sessionId={sessionId}
     >
-      <SessionDetailPage onBack={() => history.back()} />
+      <SessionDetailPage />
     </AgentObservabilityProvider>
   )
 }`,
@@ -669,27 +669,21 @@ export function SessionsRoute() {
       'Full drill-in view for a single session. Combines the session header, a tabbed timeline / transcript / events / config / performance layout, and the recording player.',
     stage: 'stretch',
     render: () => <SessionDetailPreview />,
-    props: [
-      {
-        name: 'onBack',
-        type: '() => void',
-        description:
-          'Handler for the breadcrumb "Sessions" link at the top of the page. Omit to render without a back control.',
-      },
-    ],
+    props: [],
     usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
 import { SessionDetailPage } from '@/components/session-detail-page'
-import { useNavigate, useParams } from 'react-router'
+import { useParams } from 'react-router'
 
 export function SessionDetailRoute() {
   const { sessionId } = useParams<{ sessionId: string }>()
-  const navigate = useNavigate()
   return (
     <AgentObservabilityProvider
       baseUrl="https://observability.example.com/api"
       sessionId={sessionId}
     >
-      <SessionDetailPage onBack={() => navigate('/sessions')} />
+      {/* SessionDetailPage uses the breadcrumb in AgentScopeHeader at
+          the top — no back-prop wiring needed. */}
+      <SessionDetailPage />
     </AgentObservabilityProvider>
   )
 }`,
@@ -741,12 +735,6 @@ export function EvalsRoute() {
         description: 'The run to load and display. Typically read from the route.',
       },
       {
-        name: 'onBack',
-        type: '() => void',
-        description:
-          'Handler for the breadcrumb "Back to evals" action at the top of the page.',
-      },
-      {
         name: 'onCaseClick',
         type: '(caseId: string) => void',
         description:
@@ -755,17 +743,15 @@ export function EvalsRoute() {
     ],
     usage: `import { AgentObservabilityProvider } from '@/lib/observability-provider'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
-import { useNavigate, useParams } from 'react-router'
+import { useParams } from 'react-router'
 
 export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>()
-  const navigate = useNavigate()
   if (!runId) return null
   return (
     <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
       <EvalRunDetailPage
         runId={runId}
-        onBack={() => navigate('/evals')}
         // Omit onCaseClick to use the built-in drawer; provide it to
         // route to a standalone case page instead.
       />

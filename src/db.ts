@@ -167,6 +167,13 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     ? patch.agent_name
     : null;
   if (agentId) {
+    // Ensure the agents row exists BEFORE we set the FK column. The
+    // primary OTLP path upserts upstream in persistLiveKitOtlpLogs, but
+    // if agent_id arrives only via the rawReport body (no log.attributes
+    // counterpart), the upstream guard is skipped and this UPDATE would
+    // otherwise violate the agent_transport_sessions_agent_fkey added in
+    // migration 012. upsertAgent is idempotent.
+    await upsertAgent({ agentId, accountId: null, agentName });
     await sql`
       UPDATE agent_transport_sessions
       SET agent_id = ${agentId}
