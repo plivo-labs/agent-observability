@@ -647,24 +647,54 @@ export const EvalCaseDetailPage = ({
 	);
 };
 
+function splitFailureMessage(message: string): { headline: string; context: string | null } {
+	// LiveKit's assertion API emits failures shaped like:
+	//   "Expected another event, but none left. Context around failure: [0] ChatMessageEvent(item={...})"
+	// The prose before "Context around failure:" is what the reader actually
+	// wants in the headline; the rest is a Python repr() dump of the events
+	// that should be in a code block, not in body text.
+	const marker = /\n?\s*Context around failure:\s*/i;
+	const match = message.match(marker);
+	if (!match || match.index == null) return { headline: message.trim(), context: null };
+	return {
+		headline: message.slice(0, match.index).trim(),
+		context: message.slice(match.index + match[0].length).trim() || null,
+	};
+}
+
 function FailureCard({
 	failure,
 }: {
 	failure: NonNullable<ReturnType<typeof useEvalCase>["evalCase"]>["failure"];
 }) {
 	if (!failure) return null;
+	const split = failure.message ? splitFailureMessage(failure.message) : null;
 	return (
 		<Card className="border-border bg-muted/40">
 			<CardContent className="py-3">
 				<div className="flex items-center gap-2 text-s-600 text-foreground mb-2">
 					<AlertTriangle className="h-3.5 w-3.5" /> Failure ({failure.kind})
 				</div>
-				{failure.message && (
-					<div className="text-s-500 mb-2">{failure.message}</div>
+				{split?.headline && (
+					<div className="text-s-500 mb-2 whitespace-pre-wrap break-words">
+						{split.headline}
+					</div>
+				)}
+				{split?.context && (
+					<Collapsible defaultOpen>
+						<CollapsibleTrigger className="text-xxs-600 text-muted-foreground uppercase tracking-wider hover:text-foreground cursor-pointer bg-transparent border-none p-0 mb-1.5">
+							Context
+						</CollapsibleTrigger>
+						<CollapsibleContent>
+							<pre className="border rounded-md bg-card px-2.5 py-2 font-mono text-xs-400 text-muted-foreground whitespace-pre-wrap break-all max-h-[220px] overflow-auto">
+								{split.context}
+							</pre>
+						</CollapsibleContent>
+					</Collapsible>
 				)}
 				{failure.stack && (
 					<Collapsible>
-						<CollapsibleTrigger className="text-xs-600 text-muted-foreground uppercase tracking-wider hover:text-foreground cursor-pointer bg-transparent border-none p-0">
+						<CollapsibleTrigger className="mt-2 text-xxs-600 text-muted-foreground uppercase tracking-wider hover:text-foreground cursor-pointer bg-transparent border-none p-0">
 							Stack trace
 						</CollapsibleTrigger>
 						<CollapsibleContent className="mt-2">

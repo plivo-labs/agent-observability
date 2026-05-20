@@ -306,11 +306,21 @@ export async function getAgentStats(
          GROUP BY date_trunc($3, ended_at)
        ),
        turns AS (
+         -- Perceived latency: e2e_latency is the audio-pipeline measure
+         -- (STT→LLM→TTS round trip). Text-only sessions have no e2e_latency
+         -- field on per-turn metrics — they only carry llm_node_ttft — so
+         -- fall back to that. Same fallback metrics.ts uses on the read
+         -- path; without it, text-mode agents show an empty p95 chart on
+         -- the Overview tab even though we have the latency data.
          SELECT
            date_trunc($3, win.ended_at) AS bucket,
-           (m->>'e2e_latency')::float * 1000 AS perceived_ms
+           COALESCE(
+             NULLIF(m->>'e2e_latency', '')::float,
+             NULLIF(m->>'llm_node_ttft', '')::float
+           ) * 1000 AS perceived_ms
          FROM win, ${PER_TURN_ELEMS('win.session_metrics')} AS m
          WHERE (m->>'e2e_latency') ~ '^[0-9.]+$'
+            OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'
        ),
        turn_buckets AS (
          SELECT
@@ -342,9 +352,15 @@ export async function getAgentStats(
            AND ($3::text IS NULL OR account_id = $3)
        ),
        turns AS (
-         SELECT (m->>'e2e_latency')::float * 1000 AS perceived_ms
+         -- See bucket query above for the e2e_latency vs llm_node_ttft
+         -- fallback rationale (text-only sessions only carry the latter).
+         SELECT COALESCE(
+                  NULLIF(m->>'e2e_latency', '')::float,
+                  NULLIF(m->>'llm_node_ttft', '')::float
+                ) * 1000 AS perceived_ms
          FROM win, ${PER_TURN_ELEMS('win.session_metrics')} AS m
          WHERE (m->>'e2e_latency') ~ '^[0-9.]+$'
+            OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'
        )
        SELECT
          (SELECT COUNT(*) FROM win)::int AS total_sessions,

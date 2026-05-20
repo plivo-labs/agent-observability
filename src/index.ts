@@ -120,6 +120,26 @@ app.post("/observability/recordings/v0", async (c) => {
 
   const { chatItems, turnCount, hasStt, hasLlm, hasTts, metrics } = parsed;
 
+  // Fallback: derive started_at from the earliest chat item when the
+  // header didn't carry it. LiveKit's native MetricsRecordingHeader
+  // (protobuf) leaves start_time unset for some flows — text-only
+  // console mode is the one we've hit — and the multipart's chat
+  // items always carry their own created_at (epoch seconds), so the
+  // earliest one is a reliable lower bound. Without this fallback,
+  // session.started_at stays NULL → duration_ms can't be computed
+  // → Sessions table shows "—" for both Started and Duration on
+  // every text-only session.
+  if (!startedAt && chatItems.length > 0) {
+    let firstTs = Infinity;
+    for (const it of chatItems as any[]) {
+      const n = Number(it.created_at);
+      if (Number.isFinite(n) && n > 0 && n < firstTs) firstTs = n;
+    }
+    if (Number.isFinite(firstTs)) {
+      startedAt = new Date(firstTs * 1000);
+    }
+  }
+
   // Handle audio recording
   let recordUrl: string | null = null;
   const audio = formData.get("audio");
