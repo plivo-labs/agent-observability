@@ -1,4 +1,4 @@
-"""Tests for the 9 LLM-based judge factories.
+"""Tests for the LLM-based judge factories.
 
 We don't actually call the LLM here — `_LLMJudge` is LiveKit code and is
 covered by livekit-agents' own test suite. What we own is:
@@ -18,13 +18,27 @@ So these tests verify:
 from __future__ import annotations
 
 from agent_observability.livekit.judges import (
+    bot_detection_judge,
+    call_screening_judge,
+    conversation_judges,
+    conversation_status_judge,
+    do_not_disturb_judge,
     freeflow_response_accuracy_judge,
+    goal_evaluation_judge,
     hallucination_judge,
     hold_requested_intent_accuracy_judge,
+    instruction_adherence_judge,
+    intent_identification_judge,
     knowledge_base_correctness_judge,
+    low_engagement_judge,
     loop_detection_judge,
     rigid_response_accuracy_judge,
+    stt_evaluation_judge,
+    turn_detection_judge,
+    user_sentiment_judge,
     variable_extraction_judge,
+    voicemail_detection_judge,
+    wrong_number_judge,
 )
 
 
@@ -56,6 +70,45 @@ def test_loop_detection_judge_metadata():
     assert j.name == "loop_detection"
     assert "repeat" in j._instructions.lower()
     assert "stuck" in j._instructions.lower()
+
+
+def test_conversation_classifier_judge_metadata():
+    cases = [
+        (voicemail_detection_judge(), "voicemail_detected", "voicemail"),
+        (bot_detection_judge(), "bot_detected", "ivr"),
+        (call_screening_judge(), "call_screening", "screening"),
+        (low_engagement_judge(), "low_engagement", "minimal"),
+        (wrong_number_judge(), "wrong_number", "intended recipient"),
+        (do_not_disturb_judge(), "do_not_disturb", "contacted again"),
+        (user_sentiment_judge(), "user_sentiment", "positive"),
+        (conversation_status_judge(), "conversation_status", "human_contact"),
+    ]
+    for judge, name, phrase in cases:
+        assert judge.name == name
+        assert phrase in judge._instructions.lower()
+
+
+def test_conversation_judges_voice_and_text_sets():
+    voice_names = [j.name for j in conversation_judges(voice=True)]
+    text_names = [j.name for j in conversation_judges(voice=False)]
+
+    assert voice_names == [
+        "voicemail_detected",
+        "bot_detected",
+        "call_screening",
+        "low_engagement",
+        "wrong_number",
+        "do_not_disturb",
+        "user_sentiment",
+        "conversation_status",
+    ]
+    assert text_names == [
+        "low_engagement",
+        "wrong_number",
+        "do_not_disturb",
+        "user_sentiment",
+        "conversation_status",
+    ]
 
 
 # ── Ground-truth-bound judges ──────────────────────────────────────────────
@@ -97,6 +150,59 @@ def test_knowledge_base_correctness_splices_context():
     )
     assert j.name == "knowledge_base_correctness"
     assert "30 days from purchase" in j._instructions
+
+
+def test_instruction_adherence_splices_context():
+    j = instruction_adherence_judge(
+        instructions="Confirm address before placing an order.",
+        objective="Place an eligible order only after confirmation.",
+    )
+    assert j.name == "instruction_adherence"
+    assert "Confirm address" in j._instructions
+    assert "objective_progress" in j._instructions
+    assert "policy_boundary_compliance" in j._instructions
+
+
+def test_intent_identification_splices_available_intents():
+    j = intent_identification_judge(
+        available_intents=[
+            {"intent_name": "cancel_order", "intent_instructions": "Cancel an order"},
+            "track_order",
+        ],
+        chosen_intent="cancel_order",
+    )
+    assert j.name == "intent_identification"
+    assert "cancel_order" in j._instructions
+    assert "intent_not_found" in j._instructions
+
+
+def test_goal_evaluation_splices_goals():
+    j = goal_evaluation_judge(
+        goals=[{"goal_name": "collect_email", "description": "Get user email"}],
+        flow_history="User provided maya@example.com",
+    )
+    assert j.name == "goal_evaluation"
+    assert "collect_email" in j._instructions
+    assert "maya@example.com" in j._instructions
+
+
+def test_stt_evaluation_splices_transcript():
+    j = stt_evaluation_judge(transcript="User: I said Austin, not Boston")
+    assert j.name == "stt"
+    assert "Austin" in j._instructions
+    assert "speech-to-text" in j._instructions
+
+
+def test_turn_detection_splices_fragments():
+    j = turn_detection_judge(
+        fragments=[
+            {"transcribed_text": "I want to", "is_eou": True},
+            "book a meeting tomorrow",
+        ],
+    )
+    assert j.name == "turn_detection"
+    assert "I want to" in j._instructions
+    assert "premature" in j._instructions.lower()
 
 
 # ── default_judges() composition ───────────────────────────────────────────

@@ -27,6 +27,22 @@ from livekit.agents.llm import LLM
 
 # LLM judges — factory functions
 from agent_observability.livekit.judges.hallucination import hallucination_judge
+from agent_observability.livekit.judges.conversation import (
+    bot_detection_judge,
+    call_screening_judge,
+    conversation_judges,
+    conversation_status_judge,
+    do_not_disturb_judge,
+    low_engagement_judge,
+    user_sentiment_judge,
+    voicemail_detection_judge,
+    wrong_number_judge,
+)
+from agent_observability.livekit.judges.goal import goal_evaluation_judge
+from agent_observability.livekit.judges.instruction import (
+    instruction_adherence_judge,
+    intent_identification_judge,
+)
 from agent_observability.livekit.judges.intent import hold_requested_intent_accuracy_judge
 from agent_observability.livekit.judges.knowledge_base import (
     knowledge_base_correctness_judge,
@@ -36,6 +52,8 @@ from agent_observability.livekit.judges.response_accuracy import (
     freeflow_response_accuracy_judge,
     rigid_response_accuracy_judge,
 )
+from agent_observability.livekit.judges.stt import stt_evaluation_judge
+from agent_observability.livekit.judges.turn_detection import turn_detection_judge
 from agent_observability.livekit.judges.variable import variable_extraction_judge
 
 # Programmatic judges — classes
@@ -81,6 +99,20 @@ __all__ = [
     "Verdict",
     # LLM judge factories
     "hallucination_judge",
+    "voicemail_detection_judge",
+    "bot_detection_judge",
+    "call_screening_judge",
+    "low_engagement_judge",
+    "wrong_number_judge",
+    "do_not_disturb_judge",
+    "user_sentiment_judge",
+    "conversation_status_judge",
+    "conversation_judges",
+    "instruction_adherence_judge",
+    "intent_identification_judge",
+    "goal_evaluation_judge",
+    "stt_evaluation_judge",
+    "turn_detection_judge",
     "rigid_response_accuracy_judge",
     "freeflow_response_accuracy_judge",
     "hold_requested_intent_accuracy_judge",
