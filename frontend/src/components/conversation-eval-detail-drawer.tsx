@@ -121,7 +121,13 @@ export function ConversationEvalDetailDrawer({
                   row.outcome ? (
                     <ResultBadge value={row.outcome.replace(/^lk\./, '')} />
                   ) : (
-                    'Pending'
+                    // Outcomes are an opt-in business signal the worker
+                    // emits via tagger.outcome(); when absent, the
+                    // session simply has no outcome — not a "pending"
+                    // state machine. Match the table column's "—"
+                    // treatment so the same nullable field reads the
+                    // same way on both surfaces.
+                    <span className="text-muted-foreground">—</span>
                   )
                 }
               >
