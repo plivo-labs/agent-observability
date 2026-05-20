@@ -215,7 +215,18 @@ export function buildSessionMetrics(
         const perceivedMs = e2eMs ?? (llmMs != null && ttsMs != null ? llmMs + ttsMs : llmMs);
 
         const agentText = text;
-        const ttsChars = agentText.length;
+        // Only count TTS characters when the audio pipeline actually
+        // synthesized speech — TTS metadata or a tts_node_ttfb on the
+        // turn are the reliable signals. On a text-only session the
+        // assistant produces text but no TTS runs; counting agent_text
+        // length there mislabels prose length as TTS work and clutters
+        // the Token Usage panel with a metric that has no audio cost.
+        const ttsRan =
+          ttsMs != null ||
+          (ttsMeta != null &&
+            typeof ttsMeta === "object" &&
+            !Array.isArray(ttsMeta));
+        const ttsChars = ttsRan ? agentText.length : 0;
 
         const turn: TurnRecord = {
           turn_number: turnNumber,

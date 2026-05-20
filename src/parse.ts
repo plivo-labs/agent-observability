@@ -60,8 +60,13 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
 
   for (const item of chatItems) {
     if (item.type === "message") {
-      turnCount++;
       const role = item.role ?? item.message?.role;
+      // Count one turn per assistant message — a turn isn't complete
+      // until the agent replies. Matches metrics.ts:turnNumber so the
+      // sessions-list `turn_count` column and the KPI tile's `total_turns`
+      // never disagree (they used to: this loop counted every message
+      // including user-only items, so a 4-turn dialog showed as 8).
+      if (role === "assistant") turnCount++;
       if (role === "user") hasStt = true;
       if (role === "assistant") hasTts = true;
     }

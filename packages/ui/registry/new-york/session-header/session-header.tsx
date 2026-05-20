@@ -91,7 +91,11 @@ export const SessionHeader = ({
             tts={!textOnly && session.has_tts}
           />
         </KVRow>
-        <KVRow label="Turns">{session.turn_count ?? '—'}</KVRow>
+        {/* Turn count lives on the KPI tile below, reading the computed
+         *  summary.total_turns (logical user→assistant pairs). This used to
+         *  duplicate it from session.turn_count, which historically counted
+         *  every message item — so the header would say 8 while the KPI
+         *  said 4 on the same session. One source, no contradiction. */}
       </div>
 
       <div className="obs-kv">

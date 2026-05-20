@@ -173,12 +173,18 @@ export const SessionsPage = ({
         meta: { label: 'Duration' },
       },
       {
+        // The agent_transport_sessions.turn_count column counts message items
+        // (user + assistant). The session-detail KPI tile shows
+        // summary.total_turns (logical user→assistant pairs), which is the
+        // canonical "turn count" elsewhere. Same column, two semantics —
+        // surface this one as "Messages" so neither lies, and let the KPI
+        // tile own the word "Turns".
         id: 'turn_count',
         accessorKey: 'turn_count',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Turns" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Messages" />,
         cell: ({ row }) => <span className="tnum">{row.original.turn_count}</span>,
         enableSorting: false,
-        meta: { label: 'Turns' },
+        meta: { label: 'Messages' },
       },
     ],
     [],

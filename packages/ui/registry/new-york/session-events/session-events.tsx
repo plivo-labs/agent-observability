@@ -94,6 +94,11 @@ function getFunctionCallOutput(item: Record<string, unknown> | null): Record<str
   return item.type === 'function_call_output' ? item : asRecord(item.function_call_output)
 }
 
+function getAgentConfigUpdate(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'agent_config_update' ? item : asRecord(item.agent_config_update)
+}
+
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1">
@@ -270,11 +275,78 @@ function EventMessage({ event }: { event: SessionEvent }) {
         if (from != null) return <>handoff from: <b>{String(from)}</b></>
         // Shouldn't happen — fall through to the generic item renderer.
       }
-      return (
-        <>
-          item: <b>{String(item.type ?? 'unknown')}</b>
-        </>
-      )
+      const configUpdate = getAgentConfigUpdate(item)
+      if (configUpdate) {
+        // Mid-session config swap — surface the two fields readers actually
+        // need to recognize the new identity (tools the agent gained,
+        // first line of the new instructions). The full instructions live
+        // on the Config tab; pulling them into the events row would push
+        // every other event off-screen.
+        const toolsAdded = Array.isArray(configUpdate.tools_added)
+          ? (configUpdate.tools_added as unknown[]).map(String)
+          : []
+        const toolsRemoved = Array.isArray(configUpdate.tools_removed)
+          ? (configUpdate.tools_removed as unknown[]).map(String)
+          : []
+        const instructions = typeof configUpdate.instructions === 'string'
+          ? configUpdate.instructions
+          : ''
+        const firstLine = instructions.split('\n')[0].slice(0, 120)
+        const ellipsis = instructions.length > firstLine.length ? '…' : ''
+        const parts: React.ReactNode[] = []
+        if (toolsAdded.length > 0) {
+          parts.push(
+            <span key="added">
+              <span className="text-muted-foreground">tools+</span>{' '}
+              <code>{toolsAdded.join(', ')}</code>
+            </span>,
+          )
+        }
+        if (toolsRemoved.length > 0) {
+          parts.push(
+            <span key="removed">
+              <span className="text-muted-foreground">tools−</span>{' '}
+              <code>{toolsRemoved.join(', ')}</code>
+            </span>,
+          )
+        }
+        if (firstLine.trim()) {
+          parts.push(
+            <q key="instructions">{firstLine}{ellipsis}</q>,
+          )
+        }
+        return (
+          <>
+            config update
+            {parts.length > 0 && <> · </>}
+            {parts.flatMap((p, i) => (i === 0 ? [p] : [<> · </>, p]))}
+          </>
+        )
+      }
+      // Unknown wrapper type. Items may be either flat (`item.type === 'X'`)
+      // or wrapped (`item.X = {...}`); when neither pattern matched
+      // anything we recognize, surface the first wrapper-looking key so
+      // the reader at least sees what KIND of item it was instead of a
+      // bare "unknown".
+      if (item.type) {
+        return (
+          <>
+            item: <b>{String(item.type)}</b>
+          </>
+        )
+      }
+      const wrappedKey = Object.keys(item).find((k) => {
+        const v = (item as Record<string, unknown>)[k]
+        return v != null && typeof v === 'object'
+      })
+      if (wrappedKey) {
+        return (
+          <>
+            item: <b>{wrappedKey}</b>
+          </>
+        )
+      }
+      return <>item: <b>unknown</b></>
     }
     case 'speech_created':
       return (
