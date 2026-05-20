@@ -62,7 +62,7 @@ interface PropDef {
 interface DocEntry {
   id: string
   label: string
-  group: 'Server setup' | 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
+  group: 'Server setup' | 'Eval plugins' | 'Core' | 'Hooks' | 'Pages' | 'Components' | 'Charts' | 'Utilities'
   /** Component registry name (for the install command). Omitted for guide
    *  entries that don't correspond to a registry item. */
   pkg?: string
@@ -408,6 +408,242 @@ docker compose up --build`}
       </>
     ),
   },
+
+  // ───── Eval plugins ──────────────────────────────────────────────────
+  {
+    id: 'pytest-plugin',
+    label: 'pytest-agent-observability',
+    group: 'Eval plugins',
+    description:
+      'pytest plugin that streams LiveKit-agents eval results into Agent Observability. Each pytest invocation lands as one eval_run; every test surfaces as an eval_case with events, judge verdicts, and failure detail.',
+    body: () => (
+      <>
+        <div className="comp-sub">Install</div>
+        <CodeBlock
+          lang="bash"
+          code={`pip install pytest-agent-observability`}
+        />
+        <p className="docs-p">
+          Requires Python 3.9+ and pytest 7+. <code className="type">livekit-agents</code> is optional — the plugin works for plain pytest suites too, and pulls eval data from the LiveKit assertion API when it's present.
+        </p>
+
+        <div className="comp-sub">Configure</div>
+        <p className="docs-p">
+          The plugin reads from CLI flags first, then environment variables. Only the URL is required; everything else is optional but recommended so the run identifies itself in the dashboard.
+        </p>
+        <div className="docs-props">
+          <table>
+            <thead>
+              <tr>
+                <th>CLI flag</th>
+                <th>Env var</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>--agent-observability-url</code><span className="req"> required</span></td>
+                <td><code>AGENT_OBSERVABILITY_URL</code></td>
+                <td>Base URL of the obs server (e.g. <code className="type">http://localhost:9090</code>).</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-agent-id</code></td>
+                <td><code>AGENT_OBSERVABILITY_AGENT_ID</code></td>
+                <td>Stable identifier for the agent under test. Matches the <code className="type">agent_id</code> the live SDK uses so production sessions + simulation runs aggregate under one agent row.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-agent-name</code></td>
+                <td><code>AGENT_OBSERVABILITY_AGENT_NAME</code></td>
+                <td>Human-readable label for the agent. Surfaced in the dashboard alongside the ID.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-account-id</code></td>
+                <td><code>AGENT_OBSERVABILITY_ACCOUNT_ID</code></td>
+                <td>Account scope for multi-tenant deployments. Optional.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-run-name</code></td>
+                <td><code>AGENT_OBSERVABILITY_RUN_NAME</code></td>
+                <td>Human-readable label for this run (e.g. <code className="type">Nightly smoke</code>, <code className="type">PR #482</code>). Shown in the run list.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-live-streaming</code></td>
+                <td><code>AGENT_OBSERVABILITY_LIVE_STREAMING</code></td>
+                <td>When set, the plugin emits per-case events as they finish (instead of batching at the end). Useful for long suites where you want to see partial progress on the dashboard.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-timeout</code></td>
+                <td><code>AGENT_OBSERVABILITY_TIMEOUT</code></td>
+                <td>HTTP timeout in seconds for the upload calls. Default <code className="dflt">10</code>.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-max-retries</code></td>
+                <td><code>AGENT_OBSERVABILITY_MAX_RETRIES</code></td>
+                <td>Retries on transient failure before falling back to local cache. Default <code className="dflt">3</code>.</td>
+              </tr>
+              <tr>
+                <td><code>--agent-observability-fallback-dir</code></td>
+                <td><code>AGENT_OBSERVABILITY_FALLBACK_DIR</code></td>
+                <td>Where to dump payloads when the server is unreachable after all retries. Default <code className="dflt">.agent-observability-cache/</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="comp-sub">Use inside a test</div>
+        <p className="docs-p">
+          The plugin auto-captures LiveKit's <code className="type">RunResult</code> objects. In most tests you just write the eval the way you normally would — the plugin records the chat history, judge verdicts, and tool calls under the hood.
+        </p>
+        <CodeBlock
+          lang="python"
+          code={`# conftest.py — nothing needed; the plugin auto-registers.
+
+# my_test.py
+import pytest
+from livekit.agents import Agent, AgentSession, inference
+from livekit.agents.evals import accuracy_judge, safety_judge
+
+class Assistant(Agent):
+    def __init__(self):
+        super().__init__(instructions="Be helpful.")
+
+@pytest.mark.asyncio
+async def test_greets_politely():
+    llm = inference.LLM(model="openai/gpt-4.1-mini")
+    session = AgentSession(llm=llm)
+    await session.start(agent=Assistant())
+
+    result = await session.run(user_input="Hello")
+    result.expect.next_event().is_message(role="assistant")
+    await result.expect.next_event(type="message").judge(
+        llm,
+        intent="greets politely",
+    )
+`}
+        />
+
+        <div className="comp-sub">Run</div>
+        <CodeBlock
+          lang="bash"
+          code={`# Inline config — best for CI
+pytest tests/ \\
+  --agent-observability-url=http://obs.example.com \\
+  --agent-observability-agent-id=support-bot \\
+  --agent-observability-agent-name="Support Bot" \\
+  --agent-observability-run-name="PR #482"
+
+# Or via env vars (one-time export, useful for local dev)
+export AGENT_OBSERVABILITY_URL=http://localhost:9090
+export AGENT_OBSERVABILITY_AGENT_ID=support-bot
+pytest tests/`}
+        />
+        <p className="docs-p">
+          On success, the dashboard shows the run under <code className="type">Agents → support-bot → Simulation Evals</code> with per-case pass/fail rows, judge verdicts, and the full event trace.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'vitest-plugin',
+    label: 'vitest-agent-observability',
+    group: 'Eval plugins',
+    description:
+      'Vitest reporter that uploads LiveKit-agents eval results to Agent Observability. Same model as the pytest plugin: each `vitest run` is one eval_run; every `it(...)` becomes one eval_case.',
+    body: () => (
+      <>
+        <div className="comp-sub">Install</div>
+        <CodeBlock
+          lang="bash"
+          code={`npm install -D vitest-agent-observability`}
+        />
+        <p className="docs-p">
+          Requires Node 18+ and <code className="type">vitest {'>='} 1.0</code>. <code className="type">@livekit/agents</code> is optional — the reporter works for plain Vitest suites too.
+        </p>
+
+        <div className="comp-sub">Configure</div>
+        <p className="docs-p">
+          The reporter is added as a Vitest reporter; the setup file registers an <code className="type">afterEach</code> hook that flushes captured <code className="type">RunResult</code>/judgment data into <code className="type">task.meta</code>. Without the setup file, nothing will be uploaded from tests running in worker pools.
+        </p>
+        <CodeBlock
+          lang="ts"
+          code={`// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import AgentObservability from 'vitest-agent-observability';
+
+export default defineConfig({
+  test: {
+    setupFiles: ['vitest-agent-observability/setup'],
+    reporters: [
+      'default',
+      new AgentObservability({
+        // Optional — falls back to AGENT_OBSERVABILITY_URL env var.
+        // url: 'http://localhost:9090',
+        agentId: 'support-bot',
+        agentName: 'Support Bot',
+        runName: 'PR #482',          // optional, shown in the run list
+        accountId: 'acct_abc123',    // optional
+        liveStreaming: false,        // emit per-case as they finish
+        timeout: 10_000,             // upload timeout (ms)
+        maxRetries: 3,
+        fallbackDir: '.agent-observability-cache',
+      }),
+    ],
+  },
+});
+`}
+        />
+        <p className="docs-p">
+          Every option is also readable from an environment variable
+          (e.g. <code className="type">AGENT_OBSERVABILITY_AGENT_ID</code>, <code className="type">AGENT_OBSERVABILITY_RUN_NAME</code>). Constructor options take precedence when both are present.
+        </p>
+
+        <div className="comp-sub">Use inside a test</div>
+        <p className="docs-p">
+          Auto-capture is on by default. The plugin monkey-patches <code className="type">AgentSession.prototype.run</code> so every <code className="type">RunResult</code> flows into the collector automatically. <code className="type">captureRunResult(...)</code> is still exported for results produced outside <code className="type">.run()</code>; it's idempotent.
+        </p>
+        <CodeBlock
+          lang="ts"
+          code={`import { describe, it } from 'vitest';
+import { Agent, AgentSession, inference } from '@livekit/agents';
+
+class Assistant extends Agent {
+  constructor() { super({ instructions: 'Be helpful.' }); }
+}
+
+describe('Assistant', () => {
+  it('greets politely', async () => {
+    const llm = new inference.LLM({ model: 'openai/gpt-4.1-mini' });
+    const session = new AgentSession({ llm });
+    await session.start({ agent: new Assistant() });
+
+    const result = await session.run({ userInput: 'Hello' });
+
+    result.expect.nextEvent().isMessage({ role: 'assistant' });
+    await result.expect.nextEvent({ type: 'message' }).judge(llm, {
+      intent: 'greets politely',
+    });
+  });
+});
+`}
+        />
+
+        <div className="comp-sub">Run</div>
+        <CodeBlock
+          lang="bash"
+          code={`# Inline config + env
+AGENT_OBSERVABILITY_URL=http://obs.example.com \\
+  npx vitest run
+
+# Or just inline if AGENT_OBSERVABILITY_URL is already exported
+npx vitest run`}
+        />
+        <p className="docs-p">
+          The run shows up at <code className="type">Agents → support-bot → Simulation Evals</code> alongside any pytest runs against the same <code className="type">agent_id</code>.
+        </p>
+      </>
+    ),
+  },
+
   {
     id: 'observability-provider',
     label: 'Agent Observability Provider',
@@ -1231,6 +1467,7 @@ export function MyChart({ data }: { data: Row[] }) {
  * more groups. Inside a group, entries render in declaration order. */
 const CATEGORIES: Array<{ label: string; groups: Array<DocEntry['group']> }> = [
   { label: 'Server setup', groups: ['Server setup'] },
+  { label: 'Eval plugins', groups: ['Eval plugins'] },
   {
     label: 'UI components',
     groups: ['Core', 'Hooks', 'Pages', 'Components', 'Charts', 'Utilities'],
@@ -1441,6 +1678,7 @@ async function getHighlighter(): Promise<HighlighterCore> {
           import('shiki/langs/tsx.mjs'),
           import('shiki/langs/typescript.mjs'),
           import('shiki/langs/bash.mjs'),
+          import('shiki/langs/python.mjs'),
         ],
         engine: createOnigurumaEngine(import('shiki/wasm')),
       })
@@ -1455,7 +1693,7 @@ function CodeBlock({
   className,
 }: {
   code: string
-  lang?: 'tsx' | 'ts' | 'bash'
+  lang?: 'tsx' | 'ts' | 'bash' | 'python'
   className?: string
 }) {
   const [html, setHtml] = useState<string>('')
