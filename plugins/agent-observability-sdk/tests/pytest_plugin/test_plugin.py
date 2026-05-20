@@ -40,7 +40,7 @@ def test_plugin_uploads_on_sessionfinish(pytester: pytest.Pytester, monkeypatch,
 
     pytester.makeconftest(
         f"""
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
 
         _orig = uploader.upload
 
@@ -84,7 +84,7 @@ def test_plugin_records_failure(pytester: pytest.Pytester, monkeypatch, tmp_path
 
     pytester.makeconftest(
         f"""
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
         def _stub(payload, config, *, fallback_dir=None):
             import json
             from pathlib import Path
@@ -109,14 +109,22 @@ def test_plugin_records_failure(pytester: pytest.Pytester, monkeypatch, tmp_path
     assert "one is not two" in case["failure"]["message"]
 
 
-def test_terminal_summary_prints_run_id_and_dashboard_url(
+def test_terminal_summary_prints_run_id_and_agent_scoped_dashboard_url(
     pytester: pytest.Pytester, monkeypatch
 ):
-    """Successful upload should print run_id + clickable dashboard URL."""
+    """Successful upload prints the v2 agent-scoped dashboard URL.
+
+    The v2 dashboard routes are agent-first: simulation eval runs live at
+    /agents/:agentId/simulation-evals/:runId, not at the legacy /evals/:id.
+    """
     monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    monkeypatch.setenv(
+        "AGENT_OBSERVABILITY_AGENT_ID",
+        "9c2f7e3d-4b8a-4d2e-9f1b-stubagent01",
+    )
     pytester.makeconftest(
         """
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
         def _stub(payload, config, *, fallback_dir=None):
             return True
         uploader.upload = _stub
@@ -134,7 +142,38 @@ def test_terminal_summary_prints_run_id_and_dashboard_url(
     assert "agent-observability" in stdout
     assert "Run uploaded:" in stdout
     assert "View at:" in stdout
-    assert "http://stub:9090/evals/" in stdout
+    assert (
+        "http://stub:9090/agents/9c2f7e3d-4b8a-4d2e-9f1b-stubagent01/simulation-evals/"
+        in stdout
+    )
+
+
+def test_terminal_summary_falls_back_to_agents_list_without_agent_id(
+    pytester: pytest.Pytester, monkeypatch
+):
+    """No agent_id → link goes to the agents-list root, not the legacy /evals/."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    monkeypatch.delenv("AGENT_OBSERVABILITY_AGENT_ID", raising=False)
+    pytester.makeconftest(
+        """
+        from agent_observability.livekit.pytest import uploader
+        def _stub(payload, config, *, fallback_dir=None):
+            return True
+        uploader.upload = _stub
+        """
+    )
+    pytester.makepyfile(
+        """
+        def test_one(): pass
+        """
+    )
+    result = pytester.runpytest("-p", "agent_observability", "-v")
+    result.assert_outcomes(passed=1)
+
+    stdout = result.stdout.str()
+    assert "View at:      http://stub:9090/agents" in stdout
+    # Legacy /evals/<id> URL must never appear.
+    assert "/evals/" not in stdout.replace("/observability/evals/", "")
 
 
 def test_terminal_summary_reports_failure_and_fallback_path(
@@ -144,7 +183,7 @@ def test_terminal_summary_reports_failure_and_fallback_path(
     monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
     pytester.makeconftest(
         """
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
         def _stub(payload, config, *, fallback_dir=None):
             return False  # upload failed
         uploader.upload = _stub
@@ -168,7 +207,7 @@ def test_capture_without_plugin_is_safe(pytester: pytest.Pytester, monkeypatch):
     monkeypatch.delenv("AGENT_OBSERVABILITY_URL", raising=False)
     pytester.makepyfile(
         """
-        from pytest_agent_observability import capture
+        from agent_observability.livekit.pytest import capture
         def test_runs():
             # Fake run result — capture should silently no-op.
             capture(object())
@@ -185,7 +224,7 @@ def test_autocapture_via_session_run_wrapper(pytester: pytest.Pytester, monkeypa
 
     pytester.makeconftest(
         f"""
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
         def _stub(payload, config, *, fallback_dir=None):
             import json
             from pathlib import Path
@@ -256,7 +295,7 @@ def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch,
 
     pytester.makeconftest(
         f"""
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
         def _stub(payload, config, *, fallback_dir=None):
             import json
             from pathlib import Path
@@ -268,7 +307,7 @@ def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch,
     pytester.makepyfile(
         """
         from dataclasses import dataclass
-        from pytest_agent_observability import capture
+        from agent_observability.livekit.pytest import capture
 
         @dataclass
         class FakeMsg:
@@ -313,7 +352,7 @@ def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch,
 def _capture_payload_conftest(captured_path) -> str:
     """conftest stub that writes the payload the plugin would upload."""
     return f"""
-        from pytest_agent_observability import uploader
+        from agent_observability.livekit.pytest import uploader
 
         def _stub(payload, config, *, fallback_dir=None):
             import json

@@ -106,9 +106,9 @@ by the Vitest reporter from standard env vars.
 ## Migrating from `vitest-agent-observability`
 
 The standalone `vitest-agent-observability` package is **discontinued**.
-The last published release (0.2.1) still installs but predates the
-agent-observability v2 server's required `agent_id` tag and will see
-uploads rejected with `400 missing_agent_id`. Switch to this SDK:
+The last published release (0.2.1) still installs but predates this
+SDK's helpers (`initObservability`, `ensureObservabilityUrl`). Switch
+to this SDK to pick those up + future fixes:
 
 ```diff
 -import AgentObservability from 'vitest-agent-observability';

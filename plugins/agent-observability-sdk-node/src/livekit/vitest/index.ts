@@ -137,7 +137,7 @@ export default class AgentObservabilityReporter {
         fallbackDir,
         logger: this.logger,
       });
-      this.printSummary(payload.run.run_id, ok, fallbackDir);
+      this.printSummary(payload.run.run_id, payload.run.agent_id ?? null, ok, fallbackDir);
     } finally {
       if (this.restoreJudge) {
         try { this.restoreJudge(); } catch { /* ignore */ }
@@ -153,12 +153,24 @@ export default class AgentObservabilityReporter {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   /** Emit the run_id + dashboard URL alongside Vitest's final output. */
-  private printSummary(runId: string, ok: boolean, fallbackDir: string | null): void {
+  private printSummary(
+    runId: string,
+    agentId: string | null,
+    ok: boolean,
+    fallbackDir: string | null,
+  ): void {
     if (!this.uploadConfig || !this.logger.info) return;
     if (ok) {
       const baseUrl = this.uploadConfig.url.replace(/\/$/, "");
+      // v2 routes are agent-scoped: /agents/:agentId/simulation-evals/:runId.
+      // When the suite ran without an agent_id (rare — uploads usually
+      // reject upstream), fall back to the agents-list root so the link
+      // still goes somewhere useful.
+      const viewUrl = agentId
+        ? `${baseUrl}/agents/${agentId}/simulation-evals/${runId}`
+        : `${baseUrl}/agents`;
       this.logger.info(`Run uploaded: ${runId}`);
-      this.logger.info(`View at:      ${baseUrl}/evals/${runId}`);
+      this.logger.info(`View at:      ${viewUrl}`);
     } else {
       this.logger.warn(`Run upload failed: ${runId}`);
       if (fallbackDir) {

@@ -17,7 +17,7 @@ So these tests verify:
 
 from __future__ import annotations
 
-from agent_observability.judges import (
+from agent_observability.livekit.judges import (
     freeflow_response_accuracy_judge,
     hallucination_judge,
     hold_requested_intent_accuracy_judge,
@@ -103,7 +103,7 @@ def test_knowledge_base_correctness_splices_context():
 
 
 def test_default_judges_returns_four_ground_truth_free_judges():
-    from agent_observability.judges import default_judges
+    from agent_observability.livekit.judges import default_judges
 
     judges = default_judges()
     names = [j.name for j in judges]
@@ -120,7 +120,7 @@ def test_default_judges_propagates_llm(monkeypatch):
 
     sentinel = object()
 
-    from agent_observability.judges import default_judges
+    from agent_observability.livekit.judges import default_judges
 
     judges = default_judges(llm=sentinel)  # type: ignore[arg-type]
     for j in judges:

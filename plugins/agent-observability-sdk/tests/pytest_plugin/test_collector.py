@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pytest_agent_observability import collector as col
+from agent_observability.livekit.pytest import collector as col
 
 
 def test_capture_without_active_test_is_noop():

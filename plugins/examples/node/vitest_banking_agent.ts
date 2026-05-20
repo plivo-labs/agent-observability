@@ -21,7 +21,7 @@
  *   # below is the human-facing label kept in this docstring; it is
  *   # never sent to the server.
  *   export AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c   # optional
- *   npx vitest run plugins/examples/vitest_banking_agent.ts
+ *   npx vitest run plugins/examples/node/vitest_banking_agent.ts
  */
 
 import { describe, it } from "vitest";

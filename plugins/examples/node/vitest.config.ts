@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config'
-import AgentObservability from 'vitest-agent-observability'
+import AgentObservability from 'agent-observability-sdk/livekit/vitest'
 
 // Vitest config for the example eval suites. `setupFiles` registers the
 // plugin's afterEach hook that flushes captured events; the reporter
@@ -20,7 +20,7 @@ export default defineConfig({
       // Initializes the @livekit/agents pino logger. Must run before any
       // AgentSession is constructed.
       './setup.ts',
-      'vitest-agent-observability/setup',
+      'agent-observability-sdk/livekit/vitest/setup',
     ],
     reporters: [
       'default',

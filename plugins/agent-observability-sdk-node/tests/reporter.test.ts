@@ -139,7 +139,32 @@ describe("AgentObservabilityReporter", () => {
     expect(body.cases[0].failure.kind).toBe("judge_failed");
   });
 
-  test("prints run_id + dashboard URL on successful upload", async () => {
+  test("prints run_id + agent-scoped dashboard URL on successful upload", async () => {
+    // v2 routes are agent-first: /agents/:agentId/simulation-evals/:runId.
+    // Older clients pointed at the legacy /evals/:id; assertion catches a
+    // regression to that path.
+    const infos: string[] = [];
+    const reporter = new AgentObservabilityReporter({
+      url: "http://stub:9090",
+      agentId: "9c2f7e3d-4b8a-4d2e-9f1b-stubagent01",
+      fallbackDir: null as any,
+    });
+    (reporter as any).logger = {
+      info: (m: string) => infos.push(m),
+      warn: () => {},
+      error: () => {},
+    };
+    await reporter.onInit({});
+    await reporter.onFinished([makeFile("a.test.ts", [makeTest("t1", { state: "pass" })])], []);
+
+    const runId = JSON.parse(fetchMock.mock.calls[0][1].body as string).run.run_id;
+    expect(infos).toContain(`Run uploaded: ${runId}`);
+    expect(infos).toContain(
+      `View at:      http://stub:9090/agents/9c2f7e3d-4b8a-4d2e-9f1b-stubagent01/simulation-evals/${runId}`,
+    );
+  });
+
+  test("falls back to /agents root when no agent_id supplied", async () => {
     const infos: string[] = [];
     const reporter = new AgentObservabilityReporter({
       url: "http://stub:9090",
@@ -153,9 +178,7 @@ describe("AgentObservabilityReporter", () => {
     await reporter.onInit({});
     await reporter.onFinished([makeFile("a.test.ts", [makeTest("t1", { state: "pass" })])], []);
 
-    const runId = JSON.parse(fetchMock.mock.calls[0][1].body as string).run.run_id;
-    expect(infos).toContain(`Run uploaded: ${runId}`);
-    expect(infos).toContain(`View at:      http://stub:9090/evals/${runId}`);
+    expect(infos).toContain(`View at:      http://stub:9090/agents`);
   });
 
   test("prints fallback path on upload failure", async () => {

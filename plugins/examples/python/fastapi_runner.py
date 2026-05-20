@@ -6,15 +6,17 @@
 #     "pydantic>=2.0",
 #     "pytest>=7.0",
 #     "pytest-asyncio>=0.21",
-#     "pytest-agent-observability",
+#     "agent-observability-sdk",
 #     "livekit-agents>=1.5",
 #     "livekit-plugins-openai>=1.5",
 #     "openai>=1.40",
 # ]
 #
-# # Local override — uncomment to test against the in-tree plugin.
-# # [tool.uv.sources]
-# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Resolve agent-observability-sdk from the in-tree checkout. Drop this
+# # block (and let the dep above resolve from PyPI) when running outside
+# # the monorepo.
+# [tool.uv.sources]
+# agent-observability-sdk = { path = "../../agent-observability-sdk" }
 # ///
 """FastAPI server that exposes test runs over HTTP.
 

@@ -3,15 +3,17 @@
 # dependencies = [
 #     "pytest>=7.0",
 #     "pytest-asyncio>=0.21",
-#     "pytest-agent-observability",
+#     "agent-observability-sdk",
 #     "livekit-agents>=1.5",
 #     "livekit-plugins-openai>=1.5",
 #     "openai>=1.40",
 # ]
 #
-# # Local override — uncomment to test against the in-tree plugin.
-# # [tool.uv.sources]
-# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Resolve agent-observability-sdk from the in-tree checkout. Drop this
+# # block (and let the dep above resolve from PyPI) when running outside
+# # the monorepo.
+# [tool.uv.sources]
+# agent-observability-sdk = { path = "../../agent-observability-sdk" }
 # ///
 """Pytest example where an LLM generates the scenarios for you.
 
@@ -40,7 +42,7 @@ Run (inline deps via PEP 723 — no prior install step needed):
     # never sent to the server.
     export AGENT_OBSERVABILITY_AGENT_ID=1906d7f7-eb95-4c00-a200-8a710aca85ee   # optional
     export AGENT_OBSERVABILITY_GENERATED_N=10            # optional; default 10
-    uv run plugins/examples/pytest_generated_agent.py
+    uv run plugins/examples/python/pytest_generated_agent.py
 """
 
 from __future__ import annotations
@@ -200,7 +202,7 @@ async def test_generated_scenario(scenario: Scenario) -> None:
     """One parametrized case per generated scenario.
 
     We use the framework's `.judge()` API rather than our own judge loop so
-    the `pytest-agent-observability` plugin (which monkey-patches
+    the `agent-observability-sdk` plugin (which monkey-patches
     `ChatMessageAssert.judge`) captures each generated scenario's intent +
     verdict + reasoning as a first-class Judgment event in the dashboard. A
     fail surfaces as a judgment card, not a raw pytest assertion traceback.

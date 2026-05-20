@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pytest_agent_observability.events import serialize_events
+from agent_observability.livekit.pytest.events import serialize_events
 
 
 # ── Fake LiveKit event shapes ──────────────────────────────────────────────

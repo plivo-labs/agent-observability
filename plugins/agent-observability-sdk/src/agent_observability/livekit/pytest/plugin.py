@@ -421,8 +421,18 @@ def pytest_terminal_summary(
     terminalreporter.write_sep("=", "agent-observability")
     if _state._last_upload_ok and _state.upload_config is not None:
         base_url = _state.upload_config.url  # already rstrip('/')
+        # v2 routes are agent-scoped: /agents/:agentId/simulation-evals/:runId.
+        # When the suite ran without an agent_id (rare — uploads usually
+        # reject upstream), fall back to the agents-list root so the link
+        # still goes somewhere useful.
         terminalreporter.write_line(f"Run uploaded: {run_id}")
-        terminalreporter.write_line(f"View at:      {base_url}/evals/{run_id}")
+        if _state.agent_id:
+            view_url = (
+                f"{base_url}/agents/{_state.agent_id}/simulation-evals/{run_id}"
+            )
+        else:
+            view_url = f"{base_url}/agents"
+        terminalreporter.write_line(f"View at:      {view_url}")
     else:
         terminalreporter.write_line(f"Run upload failed: {run_id}")
         if _state.fallback_dir is not None:

@@ -22,15 +22,13 @@ __pycache__/
 .pytest_cache/
 .venv/
 
-# plugin build output (regenerable; published via npm tarball)
-plugins/vitest-agent-observability/dist/
-
 # SDK build / lock output
 plugins/agent-observability-sdk/dist/
 plugins/agent-observability-sdk/uv.lock
+plugins/agent-observability-sdk-node/dist/
 
 # TypeScript compile artifacts (sources are .ts/.tsx; .js are stale outputs)
 tests/**/*.test.js
 packages/ui/tests/**/*.test.js
-plugins/examples/vitest/*.js
+plugins/examples/node/*.js
 tsconfig.tsbuildinfo

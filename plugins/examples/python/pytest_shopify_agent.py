@@ -3,14 +3,16 @@
 # dependencies = [
 #     "pytest>=7.0",
 #     "pytest-asyncio>=0.21",
-#     "pytest-agent-observability",
+#     "agent-observability-sdk",
 #     "livekit-agents>=1.5",
 #     "livekit-plugins-openai>=1.5",
 # ]
 #
-# # Local override — uncomment to test against the in-tree plugin.
-# # [tool.uv.sources]
-# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Resolve agent-observability-sdk from the in-tree checkout. Drop this
+# # block (and let the dep above resolve from PyPI) when running outside
+# # the monorepo.
+# [tool.uv.sources]
+# agent-observability-sdk = { path = "../../agent-observability-sdk" }
 # ///
 """Simulation tests for the Shopify phone-support example agent.
 
@@ -40,7 +42,7 @@ Run (inline deps via PEP 723 — no prior install step needed):
     # the same agent in obs. Override with the env var if you want
     # a separate agent record for the simulation run.
     export AGENT_OBSERVABILITY_AGENT_ID=da3d4071-34ce-41b2-8c9e-05eef23a43bb
-    uv run plugins/examples/pytest/pytest_shopify_agent.py
+    uv run plugins/examples/python/pytest_shopify_agent.py
 """
 
 from __future__ import annotations

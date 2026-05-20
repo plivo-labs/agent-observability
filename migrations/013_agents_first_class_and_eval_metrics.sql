@@ -25,7 +25,12 @@
 -- Both columns are SDK-supplied (AudioStreamServer / AgentServer take
 -- agent_id and agent_name kwargs) and reach obs via the OTLP session-
 -- report log + `agent_id:<value>` / `agent_name:<value>` session tags.
--- The ingest path returns 400 if agent_id is missing.
+--
+-- NOTE: this migration ran with agent_id as NOT NULL. Migration 014
+-- subsequently relaxes that to nullable so the column can be backfilled
+-- via the OTLP tag channel keyed on session_id (mirrors how account_id
+-- has always behaved). The NOT NULL guard below stays as-is — it was
+-- the right shape at the time and is reverted by 014. Don't re-add it.
 --
 -- DEPLOYMENT SAFETY: PostgreSQL rejects ADD COLUMN ... NOT NULL on a
 -- non-empty table without a DEFAULT. Add nullable first, then

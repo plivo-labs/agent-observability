@@ -1,7 +1,7 @@
 # Vitest examples
 
 Runnable reference eval suites that exercise the
-[`vitest-agent-observability`](../../vitest-agent-observability/) reporter.
+[`agent-observability-sdk`](../../agent-observability-sdk-node/) (Node) reporter.
 
 ## Run
 
@@ -35,7 +35,7 @@ Override by prefixing your own: `AGENT_OBSERVABILITY_AGENT_ID=my-bot bun run tes
 
 ## Plugin link
 
-`package.json` pulls the reporter via `"vitest-agent-observability":
-"file:../../vitest-agent-observability"`, so `bun run build` inside
-`../../vitest-agent-observability` picks up immediately after a
+`package.json` pulls the SDK via `"agent-observability-sdk":
+"file:../../agent-observability-sdk-node"`, so `bun run build` inside
+`../../agent-observability-sdk-node` picks up immediately after a
 `bun install` here.

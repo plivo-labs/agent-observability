@@ -16,9 +16,9 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-from pytest_agent_observability import collector as col
-from pytest_agent_observability import plugin as pl
-from pytest_agent_observability import uploader as up
+from agent_observability.livekit.pytest import collector as col
+from agent_observability.livekit.pytest import plugin as pl
+from agent_observability.livekit.pytest import uploader as up
 
 
 def _make_config() -> up.UploadConfig:

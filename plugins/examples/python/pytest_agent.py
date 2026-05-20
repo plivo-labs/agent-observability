@@ -3,18 +3,20 @@
 # dependencies = [
 #     "pytest>=7.0",
 #     "pytest-asyncio>=0.21",
-#     "pytest-agent-observability",
+#     "agent-observability-sdk",
 #     "livekit-agents>=1.5",
 #     "livekit-plugins-openai>=1.5",
 # ]
 #
-# # Local override — uncomment to test against the in-tree plugin.
-# # [tool.uv.sources]
-# pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Resolve agent-observability-sdk from the in-tree checkout. Drop this
+# # block (and let the dep above resolve from PyPI) when running outside
+# # the monorepo.
+# [tool.uv.sources]
+# agent-observability-sdk = { path = "../../agent-observability-sdk" }
 # ///
 """Example LiveKit agent + pytest evals.
 
-Demonstrates the shape of tests that `pytest-agent-observability` will ingest:
+Demonstrates the shape of tests that `agent-observability-sdk` will ingest:
   - Function-call + arguments assertions
   - Function-call-output assertions
   - LLM-judge pass/fail verdicts
@@ -32,7 +34,7 @@ To run:
     # never sent to the server.
     export AGENT_OBSERVABILITY_AGENT_ID=9a8efb7b-6aeb-4ed9-9334-d121f7c67bb5
     export OPENAI_API_KEY=sk-...
-    uv run plugins/examples/pytest/pytest_agent.py
+    uv run plugins/examples/python/pytest_agent.py
 
 The PEP 723 header above declares this file's deps so `uv run` resolves them
 into a one-shot venv. The `if __name__ == "__main__"` block at the bottom

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pytest_agent_observability import collector as col
-from pytest_agent_observability.payload import build_payload, TESTING_FRAMEWORK
+from agent_observability.livekit.pytest import collector as col
+from agent_observability.livekit.pytest.payload import build_payload, TESTING_FRAMEWORK
 
 
 def test_build_payload_shape():

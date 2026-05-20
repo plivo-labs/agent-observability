@@ -340,18 +340,22 @@ describe("POST /observability/recordings/v0", () => {
     expect(res.status).toBe(401);
   });
 
-  // ── agent_id ingest validation ─────────────────────────────────────────
+  // ── agent_id ingest extraction ─────────────────────────────────────────
   //
   // Three extraction paths from rawReport (in order of precedence):
   //   1. rawReport.agent_id (top-level field)
   //   2. rawReport.tags[] entry matching /^agent_id:.+/
-  // Plus: when rawReport is absent (header-only POST), validation is
-  // skipped — the DB layer's NOT NULL will catch it instead. These four
-  // tests pin each branch.
+  // When neither is present the route still accepts the upload with
+  // agentId=null — agent_transport_sessions.agent_id is nullable (mig
+  // 014), and the OTLP "tag" body that arrives ~1s later carries
+  // `agent_id:<uuid>` which `applySessionTagMetadata` backfills via
+  // an UPDATE keyed on session_id. Same shape `account_id` follows.
+  // Header-only POSTs (no chat_history blob) also accept with null.
 
-  test("rejects with 400 when rawReport is present but agent_id is missing", async () => {
+  test("accepts with agent_id=null when rawReport carries no agent identifier", async () => {
     const chatHistory = JSON.stringify({
-      // No agent_id, no tags carrying it — should fail validation.
+      // No agent_id, no tags carrying it. The route used to 400 here;
+      // we now accept and rely on the OTLP backfill path.
       items: [
         { id: "m1", type: "message", role: "user" },
       ],
@@ -367,11 +371,10 @@ describe("POST /observability/recordings/v0", () => {
       })
     );
 
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error?.code).toBe("missing_agent_id");
-    // Route bailed before insertSession; mocked DB shouldn't see this.
-    expect(mockInsertSession).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
+    expect(call.agentId).toBeNull();
   });
 
   test("extracts agent_id from rawReport.tags[] when no top-level field", async () => {
@@ -426,11 +429,10 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.agentId).toBe("top-level-wins-uuid");
   });
 
-  test("skips validation when rawReport is absent (header-only POST)", async () => {
-    // No chat_history blob → rawReport stays null → validation skipped.
-    // insertSession is still called (with agentId=null); the DB NOT NULL
-    // constraint catches it in production. Behavior we want to preserve
-    // because some test/edge paths upload header+audio without history.
+  test("accepts with agent_id=null when rawReport is absent (header-only POST)", async () => {
+    // No chat_history blob → rawReport stays null → no extractor source.
+    // insertSession runs with agentId=null; OTLP tag arriving later
+    // backfills the column via applySessionTagMetadata.
     const form = new FormData();
     form.append("header", new Blob([JSON.stringify({ session_id: "no-history" })], { type: "application/json" }));
 
@@ -450,10 +452,10 @@ describe("POST /observability/recordings/v0", () => {
 
   test("accepts valid request and calls insertSession", async () => {
     const chatHistory = JSON.stringify({
-      // agent_id is required at ingest now; without it the route 400s. We
-      // put a UUID at the top level here — the SDK puts it on the OTLP
-      // session-report log's attributes too, but for the multipart route
-      // the rawReport.agent_id field is what's extracted.
+      // Happy path: top-level agent_id ships in chat_history and is
+      // extracted here at multipart time. The SDK also puts it on the
+      // OTLP session-report log's attributes for the backfill channel,
+      // but when this field is populated up front the UPDATE is a no-op.
       agent_id: "11111111-2222-3333-4444-555555555555",
       items: [
         { id: "m1", type: "message", role: "user", metrics: { transcription_delay: 0.12 } },

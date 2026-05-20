@@ -2,7 +2,7 @@
  * Example LiveKit agent + Vitest evals.
  *
  * Mirrors `pytest_agent.py` for the Node SDK. Demonstrates the shape of tests
- * that `vitest-agent-observability` will ingest:
+ * that `agent-observability-sdk` (Node) will ingest:
  *   - Function-call + arguments assertions
  *   - Function-call-output assertions
  *   - LLM-judge pass/fail verdicts
@@ -20,7 +20,7 @@
  *   # never sent to the server.
  *   export AGENT_OBSERVABILITY_AGENT_ID=9a8efb7b-6aeb-4ed9-9334-d121f7c67bb5
  *   export OPENAI_API_KEY=sk-...
- *   npx vitest run plugins/examples/vitest_agent.ts
+ *   npx vitest run plugins/examples/node/vitest_agent.ts
  *
  * Requires: @livekit/agents (Node) >=1.5, a text-mode-capable LLM.
  */

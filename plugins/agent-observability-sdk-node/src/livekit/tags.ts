@@ -31,8 +31,10 @@ export interface InitObservabilityOptions {
   /**
    * Stable opaque agent identifier. Falls back to
    * `AGENT_OBSERVABILITY_AGENT_ID` when omitted. Required: the v2
-   * server rejects uploads with a 400 missing_agent_id when no
-   * agent_id is present.
+   * server accepts uploads without an agent_id (it nulls the column
+   * and waits for an OTLP tag to backfill), but without this helper
+   * emitting the tag the backfill never lands and the session stays
+   * unparented on the dashboard.
    */
   agentId?: string;
   /** Human-readable label (display only). Optional. */
@@ -85,8 +87,9 @@ export function initObservability(tagger: Tagger, options: InitObservabilityOpti
   if (!resolvedAgentId) {
     throw new Error(
       "initObservability: agentId is required. Pass agentId='<uuid>' or " +
-        "set AGENT_OBSERVABILITY_AGENT_ID. Without it the server rejects " +
-        "the upload with 400 missing_agent_id.",
+        "set AGENT_OBSERVABILITY_AGENT_ID. The server accepts uploads " +
+        "without one, but the session will sit unparented on the " +
+        "dashboard with no agent_id backfill ever arriving.",
     );
   }
 

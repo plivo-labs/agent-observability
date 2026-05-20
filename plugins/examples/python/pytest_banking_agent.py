@@ -3,14 +3,16 @@
 # dependencies = [
 #     "pytest>=7.0",
 #     "pytest-asyncio>=0.21",
-#     "pytest-agent-observability",
+#     "agent-observability-sdk",
 #     "livekit-agents>=1.5",
 #     "livekit-plugins-openai>=1.5",
 # ]
 #
-# # Local override — uncomment to test against the in-tree plugin.
-# # [tool.uv.sources]
-# pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Resolve agent-observability-sdk from the in-tree checkout. Drop this
+# # block (and let the dep above resolve from PyPI) when running outside
+# # the monorepo.
+# [tool.uv.sources]
+# agent-observability-sdk = { path = "../../agent-observability-sdk" }
 # ///
 """Complex multi-agent example: a retail-banking voice assistant.
 
@@ -43,7 +45,7 @@ Run (inline deps via PEP 723 — no prior install step needed):
     # below is the human-facing label kept in this docstring; it is
     # never sent to the server.
     export AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c   # optional
-    uv run plugins/examples/pytest_banking_agent.py
+    uv run plugins/examples/python/pytest_banking_agent.py
 """
 
 from __future__ import annotations

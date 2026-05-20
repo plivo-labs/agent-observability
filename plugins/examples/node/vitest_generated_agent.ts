@@ -21,7 +21,7 @@
  *   # never sent to the server.
  *   export AGENT_OBSERVABILITY_AGENT_ID=1906d7f7-eb95-4c00-a200-8a710aca85ee   # optional
  *   export AGENT_OBSERVABILITY_GENERATED_N=10            # optional; default 10
- *   npx vitest run plugins/examples/vitest_generated_agent.ts
+ *   npx vitest run plugins/examples/node/vitest_generated_agent.ts
  */
 
 import { describe, it } from "vitest";
@@ -176,7 +176,7 @@ export async function runAll() {
 
 describe("LLM-generated PizzaShopAgent scenarios", () => {
   // We use the framework's `.judge()` rather than our own judge loop so the
-  // `vitest-agent-observability` plugin — which monkey-patches
+  // `agent-observability-sdk` (Node) plugin — which monkey-patches
   // `ChatMessageAssert.judge` — captures each generated scenario's intent,
   // verdict, and reasoning as a first-class Judgment event in the dashboard.
   // A fail surfaces as a judgment card, not a raw Vitest assertion error.

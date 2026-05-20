@@ -3,14 +3,16 @@
 # dependencies = [
 #     "pytest>=7.0",
 #     "pytest-asyncio>=0.21",
-#     "pytest-agent-observability",
+#     "agent-observability-sdk",
 #     "livekit-agents>=1.5.2",
 #     "livekit-plugins-openai>=1.5",
 # ]
 #
-# # Local override — uncomment to test against the in-tree plugin.
-# # [tool.uv.sources]
-# # pytest-agent-observability = { path = "../../pytest-agent-observability" }
+# # Resolve agent-observability-sdk from the in-tree checkout. Drop this
+# # block (and let the dep above resolve from PyPI) when running outside
+# # the monorepo.
+# [tool.uv.sources]
+# agent-observability-sdk = { path = "../../agent-observability-sdk" }
 # ///
 """Shopify pytest sim that mirrors the **live judges example**.
 
@@ -58,7 +60,7 @@ Run (inline deps via PEP 723 — no prior install step needed):
     export OPENAI_API_KEY=sk-...
     export AGENT_OBSERVABILITY_URL=http://localhost:9090   # optional
     export AGENT_OBSERVABILITY_AGENT_ID=da3d4071-34ce-41b2-8c9e-05eef23a43bb
-    uv run plugins/examples/pytest/pytest_shopify_with_judges.py
+    uv run plugins/examples/python/pytest_shopify_with_judges.py
 """
 
 from __future__ import annotations
@@ -72,6 +74,10 @@ from livekit.agents import (
     RunContext,
     function_tool,
     llm,
+)
+from agent_observability.livekit.judges import (
+    default_judges,
+    hallucination_judge,
 )
 from livekit.agents.evals import (
     Judge,
@@ -919,6 +925,58 @@ async def test_confirms_destructive_actions_judge_passes_when_user_consented():
             chat_ctx=sess.chat_ctx
         )
         assert judgment.verdict in {"pass", "maybe"}, judgment.reasoning
+
+
+# ── Post-session judges (agent-observability-sdk) ───────────────────────────
+#
+# The SDK ships nine LiveKit-compatible judges ported from cx-sqs-worker.
+# They satisfy the same Judge interface as the LiveKit built-ins above, so
+# they compose into a single JudgeGroup. `default_judges()` is the
+# pre-configured set of four ground-truth-free judges (Hallucination,
+# Freeflow Response Accuracy, Hold-Requested Intent Accuracy, Loop
+# Detection) — spread it next to any ground-truth-bound judges you build
+# yourself.
+
+
+@pytest.mark.asyncio
+async def test_sdk_hallucination_judge_passes_on_grounded_session():
+    """SDK judge: no fabrications when every fact came from a tool call."""
+    async with _judge_llm() as model, _new_session(model) as sess:
+        await _drive_delivered_order_return(sess)
+        judgment = await hallucination_judge(llm=model).evaluate(
+            chat_ctx=sess.chat_ctx
+        )
+        assert judgment.verdict in {"pass", "maybe"}, judgment.reasoning
+
+
+@pytest.mark.asyncio
+async def test_sdk_default_judges_compose_with_livekit_builtins():
+    """Composition: mix LiveKit built-ins with the SDK's default set.
+
+    `default_judges()` returns the four ground-truth-free SDK judges
+    (Hallucination, Freeflow Response Accuracy, Hold-Requested Intent
+    Accuracy, Loop Detection). They go straight into a JudgeGroup
+    alongside LiveKit's built-ins.
+    """
+    from livekit.agents.evals import JudgeGroup
+
+    async with _judge_llm() as model, _new_session(model) as sess:
+        await _drive_delivered_order_return(sess)
+        group = JudgeGroup(
+            llm=model,
+            judges=[
+                accuracy_judge(),       # LiveKit built-in
+                tool_use_judge(),       # LiveKit built-in
+                *default_judges(llm=model),   # 4 SDK judges
+            ],
+        )
+        result = await group.evaluate(sess.chat_ctx)
+        # Every judge surfaced a verdict; none crashed.
+        assert len(result.judgments) >= 6
+        for name, judgment in result.judgments.items():
+            assert judgment.verdict in {"pass", "fail", "maybe"}, (
+                f"{name}: {judgment.reasoning}"
+            )
 
 
 # ── Entry point: `uv run pytest_shopify_with_judges.py` ─────────────────────

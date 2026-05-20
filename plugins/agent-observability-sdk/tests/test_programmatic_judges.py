@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_observability.judges import IntentAccuracyJudge, ToolCorrectnessJudge
+from agent_observability.livekit.judges import IntentAccuracyJudge, ToolCorrectnessJudge
 
 
 # ── IntentAccuracyJudge ────────────────────────────────────────────────────

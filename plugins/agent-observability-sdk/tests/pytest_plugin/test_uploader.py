@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import httpx
 
-from pytest_agent_observability.uploader import (
+from agent_observability.livekit.pytest.uploader import (
     UploadConfig,
     upload,
     config_from_env,

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-observability-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evaluation judges for AI voice agents (hallucination, response accuracy, intent, tool correctness, etc.)"
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
@@ -23,13 +23,21 @@ dependencies = [
   # We extend `livekit.agents.evals.Judge` and emit `JudgmentResult` from it.
   # Same upper-bound as agent-transport-python, which is the most likely host.
   "livekit-agents>=1.5.2,<1.6",
+  # The pytest plugin lives under `agent_observability.livekit.pytest` and is
+  # surfaced via the pytest11 entry-point below. pytest stays a runtime dep
+  # because the entry-point is loaded at pytest startup; httpx powers the
+  # uploader. Both are small.
+  "pytest>=7.0",
+  "httpx>=0.24",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=7.0",
   "pytest-asyncio>=0.21",
 ]
+
+[project.entry-points.pytest11]
+agent_observability = "agent_observability.livekit.pytest.plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_observability"]

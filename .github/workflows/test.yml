@@ -34,7 +34,30 @@ jobs:
         working-directory: packages/ui
         run: bun test
 
-  vitest-plugin:
+  observability-sdk-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync agent-observability-sdk (Python) dependencies
+        working-directory: plugins/agent-observability-sdk
+        run: uv sync --extra dev
+
+      - name: Run agent-observability-sdk (Python) tests
+        working-directory: plugins/agent-observability-sdk
+        run: uv run pytest -v
+
+  observability-sdk-node:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,60 +66,14 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install vitest plugin dependencies
-        working-directory: plugins/vitest-agent-observability
+      - name: Install agent-observability-sdk (Node) dependencies
+        working-directory: plugins/agent-observability-sdk-node
         run: bun install --frozen-lockfile
 
-      - name: Build vitest plugin
-        working-directory: plugins/vitest-agent-observability
+      - name: Build agent-observability-sdk (Node)
+        working-directory: plugins/agent-observability-sdk-node
         run: bun run build
 
-      - name: Run vitest plugin tests
-        working-directory: plugins/vitest-agent-observability
+      - name: Run agent-observability-sdk (Node) tests
+        working-directory: plugins/agent-observability-sdk-node
         run: bunx vitest run
-
-  pytest-plugin:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Sync pytest plugin dependencies
-        working-directory: plugins/pytest-agent-observability
-        run: uv sync --extra dev
-
-      - name: Run pytest plugin tests
-        working-directory: plugins/pytest-agent-observability
-        run: uv run pytest -v
-
-  observability-sdk:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Sync agent-observability-sdk dependencies
-        working-directory: plugins/agent-observability-sdk
-        run: uv sync --extra dev
-
-      - name: Run agent-observability-sdk tests
-        working-directory: plugins/agent-observability-sdk
-        run: uv run pytest -v

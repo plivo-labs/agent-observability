@@ -194,20 +194,25 @@ app.post("/observability/recordings/v0", async (c) => {
   if (!accountId) {
     accountId = extractAccountId(rawReport);
   }
+  // agent_id is optional at multipart ingest time.
+  //
+  // The agent-transport SDK injects it into chat_history JSON (top-level
+  // agent_id field + a "agent_id:<uuid>" entry in tags[]) so it lands
+  // here on the first request. Raw-LiveKit uploads via
+  // _upload_session_report carry a vanilla ChatContext.to_dict() that
+  // is items-only and won't have it — for those, the OTLP "tag" body
+  // arrives ~1s later carrying `agent_id:<uuid>` and applySessionTagMetadata
+  // backfills the column via UPDATE keyed on session_id. Same pattern
+  // account_id already follows (migration 002 made that column
+  // nullable from the start).
+  //
+  // We log when it's missing so the gap is visible — easier to spot a
+  // worker that never emits the OTLP channel at all (e.g., misconfigured
+  // observability URL).
   const agentId = extractAgentId(rawReport);
   if (rawReport != null && !agentId) {
-    console.error(
-      `[recordings] missing agent_id for session=${sessionId} ` +
-        `(rawReport.agent_id=${typeof rawReport?.agent_id}, ` +
-        `rawReport.tags has agent_id:* = ` +
-        `${Array.isArray(rawReport?.tags) && rawReport.tags.some((t: any) => typeof t === "string" && t.startsWith("agent_id:"))})`,
-    );
-    return c.json(
-      buildErrorResponse(
-        "missing_agent_id",
-        "agent_id is required. The agent-transport SDK should put it in the multipart's chat_history JSON (top-level `agent_id` field) or as a session tag `agent_id:<uuid>`.",
-      ),
-      400,
+    console.warn(
+      `[recordings] agent_id not in chat_history; expecting OTLP tag backfill for session=${sessionId}`,
     );
   }
 

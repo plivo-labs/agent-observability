@@ -2,7 +2,7 @@
   "name": "agent-observability-examples",
   "version": "0.0.0",
   "private": true,
-  "description": "Runnable Vitest examples for vitest-agent-observability",
+  "description": "Runnable Vitest examples for agent-observability-sdk (Node)",
   "type": "module",
   "scripts": {
     "test": "vitest run",
@@ -23,7 +23,7 @@
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "vitest": "^2.1.9",
-    "vitest-agent-observability": "file:../../vitest-agent-observability"
+    "agent-observability-sdk": "file:../../agent-observability-sdk-node"
   },
   "engines": {
     "node": ">=18"

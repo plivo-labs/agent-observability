@@ -60,9 +60,11 @@ def init_observability(
         ``ctx.tagger`` inside a ``@server.rtc_session(...)`` entrypoint
         or ``on_session_end``.
     :param agent_id: Stable opaque agent identifier. Falls back to
-        ``AGENT_OBSERVABILITY_AGENT_ID`` when omitted. Required:
-        agent-observability v2 rejects uploads with a
-        ``400 missing_agent_id`` when no ``agent_id`` is present.
+        ``AGENT_OBSERVABILITY_AGENT_ID`` when omitted. Required by this
+        helper: the server accepts uploads without an ``agent_id`` (it
+        nulls the column and waits for an OTLP tag to backfill), but
+        without this helper emitting the tag the backfill never lands
+        and the session stays unparented on the dashboard.
     :param agent_name: Human-readable label. Optional.
     :param account_id: Tenant / customer identifier for multi-tenant
         dashboards. Optional.
@@ -95,8 +97,9 @@ def init_observability(
         raise ValueError(
             "init_observability: agent_id is required. Pass "
             "agent_id='<uuid>' or set AGENT_OBSERVABILITY_AGENT_ID. "
-            "Without it the server rejects the upload with "
-            "400 missing_agent_id."
+            "The server accepts uploads without one, but the session "
+            "will sit unparented on the dashboard with no agent_id "
+            "backfill ever arriving."
         )
 
     metadata: dict[str, Any] = {"agent_id": resolved_agent_id}

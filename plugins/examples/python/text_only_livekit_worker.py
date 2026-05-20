@@ -80,9 +80,12 @@ load_dotenv()
 
 logger = logging.getLogger("text-only-livekit-worker")
 
-# Console mode picks up these defaults when LIVEKIT_* envs are missing.
-# Lets `uv run … console --text --record` work out of the box for a
-# local-only demo against the LiveKit console worker.
+# `console` mode runs an interactive in-process REPL — no real LiveKit
+# server is contacted, but the framework's startup check still demands
+# LIVEKIT_URL be set. Stub it (and the matching key/secret) so
+# `uv run … console --text --record` works without forcing the reader
+# to export three env vars just to try the example. `dev` / `start`
+# modes connect to a real cluster and need real values — no stub there.
 if "console" in sys.argv:
     os.environ.setdefault("LIVEKIT_URL", "ws://localhost:7880")
     os.environ.setdefault("LIVEKIT_API_KEY", "demo-livekit-api-key")

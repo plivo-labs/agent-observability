@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pytest_agent_observability.ci import detect_ci
+from agent_observability.livekit.pytest.ci import detect_ci
 
 
 CI_ENV_VARS = [
