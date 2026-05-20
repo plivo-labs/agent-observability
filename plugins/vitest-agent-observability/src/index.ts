@@ -124,6 +124,8 @@ export default class AgentObservabilityReporter {
       const payload = buildPayload({
         collector: this.collector,
         agentId: this.opts.agentId ?? process.env.AGENT_OBSERVABILITY_AGENT_ID ?? null,
+        agentName:
+          this.opts.agentName ?? process.env.AGENT_OBSERVABILITY_AGENT_NAME ?? null,
         accountId: this.opts.accountId ?? process.env.AGENT_OBSERVABILITY_ACCOUNT_ID ?? null,
         finishedAt: Date.now() / 1000,
       });

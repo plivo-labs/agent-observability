@@ -403,7 +403,7 @@ app.get("/api/sessions/:id", async (c) => {
   const rows = await sql`
     SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
-           chat_history, session_metrics, raw_report, record_url, created_at
+           chat_history, session_metrics, raw_report, record_url, estimated_cost_usd, created_at
     FROM agent_transport_sessions
     WHERE session_id = ${sessionId}
     LIMIT 1

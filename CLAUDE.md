@@ -89,12 +89,12 @@ See `.env.example` for all variables. Only `DATABASE_URL` is required. Basic aut
 
 ## Releasing
 
-Three independently versioned packages publish from this repo, each via a
-PR-label trigger — no manual tags or releases needed. The three publish
+Four independently versioned packages publish from this repo, each via a
+PR-label trigger — no manual tags or releases needed. The four publish
 workflows (`publish-ui.yml`, `publish-pytest-plugin.yml`,
-`publish-vitest-plugin.yml`) all hang off the `Tests` workflow's
-`workflow_run` and fire only when a specific `release-*` label is
-present on the merged PR.
+`publish-vitest-plugin.yml`, `publish-observability-sdk.yml`) all hang
+off the `Tests` workflow's `workflow_run` and fire only when a specific
+`release-*` label is present on the merged PR.
 
 ### Packages at a glance
 
@@ -103,12 +103,14 @@ present on the merged PR.
 | `agent-observability-ui` | `packages/ui/` | npm | `ui-v*` | `release-ui-pkg` | `agent-observability-ui` |
 | `pytest-agent-observability` | `plugins/pytest-agent-observability/` | PyPI | `pytest-plugin-v*` | `release-pytest-plugin` | `pytest-agent-observability` |
 | `vitest-agent-observability` | `plugins/vitest-agent-observability/` | npm | `vitest-plugin-v*` | `release-vitest-plugin` | `vitest-agent-observability` |
+| `agent-observability-sdk` | `plugins/agent-observability-sdk/` | PyPI | `obs-sdk-v*` | `release-observability-sdk` | `agent-observability-sdk` |
 
 ### Release flow (same for all three)
 
 1. Bump `version` in the package's manifest
    (`packages/ui/package.json` / `plugins/pytest-agent-observability/pyproject.toml` /
-   `plugins/vitest-agent-observability/package.json`).
+   `plugins/vitest-agent-observability/package.json` /
+   `plugins/agent-observability-sdk/pyproject.toml`).
 2. **Version bumps must be in a dedicated PR** — do not mix with
    feature changes.
 3. Labels:
@@ -137,9 +139,10 @@ If you add or change a registry item in `registry.json`, run
 - **npm:** `NPM_TOKEN` must be set as a repository Actions secret (an npm
   automation token with publish rights for both `agent-observability-ui`
   and `vitest-agent-observability`).
-- **PyPI:** configure a trusted publisher at pypi.org for
-  `pytest-agent-observability` pointing at the
-  `publish-pytest-plugin.yml` workflow in this repo. No secret needed.
+- **PyPI:** configure trusted publishers at pypi.org for both
+  `pytest-agent-observability` (pointing at `publish-pytest-plugin.yml`)
+  and `agent-observability-sdk` (pointing at
+  `publish-observability-sdk.yml`). No secret needed.
 - **GitHub labels:** create each label in the table above in the repo.
 
 ### Labeling PRs (agents creating PRs in this repo)
@@ -158,13 +161,15 @@ modifies:
 | `packages/ui/**` | `agent-observability-ui` |
 | `plugins/pytest-agent-observability/**` | `pytest-agent-observability` |
 | `plugins/vitest-agent-observability/**` | `vitest-agent-observability` |
-| `src/**`, `migrations/**`, `frontend/**`, or any other path outside `packages/ui/**` and `plugins/**` | no notes-filter label needed — those paths aren't published as a package |
+| `plugins/agent-observability-sdk/**` | `agent-observability-sdk` |
+| `src/**`, `migrations/**`, `frontend/**`, `docs/**`, or any other path outside `packages/ui/**` and `plugins/**` | no notes-filter label needed — those paths aren't published as a package |
 | Version bump only, in `packages/ui/package.json` | `release-ui-pkg` (no notes-filter label — bumps are not in release notes) |
 | Version bump only, in `plugins/pytest-agent-observability/pyproject.toml` | `release-pytest-plugin` |
 | Version bump only, in `plugins/vitest-agent-observability/package.json` | `release-vitest-plugin` |
+| Version bump only, in `plugins/agent-observability-sdk/pyproject.toml` | `release-observability-sdk` |
 
 Rules:
-- The three publishable packages share no source code; a PR almost
+- The four publishable packages share no source code; a PR almost
   always targets exactly one of them and carries one notes-filter
   label. The rare cross-cutting PR can carry multiple labels.
 - `release-*` trigger labels are mutually exclusive with notes-filter

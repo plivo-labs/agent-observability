@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/ui/preview/**'
+      - 'docs/**'
       - 'packages/ui/registry/**'
       - 'packages/ui/package.json'
       - 'packages/ui/bun.lock'
       - '.env.example'
-      - '.github/workflows/deploy-preview.yml'
+      - '.github/workflows/docs.yml'
   workflow_dispatch: {}
 
 permissions:
@@ -33,17 +33,17 @@ jobs:
         working-directory: packages/ui
         run: bun install --frozen-lockfile
 
-      - name: Install preview dependencies
-        working-directory: packages/ui/preview
+      - name: Install docs dependencies
+        working-directory: docs
         run: bun install --frozen-lockfile
 
-      - name: Build preview
-        working-directory: packages/ui/preview
+      - name: Build docs
+        working-directory: docs
         run: bun run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: packages/ui/preview/dist
+          path: docs/dist
 
   deploy:
     needs: build

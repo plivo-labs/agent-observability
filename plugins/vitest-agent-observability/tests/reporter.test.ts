@@ -23,14 +23,16 @@ function makeTest(
 
 describe("AgentObservabilityReporter", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
-    vi.stubGlobal("fetch", fetchMock);
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
+    globalThis.fetch = originalFetch;
   });
 
   test("no-op when no URL configured", async () => {

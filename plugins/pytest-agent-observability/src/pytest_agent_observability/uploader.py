@@ -75,6 +75,29 @@ def upload(payload: dict, config: UploadConfig, *, fallback_dir: Optional[Path] 
     return False
 
 
+def best_effort_post(payload: dict, config: UploadConfig) -> bool:
+    """Single-attempt POST with no retries and no fallback file.
+
+    Used by the streaming flusher: missing one streamed update is fine
+    because (a) the terminal POST at pytest_sessionfinish carries the
+    full case list, and (b) failed streams just mean the dashboard sees
+    cases a few seconds later. Never raises — silently swallows network
+    errors so a transient blip can't crash the worker thread.
+    """
+    endpoint = f"{config.url}/observability/evals/v0"
+    try:
+        with httpx.Client(timeout=config.timeout_s) as client:
+            resp = client.post(
+                endpoint,
+                json=payload,
+                auth=config.basic_auth,
+                headers={"Content-Type": "application/json"},
+            )
+        return 200 <= resp.status_code < 300
+    except Exception:
+        return False
+
+
 def _write_fallback(payload: dict, fallback_dir: Path) -> None:
     try:
         fallback_dir.mkdir(parents=True, exist_ok=True)

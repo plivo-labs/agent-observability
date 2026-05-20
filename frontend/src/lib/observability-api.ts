@@ -120,6 +120,13 @@ export function createObservabilityApi(baseUrl: string) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run_ids: runIds }),
       }),
+
+    deleteEvalCases: (runId: string, caseIds: string[]) =>
+      fetchJson<{ api_id: string; deleted: number }>(`/evals/${runId}/cases`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_ids: caseIds }),
+      }),
   }
 }
 

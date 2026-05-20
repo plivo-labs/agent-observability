@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "labels",
+  "title": "Transport & Modality Labels",
+  "description": "Single registry for TRANSPORT_LABELS, TRANSPORT_ICONS, MODALITY_LABELS, MODALITY_ICONS plus the matching transportLabel/transportIcon/modalityLabel helpers. Keeps the visual treatment of voice / audio_stream / sip / text / terminal consistent across every list page.",
+  "dependencies": [
+    "lucide-react"
+  ],
+  "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/labels/labels.ts",
+      "content": "/**\n * Display-name + icon registries for enum-shaped values that appear in\n * the UI.\n *\n * Single source of truth so a new surface that wants to render, say, a\n * transport label doesn't reinvent \"audio_stream\" → \"Audio Stream\".\n * Add new entries here when extending an enum; components below derive\n * from these.\n */\n\nimport {\n  AudioLines,\n  MessageSquare,\n  Mic,\n  Phone,\n  TerminalSquare,\n  type LucideIcon,\n} from 'lucide-react'\nimport type { Modality, Transport } from './observability-types'\n\n\n// ── Transports ──────────────────────────────────────────────────────────────\n\nexport const TRANSPORT_LABELS: Record<Transport, string> = {\n  sip: 'SIP',\n  audio_stream: 'Audio Stream',\n  text: 'Text',\n  terminal_text: 'Terminal',\n}\n\nexport const TRANSPORT_ICONS: Record<Transport, LucideIcon> = {\n  sip: Phone,\n  audio_stream: AudioLines,\n  text: MessageSquare,\n  terminal_text: TerminalSquare,\n}\n\n/** Look up the display label for a transport value. Returns the raw\n *  string for unknown/future values so the UI is forward-compatible. */\nexport function transportLabel(value: string | null | undefined): string {\n  if (!value) return ''\n  return (TRANSPORT_LABELS as Record<string, string>)[value] ?? value\n}\n\n/** Icon component for a transport. Returns null for unknown values so\n *  the caller can decide how to render text-only. */\nexport function transportIcon(value: string | null | undefined): LucideIcon | null {\n  if (!value) return null\n  return (TRANSPORT_ICONS as Record<string, LucideIcon>)[value] ?? null\n}\n\n\n// ── Modality ────────────────────────────────────────────────────────────────\n\nexport const MODALITY_LABELS: Record<Exclude<Modality, null>, string> = {\n  voice: 'Voice',\n  text: 'Text',\n  mixed: 'Mixed',\n}\n\n/** Modality icons. `mixed` deliberately has no single icon — callers\n *  composite voice + text icons together for that case. The Mic icon\n *  is used for voice modality so it's visually distinct from the\n *  AudioLines (waveform) icon used for the `audio_stream` transport —\n *  one says \"this agent speaks\", the other says \"audio data is flowing\". */\nexport const MODALITY_ICONS: Record<'voice' | 'text', LucideIcon> = {\n  voice: Mic,\n  text: MessageSquare,\n}\n\nexport function modalityLabel(value: Modality | string | null | undefined): string {\n  if (!value) return ''\n  return (MODALITY_LABELS as Record<string, string>)[value] ?? String(value)\n}\n",
+      "type": "registry:lib",
+      "target": "lib/labels.ts"
+    }
+  ],
+  "type": "registry:lib"
+}

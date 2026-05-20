@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
-import { AudioLines, Phone, Trash2 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -17,44 +16,47 @@ import { DataTableColumnHeader } from '@/components/data-table/data-table-column
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/components/data-table/use-data-table'
-import { formatDate, formatDuration } from '@/lib/observability-format'
-import { useSessions } from '@/lib/observability-hooks'
+import { formatCost, formatDate, formatDuration, formatMs } from '@/lib/observability-format'
+import { useAgentStats, useSessions } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
-import type { AgentSessionRow, Transport } from '@/lib/observability-types'
+import type { AgentSessionRow, AgentStatsRange } from '@/lib/observability-types'
+import { DurationCell, TransportPill } from '@/components/obs-cells'
+import { KpiTile } from '@/components/kpi'
 
 const TRANSPORT_OPTIONS = [
   { label: 'SIP', value: 'sip' },
   { label: 'Audio Stream', value: 'audio_stream' },
+  { label: 'Text', value: 'text' },
+  { label: 'Terminal', value: 'terminal_text' },
 ]
 
-function TransportCell({ transport }: { transport: Transport | null }) {
-  if (transport === 'sip') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-s-400">
-        <Phone className="h-3.5 w-3.5 text-muted-foreground" />
-        SIP
-      </span>
-    )
-  }
-  if (transport === 'audio_stream') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-s-400">
-        <AudioLines className="h-3.5 w-3.5 text-muted-foreground" />
-        Audio Stream
-      </span>
-    )
-  }
-  return <span className="text-muted-foreground">—</span>
-}
-
-export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
+export const SessionsPage = ({
+  onSessionClick,
+  agentId,
+  range = '7d',
+}: {
+  onSessionClick?: (sessionId: string) => void
+  /** When set, locks the list to this agent — every fetch includes
+   * `agent_id=<value>` so the page can be embedded inside the agent
+   * detail dashboard without an extra filter UI. */
+  agentId?: string
+  /** Window for the KPI tile sparklines. The agent detail header's
+   * range picker propagates here so the strip stays in sync with the
+   * Overview tab. Standalone (cross-agent) callers can leave the
+   * default 7d. */
+  range?: AgentStatsRange
+}) => {
+  // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
+  // Column ids below (`transport`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
-  const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [transport] = useQueryState(
     'transport',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
+  // Single-date filter emits the picked day's midnight (local) as an epoch-ms
+  // string. We expand it server-side into a 00:00 → next-midnight window so
+  // the query returns every session that started during that calendar day.
   const [startedAt] = useQueryState(
     'started_at',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -77,7 +79,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     perPage,
     (page - 1) * perPage,
     {
-      accountId: accountId || undefined,
+      agentId,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
       transport: transport.length ? transport : undefined,
@@ -119,34 +121,16 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         accessorKey: 'session_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Session ID" />,
         cell: ({ row }) => (
-          <span className="text-s-400 max-w-[200px] truncate inline-block">
-            {row.original.session_id}
-          </span>
+          <span className="font-mono">{row.original.session_id}</span>
         ),
         enableSorting: false,
         meta: { label: 'Session ID' },
       },
       {
-        id: 'account_id',
-        accessorKey: 'account_id',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
-        cell: ({ row }) =>
-          row.original.account_id ? (
-            <span className="text-s-400 text-muted-foreground max-w-[150px] truncate inline-block">
-              {row.original.account_id}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
-        enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
-      },
-      {
         id: 'transport',
         accessorKey: 'transport',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Transport" />,
-        cell: ({ row }) => <TransportCell transport={row.original.transport} />,
+        cell: ({ row }) => <TransportPill value={row.original.transport} />,
         enableSorting: false,
         enableColumnFilter: true,
         meta: {
@@ -160,7 +144,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="text-s-400 text-muted-foreground whitespace-nowrap">
+          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
             {formatDate(row.original.started_at)}
           </span>
         ),
@@ -173,7 +157,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         accessorKey: 'ended_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Ended" />,
         cell: ({ row }) => (
-          <span className="text-s-400 text-muted-foreground whitespace-nowrap">
+          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
             {formatDate(row.original.ended_at)}
           </span>
         ),
@@ -184,11 +168,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         id: 'duration_ms',
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400 tabular-nums">
-            {formatDuration(row.original.duration_ms)}
-          </span>
-        ),
+        cell: ({ row }) => <DurationCell ms={row.original.duration_ms} />,
         enableSorting: false,
         meta: { label: 'Duration' },
       },
@@ -196,25 +176,9 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         id: 'turn_count',
         accessorKey: 'turn_count',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Turns" />,
-        cell: ({ row }) => (
-          <span className="text-s-400 tabular-nums">{row.original.turn_count}</span>
-        ),
+        cell: ({ row }) => <span className="tnum">{row.original.turn_count}</span>,
         enableSorting: false,
         meta: { label: 'Turns' },
-      },
-      {
-        id: 'capabilities',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Capabilities" />,
-        cell: ({ row }) => {
-          const textOnly = row.original.transport === 'text' || row.original.transport === 'terminal_text'
-          return (
-            <div className="flex gap-1">
-              {!textOnly && row.original.has_stt && <Badge variant="outline" className="text-xxs-400">STT</Badge>}
-              {row.original.has_llm && <Badge variant="outline" className="text-xxs-400">LLM</Badge>}
-              {!textOnly && row.original.has_tts && <Badge variant="outline" className="text-xxs-400">TTS</Badge>}
-            </div>
-          )
-        },
       },
     ],
     [],
@@ -222,6 +186,23 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
 
   const totalCount = meta.total_count
   const pageCount = Math.max(1, Math.ceil(totalCount / perPage))
+
+  // Real time-series KPIs come from /api/agents/:id/stats which
+  // pre-aggregates session counts, latency, durations, and
+  // interruptions into per-day buckets. We only fetch when embedded
+  // (agentId provided) — the cross-agent /sessions list (gone in this
+  // IA but harmless to defend) would otherwise hit a 404. 7d gives a
+  // sparkline 7-points wide which is the visual sweet spot.
+  const { stats: agentStats } = useAgentStats(agentId, range)
+  const kpiSeries = useMemo(() => {
+    const buckets = agentStats?.buckets ?? []
+    return {
+      sessions: buckets.map((b) => b.session_count),
+      p95Latency: buckets.map((b) => b.p95_user_perceived_ms ?? 0),
+      avgDuration: buckets.map((b) => b.avg_duration_ms ?? 0),
+      cost: buckets.map((b) => b.estimated_cost_usd ?? 0),
+    }
+  }, [agentStats])
 
   const { table } = useDataTable({
     data: sessions,
@@ -253,17 +234,83 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     }
   }
 
+  // When embedded inside the agent-detail dashboard, the parent already
+  // renders the breadcrumb + agent header — re-rendering an "obs-head"
+  // here adds a duplicate H1 ("Sessions") and a 30-day subtitle that
+  // doesn't match the picked range. Mirror AgentRunsPage's embedded
+  // behavior: drop the head block entirely and let the parent govern
+  // the top region; the `<b>{totalCount}</b> total` still surfaces in
+  // the table toolbar.
+  const embedded = !!agentId
+
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-h2-600 font-semibold">Sessions</h1>
-        <span className="text-s-400 text-muted-foreground">{totalCount} total</span>
+    <>
+      {!embedded && (
+        <div className="obs-head">
+          <div>
+            <h1>Sessions</h1>
+            <div className="sub">All sessions captured for this agent.</div>
+          </div>
+          <div className="total"><b>{totalCount}</b> total</div>
+        </div>
+      )}
+
+      <div className="eval-kpi-grid" style={{ marginBottom: 16 }}>
+        <KpiTile
+          label="Sessions"
+          value={(agentStats?.total_sessions ?? 0).toLocaleString()}
+          sub={`${range} window · ${totalCount.toLocaleString()} all-time`}
+          sparkValues={kpiSeries.sessions}
+          sparkColor="hsl(270 60% 55%)"
+        />
+        <KpiTile
+          label="p95 perceived latency"
+          value={
+            agentStats?.p95_user_perceived_ms != null
+              ? formatMs(agentStats.p95_user_perceived_ms)
+              : '—'
+          }
+          sub={`user perceived · ${range}`}
+          sparkValues={kpiSeries.p95Latency}
+          sparkColor="hsl(210 90% 42%)"
+        />
+        <KpiTile
+          label="Avg duration"
+          value={
+            kpiSeries.avgDuration.length
+              ? formatDuration(
+                  Math.round(
+                    kpiSeries.avgDuration.reduce((s, v) => s + v, 0) /
+                      kpiSeries.avgDuration.length,
+                  ),
+                )
+              : '—'
+          }
+          sub={`per session · ${range}`}
+          sparkValues={kpiSeries.avgDuration}
+          sparkColor="hsl(35 90% 45%)"
+        />
+        <KpiTile
+          label="Total cost"
+          value={formatCost(agentStats?.total_estimated_cost_usd ?? null)}
+          sub={`priced on LLM usage · ${range}`}
+          sparkValues={kpiSeries.cost}
+          sparkColor="hsl(0 70% 50%)"
+        />
       </div>
 
       {error && (
         <div
           role="alert"
-          className="border border-border bg-muted text-foreground px-4 py-3 rounded-md mb-3 text-s-400"
+          style={{
+            border: '1px solid hsl(var(--destructive-border))',
+            background: 'hsl(var(--destructive-bg))',
+            color: 'hsl(var(--destructive))',
+            padding: '10px 14px',
+            borderRadius: 8,
+            marginBottom: 12,
+            font: 'var(--text-s-400)',
+          }}
         >
           Failed to load sessions: {error}
         </div>
@@ -331,6 +378,6 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   )
 }

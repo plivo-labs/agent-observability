@@ -222,15 +222,20 @@ export interface AgentStatsBucket {
   session_count: number;
   avg_duration_ms: number | null;
   p95_user_perceived_ms: number | null;
-  total_tool_calls: number;
-  total_interruptions: number;
+  /** Per-bucket sum of `agent_transport_sessions.estimated_cost_usd`.
+   *  Pre-aggregated server-side using the same priceFor() path eval-runs
+   *  use, then summed across the bucket's sessions. Null when no session
+   *  in the bucket carried a priceable usage record. */
+  estimated_cost_usd: number | null;
 }
 
 export interface AgentStats {
   range: string;                 // '24h' | '7d' | '30d'
   total_sessions: number;
-  total_llm_tokens: number;
-  total_tool_calls: number;
+  /** Window-wide sum of `estimated_cost_usd`. Null when no session in the
+   *  window carried priceable usage. Drives the Sessions tab's Total
+   *  Cost KPI tile and sparkline. */
+  total_estimated_cost_usd: number | null;
   avg_turn_count: number | null;
   p50_user_perceived_ms: number | null;
   p95_user_perceived_ms: number | null;
@@ -285,7 +290,7 @@ export async function getAgentStats(
     // numeric per-turn metrics still appears (p95 = NULL).
     sql.unsafe(
       `WITH win AS (
-         SELECT id, ended_at, duration_ms, session_metrics
+         SELECT id, ended_at, duration_ms, session_metrics, estimated_cost_usd
          FROM agent_transport_sessions
          WHERE agent_id = $1
            AND ended_at >= NOW() - $2::interval
@@ -294,8 +299,9 @@ export async function getAgentStats(
        session_buckets AS (
          SELECT
            date_trunc($3, ended_at) AS bucket,
-           COUNT(*)::int            AS session_count,
-           AVG(duration_ms)::int    AS avg_duration_ms
+           COUNT(*)::int                    AS session_count,
+           AVG(duration_ms)::int            AS avg_duration_ms,
+           SUM(estimated_cost_usd)::float   AS estimated_cost_usd
          FROM win
          GROUP BY date_trunc($3, ended_at)
        ),
@@ -318,9 +324,8 @@ export async function getAgentStats(
          sb.bucket           AS bucket_start,
          sb.session_count,
          sb.avg_duration_ms,
-         tb.p95_user_perceived_ms,
-         0::int AS total_tool_calls,
-         0::int AS total_interruptions
+         sb.estimated_cost_usd,
+         tb.p95_user_perceived_ms
        FROM session_buckets sb
        LEFT JOIN turn_buckets tb USING (bucket)
        ORDER BY sb.bucket ASC`,
@@ -330,7 +335,7 @@ export async function getAgentStats(
     // subqueries in a SELECT with no FROM clause; that's valid SQL.
     sql.unsafe(
       `WITH win AS (
-         SELECT id, session_id, session_metrics, turn_count
+         SELECT id, session_id, session_metrics, turn_count, estimated_cost_usd
          FROM agent_transport_sessions
          WHERE agent_id = $1
            AND ended_at >= NOW() - $2::interval
@@ -343,6 +348,7 @@ export async function getAgentStats(
        )
        SELECT
          (SELECT COUNT(*) FROM win)::int AS total_sessions,
+         (SELECT SUM(estimated_cost_usd) FROM win)::float AS total_estimated_cost_usd,
          (SELECT AVG(turn_count) FROM win)::float AS avg_turn_count,
          (SELECT percentile_disc(0.50) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p50_user_perceived_ms,
          (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p95_user_perceived_ms,
@@ -405,8 +411,9 @@ export async function getAgentStats(
   return {
     range,
     total_sessions: totals.total_sessions ?? 0,
-    total_llm_tokens: 0, // future: extract from session_metrics.usage
-    total_tool_calls: 0, // future: count chat_history function_call items
+    total_estimated_cost_usd: totals.total_estimated_cost_usd != null
+      ? Number(totals.total_estimated_cost_usd)
+      : null,
     avg_turn_count: totals.avg_turn_count != null ? Number(totals.avg_turn_count) : null,
     p50_user_perceived_ms: totals.p50_user_perceived_ms,
     p95_user_perceived_ms: totals.p95_user_perceived_ms,
@@ -418,8 +425,7 @@ export async function getAgentStats(
       session_count: r.session_count,
       avg_duration_ms: r.avg_duration_ms,
       p95_user_perceived_ms: r.p95_user_perceived_ms,
-      total_tool_calls: r.total_tool_calls,
-      total_interruptions: r.total_interruptions,
+      estimated_cost_usd: r.estimated_cost_usd != null ? Number(r.estimated_cost_usd) : null,
     })),
     transport_breakdown: transportRows.map((r: any) => ({
       transport: r.transport,
@@ -463,7 +469,6 @@ export interface ConversationEvalSummary {
   outcome: string | null;
   outcome_reason: string | null;
   evaluations: Array<Record<string, unknown>>;
-  tags: Array<{ name: string; metadata: Record<string, unknown> | null }>;
 }
 
 export interface ListConversationEvalsOpts {
@@ -544,16 +549,6 @@ export async function listConversationEvals(
        FROM session_outcomes
        WHERE session_id IN (SELECT session_id FROM paged)
        ORDER BY session_id, COALESCE(observed_at, updated_at, created_at) DESC
-     ),
-     tg AS (
-       SELECT session_id,
-              jsonb_agg(jsonb_build_object(
-                'name', name,
-                'metadata', metadata
-              ) ORDER BY COALESCE(observed_at, created_at) ASC) AS tags
-       FROM session_tags
-       WHERE session_id IN (SELECT session_id FROM paged)
-       GROUP BY session_id
      )
      SELECT p.session_id,
             p.account_id,
@@ -568,12 +563,10 @@ export async function listConversationEvals(
             oc.outcome,
             oc.outcome_reason,
             COALESCE(ev.evaluations, '[]'::jsonb) AS evaluations,
-            COALESCE(tg.tags,        '[]'::jsonb) AS tags,
             (SELECT COUNT(*) FROM base)::int AS total_count
      FROM paged p
      LEFT JOIN ev USING (session_id)
      LEFT JOIN oc USING (session_id)
-     LEFT JOIN tg USING (session_id)
      ORDER BY p.ended_at DESC`,
     [opts.agentId, accountId, limit, offset, sessionId, failedOnly],
   );
@@ -595,9 +588,6 @@ export async function listConversationEvals(
     evaluations: typeof row.evaluations === 'string'
       ? JSON.parse(row.evaluations)
       : row.evaluations ?? [],
-    tags: typeof row.tags === 'string'
-      ? JSON.parse(row.tags)
-      : row.tags ?? [],
   }));
 
   return { rows, total };

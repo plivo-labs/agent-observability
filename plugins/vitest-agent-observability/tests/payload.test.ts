@@ -22,6 +22,7 @@ describe("buildPayload", () => {
     const payload = buildPayload({
       collector: rc,
       agentId: "support-bot",
+      agentName: "Support Bot",
       accountId: "acct-1",
       finishedAt: 200,
     });
@@ -32,11 +33,38 @@ describe("buildPayload", () => {
     // package.json — the test runs under vitest so it must be set.
     expect(payload.run.testing_framework_version).toBeTypeOf("string");
     expect(payload.run.agent_id).toBe("support-bot");
+    expect(payload.run.agent_name).toBe("Support Bot");
     expect(payload.run.account_id).toBe("acct-1");
     expect(payload.run.started_at).toBe(100);
     expect(payload.run.finished_at).toBe(200);
     expect(payload.run.ci).toEqual({ provider: "github" });
     expect(payload.cases).toHaveLength(1);
+  });
+
+  test("agent_name is null when unset", () => {
+    // Default — neither plugin option nor env var resolved at the
+    // index.ts call site. buildPayload itself takes whatever it's
+    // given; this pins the null projection rather than `undefined`.
+    const rc = newRun(0, null);
+    const payload = buildPayload({
+      collector: rc,
+      agentId: "support-bot",
+      accountId: null,
+      finishedAt: 0,
+    });
+    expect(payload.run.agent_name).toBeNull();
+  });
+
+  test("agent_name passes through verbatim", () => {
+    const rc = newRun(0, null);
+    const payload = buildPayload({
+      collector: rc,
+      agentId: "support-bot",
+      agentName: "Customer Bot",
+      accountId: null,
+      finishedAt: 0,
+    });
+    expect(payload.run.agent_name).toBe("Customer Bot");
   });
 
   test("detects livekit when @livekit/agents is installed", () => {

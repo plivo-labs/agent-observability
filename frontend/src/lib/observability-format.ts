@@ -26,6 +26,32 @@ export const formatDate = (iso: string | null): string => {
   return dayjs(iso).format('MMM D, YYYY h:mm A')
 }
 
+/** Compact token-count rendering — millions and thousands rounded for at-
+ *  a-glance reading. 1234 → "1.2K", 1_234_567 → "1.2M". Zero renders "0"
+ *  (callers decide whether to em-dash when no data). */
+export const formatTokens = (n: number): string => {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    return `${m >= 10 ? m.toFixed(0) : m.toFixed(1)}M`
+  }
+  if (n >= 1_000) {
+    const k = n / 1000
+    return `${k >= 10 ? k.toFixed(0) : k.toFixed(1)}K`
+  }
+  return n.toLocaleString('en-US')
+}
+
+/** Compact USD rendering. <$0.01 → "<$0.01" so tiny but non-zero costs
+ *  don't get rounded to $0.00 and look like "we couldn't price you". */
+export const formatCost = (usd: number | null | undefined): string => {
+  if (usd == null || !Number.isFinite(usd)) return '—'
+  if (usd === 0) return '$0.00'
+  if (usd > 0 && usd < 0.01) return '<$0.01'
+  if (usd >= 1000) return `$${Math.round(usd).toLocaleString('en-US')}`
+  return `$${usd.toFixed(2)}`
+}
+
 export const computeAvg = (values: number[]) => {
   if (!values.length) return 0
   return Math.round(values.reduce((a, b) => a + b, 0) / values.length)

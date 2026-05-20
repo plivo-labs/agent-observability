@@ -16,11 +16,12 @@ import { DataTableColumnHeader } from '@/components/data-table/data-table-column
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/components/data-table/use-data-table'
-import { formatDate } from '@/lib/observability-format'
-import { useSessions } from '@/lib/observability-hooks'
+import { formatCost, formatDate, formatDuration, formatMs } from '@/lib/observability-format'
+import { useAgentStats, useSessions } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
-import type { AgentSessionRow } from '@/lib/observability-types'
+import type { AgentSessionRow, AgentStatsRange } from '@/lib/observability-types'
 import { DurationCell, TransportPill } from '@/components/obs-cells'
+import { KpiTile } from '@/components/kpi'
 
 const TRANSPORT_OPTIONS = [
   { label: 'SIP', value: 'sip' },
@@ -32,23 +33,23 @@ const TRANSPORT_OPTIONS = [
 export const SessionsPage = ({
   onSessionClick,
   agentId,
+  range = '7d',
 }: {
   onSessionClick?: (sessionId: string) => void
   /** When set, locks the list to this agent — every fetch includes
    * `agent_id=<value>` so the page can be embedded inside the agent
    * detail dashboard without an extra filter UI. */
   agentId?: string
+  /** Window for the KPI tile sparklines. The agent detail header's
+   * range picker propagates here so the strip stays in sync with the
+   * Overview tab. Standalone (cross-agent) callers can leave the
+   * default 7d. */
+  range?: AgentStatsRange
 }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
-  // Column ids below (`agent_id`, `account_id`, `transport`, `started_at`)
-  // become the URL keys.
+  // Column ids below (`transport`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
-  const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
-  const [agentIdQuery] = useQueryState('agent_id', parseAsString.withDefault(''))
-  // Prop wins so the embedded-in-agent-dashboard case is forced; falls
-  // back to URL-synced filter on the cross-agent /sessions route.
-  const effectiveAgentId = agentId ?? (agentIdQuery || undefined)
   const [transport] = useQueryState(
     'transport',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -78,8 +79,7 @@ export const SessionsPage = ({
     perPage,
     (page - 1) * perPage,
     {
-      accountId: accountId || undefined,
-      agentId: effectiveAgentId,
+      agentId,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
       transport: transport.length ? transport : undefined,
@@ -121,55 +121,10 @@ export const SessionsPage = ({
         accessorKey: 'session_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Session ID" />,
         cell: ({ row }) => (
-          <span>{row.original.session_id}</span>
+          <span className="font-mono">{row.original.session_id}</span>
         ),
         enableSorting: false,
         meta: { label: 'Session ID' },
-      },
-      {
-        // Agent identity column. Primary line is the id (mono, copyable);
-        // secondary line is the human label when present. Filter chip
-        // routes through ?agent_id=... (exact match, same as the agent
-        // detail page URL).
-        id: 'agent_id',
-        accessorKey: 'agent_id',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Agent" />,
-        cell: ({ row }) => {
-          const id = row.original.agent_id
-          const name = row.original.agent_name
-          if (!id && !name) return <span className="muted">—</span>
-          return (
-            <div className="flex flex-col leading-tight">
-              {name ? (
-                <span className="text-xs-500">{name}</span>
-              ) : (
-                <span className="text-xs-500">{id}</span>
-              )}
-              {name && id && (
-                <span className="text-muted-foreground text-[11px]">
-                  {id}
-                </span>
-              )}
-            </div>
-          )
-        },
-        enableSorting: false,
-        meta: { label: 'Agent' },
-      },
-      {
-        id: 'account_id',
-        accessorKey: 'account_id',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
-        cell: ({ row }) =>
-          row.original.account_id ? (
-            <span className="muted" style={{ fontSize: 12 }}>
-              {row.original.account_id}
-            </span>
-          ) : (
-            <span className="muted">—</span>
-          ),
-        enableSorting: false,
-        meta: { label: 'Account' },
       },
       {
         id: 'transport',
@@ -232,6 +187,23 @@ export const SessionsPage = ({
   const totalCount = meta.total_count
   const pageCount = Math.max(1, Math.ceil(totalCount / perPage))
 
+  // Real time-series KPIs come from /api/agents/:id/stats which
+  // pre-aggregates session counts, latency, durations, and
+  // interruptions into per-day buckets. We only fetch when embedded
+  // (agentId provided) — the cross-agent /sessions list (gone in this
+  // IA but harmless to defend) would otherwise hit a 404. 7d gives a
+  // sparkline 7-points wide which is the visual sweet spot.
+  const { stats: agentStats } = useAgentStats(agentId, range)
+  const kpiSeries = useMemo(() => {
+    const buckets = agentStats?.buckets ?? []
+    return {
+      sessions: buckets.map((b) => b.session_count),
+      p95Latency: buckets.map((b) => b.p95_user_perceived_ms ?? 0),
+      avgDuration: buckets.map((b) => b.avg_duration_ms ?? 0),
+      cost: buckets.map((b) => b.estimated_cost_usd ?? 0),
+    }
+  }, [agentStats])
+
   const { table } = useDataTable({
     data: sessions,
     columns,
@@ -262,14 +234,69 @@ export const SessionsPage = ({
     }
   }
 
+  // When embedded inside the agent-detail dashboard, the parent already
+  // renders the breadcrumb + agent header — re-rendering an "obs-head"
+  // here adds a duplicate H1 ("Sessions") and a 30-day subtitle that
+  // doesn't match the picked range. Mirror AgentRunsPage's embedded
+  // behavior: drop the head block entirely and let the parent govern
+  // the top region; the `<b>{totalCount}</b> total` still surfaces in
+  // the table toolbar.
+  const embedded = !!agentId
+
   return (
     <>
-      <div className="obs-head">
-        <div>
-          <h1>Sessions</h1>
-          <div className="sub">Every agent session captured in the last 30 days.</div>
+      {!embedded && (
+        <div className="obs-head">
+          <div>
+            <h1>Sessions</h1>
+            <div className="sub">All sessions captured for this agent.</div>
+          </div>
+          <div className="total"><b>{totalCount}</b> total</div>
         </div>
-        <div className="total"><b>{totalCount}</b> total</div>
+      )}
+
+      <div className="eval-kpi-grid" style={{ marginBottom: 16 }}>
+        <KpiTile
+          label="Sessions"
+          value={(agentStats?.total_sessions ?? 0).toLocaleString()}
+          sub={`${range} window · ${totalCount.toLocaleString()} all-time`}
+          sparkValues={kpiSeries.sessions}
+          sparkColor="hsl(270 60% 55%)"
+        />
+        <KpiTile
+          label="p95 perceived latency"
+          value={
+            agentStats?.p95_user_perceived_ms != null
+              ? formatMs(agentStats.p95_user_perceived_ms)
+              : '—'
+          }
+          sub={`user perceived · ${range}`}
+          sparkValues={kpiSeries.p95Latency}
+          sparkColor="hsl(210 90% 42%)"
+        />
+        <KpiTile
+          label="Avg duration"
+          value={
+            kpiSeries.avgDuration.length
+              ? formatDuration(
+                  Math.round(
+                    kpiSeries.avgDuration.reduce((s, v) => s + v, 0) /
+                      kpiSeries.avgDuration.length,
+                  ),
+                )
+              : '—'
+          }
+          sub={`per session · ${range}`}
+          sparkValues={kpiSeries.avgDuration}
+          sparkColor="hsl(35 90% 45%)"
+        />
+        <KpiTile
+          label="Total cost"
+          value={formatCost(agentStats?.total_estimated_cost_usd ?? null)}
+          sub={`priced on LLM usage · ${range}`}
+          sparkValues={kpiSeries.cost}
+          sparkColor="hsl(0 70% 50%)"
+        />
       </div>
 
       {error && (

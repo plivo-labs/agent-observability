@@ -20,8 +20,13 @@ const LATENCY_THRESHOLDS: Record<string, { good: number; warn: number }> = {
   TTS: { good: 300, warn: 600 },
 }
 
+// Per-turn metric pills sit just below an agent or user bubble. Bg-card
+// + tinted text/border reads as a quieter row than the filled-bg pills
+// the dashboard used to ship. The label is muted so the value is what
+// the eye lands on; only "bad" tones lean on font-weight to draw
+// attention to a problem turn.
 const PILL_BASE =
-  'rounded border px-1.5 py-0.5 text-[10px] font-mono font-normal tabular-nums'
+  'rounded border px-1.5 py-0.5 text-[10px] font-mono font-normal tabular-nums bg-card'
 
 /** STT confidence pill on user bubbles. Thresholds mirror voice SLOs:
  * ≥ 0.9 green, ≥ 0.7 amber, below red. */
@@ -29,10 +34,10 @@ const ConfidencePill = ({ value }: { value: number | undefined }) => {
   if (value == null) return null
   const tone =
     value >= 0.9
-      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]'
+      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]'
       : value >= 0.7
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))]'
-        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] font-semibold'
+        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]'
+        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] font-semibold'
   const pct = Math.round(value * 100)
   return (
     <Badge
@@ -41,7 +46,8 @@ const ConfidencePill = ({ value }: { value: number | undefined }) => {
       aria-label={`Transcript confidence: ${pct}%`}
       className={`${PILL_BASE} ${tone}`}
     >
-      CONF&nbsp;&nbsp;|&nbsp;&nbsp;{pct}%
+      <span className="text-muted-foreground">CONF</span>
+      &nbsp;&nbsp;{pct}%
     </Badge>
   )
 }
@@ -51,17 +57,18 @@ const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) =
   const th = LATENCY_THRESHOLDS[label] ?? { good: 500, warn: 1500 }
   const tone =
     ms <= th.good
-      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]'
+      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]'
       : ms <= th.warn
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))]'
-        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] font-semibold'
+        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]'
+        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] font-semibold'
   return (
     <Badge
       variant="outline"
       title={`${label}: ${formatMs(ms)}`}
       className={`${PILL_BASE} ${tone}`}
     >
-      {label}&nbsp;&nbsp;|&nbsp;&nbsp;{formatMs(ms)}
+      <span className="text-muted-foreground">{label}</span>
+      &nbsp;&nbsp;{formatMs(ms)}
     </Badge>
   )
 }

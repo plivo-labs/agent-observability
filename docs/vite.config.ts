@@ -6,7 +6,7 @@ import { readFileSync } from 'fs'
 import { handleMockRequest, type MockData } from './src/lib/mock-handler'
 
 const reg = (...segments: string[]) =>
-  resolve(__dirname, '../registry/new-york', ...segments)
+  resolve(__dirname, '../packages/ui/registry/new-york', ...segments)
 
 const mockDataPath = resolve(__dirname, 'src/mock-data.json')
 
@@ -35,7 +35,16 @@ export default defineConfig({
   base: '/agent-observability/',
   plugins: [react(), tailwindcss(), mockApiPlugin()],
   optimizeDeps: {
+    // Force pre-bundle of every external dep imported by registry files.
+    // Registry files live OUTSIDE `docs/` so Vite's default upward
+    // node-resolution from each file won't find docs/node_modules —
+    // optimizeDeps.include forces resolution from the project root
+    // instead, which is where `docs/node_modules` lives.
     include: [
+      'react',
+      'react-dom',
+      'react-router',
+      'react-day-picker',
       'recharts',
       'dayjs',
       'dayjs/plugin/relativeTime',
@@ -43,6 +52,8 @@ export default defineConfig({
       'wavesurfer.js',
       '@tanstack/react-table',
       'nuqs',
+      'nuqs/server',
+      'zod',
     ],
   },
   resolve: {
@@ -85,6 +96,19 @@ export default defineConfig({
       { find: '@/components/evals-page', replacement: reg('evals-page/evals-page.tsx') },
       { find: '@/components/eval-run-detail-page', replacement: reg('eval-run-detail-page/eval-run-detail-page.tsx') },
       { find: '@/components/eval-case-detail-page', replacement: reg('eval-case-detail-page/eval-case-detail-page.tsx') },
+      { find: '@/components/eval-run-compare-page', replacement: reg('eval-run-compare-page/eval-run-compare-page.tsx') },
+
+      // Net-new registry items from the agents-first-class IA
+      { find: '@/components/obs-cells', replacement: reg('obs-cells/obs-cells.tsx') },
+      { find: '@/components/kpi', replacement: reg('kpi/kpi.tsx') },
+      { find: '@/components/agent-scope-header', replacement: reg('agent-scope-header/agent-scope-header.tsx') },
+      { find: '@/components/agents-page', replacement: reg('agents-page/agents-page.tsx') },
+      { find: '@/components/agent-detail-page', replacement: reg('agent-detail-page/agent-detail-page.tsx') },
+      { find: '@/components/agent-overview-tab', replacement: reg('agent-overview-tab/agent-overview-tab.tsx') },
+      { find: '@/components/agent-runs-page', replacement: reg('agent-runs-page/agent-runs-page.tsx') },
+      { find: '@/components/conversation-evals-tab', replacement: reg('conversation-evals-tab/conversation-evals-tab.tsx') },
+      { find: '@/components/conversation-eval-detail-drawer', replacement: reg('conversation-eval-detail-drawer/conversation-eval-detail-drawer.tsx') },
+      { find: '@/lib/labels', replacement: reg('labels/labels.ts') },
 
       // Fallback — regex so it doesn't outprioritize specific string matches
       { find: /^@\//, replacement: resolve(__dirname, 'src') + '/' },

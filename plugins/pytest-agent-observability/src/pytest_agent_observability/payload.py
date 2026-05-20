@@ -38,13 +38,38 @@ def build_payload(
     agent_id: Optional[str],
     agent_name: Optional[str],
     account_id: Optional[str],
-    finished_at: float,
+    finished_at: Optional[float],
+    status: str = "completed",
+    name: Optional[str] = None,
+    cases: Optional[list] = None,
 ) -> dict:
+    """Build the eval payload (v0).
+
+    Streaming flow:
+      • pytest_sessionstart  → status='running', cases=None (defaults to
+                               collector.cases which is empty at that point).
+      • Background flusher   → status='running', cases=<subset of newly
+                               finished cases>. Server's ON CONFLICT
+                               (case_id) DO NOTHING + post-insert
+                               aggregation make these partial payloads
+                               additive — each just adds its cases to
+                               the run, totals recompute from eval_cases.
+      • pytest_sessionfinish → status from exitstatus, cases=None
+                               (collector.cases has the full set).
+
+    `name` is an optional human-readable label so the dashboard can
+    show "Nightly smoke" / "PR #482" instead of just a UUID prefix.
+
+    `cases` overrides collector.cases when provided — used by the
+    streaming flusher to POST a subset.
+    """
     framework = detect_framework()
+    case_list = cases if cases is not None else collector.cases
     return {
         "version": "v0",
         "run": {
             "run_id": collector.run_id,
+            "name": name,
             "account_id": account_id,
             "agent_id": agent_id,
             "agent_name": agent_name,
@@ -54,9 +79,10 @@ def build_payload(
             "testing_framework_version": _pkg_version("pytest"),
             "started_at": collector.started_at,
             "finished_at": finished_at,
+            "status": status,
             "ci": collector.ci,
         },
-        "cases": [_case_to_dict(c) for c in collector.cases],
+        "cases": [_case_to_dict(c) for c in case_list],
     }
 
 

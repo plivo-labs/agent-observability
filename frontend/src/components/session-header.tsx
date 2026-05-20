@@ -70,6 +70,20 @@ export const SessionHeader = ({
         <KVRow label="Session ID">
           <span>{session.session_id}</span>
         </KVRow>
+        <KVRow label="Agent">
+          {session.agent_id || session.agent_name ? (
+            <div className="flex flex-col items-end leading-tight">
+              <span>{session.agent_name || session.agent_id}</span>
+              {session.agent_name && session.agent_id && (
+                <span className="text-muted-foreground text-[11px] font-mono">
+                  {session.agent_id}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span style={{ color: 'hsl(var(--tertiary))' }}>—</span>
+          )}
+        </KVRow>
         <KVRow label="Capabilities">
           <CapsChips
             stt={!textOnly && session.has_stt}

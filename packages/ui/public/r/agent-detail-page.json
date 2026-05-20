@@ -1,0 +1,30 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "agent-detail-page",
+  "title": "Agent Detail Page",
+  "description": "Agent dashboard with Overview / Sessions / Simulation Evals / Conversation Evals tabs. URL-synced range picker (24h / 7d / 30d) propagates to the Overview KPIs and Sessions tab sparklines.",
+  "dependencies": [
+    "lucide-react",
+    "nuqs",
+    "react-router"
+  ],
+  "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/obs-cells.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/agent-overview-tab.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/agent-runs-page.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/sessions-page.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/conversation-evals-tab.json",
+    "tabs",
+    "skeleton"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/agent-detail-page/agent-detail-page.tsx",
+      "content": "import { useMemo } from 'react'\nimport { parseAsStringEnum, useQueryState } from 'nuqs'\nimport { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'\nimport { AgentOverviewTab } from '@/components/agent-overview-tab'\nimport { ConversationEvalsTab } from '@/components/conversation-evals-tab'\nimport { SessionsPage } from '@/components/sessions-page'\nimport { AgentRunsPage } from '@/components/agent-runs-page'\nimport { AgentScopeHeader } from '@/components/agent-scope-header'\nimport type { AgentStatsRange } from '@/lib/observability-types'\n\ninterface AgentDetailPageProps {\n  agentId: string\n  onSessionClick?: (sessionId: string) => void\n  onRunClick?: (runId: string) => void\n  onCompare?: (runIdA: string, runIdB: string) => void\n}\n\nconst TAB_VALUES = ['overview', 'sessions', 'simulation-evals', 'conversation-evals'] as const\ntype TabValue = (typeof TAB_VALUES)[number]\n\nconst RANGE_VALUES = ['24h', '7d', '30d'] as const\n\nexport const AgentDetailPage = ({\n  agentId,\n  onSessionClick,\n  onRunClick,\n  onCompare,\n}: AgentDetailPageProps) => {\n  // URL-synced tab + range so links into the agent dashboard are deep-\n  // linkable. parseAsStringEnum keeps the URL stable even if a stale\n  // value lingers from an older deploy.\n  const [tabRaw, setTab] = useQueryState(\n    'tab',\n    parseAsStringEnum([...TAB_VALUES]).withDefault('overview'),\n  )\n  const [rangeRaw, setRange] = useQueryState(\n    'range',\n    // 7d is the sensible default — most agents have sparse activity at\n    // any single 24h window, so opening the dashboard on 24h almost\n    // always shows an empty Overview. Users can drill into 24h\n    // explicitly when they care about the last day.\n    parseAsStringEnum([...RANGE_VALUES]).withDefault('7d'),\n  )\n  const tab = useMemo<TabValue>(() => tabRaw as TabValue, [tabRaw])\n  const range = useMemo<AgentStatsRange>(() => rangeRaw as AgentStatsRange, [rangeRaw])\n\n  // Range picker only matters on the Overview / Sessions tabs, but keep\n  // the slot reserved so the header doesn't reflow as you switch.\n  const rangePicker = (tab === 'overview' || tab === 'sessions') ? (\n    <div className=\"flex items-center gap-1 rounded-lg border bg-card p-1 text-xs\">\n      {RANGE_VALUES.map((r) => (\n        <button\n          key={r}\n          type=\"button\"\n          onClick={() => setRange(r)}\n          className={\n            'rounded px-2 py-1 ' +\n            (range === r\n              ? 'bg-foreground text-background'\n              : 'text-muted-foreground hover:text-foreground')\n          }\n        >\n          {r}\n        </button>\n      ))}\n    </div>\n  ) : null\n\n  return (\n    <div className=\"w-full p-6 flex flex-col gap-4 min-w-0\">\n      <AgentScopeHeader agentId={agentId} rightSlot={rangePicker} />\n\n      <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>\n        <TabsList>\n          <TabsTrigger value=\"overview\">Overview</TabsTrigger>\n          <TabsTrigger value=\"sessions\">Sessions</TabsTrigger>\n          <TabsTrigger value=\"simulation-evals\">Simulation Evals</TabsTrigger>\n          <TabsTrigger value=\"conversation-evals\">Conversation Evals</TabsTrigger>\n        </TabsList>\n\n        <TabsContent value=\"overview\" className=\"mt-4\">\n          {/* No accountId passed — stats span all accounts for this id. */}\n          <AgentOverviewTab agentId={agentId} range={range} />\n        </TabsContent>\n\n        <TabsContent value=\"sessions\" className=\"mt-4\">\n          {/* SessionsPage / EvalsPage carry their own padding when used\n              standalone; embedded here we let the tab content's padding\n              govern instead of nudging back with -mx-6 (which made these\n              tabs render slightly wider than Overview / Conversation\n              Evals — visible misalignment when switching tabs). */}\n          <SessionsPage\n            onSessionClick={onSessionClick}\n            agentId={agentId}\n            range={range}\n          />\n        </TabsContent>\n\n        <TabsContent value=\"simulation-evals\" className=\"mt-4\">\n          <AgentRunsPage\n            agentId={agentId}\n            embedded\n            onRunClick={onRunClick}\n            onCompare={onCompare}\n          />\n        </TabsContent>\n\n        <TabsContent value=\"conversation-evals\" className=\"mt-4\">\n          {/* No accountId passed — eval list spans all accounts for this id. */}\n          <ConversationEvalsTab agentId={agentId} />\n        </TabsContent>\n      </Tabs>\n    </div>\n  )\n}\n",
+      "type": "registry:component"
+    }
+  ],
+  "type": "registry:block"
+}

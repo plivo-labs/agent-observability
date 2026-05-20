@@ -177,7 +177,6 @@ export interface ConversationEvalSummary {
   outcome: string | null
   outcome_reason: string | null
   evaluations: SessionExternalEvaluation[]
-  tags: Array<{ name: string; metadata: Record<string, unknown> | null }>
 }
 
 export interface AgentsFilters {
@@ -195,15 +194,13 @@ export interface AgentStatsBucket {
   session_count: number
   avg_duration_ms: number | null
   p95_user_perceived_ms: number | null
-  total_tool_calls: number
-  total_interruptions: number
+  estimated_cost_usd: number | null
 }
 
 export interface AgentStats {
   range: AgentStatsRange
   total_sessions: number
-  total_llm_tokens: number
-  total_tool_calls: number
+  total_estimated_cost_usd: number | null
   avg_turn_count: number | null
   p50_user_perceived_ms: number | null
   p95_user_perceived_ms: number | null
@@ -277,6 +274,7 @@ export interface AgentSessionRow {
   evaluations?: SessionExternalEvaluation[]
   outcome?: SessionOutcome | null
   record_url: string | null
+  estimated_cost_usd: number | null
   created_at: string
 }
 
@@ -375,8 +373,25 @@ export interface CiMetadata {
   [k: string]: unknown
 }
 
+/**
+ * Run lifecycle status. Plugins post 'running' at session-start, then
+ * 'completed' (or 'failed') at session-finish. The server-side read
+ * overlay flips stale 'running' runs (>60s no heartbeat) to 'completed'
+ * so a crashed plugin doesn't leave runs visually stuck.
+ */
+export type EvalRunStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
 export interface EvalRunRow {
   run_id: string
+  /** Optional human-readable label (e.g. "Nightly smoke", "PR #482").
+   * Set via `--agent-observability-run-name` CLI flag or the
+   * AGENT_OBSERVABILITY_RUN_NAME env var on the plugin side. */
+  name: string | null
   account_id: string | null
   agent_id: string | null
   /** Human-readable agent label resolved from the agents table at read
@@ -391,7 +406,9 @@ export interface EvalRunRow {
   testing_framework: string
   testing_framework_version: string | null
   started_at: string
-  finished_at: string
+  /** Null while a run is in-flight (status='running'). The plugin's
+   *  session-finish POST populates it via INSERT ON CONFLICT DO UPDATE. */
+  finished_at: string | null
   duration_ms: number | null
   total: number
   passed: number
@@ -399,6 +416,45 @@ export interface EvalRunRow {
   errored: number
   skipped: number
   ci: CiMetadata | null
+  /** Effective status — already passed through the server's read-time
+   *  overlay (running rows with last_activity_at >1h ago flip to
+   *  'completed'), so consumers can render directly. */
+  status: EvalRunStatus
+  /** Server-stamped timestamp of the last write to this row. Null on
+   *  pre-status rows (legacy). Drives the read-time TTL overlay. */
+  last_activity_at: string | null
+  /** Latency p50/p95/avg for "time to first token" — extracted from
+   *  per-turn LiveKit metrics on assistant messages. Null when no
+   *  samples (e.g. text-only suites or first-POST-only runs). */
+  ttft_p50_ms: number | null
+  ttft_p95_ms: number | null
+  ttft_avg_ms: number | null
+  /** TTFB — "time to first byte" for TTS output. Null for text-only
+   *  suites that don't run a TTS pipeline. UI auto-hides TTFB cards
+   *  when these are null across the run. */
+  ttfb_p50_ms: number | null
+  ttfb_p95_ms: number | null
+  ttfb_avg_ms: number | null
+  turn_count: number
+  tool_call_count: number
+  interruption_count: number
+  agent_handoff_count: number
+  /** Number of TTFT samples that contributed to the percentiles —
+   *  useful for sanity-checking small-sample runs. */
+  ttft_sample_count: number
+  /** Sum of LLM token counts across all assistant-message events.
+   *  `total_tokens` trusts the event's `llm_total_tokens` when
+   *  present, else `prompt + completion`. `cached_prompt_tokens` is
+   *  a subset of `prompt_tokens` (cache % = cached / prompt). */
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cached_prompt_tokens: number
+  /** Estimated USD cost from per-message provider:model pricing.
+   *  Null when at least one usage sample couldn't be priced
+   *  (mixed-model run with an unknown model). Zero when there are
+   *  no tokens to price. */
+  estimated_cost_usd: number | null
   created_at: string
 }
 
@@ -413,6 +469,29 @@ export interface EvalCaseRow {
   events: RunEvent[]
   judgments: JudgmentResult[]
   failure: Failure | null
+  /** Per-case latency metrics, computed at ingest from the events
+   *  array. Same shape and null-when-no-samples convention as the
+   *  run-level metrics on `EvalRunRow`. */
+  ttft_p50_ms: number | null
+  ttft_p95_ms: number | null
+  ttft_avg_ms: number | null
+  ttfb_p50_ms: number | null
+  ttfb_p95_ms: number | null
+  ttfb_avg_ms: number | null
+  turn_count: number
+  tool_call_count: number
+  interruption_count: number
+  agent_handoff_count: number
+  ttft_sample_count: number
+  /** Sum of LLM token counts across this case's assistant-message
+   *  events. Same shape and semantics as the run-level fields. */
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cached_prompt_tokens: number
+  /** Estimated USD cost for this case. Same null/zero/positive
+   *  semantics as the run-level field. */
+  estimated_cost_usd: number | null
   created_at: string
 }
 

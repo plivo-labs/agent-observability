@@ -1,7 +1,7 @@
-import { Coins, Gauge, MessageCircle, OctagonX, Timer, Wrench } from 'lucide-react'
-import { formatMs } from '@/lib/observability-format'
+import { Coins, DollarSign, Gauge, MessageCircle, OctagonX, Wrench } from 'lucide-react'
+import { formatCost, formatMs } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
-import { usePerformance } from '@/lib/observability-hooks'
+import { usePerformance, useSession } from '@/lib/observability-hooks'
 
 type Tone = 'good' | 'warn' | 'bad'
 
@@ -51,12 +51,13 @@ export const MetricSummaryCards = ({
   metrics?: SessionMetrics | null
 }) => {
   const { metrics: hookMetrics } = usePerformance()
+  const { session } = useSession()
   const metrics = metricsProp ?? hookMetrics
   if (!metrics) return null
 
   const { summary } = metrics
+  const cost = session?.estimated_cost_usd ?? null
   const p95 = summary.p95_user_perceived_ms ?? summary.latency?.user_perceived_ms?.p95 ?? null
-  const avg = summary.avg_user_perceived_ms ?? summary.latency?.user_perceived_ms?.avg ?? null
   const totalTokens = summary.total_llm_tokens ?? summary.usage?.total_llm_tokens ?? 0
   const interruptions = summary.interruptions ?? summary.interruption?.total_interruptions ?? 0
 
@@ -78,17 +79,10 @@ export const MetricSummaryCards = ({
       <MetricTile icon={<Wrench size={12} />} label="Tool Calls" value={summary.total_tool_calls} />
       <MetricTile
         icon={<Gauge size={12} />}
-        label="P95 Latency"
+        label="p95 perceived latency"
         value={renderLatency(p95)}
         sub={p95 != null ? 'user perceived' : undefined}
         tone={latencyTone(p95)}
-      />
-      <MetricTile
-        icon={<Timer size={12} />}
-        label="Avg Latency"
-        value={renderLatency(avg)}
-        sub={avg != null ? 'user perceived' : undefined}
-        tone={latencyTone(avg)}
       />
       <MetricTile
         icon={<Coins size={12} />}
@@ -99,6 +93,12 @@ export const MetricSummaryCards = ({
             ? `~${Math.round(totalTokens / summary.total_turns).toLocaleString()}/turn`
             : undefined
         }
+      />
+      <MetricTile
+        icon={<DollarSign size={12} />}
+        label="Cost"
+        value={cost != null ? formatCost(cost) : '—'}
+        sub={cost != null ? 'LLM usage' : 'no priceable usage'}
       />
     </div>
   )

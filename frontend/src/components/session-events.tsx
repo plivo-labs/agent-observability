@@ -97,7 +97,7 @@ function getFunctionCallOutput(item: Record<string, unknown> | null): Record<str
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--tertiary))]">
+      <div className="text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--tertiary))]">
         {label}
       </div>
       <div className="min-w-0 text-[13px] text-[hsl(var(--foreground))]">
@@ -122,7 +122,7 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--info))]">
+          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--info))]">
             Tool call
           </span>
           <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
@@ -152,7 +152,7 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className={`rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+          <span className={`rounded border px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] ${
             isError
               ? 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]'
               : 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]'
@@ -365,7 +365,7 @@ export const SessionEvents = () => {
                   <Badge
                     variant="outline"
                     data-event-type={event.type}
-                    className={`tag h-5 rounded px-2 py-0 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
+                    className={`tag h-5 rounded px-2 py-0 font-mono text-[10px] font-semibold tracking-[0.06em] ${tagTone}`}
                   >
                     <span>{event.type}</span>
                   </Badge>

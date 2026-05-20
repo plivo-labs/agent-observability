@@ -76,6 +76,10 @@ export interface EvalRun {
   run_id: string;
   account_id?: string | null;
   agent_id?: string | null;
+  /** Human-readable agent label. Surfaces in the dashboard when set;
+   *  the agent_id is the stable PK used for joins, agent_name is just
+   *  the friendly label shown in the agents table. */
+  agent_name?: string | null;
   /** Agent framework family — `livekit` / `pipecat` / …. Null when no
    *  known agent-framework package is installed. */
   framework: string | null;
@@ -99,6 +103,9 @@ export interface EvalPayloadV0 {
 export interface ReporterOptions {
   url?: string;
   agentId?: string | null;
+  /** Human-readable agent label. Falls back to
+   *  `AGENT_OBSERVABILITY_AGENT_NAME` when unset. */
+  agentName?: string | null;
   accountId?: string | null;
   basicAuth?: { user: string; pass: string } | null;
   timeoutMs?: number;

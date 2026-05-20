@@ -101,18 +101,18 @@ npx agent-observability-ui@latest add metric-summary-cards
 npx agent-observability-ui@latest add session-detail-page
 ```
 
-See the [full documentation](packages/ui/README.md) for usage, available components, hooks, and the preview app. Releases are automated — see [Releasing](CLAUDE.md#releasing) for the publish flow.
+See the [full documentation](packages/ui/README.md) for usage, available components, and hooks. Releases are automated — see [Releasing](CLAUDE.md#releasing) for the publish flow.
 
-### Preview App
+### Docs site
 
 Live playground: **https://plivo-labs.github.io/agent-observability/** — browse every component with mock data, no install required.
 
 To run locally:
 
 ```bash
-cd packages/ui/preview
+cd docs
 bun install
-bun run dev  # http://localhost:5174
+bun run dev  # http://localhost:5174/agent-observability/
 ```
 
 ## Eval Plugins
@@ -238,11 +238,12 @@ agent-observability/
 ├── frontend/                         # Dashboard app (Vite + React)
 ├── packages/ui/                      # shadcn component registry
 │   ├── registry/                     # Component source
-│   ├── preview/                      # Preview app
 │   └── tests/                        # Unit tests
+├── docs/                             # Docs site (preview app, deployed to GH Pages)
 ├── plugins/                          # Eval ingestion plugins
 │   ├── pytest-agent-observability/   # pytest plugin
 │   ├── vitest-agent-observability/   # Vitest reporter
+│   ├── agent-observability-sdk/      # Python SDK: judges + EvaluationCase
 │   └── examples/                     # Runnable eval suites (pytest/ + vitest/)
 ├── migrations/                       # SQL migrations
 └── tests/                            # Server tests

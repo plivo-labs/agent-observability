@@ -70,10 +70,13 @@ export function ResultBadge({ value }: { value: string | null | undefined }) {
     <Badge
       variant="outline"
       className={cn(
-        'gap-1',
-        tone === 'success' && 'border-success bg-success text-success-foreground',
-        tone === 'maybe' && 'border-warning bg-warning text-warning-foreground',
-        tone === 'fail' && 'border-destructive bg-destructive text-destructive-foreground',
+        'gap-1 capitalize',
+        tone === 'success' &&
+          'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]',
+        tone === 'maybe' &&
+          'border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))]',
+        tone === 'fail' &&
+          'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]',
       )}
     >
       {icon}
@@ -92,9 +95,13 @@ export function SummaryTile({
   children?: ReactNode
 }) {
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 flex min-h-6 items-center gap-2 text-sm font-medium">{value}</div>
+    <div className="rounded-lg border bg-card p-3 shadow-sm">
+      <div className="text-xxs-600 uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-2 flex min-h-6 items-center gap-2 text-sm font-medium">
+        {value}
+      </div>
       {children}
     </div>
   )
@@ -113,7 +120,7 @@ export function EvaluationDetail({
 
   return (
     <div className="space-y-1.5 border-t pt-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="text-xxs-600 uppercase tracking-[0.08em] text-muted-foreground">
         {label}
       </div>
       <div

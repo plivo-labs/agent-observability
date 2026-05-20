@@ -42,8 +42,16 @@ def _reset_current_test(token: contextvars.Token) -> None:
 @dataclass
 class CaseState:
     run_results: list[Any] = field(default_factory=list)
+    # AgentSession instances captured by the autocapture wrapper. Token
+    # counts live on `session.usage` (via ModelUsageCollector), NOT in
+    # the per-message `item.metrics` that RunResult.events carries. We
+    # keep the session references so pytest_runtest_makereport can read
+    # `session.usage.model_usage` and emit synthetic `type: "usage"`
+    # events alongside the message events.
+    sessions: list[Any] = field(default_factory=list)
     judgments: list[dict] = field(default_factory=list)
     _seen_ids: set[int] = field(default_factory=set)
+    _seen_session_ids: set[int] = field(default_factory=set)
 
 
 # test_id -> CaseState
@@ -92,6 +100,27 @@ def capture(run_result: Any) -> Any:
     state._seen_ids.add(rid)
     state.run_results.append(run_result)
     return run_result
+
+
+# ── Internal: session recording (for AgentSession.usage extraction) ────────
+
+
+def _record_session(session: Any) -> None:
+    """Attach a LiveKit AgentSession to the currently-running test so
+    pytest_runtest_makereport can later read its `usage.model_usage` and
+    surface token counts to the server. Called by the autocapture
+    wrapper installed in plugin.py. Idempotent: capturing the same
+    session twice (e.g. when a test invokes `.run()` multiple times) is
+    a no-op."""
+    test_id = _current_test.get()
+    if test_id is None:
+        return
+    state = _state_for(test_id)
+    sid = id(session)
+    if sid in state._seen_session_ids:
+        return
+    state._seen_session_ids.add(sid)
+    state.sessions.append(session)
 
 
 # ── Internal: judgment recording (called by the judge wrapper) ──────────────

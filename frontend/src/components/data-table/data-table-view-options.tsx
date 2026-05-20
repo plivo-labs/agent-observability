@@ -48,6 +48,7 @@ export function DataTableViewOptions<TData>({
           aria-label="Toggle columns"
           role="combobox"
           variant="outline"
+          size="sm"
           className="ml-auto hidden font-normal lg:flex"
           disabled={disabled}
         >

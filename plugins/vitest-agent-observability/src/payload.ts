@@ -30,10 +30,11 @@ export function detectFramework(): { name: string; version: string | null } | nu
 export function buildPayload(opts: {
   collector: RunCollector;
   agentId?: string | null;
+  agentName?: string | null;
   accountId?: string | null;
   finishedAt: number;
 }): EvalPayloadV0 {
-  const { collector, agentId, accountId, finishedAt } = opts;
+  const { collector, agentId, agentName, accountId, finishedAt } = opts;
   const framework = detectFramework();
   return {
     version: "v0",
@@ -41,6 +42,7 @@ export function buildPayload(opts: {
       run_id: collector.run_id,
       account_id: accountId ?? null,
       agent_id: agentId ?? null,
+      agent_name: agentName ?? null,
       framework: framework?.name ?? null,
       framework_version: framework?.version ?? null,
       testing_framework: TESTING_FRAMEWORK,

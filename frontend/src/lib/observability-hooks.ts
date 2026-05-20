@@ -238,6 +238,19 @@ export function useEvalRuns(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, limit, offset, agentId, frameworkKey, testingFrameworkKey, accountId, startedFrom, startedTo, refetchTick])
 
+  // Live polling while any visible row is in-flight. Cleared as soon as
+  // every row has finalized — keeps a finished page idle. 1500ms is fast
+  // enough to feel live without pummelling the API; matches PR #45.
+  const anyRunning = useMemo(
+    () => runs.some((r) => r.status === 'running'),
+    [runs],
+  )
+  useEffect(() => {
+    if (!anyRunning) return
+    const id = setInterval(() => setRefetchTick((v) => v + 1), 1500)
+    return () => clearInterval(id)
+  }, [anyRunning])
+
   return { runs, meta, loading, error, offset, setOffset, refetch }
 }
 
@@ -246,6 +259,8 @@ export function useEvalRun(runId: string | undefined) {
   const [run, setRun] = useState<EvalRunDetail | null>(null)
   const [loading, setLoading] = useState(!!runId)
   const [error, setError] = useState<string | null>(null)
+  const [refetchTick, setRefetchTick] = useState(0)
+  const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
 
   useEffect(() => {
     if (!runId) return
@@ -258,9 +273,20 @@ export function useEvalRun(runId: string | undefined) {
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
-  }, [api, runId])
+  }, [api, runId, refetchTick])
 
-  return { run, loading, error }
+  // Live polling — when this run is still in flight, re-fetch every
+  // 1.5s so streamed cases (S2.5 flusher) appear on the detail page
+  // without a manual refresh. Same cadence as useEvalRuns. Effect
+  // tears down the moment the status leaves 'running'.
+  const isRunning = run?.status === 'running'
+  useEffect(() => {
+    if (!isRunning) return
+    const id = setInterval(() => setRefetchTick((v) => v + 1), 1500)
+    return () => clearInterval(id)
+  }, [isRunning])
+
+  return { run, loading, error, refetch }
 }
 
 export function useEvalCase(runId: string | undefined, caseId: string | undefined) {

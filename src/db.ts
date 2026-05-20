@@ -2,6 +2,8 @@ import { SQL } from "bun";
 import { config } from "./config.js";
 import { normalizeRawReportPatch } from "./raw-report.js";
 import { upsertAgent } from "./agents/upsert.js";
+import { costFromSessionUsage } from "./evals/metrics.js";
+import { ensurePricesLoaded } from "./evals/pricing.js";
 
 export const sql = new SQL(config.DATABASE_URL);
 
@@ -60,6 +62,11 @@ interface SessionRawReportPatchInput {
 }
 
 export async function insertSession(session: SessionInsert): Promise<void> {
+  // estimated_cost_usd is populated later by mergeSessionRawReport when
+  // the OTLP "session report" patch back-fills session_metrics.usage —
+  // chat_history at insert time carries only timings (TTFT/TTFB/e2e
+  // latency), not token counts, so computing here would persist a
+  // misleading $0 for every voice-agent session.
   await sql`
     INSERT INTO agent_transport_sessions (
       session_id, account_id, agent_id, agent_name, transport, started_at, ended_at, duration_ms, turn_count,
@@ -183,18 +190,30 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
   // the data. Only writes when the current value is missing/empty so we
   // don't clobber a fresher value from a different path.
   if (Array.isArray(patch.usage) && patch.usage.length > 0) {
+    // Cost is computed from the same `patch.usage` we're about to merge
+    // and is persisted in the SAME UPDATE so the two values can never
+    // drift. The WHERE clause gates BOTH writes on the row currently
+    // having no usage — that way a duplicate OTLP patch can't write a
+    // cost figure that doesn't correspond to the stored usage array.
+    //
+    // COALESCE on cost preserves any previously-set value (the column
+    // is otherwise only written here, so this is effectively a NULL→
+    // value transition, but the COALESCE keeps the column monotonic).
+    await ensurePricesLoaded();
+    const cost = costFromSessionUsage(patch.usage);
     await sql`
       UPDATE agent_transport_sessions
       SET session_metrics = jsonb_set(
-        CASE
-          WHEN jsonb_typeof(session_metrics) = 'object'
-            THEN session_metrics
-          ELSE '{}'::jsonb
-        END,
-        '{usage}',
-        ${patch.usage}::jsonb,
-        true
-      )
+            CASE
+              WHEN jsonb_typeof(session_metrics) = 'object'
+                THEN session_metrics
+              ELSE '{}'::jsonb
+            END,
+            '{usage}',
+            ${patch.usage}::jsonb,
+            true
+          ),
+          estimated_cost_usd = COALESCE(estimated_cost_usd, ${cost})
       WHERE session_id = ${input.sessionId}
         AND (
           session_metrics IS NULL

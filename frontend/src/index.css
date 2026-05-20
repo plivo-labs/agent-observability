@@ -65,6 +65,31 @@
   --font-size-xxs-400: 10px; --line-height-xxs-400: 13px;
   --font-size-xxs-600: 10px; --line-height-xxs-600: 13px;
 
+  /* Tailwind 4 generates the `text-<name>` utility from `--text-<name>`
+   * (and `--text-<name>--line-height`). The `--font-size-*` aliases above
+   * are kept for any code that reads them via `var(--font-size-*)`, but
+   * the `text-h2-600` / `text-xs-500` / `text-xxs-600` etc. classes
+   * used widely across the app only resolve once these aliases exist. */
+  --text-h1-600: 26px;   --text-h1-600--line-height: 32px;
+  --text-h1-400: 26px;   --text-h1-400--line-height: 32px;
+  --text-h2-600: 22px;   --text-h2-600--line-height: 32px;
+  --text-h2-400: 22px;   --text-h2-400--line-height: 32px;
+  --text-h3-600: 18px;   --text-h3-600--line-height: 26px;
+  --text-h3-400: 18px;   --text-h3-400--line-height: 26px;
+  --text-h4-600: 16px;   --text-h4-600--line-height: 24px;
+  --text-h4-400: 16px;   --text-h4-400--line-height: 24px;
+  --text-p-600:  14px;   --text-p-600--line-height:  20px;
+  --text-p-500:  14px;   --text-p-500--line-height:  20px;
+  --text-p-400:  14px;   --text-p-400--line-height:  20px;
+  --text-s-600:  13px;   --text-s-600--line-height:  18px;
+  --text-s-500:  13px;   --text-s-500--line-height:  18px;
+  --text-s-400:  13px;   --text-s-400--line-height:  18px;
+  --text-xs-600: 12px;   --text-xs-600--line-height: 18px;
+  --text-xs-500: 12px;   --text-xs-500--line-height: 18px;
+  --text-xs-400: 12px;   --text-xs-400--line-height: 13px;
+  --text-xxs-400: 10px;  --text-xxs-400--line-height: 13px;
+  --text-xxs-600: 10px;  --text-xxs-600--line-height: 13px;
+
   /* Additional color tokens — Neo parity */
   --color-bg1: hsl(var(--bg1));
   --color-bg2: hsl(var(--bg2));

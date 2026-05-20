@@ -3,6 +3,7 @@ import { Activity, AudioLines, BarChart3, Settings2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSession } from '@/lib/observability-hooks'
+import { AgentScopeHeader } from '@/components/agent-scope-header'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
 import { LatencyPercentilesChart } from '@/components/latency-percentiles-chart'
 import { PipelineBreakdownChart } from '@/components/pipeline-breakdown-chart'
@@ -15,13 +16,13 @@ import { SessionConfig } from '@/components/session-config'
 import { SessionEvents } from '@/components/session-events'
 import { SessionEvaluationsDrawer } from '@/components/session-evaluations-drawer'
 
-export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
+export const SessionDetailPage = () => {
   const { session, loading, error } = useSession()
   const [evaluationsOpen, setEvaluationsOpen] = useState(false)
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} aria-busy="true">
+      <div className="p-6 flex flex-col gap-4 relative" aria-busy="true">
         <Skeleton className="h-4 w-56" />
         <Skeleton className="h-[120px] w-full rounded-xl" />
         <div className="obs-metrics">
@@ -37,7 +38,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
   if (error || !session) {
     return (
-      <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--destructive))' }}>
+      <div className="p-6 text-center text-destructive">
         <p>{error ?? 'Session not found'}</p>
       </div>
     )
@@ -49,19 +50,18 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
   const hasRecording = Boolean(session.record_url)
 
   return (
-    <>
-      {onBack && (
-        <div className="obs-crumbs">
-          <button
-            type="button"
-            onClick={onBack}
-            style={{ all: 'unset', cursor: 'pointer', color: 'hsl(var(--secondary))' }}
-          >
-            Sessions
-          </button>
-          <span className="sep">/</span>
-          <span className="cur">{session.session_id}</span>
-        </div>
+    <div className="p-6 flex flex-col gap-4 relative">
+      {session.agent_id && (
+        <AgentScopeHeader
+          agentId={session.agent_id}
+          trail={[
+            {
+              label: 'Sessions',
+              to: `/agents/${encodeURIComponent(session.agent_id)}?tab=sessions`,
+            },
+            { label: session.session_id, mono: true },
+          ]}
+        />
       )}
 
       <SessionHeader onEvaluationsClick={() => setEvaluationsOpen(true)} />
@@ -89,8 +89,8 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="session" className="min-w-0" style={{ marginTop: 4 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <TabsContent value="session" className="min-w-0 mt-1">
+          <div className="flex flex-col gap-4">
             {hasRecording && (
               <div className="rounded-lg border bg-card p-5">
                 <SessionTimeline />
@@ -100,7 +100,7 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
           </div>
         </TabsContent>
 
-        <TabsContent value="metrics" className="min-w-0" style={{ marginTop: 4 }}>
+        <TabsContent value="metrics" className="min-w-0 mt-1">
           <div className="perf-grid">
             <LatencyPercentilesChart />
             <PipelineBreakdownChart />
@@ -109,14 +109,14 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
           </div>
         </TabsContent>
 
-        <TabsContent value="events" className="min-w-0" style={{ marginTop: 4 }}>
+        <TabsContent value="events" className="min-w-0 mt-1">
           <SessionEvents />
         </TabsContent>
 
-        <TabsContent value="config" className="min-w-0" style={{ marginTop: 4 }}>
+        <TabsContent value="config" className="min-w-0 mt-1">
           <SessionConfig />
         </TabsContent>
       </Tabs>
-    </>
+    </div>
   )
 }

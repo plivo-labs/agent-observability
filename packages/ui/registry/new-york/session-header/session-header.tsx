@@ -1,15 +1,18 @@
-import { ClipboardCheck } from 'lucide-react'
+import { ClipboardCheck, Download, Radio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import type { AgentSessionRow } from '@/lib/observability-types'
 import { useSession } from '@/lib/observability-hooks'
+import { CapsChips } from '@/components/obs-cells'
 
-const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div className="flex items-baseline justify-between py-1.5">
-    <span className="text-s-400 text-muted-foreground">{label}</span>
-    <span className="text-s-400 text-right">{children}</span>
-  </div>
-)
+function KVRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="row">
+      <div className="k">{label}</div>
+      <div className="v">{children}</div>
+    </div>
+  )
+}
 
 interface SessionHeaderProps {
   session?: AgentSessionRow
@@ -29,15 +32,9 @@ export const SessionHeader = ({
 }: SessionHeaderProps) => {
   const { session: hookSession } = useSession()
   const session = sessionProp ?? hookSession
-
   if (!session) return null
 
-  const textOnly = isTextOnlySession(session)
-  const capabilities = [
-    !textOnly && session.has_stt && 'STT',
-    session.has_llm && 'LLM',
-    !textOnly && session.has_tts && 'TTS',
-  ].filter(Boolean)
+  const stateClass = session.state === 'ended' ? 'status-ended' : 'status-live'
   const evaluationCount = session.evaluations?.length ?? 0
   // `evaluations:enabled` is emitted by the Python adapter when judges are
   // configured (or by callers passing `metadata.evaluations=true`). Surfacing
@@ -45,13 +42,19 @@ export const SessionHeader = ({
   // judge results land. Node sessions never carry this tag.
   const hasEvaluationFlag = session.tags?.some((tag) => tag.name === 'evaluations:enabled') ?? false
   const hasEvaluationData = evaluationCount > 0 || session.outcome != null || hasEvaluationFlag
+  const textOnly = isTextOnlySession(session)
 
   return (
-    <div className="rounded-lg border bg-card">
-      {/* Title row */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b">
-        <span className="text-p-400 font-medium">Session</span>
-        <div className="flex items-center gap-3">
+    <div className="obs-session-head">
+      <div className="top">
+        <div className="label">
+          <Radio size={18} /> Session
+          <span className={`status-pill ${stateClass}`}>
+            <span className="dot" />
+            {session.state ? session.state.charAt(0).toUpperCase() + session.state.slice(1) : 'Unknown'}
+          </span>
+        </div>
+        <div className="session-actions">
           {onEvaluationsClick && hasEvaluationData && (
             <Button variant="outline" size="sm" onClick={onEvaluationsClick}>
               <ClipboardCheck size={13} />
@@ -59,35 +62,55 @@ export const SessionHeader = ({
               {evaluationCount > 0 && <span>({evaluationCount})</span>}
             </Button>
           )}
-          <span className="text-p-400 font-medium tabular-nums">
-            {formatDuration(session.duration_ms)}
-          </span>
+          <div className="dur">{formatDuration(session.duration_ms)}</div>
         </div>
       </div>
 
-      {/* Two-column key-value grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x">
-        <div className="flex flex-col px-5 py-3">
-          <Row label="Session ID">
-            <span className="text-xs">{session.session_id}</span>
-          </Row>
-          <Row label="Capabilities">{capabilities.length > 0 ? capabilities.join(', ') : '—'}</Row>
-          <Row label="Turns">{session.turn_count ?? '—'}</Row>
-        </div>
-        <div className="flex flex-col px-5 py-3">
-          <Row label="Started">{formatDate(session.started_at)}</Row>
-          <Row label="Ended">{formatDate(session.ended_at)}</Row>
-          <Row label="Status">
-            <span className="capitalize">{session.state || '—'}</span>
-          </Row>
-          {session.record_url && (
-            <Row label="Recording">
-              <a href={session.record_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-xs">
-                Download
-              </a>
-            </Row>
+      <div className="obs-kv">
+        <KVRow label="Session ID">
+          <span>{session.session_id}</span>
+        </KVRow>
+        <KVRow label="Agent">
+          {session.agent_id || session.agent_name ? (
+            <div className="flex flex-col items-end leading-tight">
+              <span>{session.agent_name || session.agent_id}</span>
+              {session.agent_name && session.agent_id && (
+                <span className="text-muted-foreground text-[11px] font-mono">
+                  {session.agent_id}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span style={{ color: 'hsl(var(--tertiary))' }}>—</span>
           )}
-        </div>
+        </KVRow>
+        <KVRow label="Capabilities">
+          <CapsChips
+            stt={!textOnly && session.has_stt}
+            llm={session.has_llm}
+            tts={!textOnly && session.has_tts}
+          />
+        </KVRow>
+        <KVRow label="Turns">{session.turn_count ?? '—'}</KVRow>
+      </div>
+
+      <div className="obs-kv">
+        <KVRow label="Started">{formatDate(session.started_at)}</KVRow>
+        <KVRow label="Ended">{formatDate(session.ended_at)}</KVRow>
+        <KVRow label="Recording">
+          {session.record_url ? (
+            <a
+              className="link"
+              href={session.record_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Download size={12} /> Download
+            </a>
+          ) : (
+            <span style={{ color: 'hsl(var(--tertiary))' }}>—</span>
+          )}
+        </KVRow>
       </div>
     </div>
   )

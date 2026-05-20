@@ -300,3 +300,85 @@ def test_capture_attaches_events_to_case(pytester: pytest.Pytester, monkeypatch,
     assert ev["role"] == "assistant"
     assert ev["content"] == "hello"
     assert ev["interrupted"] is False
+
+
+# ── agent_name resolution ────────────────────────────────────────────────────
+#
+# The plugin reads agent_name from (1) `--agent-observability-agent-name`,
+# falling back to (2) `AGENT_OBSERVABILITY_AGENT_NAME`, falling back to
+# (3) None. Without these the obs dashboard can only show the opaque
+# agent_id; with them, the agents table renders a human label.
+
+
+def _capture_payload_conftest(captured_path) -> str:
+    """conftest stub that writes the payload the plugin would upload."""
+    return f"""
+        from pytest_agent_observability import uploader
+
+        def _stub(payload, config, *, fallback_dir=None):
+            import json
+            from pathlib import Path
+            Path({str(captured_path)!r}).write_text(json.dumps(payload))
+            return True
+
+        uploader.upload = _stub
+    """
+
+
+def test_agent_name_from_cli_flag_wins_over_env(
+    pytester: pytest.Pytester, monkeypatch, tmp_path
+):
+    """--agent-observability-agent-name takes precedence over the env var."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    monkeypatch.setenv("AGENT_OBSERVABILITY_AGENT_ID", "agent-uuid")
+    monkeypatch.setenv("AGENT_OBSERVABILITY_AGENT_NAME", "env-name")
+
+    captured = tmp_path / "payload.json"
+    pytester.makeconftest(_capture_payload_conftest(captured))
+    pytester.makepyfile("def test_one(): pass")
+
+    pytester.runpytest(
+        "-p",
+        "agent_observability",
+        "--agent-observability-agent-name=flag-name",
+        "-v",
+    ).assert_outcomes(passed=1)
+
+    payload = json.loads(captured.read_text())
+    assert payload["run"]["agent_name"] == "flag-name"
+
+
+def test_agent_name_from_env_when_no_flag(
+    pytester: pytest.Pytester, monkeypatch, tmp_path
+):
+    """AGENT_OBSERVABILITY_AGENT_NAME is the fallback for the flag."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    monkeypatch.setenv("AGENT_OBSERVABILITY_AGENT_ID", "agent-uuid")
+    monkeypatch.setenv("AGENT_OBSERVABILITY_AGENT_NAME", "env-name")
+
+    captured = tmp_path / "payload.json"
+    pytester.makeconftest(_capture_payload_conftest(captured))
+    pytester.makepyfile("def test_one(): pass")
+
+    pytester.runpytest("-p", "agent_observability", "-v").assert_outcomes(passed=1)
+
+    payload = json.loads(captured.read_text())
+    assert payload["run"]["agent_name"] == "env-name"
+
+
+def test_agent_name_absent_when_neither_set(
+    pytester: pytest.Pytester, monkeypatch, tmp_path
+):
+    """No flag + no env → agent_name is null in the payload."""
+    monkeypatch.setenv("AGENT_OBSERVABILITY_URL", "http://stub:9090")
+    monkeypatch.setenv("AGENT_OBSERVABILITY_AGENT_ID", "agent-uuid")
+    monkeypatch.delenv("AGENT_OBSERVABILITY_AGENT_NAME", raising=False)
+
+    captured = tmp_path / "payload.json"
+    pytester.makeconftest(_capture_payload_conftest(captured))
+    pytester.makepyfile("def test_one(): pass")
+
+    pytester.runpytest("-p", "agent_observability", "-v").assert_outcomes(passed=1)
+
+    payload = json.loads(captured.read_text())
+    assert payload["run"]["agent_name"] is None
