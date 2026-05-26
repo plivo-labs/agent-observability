@@ -143,3 +143,206 @@ maybe.
 
 A KB call can still be appropriate even with partial context if more detail \
 was needed."""
+
+
+VOICEMAIL_DETECTION = """\
+Detect whether the conversation reached voicemail. This is a voice-channel \
+classifier. Pass when the transcript is NOT voicemail. Fail when direct \
+voicemail is detected.
+
+Criteria:
+1. Direct voicemail greetings, mailbox prompts, or leave-a-message flows mean \
+voicemail_detected=true.
+2. Call screening is NOT voicemail; classify screening separately even if it \
+eventually asks for a message.
+3. Bot/IVR menus are NOT voicemail.
+4. Human conversation after an automated prompt means voicemail_detected=false."""
+
+
+BOT_DETECTION = """\
+Detect whether the call was answered by an automated IVR/bot system rather \
+than a human. Pass when no bot/IVR is present. Fail when bot_detected=true.
+
+Criteria:
+1. Menu prompts such as press 1, say billing, main menu, or repeat options are \
+bot/IVR indicators.
+2. Self-identification as an automated assistant, virtual assistant, AI \
+assistant, or phone system is a bot indicator.
+3. Voicemail and call screening are separate outcomes and should not be marked \
+as bot_detected.
+4. Analyze the answered party's messages, not the agent's own wording."""
+
+
+CALL_SCREENING = """\
+Detect automated call screening where a system asks who is calling and why, \
+and the real person does not subsequently answer. Pass when no unresolved call \
+screening is present. Fail when call_screening=true.
+
+Criteria:
+1. iOS/Android/Google call screening asks for the caller's name, purpose, or \
+reason for calling.
+2. If the real person starts conversing after the screening prompt, screening \
+was resolved and should not fail.
+3. Screening followed by voicemail remains call_screening, not voicemail.
+4. IVR menus with numbered routing options are bot/IVR, not call screening."""
+
+
+LOW_ENGAGEMENT = """\
+Detect low engagement: a real human answered but only gave minimal greetings \
+or acknowledgements and never engaged with the topic. Pass when the user \
+engaged meaningfully or the metric does not apply. Fail when low_engagement=true.
+
+Criteria:
+1. Applies after a human answered, not voicemail, call screening, or bot/IVR.
+2. User messages are only brief greetings or acknowledgements such as hello, \
+yes, yeah, speaking, okay.
+3. Any substantive question, provided information, disinterest, wrong-number \
+statement, or opt-out is not low engagement."""
+
+
+WRONG_NUMBER = """\
+Detect whether the user indicates they are not the intended recipient. Pass \
+when wrong_number=false. Fail when wrong_number=true.
+
+Criteria:
+1. User says wrong number, wrong person, I do not know them, nobody by that \
+name, or otherwise rejects the identity target.
+2. General confusion about the purpose of the call is not enough.
+3. Applies to voice, chat, SMS, and WhatsApp style transcripts."""
+
+
+DO_NOT_DISTURB = """\
+Detect whether the user explicitly asks not to be contacted again. Pass when \
+do_not_disturb=false. Fail when do_not_disturb=true.
+
+Criteria:
+1. Explicit opt-out language such as do not call me again, remove me, stop \
+contacting me, take me off your list, or similar means true.
+2. Simple disinterest is not enough unless it includes a future-contact ban.
+3. Applies to voice, chat, SMS, and WhatsApp style transcripts."""
+
+
+USER_SENTIMENT = """\
+Classify the user's sentiment as positive, neutral, negative, confused, or \
+not_applicable. Pass unless the sentiment is clearly negative or confused in a \
+way that indicates poor user experience; maybe for weak signals.
+
+Rules:
+1. positive: cooperative, receptive, appreciative.
+2. neutral: minimal but valid engagement.
+3. negative: dissatisfaction, rejection, hostility, frustration, opt-out.
+4. confused: repeated uncertainty or requests for clarification.
+5. not_applicable: no human interaction, voicemail, screening, or bot/IVR."""
+
+
+CONVERSATION_STATUS = """\
+Derive the overall conversation status from the transcript. Use one of: \
+unanswered, human_contact, silent_conversation, voicemail_detected, \
+call_screening, bot_detected, low_engagement, wrong_number, do_not_disturb, \
+transferred_to_human.
+
+Priority for voice filtering outcomes:
+1. voicemail_detected
+2. call_screening
+3. bot_detected
+4. low_engagement
+5. wrong_number
+6. do_not_disturb
+7. transferred_to_human
+8. human_contact
+
+Pass when the final status is human_contact or transferred_to_human. Fail for \
+filtering outcomes. Maybe when evidence is ambiguous."""
+
+
+INSTRUCTION_ADHERENCE = """\
+Evaluate whether the agent followed its instructions for this scenario. Use \
+the cx-style four-part rubric: objective_progress, procedure_compliance, \
+interaction_quality, and policy_boundary_compliance.
+
+Agent instructions:
+{instructions}
+
+Optional scenario objective:
+{objective}
+
+Rubric:
+1. Objective progress: did the agent move toward the intended task outcome?
+2. Procedure compliance: did it follow mandatory steps, confirmations, and \
+ordering constraints?
+3. Interaction quality: was it clear, professional, not overloaded, and \
+responsive to the user?
+4. Policy boundary compliance: did it avoid unsafe, forbidden, or out-of-scope \
+behavior?
+
+Pass only when objective, procedure, and policy are satisfied. Maybe for minor \
+interaction quality issues that do not change the outcome. Fail for critical \
+missed steps, objective failure, or policy violation."""
+
+
+INTENT_IDENTIFICATION = """\
+Evaluate whether the agent/framework selected the correct intent for the \
+conversation segment.
+
+Available intents:
+{available_intents}
+
+Chosen intent:
+{chosen_intent}
+
+Rules:
+1. intent_not_found=true when the user's intent is valid but not represented \
+in the available intent list.
+2. intent_wrongly_identified=true when the chosen intent does not match the \
+user's actual request.
+3. System intents such as hangup, error, failed, sent, or conversation_complete \
+are acceptable when they match a system interruption.
+
+Pass when the chosen intent is supported and correct. Fail when not found or \
+wrongly identified. Maybe when the user input is ambiguous."""
+
+
+GOAL_EVALUATION = """\
+Evaluate whether the configured goals were achieved by the conversation.
+
+Goals:
+{goals}
+
+Flow/run history or additional context:
+{flow_history}
+
+For each goal, decide whether the conversation achieved it. Pass when all \
+required goals were achieved. Fail when any required goal was clearly missed. \
+Maybe when the transcript lacks enough evidence."""
+
+
+STT_EVALUATION = """\
+Evaluate speech-to-text quality from the transcript. Detect transcription \
+errors that caused misunderstanding or poor agent behavior.
+
+Transcript:
+{transcript}
+
+Rules:
+1. Identify likely STT mistakes in user messages.
+2. Mark whether the agent recovered from each mistake.
+3. Ignore harmless spelling, casing, punctuation, or accent artifacts that did \
+not affect the conversation.
+4. Fail when unrecovered STT errors materially changed the outcome. Maybe for \
+minor or recovered errors. Pass when no material STT issue is visible."""
+
+
+TURN_DETECTION = """\
+Evaluate turn detection / end-of-utterance decisions from transcript \
+fragments. Detect premature EOU and missed EOU.
+
+Fragments / TD events:
+{fragments}
+
+Rules:
+1. Premature EOU: the system ended the user's turn before the utterance was \
+complete.
+2. Missed EOU: the system delayed after a complete utterance.
+3. Judge each fragment based on whether it is a complete utterance in context.
+4. Fail when TD errors would cause interruption, latency, or wrong response. \
+Maybe for borderline fragments. Pass when decisions look appropriate."""
