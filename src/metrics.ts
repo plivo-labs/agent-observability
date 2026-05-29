@@ -346,7 +346,7 @@ export function buildSessionMetrics(
   // If per-turn tokens are missing, compute from session-level usage data.
   // Usage entries have: { provider, model, input_tokens?, output_tokens?, characters_count?, audio_duration? }
   // LLM entries have input_tokens/output_tokens; TTS entries have characters_count; STT have audio_duration only.
-  if (totalTokens === 0 && usageData) {
+  if (totalTokens === 0 && Array.isArray(usageData)) {
     for (const u of usageData) {
       if (u.input_tokens != null && u.characters_count == null) {
         totalPromptTokens += u.input_tokens ?? 0;
@@ -355,7 +355,7 @@ export function buildSessionMetrics(
       }
     }
   }
-  if (totalTtsChars === 0 && usageData) {
+  if (totalTtsChars === 0 && Array.isArray(usageData)) {
     for (const u of usageData) {
       if (u.characters_count != null) {
         totalTtsChars += u.characters_count;

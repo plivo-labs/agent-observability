@@ -40,9 +40,12 @@ export function normalizeKeys(obj: any): any {
  * so the metrics builder works consistently for both.
  *
  * Detection rules:
- * - hasStt: user-role message OR transcription_delay metric present
  * - hasLlm: llm_node_ttft metric present
- * - hasTts: assistant-role message OR tts_node_ttfb metric present
+ * - hasStt/hasTts: a user/assistant message implies STT/TTS *only in a voice
+ *   session*. The session is treated as voice when any item carries an audio
+ *   metric (transcription_delay, tts_node_ttfb, started/stopped_speaking_at).
+ *   With zero audio metrics it's text-only — messages are typed, not spoken —
+ *   so hasStt/hasTts stay false.
  */
 export function parseChatHistory(chat: any): ParsedChatHistory {
   // Normalize entire payload to snake_case
@@ -58,6 +61,8 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
   let hasTts = false;
   const metrics: any[] = [];
 
+  let sawAudioSignal = false;
+
   for (const item of chatItems) {
     if (item.type === "message") {
       const role = item.role ?? item.message?.role;
@@ -67,6 +72,9 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
       // never disagree (they used to: this loop counted every message
       // including user-only items, so a 4-turn dialog showed as 8).
       if (role === "assistant") turnCount++;
+      // Role-based STT/TTS is a voice-session fallback (a user/assistant
+      // message implies speech even when this item's own metric is absent).
+      // Cleared after the loop if the session turns out to be text-only.
       if (role === "user") hasStt = true;
       if (role === "assistant") hasTts = true;
     }
@@ -75,10 +83,29 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
     if (m.llm_node_ttft) hasLlm = true;
     if (m.tts_node_ttfb) hasTts = true;
     if (m.transcription_delay) hasStt = true;
+    // Audio-pipeline evidence: these only exist when STT/TTS actually ran.
+    // Their total absence across the session marks it as text-only.
+    if (
+      m.transcription_delay != null ||
+      m.tts_node_ttfb != null ||
+      m.started_speaking_at != null ||
+      m.stopped_speaking_at != null
+    ) {
+      sawAudioSignal = true;
+    }
 
     if (Object.keys(m).length > 0) {
       metrics.push({ item_id: item.id, role: item.role, ...m });
     }
+  }
+
+  // Text-only sessions carry user/assistant messages but never run STT/TTS.
+  // With no audio metric anywhere, the role-based flags above would mislabel
+  // them — trust the absence of audio evidence and report no STT/TTS. Voice
+  // sessions (any audio metric present) keep the role-based fallback.
+  if (!sawAudioSignal) {
+    hasStt = false;
+    hasTts = false;
   }
 
   return { chatItems, turnCount, hasStt, hasLlm, hasTts, metrics };
