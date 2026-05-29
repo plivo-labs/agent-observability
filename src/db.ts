@@ -155,6 +155,24 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     return;
   }
 
+  // Detect the OTLP-before-recording race. Every write below is an UPDATE
+  // keyed on session_id; if the recording multipart hasn't created the row
+  // yet, the usage/cost/events carried in this patch are silently dropped
+  // (only session_tags are durable + replayed on insert via
+  // applyStoredSessionTags). Log it so the gap is visible in prod — if this
+  // never fires, the recording-first ordering holds and the heavier
+  // insert→upsert fix isn't warranted.
+  const [sessionRow] = await sql`
+    SELECT 1 AS present FROM agent_transport_sessions WHERE session_id = ${input.sessionId} LIMIT 1
+  `;
+  if (!sessionRow) {
+    console.warn(
+      `[otlp] raw_report patch for session=${input.sessionId} arrived before its ` +
+        `recording row; usage/cost/events in this patch will be dropped ` +
+        `(keys=${Object.keys(patch).join(",")})`,
+    );
+  }
+
   // Promote agent_id and agent_name from the patch into their indexed
   // columns. The patch still carries them in raw_report (for fidelity);
   // the columns power the /api/agents distinct-aggregate query and the
