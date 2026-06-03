@@ -30,6 +30,8 @@ export const evalCaseSchema = z.object({
   events: z.array(z.unknown()).default([]),
   judgments: z.array(z.unknown()).default([]),
   failure: z.unknown().nullable().optional(),
+  // Audio recording proxy URL (live-call cases only); null otherwise.
+  recording_url: z.string().nullable().optional(),
 });
 export type EvalCase = z.infer<typeof evalCaseSchema>;
 

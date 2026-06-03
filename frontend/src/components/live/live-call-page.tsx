@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import {
-  Activity, AlertTriangle, Bot, Check, GitPullRequest, Hand, Loader, Mic, Phone, RotateCw, Send, Timer, TriangleAlert, Volume2, VolumeX, X,
+  Activity, AlertTriangle, Bot, Check, FileCode, GitPullRequest, Hand, ListChecks, Loader, Mic, Phone, Radio, RotateCw, Send, Timer, TriangleAlert, Users, Volume2, VolumeX, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -18,13 +18,7 @@ import { readLiveRun, writeLiveRun, clearLiveRun } from '../simulate/run-persist
 
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
 const fmtClock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-const btn = 'inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50'
-const btnPrimary = cn(btn, 'bg-primary text-primary-foreground hover:bg-primary/90 px-3.5 py-2')
-const btnOut = cn(btn, 'border border-border bg-card hover:bg-accent px-3 py-2')
 
-function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn('rounded-lg border border-border bg-card', className)}>{children}</div>
-}
 function Waveform({ active, color }: { active: boolean; color: string }) {
   return (
     <div className="flex h-7 items-center gap-[3px]">
@@ -44,7 +38,6 @@ function AudioLeg({ label, color, speaking, muted, onMute }: { label: string; co
     </div>
   )
 }
-const verdictPill = (v: 'pass' | 'fail') => cn('rounded-full px-2 py-0.5 text-xs font-semibold', v === 'pass' ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive')
 
 export function LiveCallPage() {
   const navigate = useNavigate()
@@ -212,49 +205,80 @@ export function LiveCallPage() {
   if (phase === 'setup') {
     const chosenN = selectedIds.length
     return (
-      <div className="animate-in fade-in duration-300">
-        <div className="mb-5"><h1 className="text-[26px] font-semibold leading-8 text-foreground">Live calls</h1><div className="mt-1 text-sm text-muted-foreground">Run a suite of live calls — one per persona — against your agent, scored by a rubric. Step on stage any time.</div></div>
+      <div>
+        <header className="ao-hero ao-reveal">
+          <div>
+            <div className="ao-hero-eyebrow"><Radio /> Live calling</div>
+            <h1 className="ao-hero-title">Live calls</h1>
+            <p className="ao-hero-sub">Run a suite of live calls — one per persona — against your agent, scored by a rubric. Step on stage any time.</p>
+          </div>
+          <div className="ao-hero-actions">
+            {liveMode === 'truman'
+              ? <span className="ao-badge is-success ao-badge--dot is-pulse">Real · Truman</span>
+              : <span className="ao-badge is-warning ao-badge--dot">Shell · demo</span>}
+          </div>
+        </header>
+
         {liveMode === 'truman' ? (
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/30 bg-success/8 px-3.5 py-2.5 text-sm">
-            <Phone size={16} className="mt-0.5 shrink-0 text-success" />
+          <div className="ao-alert mb-4 ao-reveal ao-reveal-1">
+            <Phone />
             <span><b>Real calls via Truman.</b> Each persona places a real phone call to <span className="font-mono">{phoneNo.trim() || 'the number you enter below'}</span> over LiveKit + Plivo; Truman judges the recorded transcript against your rubric. Calls run asynchronously — the suite updates live as each finishes. (Dialing needs Truman's caller worker running.)</span>
           </div>
         ) : (
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/8 px-3.5 py-2.5 text-sm">
-            <TriangleAlert size={16} className="mt-0.5 shrink-0 text-warning" />
+          <div className="ao-alert is-warning mb-4 ao-reveal ao-reveal-1">
+            <TriangleAlert />
             <span><b>Live-call shell.</b> Real PSTN dialing is served by the Truman caller — set <span className="font-mono">TRUMAN_API_URL</span> to place real calls. Here calls are engine-driven; the suite, lifecycle, transcript, takeover and criteria scoring match Truman.</span>
           </div>
         )}
+
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.6fr_1fr] lg:items-start">
-          <div className="flex flex-col gap-5">
-            <Card>
-              <div className="border-b border-border px-4 py-3 text-sm font-semibold">Agent under test</div>
-              <div className="p-4">
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Agent</label>
-                <div className="relative">
-                  <Bot size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <select value={agentId} onChange={(e) => onAgentChange(e.target.value)} className="w-full rounded-md border border-border bg-background py-2 pl-8 pr-2.5 text-sm outline-none focus:ring-2 focus:ring-ring">
-                    <option value="">Custom prompt</option>
-                    {agents.map((a) => <option key={a.id} value={a.id}>{a.name}{a.builtin ? ' · builtin' : ''}</option>)}
-                  </select>
+          <div className="flex flex-col gap-5 ao-reveal ao-reveal-2">
+            <section className="ao-panel">
+              <div className="ao-panel-head">
+                <div className="ao-panel-title"><Bot /> Agent under test</div>
+              </div>
+              <div className="ao-panel-body flex flex-col gap-4">
+                <div className="ao-field">
+                  <label className="ao-label">Agent</label>
+                  <div className="relative">
+                    <Bot size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <select value={agentId} onChange={(e) => onAgentChange(e.target.value)} className="ao-input w-full pl-8">
+                      <option value="">Custom prompt</option>
+                      {agents.map((a) => <option key={a.id} value={a.id}>{a.name}{a.builtin ? ' · builtin' : ''}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <label className="mb-1.5 mt-3 block text-xs font-medium text-muted-foreground">System prompt</label>
-                <textarea value={prompt} onChange={(e) => { setPrompt(e.target.value); setAgentId('') }} rows={6} className="w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-[13px] leading-relaxed outline-none focus:ring-2 focus:ring-ring" />
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Phone number</label><input value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 415 555 0142" className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring" /></div>
-                  <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Opener override</label><input value={opener} onChange={(e) => setOpener(e.target.value)} placeholder="auto per persona" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" /></div>
+                <div className="ao-field">
+                  <label className="ao-label">System prompt</label>
+                  <textarea value={prompt} onChange={(e) => { setPrompt(e.target.value); setAgentId('') }} rows={6} className="ao-textarea mono w-full" />
+                </div>
+                <div className="ao-field-row">
+                  <div className="ao-field">
+                    <label className="ao-label">Phone number {liveMode === 'truman' && <span className="req">*</span>}</label>
+                    <input value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 415 555 0142" className="ao-input mono w-full" />
+                  </div>
+                  <div className="ao-field">
+                    <label className="ao-label">Opener override</label>
+                    <input value={opener} onChange={(e) => setOpener(e.target.value)} placeholder="auto per persona" className="ao-input w-full" />
+                  </div>
                 </div>
               </div>
-            </Card>
-            <Card>
-              <div className="flex items-center gap-2 border-b border-border px-4 py-3"><span className="text-sm font-semibold">Personas</span><span className="text-xs text-muted-foreground">{chosenN} selected — each gets its own call</span></div>
-              <div className="p-4">
+            </section>
+
+            <section className="ao-panel">
+              <div className="ao-panel-head">
+                <div>
+                  <div className="ao-panel-title"><Users /> Personas</div>
+                  <div className="ao-panel-sub">{chosenN} selected — each gets its own call</div>
+                </div>
+              </div>
+              <div className="ao-panel-body">
                 <div className="mb-3 flex flex-wrap gap-1.5">
-                  {['all', ...PERSONA_TYPES].map((t) => <span key={t} onClick={() => setTypeFilter(t)} className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium', typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>)}
+                  {['all', ...PERSONA_TYPES].map((t) => <span key={t} onClick={() => setTypeFilter(t)} className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors', typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>)}
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {filtered.map((p) => (
-                    <button key={p.id} onClick={() => toggle(p.id)} className={cn('flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-all', selectedIds.includes(p.id) ? 'border-primary ring-1 ring-primary' : 'border-border opacity-70 hover:opacity-100')}>
+                    <button key={p.id} onClick={() => toggle(p.id)} className={cn('flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-all', selectedIds.includes(p.id) ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border opacity-70 hover:opacity-100')}>
                       <div className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold text-white" style={{ background: p.avatar }}>{initials(p.name)}</div>
                       <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-foreground">{p.name}</div><div className="truncate text-xs text-muted-foreground">{p.type.replace('_', ' ')}</div></div>
                       {selectedIds.includes(p.id) && <Check size={16} className="text-primary" />}
@@ -262,19 +286,23 @@ export function LiveCallPage() {
                   ))}
                 </div>
               </div>
-            </Card>
+            </section>
           </div>
-          <div className="flex flex-col gap-5 lg:sticky lg:top-4">
-            <Card>
-              <div className="border-b border-border px-4 py-3 text-sm font-semibold">Rubric</div>
-              <div className="p-4">
-                <select value={rubricId} onChange={(e) => setRubricId(e.target.value)} className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring">{rubrics.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
-                {rubric && <div className="mt-2 flex flex-wrap gap-1">{rubric.criteria.map((c) => <span key={c.name} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground" title={c.question}>{c.name}</span>)}</div>}
-                <div className="mt-2 text-[11px] text-muted-foreground">Each is a pass/fail criterion — a call passes only if all pass.</div>
+
+          <div className="flex flex-col gap-5 lg:sticky lg:top-4 ao-reveal ao-reveal-3">
+            <section className="ao-panel">
+              <div className="ao-panel-head">
+                <div className="ao-panel-title"><ListChecks /> Rubric</div>
               </div>
-            </Card>
-            <button className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={place} disabled={placing || chosenN === 0}>{placing ? <><Loader size={16} className="animate-spin" /> Placing {chosenN} calls…</> : <><Phone size={17} /> Place {chosenN} calls</>}</button>
-            {err && <div className="text-center text-sm text-destructive">{err}</div>}
+              <div className="ao-panel-body">
+                <select value={rubricId} onChange={(e) => setRubricId(e.target.value)} className="ao-input w-full">{rubrics.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+                {rubric && <div className="mt-3 flex flex-wrap gap-1">{rubric.criteria.map((c) => <span key={c.name} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground" title={c.question}>{c.name}</span>)}</div>}
+                <div className="ao-hint mt-3">Each is a pass/fail criterion — a call passes only if all pass.</div>
+              </div>
+            </section>
+
+            <button className="ao-btn ao-btn--primary h-12 text-[15px]" onClick={place} disabled={placing || chosenN === 0}>{placing ? <><Loader size={16} className="animate-spin" /> Placing {chosenN} calls…</> : <><Phone size={17} /> Place {chosenN} calls</>}</button>
+            {err && <div className="ao-alert is-danger"><AlertTriangle />{err}</div>}
           </div>
         </div>
       </div>
@@ -285,56 +313,92 @@ export function LiveCallPage() {
   const personaSpeaking = isTruman ? live.legs.persona.speaking : selStage === 'live' && lastRole === 'user' && !takeover
   const agentSpeaking = isTruman ? live.legs.callee.speaking : selStage === 'live' && lastRole === 'agent'
   return (
-    <div className="animate-in fade-in duration-300">
-      <div className="mb-4 flex items-start justify-between gap-4">
+    <div>
+      <header className="ao-hero ao-reveal">
         <div>
-          <h1 className="flex items-center gap-2 text-[22px] font-semibold leading-7 text-foreground">Live suite <span className="text-muted-foreground">→ {batch?.agentName}</span>{isTruman && <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success">real · Truman</span>}</h1>
-          <div className="mt-0.5 flex items-center gap-2 text-sm text-muted-foreground"><span className="font-mono">{phoneNo}</span> · <Timer size={13} /> {fmtClock(elapsed)} · {calls.length} calls</div>
+          <div className="ao-hero-eyebrow"><Radio /> Live suite</div>
+          <h1 className="ao-hero-title flex items-center gap-2.5">{batch?.agentName}{isTruman && <span className="ao-badge is-success ao-badge--dot is-pulse">real · Truman</span>}</h1>
+          <p className="ao-hero-sub flex items-center gap-2"><span className="ao-mono">{phoneNo}</span> · <Timer size={13} /> {fmtClock(elapsed)} · {calls.length} calls</p>
         </div>
-        {suiteDone
-          ? <span className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold', passN === calls.length ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive')}>{passN}/{calls.length} passed</span>
-          : <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-3 py-1 text-sm font-semibold text-success"><span className="size-1.5 rounded-full bg-current animate-pulse" /> {doneCount}/{calls.length} done</span>}
+        <div className="ao-hero-actions">
+          {suiteDone
+            ? <span className={cn('ao-badge', passN === calls.length ? 'is-success' : 'is-danger')}>{passN}/{calls.length} passed</span>
+            : <span className="ao-badge is-accent ao-badge--dot is-pulse">{doneCount}/{calls.length} done</span>}
+        </div>
+      </header>
+
+      {/* KPI row */}
+      <div className="ao-stat-row ao-stagger mb-5">
+        <div className="ao-stat ao-stat--feature is-accent">
+          <div className="ao-stat-label"><Phone /> Calls placed</div>
+          <div className="ao-stat-value">{calls.length}</div>
+          <div className="ao-stat-meta">{doneCount} terminal · {Math.max(0, calls.length - doneCount)} in progress</div>
+        </div>
+        <div className={cn('ao-stat', suiteDone ? (passN === calls.length ? 'is-good' : 'is-bad') : 'is-accent')}>
+          <div className="ao-stat-label"><Check /> Passed</div>
+          <div className="ao-stat-value">{passN}<span className="suffix">/{calls.length}</span></div>
+          <div className="ao-stat-meta">{suiteDone ? 'suite complete' : 'judging in progress'}</div>
+        </div>
+        <div className="ao-stat is-good">
+          <div className="ao-stat-label"><Timer /> Elapsed</div>
+          <div className="ao-stat-value font-mono">{fmtClock(elapsed)}</div>
+          <div className="ao-stat-meta">{isTruman ? 'real call time' : 'simulated'}</div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.3fr] lg:items-start">
         {/* call grid */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 ao-reveal ao-reveal-1">
+          <div className="ao-section-label">Calls</div>
           {calls.map((cc, i) => {
             const st = stageOf(i)
             return (
-              <button key={i} onClick={() => { setSel(i); setTakeover(false) }} className={cn('flex items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all', sel === i ? 'border-primary ring-1 ring-primary' : 'border-border hover:bg-accent')}>
+              <button key={i} onClick={() => { setSel(i); setTakeover(false) }} className={cn('flex items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all', sel === i ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border hover:bg-accent')}>
                 <div className="flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold text-white" style={{ background: cc.avatar }}>{initials(cc.personaName)}</div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-foreground">{cc.personaName}</div>
                   <div className="text-xs text-muted-foreground">{cc.personaType.replace('_', ' ')}</div>
                   {st === 'live' && <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progOf(i)}%` }} /></div>}
                 </div>
-                {st === 'dialing' && <span className="inline-flex items-center gap-1 text-[11px] text-warning"><span className="size-1.5 rounded-full bg-current animate-pulse" />dialing</span>}
-                {st === 'live' && <span className="inline-flex items-center gap-1 text-[11px] text-success"><span className="size-1.5 rounded-full bg-current animate-pulse" />live</span>}
-                {st === 'done' && <span className={verdictPill(cc.verdict)}>{cc.verdict === 'pass' ? 'Pass' : 'Fail'}</span>}
+                {st === 'dialing' && <span className="ao-badge is-warning ao-badge--dot is-pulse">dialing</span>}
+                {st === 'live' && <span className="ao-badge is-success ao-badge--dot is-pulse">live</span>}
+                {st === 'done' && <span className={cn('ao-badge', cc.verdict === 'pass' ? 'is-success' : 'is-danger')}>{cc.verdict === 'pass' ? 'Pass' : 'Fail'}</span>}
               </button>
             )
           })}
           {suiteDone && (
-            <div className="mt-2 flex flex-col gap-2">
-              <button className={btnOut} disabled={!batch?.evalRunId} onClick={() => batch?.evalRunId && navigate(`/evals/${batch.evalRunId}`)}><GitPullRequest size={15} /> Open suite as eval</button>
-              {c?.sessionId && <button className={btnOut} onClick={() => navigate(`/sessions/${c.sessionId}`)}><Activity size={15} /> Open Monitor session (metrics)</button>}
-              <button className={btnPrimary} onClick={() => { clearLiveRun(); setBatch(null); setPhase('setup') }}><RotateCw size={15} /> New suite</button>
+            <div className="mt-3 flex flex-col gap-2">
+              <button className="ao-btn ao-btn--outline" disabled={!batch?.evalRunId} onClick={() => batch?.evalRunId && navigate(`/evals/${batch.evalRunId}`)}><GitPullRequest size={15} /> Open suite as eval</button>
+              {c?.sessionId && <button className="ao-btn ao-btn--outline" onClick={() => navigate(`/sessions/${c.sessionId}`)}><Activity size={15} /> Open Monitor session (metrics)</button>}
+              <button className="ao-btn ao-btn--primary" onClick={() => { clearLiveRun(); setBatch(null); setPhase('setup') }}><RotateCw size={15} /> New suite</button>
             </div>
           )}
         </div>
 
         {/* selected call detail */}
         {c && (
-          <div className="flex flex-col gap-4">
-            <Card>
-              <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-                <div className="flex size-7 items-center justify-center rounded-md text-[11px] font-semibold text-white" style={{ background: c.avatar }}>{initials(c.personaName)}</div>
-                <div className="flex-1"><div className="text-sm font-semibold">{c.personaName}</div><div className="text-xs text-muted-foreground">{selStage === 'done' ? 'completed' : selStage === 'live' ? 'live transcript' : 'connecting…'}</div></div>
-                {directorOn && selStage === 'live' ? <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"><span className="size-1.5 rounded-full bg-current animate-pulse" />director on stage</span>
-                  : selStage === 'done' ? <span className={verdictPill(c.verdict)}>{c.verdict === 'pass' ? 'Pass' : 'Fail'}</span>
-                  : <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-semibold text-success"><span className="size-1.5 rounded-full bg-current animate-pulse" />live</span>}
+          <div className="flex flex-col gap-4 ao-reveal ao-reveal-2">
+            <section className="ao-panel">
+              <div className="ao-panel-head">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex size-7 items-center justify-center rounded-md text-[11px] font-semibold text-white" style={{ background: c.avatar }}>{initials(c.personaName)}</div>
+                  <div>
+                    <div className="ao-panel-title">{c.personaName}</div>
+                    <div className="ao-panel-sub">{selStage === 'done' ? 'completed' : selStage === 'live' ? 'live transcript' : 'connecting…'}</div>
+                  </div>
+                </div>
+                {directorOn && selStage === 'live' ? <span className="ao-badge is-danger ao-badge--dot is-pulse">director on stage</span>
+                  : selStage === 'done' ? <span className={cn('ao-badge', c.verdict === 'pass' ? 'is-success' : 'is-danger')}>{c.verdict === 'pass' ? 'Pass' : 'Fail'}</span>
+                  : <span className="ao-badge is-success ao-badge--dot is-pulse">live</span>}
               </div>
+              {selStage === 'done' && (
+                <div className="ao-metricstrip" style={{ margin: '14px 16px 2px' }}>
+                  <div className="ao-metric-cell"><span className="k">Duration</span><span className="v">{fmtClock(c.durationS || c.cost.call_seconds)}</span></div>
+                  <div className="ao-metric-cell"><span className="k">Cost</span><span className="v">{c.cost.cents}¢</span></div>
+                  <div className="ao-metric-cell"><span className="k">Tokens</span><span className="v">{(c.cost.llm_tokens || 0).toLocaleString()}</span></div>
+                  <div className="ao-metric-cell"><span className="k">Verdict</span><span className={cn('v', c.verdict === 'pass' ? 'is-pass' : 'is-fail')}>{c.verdict}</span></div>
+                </div>
+              )}
               <div ref={scrollRef} className="flex max-h-[46vh] flex-col gap-3 overflow-auto p-4">
                 {selStage === 'dialing' && <div className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader size={14} className="animate-spin" /> dialing…</div>}
                 {liveTurns.map((t, i) => {
@@ -355,48 +419,56 @@ export function LiveCallPage() {
                 })}
                 {selStage === 'live' && !directorOn && <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader size={13} className="animate-spin" /> {lastRole === 'user' ? 'agent responding…' : 'caller speaking…'}</div>}
               </div>
-            </Card>
+            </section>
 
             {selStage !== 'done' ? (
               isTruman ? (
-                <Card>
-                  <div className="flex flex-col gap-2 p-3">
+                <section className="ao-panel">
+                  <div className="ao-panel-head">
+                    <div className="ao-panel-title"><Volume2 /> Audio legs</div>
+                  </div>
+                  <div className="ao-panel-body flex flex-col gap-2">
                     <AudioLeg label="Persona" color="#6366f1" speaking={personaSpeaking} muted={live.legs.persona.muted || live.takeoverActive} onMute={() => live.toggleMute('persona')} />
                     <AudioLeg label="Agent" color="hsl(var(--primary))" speaking={agentSpeaking} muted={live.legs.callee.muted} onMute={() => live.toggleMute('callee')} />
-                    {live.audioBlocked && <button className={cn(btnOut, 'mt-1')} onClick={live.resumeAudio}><Volume2 size={15} /> Tap to enable audio</button>}
+                    {live.audioBlocked && <button className="ao-btn ao-btn--outline mt-1" onClick={live.resumeAudio}><Volume2 size={15} /> Tap to enable audio</button>}
                     {live.micActive ? (
                       <div className="flex flex-col gap-2 pt-1">
                         <div className="flex items-center gap-1.5 text-xs font-medium text-destructive"><Mic size={13} /> You're on the line — persona muted. Speak into your mic.</div>
-                        <button className={btnOut} onClick={() => void live.stopMic()}>Hand back to persona</button>
+                        <button className="ao-btn ao-btn--outline" onClick={() => void live.stopMic()}>Hand back to persona</button>
                       </div>
                     ) : (
-                      <button className={cn(btnOut, 'mt-1')} onClick={() => void live.startMic()} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
+                      <button className="ao-btn ao-btn--outline mt-1" onClick={() => void live.startMic()} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
                     )}
-                    <button className={cn(btnOut)} onClick={() => void live.endCallNow()}><Phone size={15} /> End call</button>
+                    <button className="ao-btn ao-btn--danger" onClick={() => void live.endCallNow()}><Phone size={15} /> End call</button>
                     {live.error && <div className="text-[11px] text-destructive">{live.error}</div>}
                   </div>
-                </Card>
+                </section>
               ) : (
-              <Card>
-                <div className="flex flex-col gap-2 p-3">
-                  <AudioLeg label="Persona" color="#6366f1" speaking={personaSpeaking} muted={mutePersona || takeover} onMute={() => setMutePersona((m) => !m)} />
-                  <AudioLeg label="Agent" color="hsl(var(--primary))" speaking={agentSpeaking} muted={muteAgent} onMute={() => setMuteAgent((m) => !m)} />
-                  {takeover ? (
-                    <div className="flex flex-col gap-2 pt-1">
-                      <div className="flex items-center gap-1.5 text-xs font-medium text-destructive"><Mic size={13} /> You're on the line — persona muted.</div>
-                      <div className="flex gap-2"><input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendTakeover()} placeholder="Speak as the caller…" className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" /><button className={btnPrimary} onClick={sendTakeover}><Send size={15} /></button></div>
-                      <button className={btnOut} onClick={() => setTakeover(false)}>Hand back to persona</button>
-                    </div>
-                  ) : (
-                    <button className={cn(btnOut, 'mt-1')} onClick={() => setTakeover(true)} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
-                  )}
-                </div>
-              </Card>
+                <section className="ao-panel">
+                  <div className="ao-panel-head">
+                    <div className="ao-panel-title"><Volume2 /> Audio legs</div>
+                  </div>
+                  <div className="ao-panel-body flex flex-col gap-2">
+                    <AudioLeg label="Persona" color="#6366f1" speaking={personaSpeaking} muted={mutePersona || takeover} onMute={() => setMutePersona((m) => !m)} />
+                    <AudioLeg label="Agent" color="hsl(var(--primary))" speaking={agentSpeaking} muted={muteAgent} onMute={() => setMuteAgent((m) => !m)} />
+                    {takeover ? (
+                      <div className="flex flex-col gap-2 pt-1">
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-destructive"><Mic size={13} /> You're on the line — persona muted.</div>
+                        <div className="flex gap-2"><input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendTakeover()} placeholder="Speak as the caller…" className="ao-input flex-1" /><button className="ao-btn ao-btn--primary" onClick={sendTakeover}><Send size={15} /></button></div>
+                        <button className="ao-btn ao-btn--outline" onClick={() => setTakeover(false)}>Hand back to persona</button>
+                      </div>
+                    ) : (
+                      <button className="ao-btn ao-btn--outline mt-1" onClick={() => setTakeover(true)} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
+                    )}
+                  </div>
+                </section>
               )
             ) : (
               <>
-                <Card>
-                  <div className="border-b border-border px-4 py-3 text-sm font-semibold">Criteria</div>
+                <section className="ao-panel">
+                  <div className="ao-panel-head">
+                    <div className="ao-panel-title"><ListChecks /> Criteria</div>
+                  </div>
                   <div className="flex flex-col p-2">
                     {c.judge.criteria.map((cr) => (
                       <div key={cr.name} className="flex items-start gap-2.5 px-2 py-2">
@@ -405,23 +477,27 @@ export function LiveCallPage() {
                       </div>
                     ))}
                   </div>
-                </Card>
-                <Card>
-                  <div className="border-b border-border px-4 py-3 text-sm font-semibold">Cost</div>
+                </section>
+                <section className="ao-panel">
+                  <div className="ao-panel-head">
+                    <div className="ao-panel-title"><Activity /> Cost</div>
+                  </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 p-4 text-sm">
                     {[['LLM tokens', c.cost.llm_tokens.toLocaleString()], ['TTS chars', c.cost.tts_chars.toLocaleString()], ['STT secs', `${c.cost.stt_seconds}`], ['Call secs', `${c.cost.call_seconds}`]].map(([k, v]) => <div key={k} className="flex items-center justify-between"><span className="text-muted-foreground">{k}</span><span className="font-mono text-xs">{v}</span></div>)}
                     <div className="col-span-2 mt-1 flex items-center justify-between border-t border-border pt-2"><span className="text-muted-foreground">Total</span><span className="font-semibold">{c.cost.cents}¢</span></div>
                   </div>
-                </Card>
+                </section>
                 {c.recordingUrl && (
-                  <Card>
-                    <div className="border-b border-border px-4 py-3 text-sm font-semibold">Recording</div>
-                    <div className="p-4"><audio controls preload="none" src={c.recordingUrl} className="w-full" /></div>
-                  </Card>
+                  <section className="ao-panel">
+                    <div className="ao-panel-head">
+                      <div className="ao-panel-title"><FileCode /> Recording</div>
+                    </div>
+                    <div className="ao-panel-body"><audio controls preload="none" src={c.recordingUrl} className="w-full" /></div>
+                  </section>
                 )}
                 {c.error && (
-                  <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/8 px-3.5 py-2.5 text-sm text-destructive">
-                    <AlertTriangle size={15} className="mt-0.5 shrink-0" /><span>{c.error}</span>
+                  <div className="ao-alert is-danger">
+                    <AlertTriangle /><span>{c.error}</span>
                   </div>
                 )}
               </>

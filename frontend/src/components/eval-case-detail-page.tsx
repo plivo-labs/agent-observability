@@ -1,19 +1,34 @@
 import { useMemo } from 'react'
-import { AlertTriangle, ArrowLeft, ChevronRight, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  AudioLines,
+  CheckCircle2,
+  ChevronRight,
+  CircleHelp,
+  Clock,
+  Cpu,
+  Gauge,
+  Hash,
+  MessageSquareText,
+  ScrollText,
+  Wrench,
+  X,
+  XCircle,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { formatDuration, formatMs, formatToolValue } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
 import type {
   CaseStatus,
+  JudgmentVerdict,
   RunEvent,
   RunEventFunctionCall,
   RunEventFunctionCallOutput,
@@ -58,24 +73,22 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
 }
 
 const STATUS_TONE: Record<CaseStatus, string> = {
-  passed:
-    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
-  failed:
-    'bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))]',
-  errored:
-    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
-  skipped: 'bg-muted text-muted-foreground border-border',
+  passed: 'is-success',
+  failed: 'is-danger',
+  errored: 'is-warning',
+  skipped: 'is-neutral',
+}
+const STATUS_LABEL: Record<CaseStatus, string> = {
+  passed: 'Passed',
+  failed: 'Failed',
+  errored: 'Errored',
+  skipped: 'Skipped',
 }
 
-function StatusChip({ status }: { status: CaseStatus }) {
+function StatusBadge({ status }: { status: CaseStatus }) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center h-[22px] px-2 rounded-full border text-xxs-600 capitalize',
-        STATUS_TONE[status],
-      )}
-    >
-      {status}
+    <span className={cn('ao-badge ao-badge--dot', STATUS_TONE[status])}>
+      {STATUS_LABEL[status]}
     </span>
   )
 }
@@ -162,23 +175,34 @@ function MessageRow({ event, index }: { event: RunEventMessage; index: number })
     event.metrics && typeof event.metrics === 'object'
       ? buildMetricChips(event.metrics as Record<string, unknown>)
       : []
+  const role = event.role ?? 'assistant'
+  const isUser = role === 'user'
 
   return (
-    <div className="border rounded-md overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-muted text-xs-600 text-muted-foreground border-b">
-        <span className="inline-flex items-center px-1.5 py-0 rounded bg-muted text-foreground border border-border text-xxs-600 capitalize">
-          {event.role ?? 'assistant'}
+    <div className="rounded-lg border border-border bg-card overflow-hidden shadow-[var(--ao-shadow-sm)]">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/60 border-b border-border">
+        <span
+          className={cn(
+            'inline-flex items-center h-[18px] px-1.5 rounded font-mono text-xxs-600 uppercase tracking-wider',
+            isUser
+              ? 'bg-[var(--ao-accent-soft)] text-[var(--ao-accent)]'
+              : 'bg-card text-foreground border border-border',
+          )}
+        >
+          {role}
         </span>
         {event.interrupted && (
-          <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
+          <Badge variant="outline" className="text-xxs-600 text-warning border-[hsl(var(--warning-border))]">
             interrupted
           </Badge>
         )}
-        <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
+        <span className="ml-auto text-xxs-400 font-mono tabular-nums text-muted-foreground">
+          #{index}
+        </span>
       </div>
-      <div className="p-3 text-s-400 whitespace-pre-wrap">{event.content ?? ''}</div>
+      <div className="p-3 text-s-400 whitespace-pre-wrap text-foreground">{event.content ?? ''}</div>
       {chips.length > 0 && (
-        <div className="border-t bg-muted/30 px-3 py-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xxs-400 font-mono tabular-nums">
+        <div className="border-t border-border bg-muted/30 px-3 py-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xxs-400 font-mono tabular-nums">
           {chips.map((c) => (
             <span key={c.key} className="inline-flex items-baseline gap-1">
               <span className="text-muted-foreground">{c.label}</span>
@@ -209,24 +233,27 @@ function ToolInvocationRow({
   const argsEmpty = argsStr.trim() === '' || argsStr.trim() === '{}' || argsStr.trim() === 'null'
   const outputStr = output ? formatToolValue(output.output) : ''
   const outputEmpty = outputStr.trim() === ''
-  const headerLabel = call ? `tool call · ${call.name ?? 'unknown'}` : 'tool result'
+  const headerLabel = call ? `${call.name ?? 'unknown'}` : 'tool result'
 
   return (
-    <Collapsible className="border rounded-md overflow-hidden">
-      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted text-foreground text-xs-600 cursor-pointer hover:bg-muted/80 data-[state=open]:border-b border-border">
-        <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
-        {headerLabel}
+    <Collapsible className="rounded-lg border border-border bg-card overflow-hidden shadow-[var(--ao-shadow-sm)]">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 bg-muted/60 text-foreground text-xs-600 cursor-pointer hover:bg-muted data-[state=open]:border-b border-border">
+        <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90 text-muted-foreground" />
+        <Wrench className="h-3 w-3 text-[var(--ao-accent)]" />
+        <span className="font-mono">{headerLabel}</span>
         {output?.is_error && (
-          <Badge variant="outline" className="text-xxs-600 text-foreground border-border">
+          <span className="ao-badge is-danger" style={{ height: 18 }}>
             error
-          </Badge>
+          </span>
         )}
-        <span className="ml-auto text-xxs-400 font-mono tabular-nums">#{index}</span>
+        <span className="ml-auto text-xxs-400 font-mono tabular-nums text-muted-foreground">
+          #{index}
+        </span>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         {call && (
           <>
-            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">
+            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider font-mono">
               Input
             </div>
             {argsEmpty ? (
@@ -234,7 +261,7 @@ function ToolInvocationRow({
                 No arguments recorded.
               </div>
             ) : (
-              <pre className="px-3 pb-3 text-xs-400 font-mono whitespace-pre overflow-x-auto">
+              <pre className="px-3 pb-3 text-xs-400 font-mono whitespace-pre overflow-x-auto text-foreground">
                 {argsStr}
               </pre>
             )}
@@ -242,7 +269,7 @@ function ToolInvocationRow({
         )}
         {output && (
           <>
-            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider">
+            <div className="px-3 pt-2 pb-1 text-xxs-600 text-muted-foreground uppercase tracking-wider font-mono">
               Output
             </div>
             {outputEmpty ? (
@@ -250,7 +277,7 @@ function ToolInvocationRow({
                 No output recorded.
               </div>
             ) : (
-              <pre className="px-3 pb-3 text-s-400 font-mono whitespace-pre-wrap break-words">
+              <pre className="px-3 pb-3 text-s-400 font-mono whitespace-pre-wrap break-words text-foreground">
                 {outputStr}
               </pre>
             )}
@@ -293,12 +320,19 @@ function renderTranscript(events: RunEvent[]): React.ReactNode {
     return (
       <div
         key={i}
-        className="border rounded-md px-3 py-2 text-xs-400 text-muted-foreground"
+        className="rounded-lg border border-border bg-card px-3 py-2 text-xs-400 text-muted-foreground font-mono"
       >
         {ev.type}
       </div>
     )
   })
+}
+
+// Per-criterion verdict tone. Maps the judge verdict onto the shared semantic
+// classes so pass/fail/other read consistently in light + dark.
+type JudgmentTone = 'pass' | 'fail' | 'other'
+function verdictTone(v: JudgmentVerdict): JudgmentTone {
+  return v === 'pass' ? 'pass' : v === 'fail' ? 'fail' : 'other'
 }
 
 export const EvalCaseDetailPage = ({
@@ -318,39 +352,72 @@ export const EvalCaseDetailPage = ({
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-3.5 p-[18px_22px]" aria-busy="true">
-        <Skeleton className="h-5 w-48" />
-        <Skeleton className="h-4 w-64" />
-        <div className="grid grid-cols-3 gap-1.5">
-          <Skeleton className="h-[56px]" />
-          <Skeleton className="h-[56px]" />
-          <Skeleton className="h-[56px]" />
+      <div className="flex flex-col gap-5 px-[22px] py-[18px]" aria-busy="true">
+        <div className="flex flex-col gap-3">
+          <div className="ao-skeleton ao-skeleton--title" style={{ width: '40%' }} />
+          <div className="ao-skeleton ao-skeleton--line" style={{ width: '60%' }} />
         </div>
-        <Skeleton className="h-16 w-full" />
-        <Skeleton className="h-40 w-full" />
+        <div className="ao-stat-row">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="ao-stat">
+              <div className="ao-skeleton ao-skeleton--line" style={{ width: '50%' }} />
+              <div className="ao-skeleton" style={{ height: 30, width: '70%', marginTop: 8 }} />
+            </div>
+          ))}
+        </div>
+        <div className="ao-panel">
+          <div className="ao-panel-body flex flex-col gap-3">
+            <div className="ao-skeleton ao-skeleton--title" style={{ width: '30%' }} />
+            <div className="ao-skeleton ao-skeleton--line" />
+            <div className="ao-skeleton ao-skeleton--line" style={{ width: '80%' }} />
+          </div>
+        </div>
       </div>
     )
   }
 
   if (error || !evalCase) {
     return (
-      <div className="p-12 text-center text-foreground">
-        <p>Failed to load case: {error ?? 'not found'}</p>
+      <div className="px-[22px] py-[18px]">
+        <div className="ao-empty">
+          <div className="ao-empty-icon">
+            <AlertTriangle />
+          </div>
+          <div className="ao-empty-title">Couldn’t load this case</div>
+          <div className="ao-empty-text">{error ?? 'The case was not found for this run.'}</div>
+          {onBack && (
+            <div className="ao-empty-actions">
+              <button type="button" className="ao-btn ao-btn--outline" onClick={onBack}>
+                <ArrowLeft /> Back to run
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     )
   }
 
+  const judgments = evalCase.judgments
+  const passCount = judgments.filter((j) => j.verdict === 'pass').length
+  const failCount = judgments.filter((j) => j.verdict === 'fail').length
+  const showAggregate = summary != null && summary.turnsWithMetrics >= 2
+
   return (
     <>
-      <div className="flex items-center justify-between px-[18px] py-3.5 border-b text-s-500 text-muted-foreground">
+      {/* Sticky-feel control bar: back + close, present in both the full-page
+          route and the drawer mount. */}
+      <div className="flex items-center justify-between gap-2 px-[18px] py-3 border-b border-border bg-card/60">
         <Button
           variant="ghost"
           size="sm"
           onClick={onBack}
-          className="h-auto p-0 text-s-500 text-muted-foreground hover:text-foreground"
+          className="h-auto p-0 gap-1.5 text-s-500 text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="h-3 w-3" /> Back to run
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to run
         </Button>
+        <span className="ml-auto text-xxs-400 font-mono text-muted-foreground hidden sm:inline">
+          run {runId.slice(0, 8)} · case {caseId.slice(0, 8)}
+        </span>
         <Button
           variant="outline"
           size="icon"
@@ -362,120 +429,180 @@ export const EvalCaseDetailPage = ({
         </Button>
       </div>
 
-      <div className="px-[22px] py-[18px] pb-[30px] flex flex-col gap-4">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <span className="font-mono text-h4-600">{evalCase.name}</span>
-          <StatusChip status={evalCase.status} />
-        </div>
-        <div className="font-mono text-xs-400 text-muted-foreground -mt-2">
-          {evalCase.file && <span>{evalCase.file}</span>}
-          {evalCase.file && <span> · </span>}
-          <span>{formatDuration(evalCase.duration_ms)}</span>
-          {evalCase.events.length > 0 && (
-            <>
-              <span> · </span>
-              <span>
-                {evalCase.events.length} event{evalCase.events.length !== 1 ? 's' : ''}
-              </span>
-            </>
-          )}
-          {evalCase.judgments.length > 0 && (
-            <>
-              <span> · </span>
-              <span>
-                {evalCase.judgments.length} judgment
-                {evalCase.judgments.length !== 1 ? 's' : ''}
-              </span>
-            </>
-          )}
-          {/* Case-level aggregate is only meaningful when averaging across
-              ≥2 turns. For single-turn cases the per-turn chip strip
-              under the message already carries the same value, so the
-              aggregate would just duplicate it. */}
-          {summary && summary.turnsWithMetrics >= 2 && (
-            <>
-              {summary.avgTtftMs != null && (
+      <div className="px-[22px] py-[18px] pb-[34px] flex flex-col gap-5">
+        {/* Hero header — case identity + judged result front and center. */}
+        <header className="ao-hero ao-hero--bare ao-reveal">
+          <div className="min-w-0">
+            <div className="ao-hero-eyebrow">
+              <ScrollText /> Eval case
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="ao-hero-title font-mono break-all" style={{ fontSize: 26 }}>
+                {evalCase.name}
+              </h1>
+              <StatusBadge status={evalCase.status} />
+            </div>
+            <div className="ao-hero-sub flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs-400">
+              {evalCase.file && (
                 <>
-                  <span> · </span>
-                  <span>Avg TTFT {formatMs(summary.avgTtftMs)}</span>
+                  <span className="break-all">{evalCase.file}</span>
+                  <span className="text-border">·</span>
                 </>
               )}
-              {summary.models.length > 0 && (
+              <span>{formatDuration(evalCase.duration_ms)}</span>
+              {showAggregate && summary && summary.models.length > 0 && (
                 <>
-                  <span> · </span>
+                  <span className="text-border">·</span>
                   <span>
                     {summary.models.length === 1 ? 'Model' : 'Models'}{' '}
                     {summary.models.join(', ')}
                   </span>
                 </>
               )}
-            </>
-          )}
-        </div>
-
-        {evalCase.user_input && (
-          <div>
-            <div className="text-xxs-600 text-muted-foreground uppercase tracking-wider mb-2">
-              User input
-            </div>
-            <div className="border border-l-4 border-l-muted-foreground rounded-md bg-muted/50 px-3 py-2.5 text-s-400">
-              {evalCase.user_input}
             </div>
           </div>
+        </header>
+
+        {/* KPI tiles — the case's headline numbers. */}
+        <div className="ao-stat-row ao-stagger">
+          <div
+            className={cn(
+              'ao-stat ao-stat--feature',
+              evalCase.status === 'passed'
+                ? 'is-good'
+                : evalCase.status === 'failed'
+                  ? 'is-bad'
+                  : evalCase.status === 'errored'
+                    ? 'is-warn'
+                    : 'is-accent',
+            )}
+          >
+            <div className="ao-stat-label">
+              {evalCase.status === 'passed' ? (
+                <CheckCircle2 />
+              ) : evalCase.status === 'failed' ? (
+                <XCircle />
+              ) : (
+                <CircleHelp />
+              )}
+              Result
+            </div>
+            <div className="ao-stat-value" style={{ fontSize: 26 }}>
+              {STATUS_LABEL[evalCase.status]}
+            </div>
+            {judgments.length > 0 && (
+              <div className="ao-stat-meta">
+                <span className="ao-delta-up">{passCount} pass</span>
+                {failCount > 0 && (
+                  <>
+                    <span className="text-border">·</span>
+                    <span className="ao-delta-down">{failCount} fail</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="ao-stat">
+            <div className="ao-stat-label">
+              <Clock /> Duration
+            </div>
+            <div className="ao-stat-value">{formatDuration(evalCase.duration_ms)}</div>
+          </div>
+
+          <div className="ao-stat">
+            <div className="ao-stat-label">
+              <MessageSquareText /> Events
+            </div>
+            <div className="ao-stat-value">{evalCase.events.length}</div>
+            {judgments.length > 0 && (
+              <div className="ao-stat-meta">
+                {judgments.length} judgment{judgments.length !== 1 ? 's' : ''}
+              </div>
+            )}
+          </div>
+
+          <div className="ao-stat">
+            <div className="ao-stat-label">
+              {showAggregate && summary?.avgTtftMs != null ? <Gauge /> : <Cpu />}
+              {showAggregate && summary?.avgTtftMs != null ? 'Avg TTFT' : 'Turns w/ metrics'}
+            </div>
+            <div className="ao-stat-value">
+              {showAggregate && summary?.avgTtftMs != null
+                ? formatMs(summary.avgTtftMs)
+                : (summary?.turnsWithMetrics ?? 0)}
+            </div>
+          </div>
+        </div>
+
+        {/* Recording — the live call's audio (Truman-proxied), like Truman's UI. */}
+        {evalCase.recording_url && (
+          <section className="ao-scriptbox ao-reveal ao-reveal-1">
+            <div className="ao-scriptbox-cap"><AudioLines size={12} /> Recording</div>
+            <div className="ao-scriptbox-body">
+              <audio controls preload="none" src={evalCase.recording_url} className="w-full" />
+            </div>
+          </section>
         )}
 
-        <div>
-          <div className="text-xxs-600 text-muted-foreground uppercase tracking-wider mb-2">
-            Transcript
-          </div>
-          <div className="flex flex-col gap-2.5">
-            {renderTranscript(evalCase.events)}
-          </div>
-        </div>
-
-        {evalCase.judgments.length > 0 && (
-          <div>
-            <div className="text-xxs-600 text-muted-foreground uppercase tracking-wider mb-2">
-              Judgments
+        {/* Judgments — the judged-result detail, given top billing. */}
+        {judgments.length > 0 && (
+          <section className="ao-panel ao-reveal ao-reveal-1">
+            <div className="ao-panel-head">
+              <div>
+                <div className="ao-panel-title">
+                  <CheckCircle2 /> Judgments
+                </div>
+                <div className="ao-panel-sub">
+                  {passCount}/{judgments.length} criteria passed
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {passCount > 0 && <span className="ao-badge is-success">{passCount} pass</span>}
+                {failCount > 0 && <span className="ao-badge is-danger">{failCount} fail</span>}
+              </div>
             </div>
-            <div className="flex flex-col gap-2">
-              {evalCase.judgments.map((j, i) => {
-                const tone =
-                  j.verdict === 'pass'
-                    ? 'pass'
-                    : j.verdict === 'fail'
-                      ? 'fail'
-                      : 'other'
+            <div className="ao-panel-body flex flex-col gap-2.5">
+              {judgments.map((j, i) => {
+                const tone = verdictTone(j.verdict)
                 return (
                   <div
                     key={`${j.intent}-${i}`}
                     className={cn(
-                      'rounded-md border px-3 py-2.5',
+                      'rounded-lg border px-3.5 py-3',
                       tone === 'pass' &&
-                        'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/30',
+                        'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]',
                       tone === 'fail' &&
-                        'border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/30',
+                        'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',
                       tone === 'other' && 'border-border bg-muted/40',
                     )}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <p className="text-s-500 m-0">{j.intent}</p>
+                      <div className="flex items-start gap-2 min-w-0">
+                        {tone === 'pass' ? (
+                          <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" />
+                        ) : tone === 'fail' ? (
+                          <XCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
+                        ) : (
+                          <CircleHelp className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                        )}
+                        <p className="text-s-500 m-0 text-foreground">{j.intent}</p>
+                      </div>
                       <span
                         className={cn(
-                          'inline-flex items-center h-[22px] px-2 rounded-full border text-xxs-600 capitalize',
-                          tone === 'pass' &&
-                            'border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-200',
-                          tone === 'fail' &&
-                            'border-rose-300 bg-rose-100 text-rose-900 dark:border-rose-800/60 dark:bg-rose-950/50 dark:text-rose-200',
-                          tone === 'other' &&
-                            'border-border bg-muted text-muted-foreground',
+                          'ao-badge shrink-0',
+                          tone === 'pass'
+                            ? 'is-success'
+                            : tone === 'fail'
+                              ? 'is-danger'
+                              : 'is-neutral',
                         )}
                       >
-                        {tone === 'pass' ? 'passed' : tone === 'fail' ? 'failed' : 'errored'}
+                        {tone === 'pass' ? 'pass' : tone === 'fail' ? 'fail' : 'maybe'}
                       </span>
                     </div>
                     {j.reasoning && (
-                      <p className="mt-2 text-s-400 text-muted-foreground whitespace-pre-wrap">
+                      <p className="mt-2 ml-6 text-s-400 text-muted-foreground whitespace-pre-wrap">
                         {j.reasoning}
                       </p>
                     )}
@@ -483,33 +610,70 @@ export const EvalCaseDetailPage = ({
                 )
               })}
             </div>
-          </div>
+          </section>
         )}
 
+        {/* Failure — surfaced right under the verdict when present. */}
         {evalCase.failure && (
-          <Card className="border-border bg-muted/40">
-            <CardContent className="py-3">
-              <div className="flex items-center gap-2 text-s-600 text-foreground mb-2">
-                <AlertTriangle className="h-3.5 w-3.5" /> Failure ({evalCase.failure.kind})
+          <section className="ao-panel ao-reveal ao-reveal-2">
+            <div className="ao-panel-head">
+              <div className="ao-panel-title text-destructive">
+                <AlertTriangle /> Failure
               </div>
+              <span className="ao-badge is-danger font-mono">{evalCase.failure.kind}</span>
+            </div>
+            <div className="ao-panel-body flex flex-col gap-3">
               {evalCase.failure.message && (
-                <div className="text-s-500 mb-2">{evalCase.failure.message}</div>
+                <div className="ao-alert is-danger">
+                  <AlertTriangle />
+                  <span className="whitespace-pre-wrap">{evalCase.failure.message}</span>
+                </div>
               )}
               {evalCase.failure.stack && (
                 <Collapsible>
-                  <CollapsibleTrigger className="text-xs-600 text-muted-foreground uppercase tracking-wider hover:text-foreground cursor-pointer bg-transparent border-none p-0">
+                  <CollapsibleTrigger className="ao-section-label hover:text-foreground cursor-pointer bg-transparent border-none p-0">
                     Stack trace
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2">
-                    <pre className="border rounded-md bg-card px-2.5 py-2 font-mono text-xs-400 text-muted-foreground whitespace-pre-wrap break-words max-h-[180px] overflow-auto">
+                    <pre className="border border-border rounded-lg bg-muted/40 px-3 py-2.5 font-mono text-xs-400 text-muted-foreground whitespace-pre-wrap break-words max-h-[200px] overflow-auto">
                       {evalCase.failure.stack}
                     </pre>
                   </CollapsibleContent>
                 </Collapsible>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         )}
+
+        {/* User input — the prompt that drove the case. */}
+        {evalCase.user_input && (
+          <section className="ao-panel ao-reveal ao-reveal-3">
+            <div className="ao-panel-head">
+              <div className="ao-panel-title">
+                <Hash /> User input
+              </div>
+            </div>
+            <div className="ao-panel-body">
+              <div className="border-l-2 border-[var(--ao-accent)] rounded-r-md bg-muted/40 px-3.5 py-3 text-s-400 text-foreground whitespace-pre-wrap">
+                {evalCase.user_input}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Transcript / events — Truman-style "script readout" framing. */}
+        <section className="ao-scriptbox ao-reveal ao-reveal-4">
+          <div className="ao-scriptbox-cap">
+            <ScrollText size={12} /> Transcript · {evalCase.events.length} event{evalCase.events.length !== 1 ? 's' : ''}
+          </div>
+          <div className="ao-scriptbox-body">
+            {evalCase.events.length === 0 ? (
+              <div className="text-s-400 text-muted-foreground italic">No events recorded.</div>
+            ) : (
+              <div className="flex flex-col gap-2.5">{renderTranscript(evalCase.events)}</div>
+            )}
+          </div>
+        </section>
       </div>
     </>
   )

@@ -57,7 +57,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
       await tx`
         INSERT INTO eval_cases (
           case_id, run_id, name, file, status, duration_ms,
-          user_input, events, judgments, failure
+          user_input, events, judgments, failure, recording_url
         ) VALUES (
           ${c.case_id},
           ${run.run_id},
@@ -68,7 +68,8 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${c.user_input ?? null},
           ${JSON.stringify(c.events ?? [])}::jsonb,
           ${JSON.stringify(c.judgments ?? [])}::jsonb,
-          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb
+          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb,
+          ${c.recording_url ?? null}
         )
       `;
     }
@@ -136,7 +137,7 @@ export async function getEvalRun(runId: string): Promise<any | null> {
 export async function listEvalCases(runId: string): Promise<any[]> {
   const rows = await sql`
     SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, created_at
+           events, judgments, failure, recording_url, created_at
     FROM eval_cases
     WHERE run_id = ${runId}
     ORDER BY created_at ASC
@@ -147,7 +148,7 @@ export async function listEvalCases(runId: string): Promise<any[]> {
 export async function getEvalCase(runId: string, caseId: string): Promise<any | null> {
   const rows = await sql`
     SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, created_at
+           events, judgments, failure, recording_url, created_at
     FROM eval_cases
     WHERE run_id = ${runId} AND case_id = ${caseId}
     LIMIT 1

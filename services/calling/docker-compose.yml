@@ -1,0 +1,38 @@
+name: truman
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: truman-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: truman
+      POSTGRES_PASSWORD: truman
+      POSTGRES_DB: truman
+    ports:
+      - "5532:5432"
+    volumes:
+      - truman_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truman -d truman"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: truman-redis
+    restart: unless-stopped
+    ports:
+      - "6479:6379"
+    volumes:
+      - truman_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  truman_pgdata:
+  truman_redisdata:

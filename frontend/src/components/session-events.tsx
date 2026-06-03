@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, Clock } from 'lucide-react'
+import { Activity, ChevronRight, Clock } from 'lucide-react'
 import dayjs from 'dayjs'
 import { Badge } from '@/components/ui/badge'
 import { useEvents } from '@/lib/observability-hooks'
@@ -296,10 +296,12 @@ export const SessionEvents = () => {
 
   if (!events || events.length === 0) {
     return (
-      <div className="events-card">
-        <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))', font: 'var(--text-s-400)' }}>
-          No events captured for this session.
+      <div className="ao-empty">
+        <div className="ao-empty-icon">
+          <Activity />
         </div>
+        <div className="ao-empty-title">No events</div>
+        <div className="ao-empty-text">No events were captured for this session.</div>
       </div>
     )
   }
@@ -322,18 +324,31 @@ export const SessionEvents = () => {
   }
 
   return (
-    <div className="events-card">
-      <div className="events-head">
-        <div className="title">
-          {events.length} events <span className="rng">{rangeLabel}</span>
+    <section className="ao-panel ao-panel--flush">
+      <div className="ao-panel-head">
+        <div>
+          <div className="ao-panel-title">
+            <Activity /> Events
+            <span className="ao-mono ml-1">{events.length}</span>
+          </div>
+          <div className="ao-panel-sub font-mono">{rangeLabel}</div>
         </div>
-        <button
-          type="button"
-          className="timemode"
-          onClick={() => setTimeMode((m) => (m === 'relative' ? 'absolute' : 'relative'))}
-        >
-          <Clock size={12} /> {timeMode === 'relative' ? 'Relative' : 'Absolute'}
-        </button>
+        <div className="ao-seg" role="group" aria-label="Timestamp mode">
+          <button
+            type="button"
+            className={`ao-seg-item${timeMode === 'relative' ? ' is-active' : ''}`}
+            onClick={() => setTimeMode('relative')}
+          >
+            <Clock size={12} /> Relative
+          </button>
+          <button
+            type="button"
+            className={`ao-seg-item${timeMode === 'absolute' ? ' is-active' : ''}`}
+            onClick={() => setTimeMode('absolute')}
+          >
+            Absolute
+          </button>
+        </div>
       </div>
       <div className="events-list">
         {events.map((event, i) => {
@@ -379,6 +394,6 @@ export const SessionEvents = () => {
           )
         })}
       </div>
-    </div>
+    </section>
   )
 }
