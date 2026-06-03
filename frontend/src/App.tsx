@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, CheckCheck, List, Moon, RefreshCw, Sun } from 'lucide-react'
+import { Activity, CalendarClock, CheckCheck, FlaskConical, Library, List, Moon, Phone, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionsPage } from '@/components/sessions-page'
+import { SimulatePage } from '@/components/simulate/simulate-page'
+import { LiveCallPage } from '@/components/live/live-call-page'
+import { LibraryPage } from '@/components/library/library-page'
+import { SchedulesPage } from '@/components/schedules/schedules-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
 import { EvalsPage } from '@/components/evals-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
@@ -43,7 +47,11 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   // Sessions tab (at `/`) would lose its highlight on `/sessions/:id`. Compute
   // active state ourselves: each tab claims its detail routes too.
   const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
+  const isSimulateActive = pathname.startsWith('/simulate')
+  const isLiveActive = pathname.startsWith('/live')
   const isEvalsActive = pathname.startsWith('/evals')
+  const isLibraryActive = pathname.startsWith('/library')
+  const isSchedulesActive = pathname.startsWith('/schedules')
 
   return (
     <div className="obs-app">
@@ -54,10 +62,22 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
         </Link>
         <div className="obs-nav-tabs">
           <Link to="/" className={`obs-tab${isSessionsActive ? ' active' : ''}`}>
-            <List size={14} /> Sessions
+            <List size={14} /> Monitor
+          </Link>
+          <Link to="/simulate" className={`obs-tab${isSimulateActive ? ' active' : ''}`}>
+            <FlaskConical size={14} /> Simulate
+          </Link>
+          <Link to="/live" className={`obs-tab${isLiveActive ? ' active' : ''}`}>
+            <Phone size={14} /> Live
           </Link>
           <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
             <CheckCheck size={14} /> Evals
+          </Link>
+          <Link to="/library" className={`obs-tab${isLibraryActive ? ' active' : ''}`}>
+            <Library size={14} /> Library
+          </Link>
+          <Link to="/schedules" className={`obs-tab${isSchedulesActive ? ' active' : ''}`}>
+            <CalendarClock size={14} /> Schedules
           </Link>
         </div>
         <div className="obs-nav-spacer" />
@@ -141,7 +161,11 @@ export default function App() {
           <AgentObservabilityProvider baseUrl="/api">
             <Routes>
               <Route path="/" element={<SessionsRoute />} />
+              <Route path="/simulate" element={<SimulatePage />} />
+              <Route path="/live" element={<LiveCallPage />} />
               <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
+              <Route path="/library" element={<LibraryPage />} />
+              <Route path="/schedules" element={<SchedulesPage />} />
               <Route path="/evals" element={<EvalsRoute />} />
               <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
               <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
