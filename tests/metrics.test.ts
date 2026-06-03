@@ -96,14 +96,29 @@ describe("buildSessionMetrics", () => {
     expect(result.turns[0].user_perceived_ms).toBe(600);
   });
 
-  test("computes user_perceived_ms as llm + tts when e2e not available", () => {
+  test("falls back to llm_node_ttft for user_perceived_ms when e2e absent (no +tts)", () => {
+    // Canonical perceived latency = e2e_latency ?? llm_node_ttft.
+    // The old behavior summed llm + tts (would have been 530); the
+    // current contract drops that branch and uses llm_node_ttft alone.
     const chat = [
       { id: "u1", type: "message", role: "user", content: "hi" },
       { id: "a1", type: "message", role: "assistant", content: "hey",
         metrics: { llm_node_ttft: 0.45, tts_node_ttfb: 0.08 } },
     ];
     const result = buildSessionMetrics(chat, null, 1)!;
-    expect(result.turns[0].user_perceived_ms).toBe(530);
+    expect(result.turns[0].user_perceived_ms).toBe(450);
+  });
+
+  test("user_perceived_ms is undefined when neither e2e nor llm_node_ttft present", () => {
+    // Only TTS timing on the turn — with the +tts branch removed there's
+    // no e2e and no llm_node_ttft, so perceived latency is unknown.
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hi" },
+      { id: "a1", type: "message", role: "assistant", content: "hey",
+        metrics: { tts_node_ttfb: 0.08 } },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].user_perceived_ms).toBeUndefined();
   });
 
   // ── Metrics lookup from sessionMetrics by item_id ────────────────────────

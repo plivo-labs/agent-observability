@@ -51,7 +51,7 @@ def init_observability(
 
        - ``agent_id:<value>`` (always)
        - ``account_id:<value>`` (when supplied)
-       - ``agent.name:<value>`` (when supplied)
+       - ``agent_name:<value>`` (when supplied)
        - ``transport:<value>`` (when supplied)
        - ``agent.session`` (wrapper with everything in metadata)
 
@@ -127,7 +127,7 @@ def init_observability(
         )
     if agent_name:
         tagger.add(
-            f"agent.name:{agent_name}",
+            f"agent_name:{agent_name}",
             metadata={"agent_name": agent_name},
         )
     if transport:

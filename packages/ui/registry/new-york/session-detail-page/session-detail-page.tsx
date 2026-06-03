@@ -24,14 +24,14 @@ export const SessionDetailPage = () => {
     return (
       <div className="p-6 flex flex-col gap-4 relative" aria-busy="true">
         <Skeleton className="h-4 w-56" />
-        <Skeleton className="h-[120px] w-full rounded-xl" />
+        <Skeleton className="h-[120px] w-full rounded-none" />
         <div className="obs-metrics">
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-[76px] rounded-[10px]" />
+            <Skeleton key={i} className="h-[76px] rounded-none" />
           ))}
         </div>
         <Skeleton className="h-9 w-80" />
-        <Skeleton className="h-[320px] w-full rounded-xl" />
+        <Skeleton className="h-[320px] w-full rounded-none" />
       </div>
     )
   }

@@ -15,7 +15,7 @@ interface SparklineProps {
 
 export function Sparkline({
   values,
-  color = 'hsl(270 60% 55%)',
+  color = 'hsl(var(--accent-purple))',
   width = 80,
   height = 26,
 }: SparklineProps) {
@@ -82,7 +82,7 @@ export function KpiTile({
         <div className="eval-kpi__spark">
           <Sparkline
             values={sparkValues}
-            color={sparkColor || 'hsl(270 60% 55%)'}
+            color={sparkColor || 'hsl(var(--accent-purple))'}
             width={80}
             height={26}
           />

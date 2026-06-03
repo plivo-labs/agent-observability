@@ -59,7 +59,7 @@ class TestInitObservability:
             "agent.session",
             "agent_id:agent-uuid-1",
             "account_id:acct-7",
-            "agent.name:bot",
+            "agent_name:bot",
             "transport:text",
         ]
         # The wrapper carries everything in metadata for raw_report fidelity.

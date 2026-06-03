@@ -58,7 +58,7 @@ describe("initObservability", () => {
       "agent.session",
       "agent_id:agent-uuid-1",
       "account_id:acct-7",
-      "agent.name:bot",
+      "agent_name:bot",
       "transport:text",
     ]);
     expect(calls[0].metadata).toEqual({

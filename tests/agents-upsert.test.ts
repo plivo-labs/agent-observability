@@ -155,11 +155,11 @@ describe("upsertAgentTx", () => {
 // regressions without needing a full integration harness.
 
 describe("ingest path wiring", () => {
-  test("src/index.ts imports upsertAgent", async () => {
+  test("src/index.ts imports upsertAgentTx (recordings handler shares the session insert's transaction)", async () => {
     const fs = await import("node:fs/promises");
     const src = await fs.readFile("src/index.ts", "utf8");
     expect(src).toContain('from "./agents/upsert.js"');
-    expect(src).toContain("upsertAgent(");
+    expect(src).toContain("upsertAgentTx(");
   });
 
   test("src/evals/db.ts imports upsertAgentTx", async () => {

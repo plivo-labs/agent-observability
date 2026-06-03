@@ -1,3 +1,5 @@
+import { isAgentTurn, sawAudioEvidence } from "./turn-rules.js";
+
 export interface ParsedChatHistory {
   chatItems: any[];
   turnCount: number;
@@ -67,11 +69,12 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
     if (item.type === "message") {
       const role = item.role ?? item.message?.role;
       // Count one turn per assistant message — a turn isn't complete
-      // until the agent replies. Matches metrics.ts:turnNumber so the
-      // sessions-list `turn_count` column and the KPI tile's `total_turns`
-      // never disagree (they used to: this loop counted every message
-      // including user-only items, so a 4-turn dialog showed as 8).
-      if (role === "assistant") turnCount++;
+      // until the agent replies. Shares turn-rules.isAgentTurn with
+      // metrics.ts:turnNumber so the sessions-list `turn_count` column
+      // and the KPI tile's `total_turns` never disagree (they used to:
+      // this loop counted every message including user-only items, so a
+      // 4-turn dialog showed as 8).
+      if (isAgentTurn(role)) turnCount++;
       // Role-based STT/TTS is a voice-session fallback (a user/assistant
       // message implies speech even when this item's own metric is absent).
       // Cleared after the loop if the session turns out to be text-only.
@@ -85,12 +88,8 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
     if (m.transcription_delay) hasStt = true;
     // Audio-pipeline evidence: these only exist when STT/TTS actually ran.
     // Their total absence across the session marks it as text-only.
-    if (
-      m.transcription_delay != null ||
-      m.tts_node_ttfb != null ||
-      m.started_speaking_at != null ||
-      m.stopped_speaking_at != null
-    ) {
+    // Shared definition lives in turn-rules.sawAudioEvidence.
+    if (sawAudioEvidence(m)) {
       sawAudioSignal = true;
     }
 

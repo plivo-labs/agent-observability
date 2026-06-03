@@ -112,11 +112,6 @@ class ProtoReader {
   }
 }
 
-function bigintToNumber(value: bigint): number {
-  const max = BigInt(Number.MAX_SAFE_INTEGER);
-  return value > max ? Number(value) : Number(value);
-}
-
 function timestampToDate(seconds: bigint, nanos: number): Date | null {
   if (seconds === 0n && nanos === 0) {
     return null;
@@ -201,7 +196,7 @@ function decodeAnyValue(bytes: Uint8Array): unknown {
     } else if (field === 2 && wire === 0) {
       value = reader.readBool();
     } else if (field === 3 && wire === 0) {
-      value = bigintToNumber(reader.readVarint());
+      value = Number(reader.readVarint());
     } else if (field === 4 && wire === 1) {
       value = reader.readDouble();
     } else if (field === 5 && wire === 2) {

@@ -1,7 +1,7 @@
 import { SQL } from "bun";
 import { config } from "./config.js";
 import { normalizeRawReportPatch } from "./raw-report.js";
-import { upsertAgent } from "./agents/upsert.js";
+import { upsertAgent, upsertAgentTx } from "./agents/upsert.js";
 import { costFromSessionUsage } from "./evals/metrics.js";
 import { ensurePricesLoaded } from "./evals/pricing.js";
 
@@ -61,13 +61,13 @@ interface SessionRawReportPatchInput {
   patch: Record<string, unknown>;
 }
 
-export async function insertSession(session: SessionInsert): Promise<void> {
+export async function insertSession(session: SessionInsert, tx: any = sql): Promise<void> {
   // estimated_cost_usd is populated later by mergeSessionRawReport when
   // the OTLP "session report" patch back-fills session_metrics.usage —
   // chat_history at insert time carries only timings (TTFT/TTFB/e2e
   // latency), not token counts, so computing here would persist a
   // misleading $0 for every voice-agent session.
-  await sql`
+  await tx`
     INSERT INTO agent_transport_sessions (
       session_id, account_id, agent_id, agent_name, transport, started_at, ended_at, duration_ms, turn_count,
       has_stt, has_llm, has_tts, chat_history, session_metrics, raw_report, record_url
@@ -184,111 +184,127 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
   const agentName = typeof patch.agent_name === "string" && patch.agent_name.length > 0
     ? patch.agent_name
     : null;
-  if (agentId) {
-    // Ensure the agents row exists BEFORE we set the FK column. The
-    // primary OTLP path upserts upstream in persistLiveKitOtlpLogs, but
-    // if agent_id arrives only via the rawReport body (no log.attributes
-    // counterpart), the upstream guard is skipped and this UPDATE would
-    // otherwise violate the agent_transport_sessions_agent_fkey added in
-    // migration 012. upsertAgent is idempotent.
-    await upsertAgent({ agentId, accountId: null, agentName });
-    await sql`
-      UPDATE agent_transport_sessions
-      SET agent_id = ${agentId}
-      WHERE session_id = ${input.sessionId} AND agent_id IS NULL
-    `;
-  }
-  if (agentName) {
-    await sql`
-      UPDATE agent_transport_sessions
-      SET agent_name = ${agentName}
-      WHERE session_id = ${input.sessionId} AND agent_name IS NULL
-    `;
-  }
 
-  // Promote usage into session_metrics.usage when it arrives via the
-  // OTLP "session report" patch. The recording multipart route may have
-  // initialized session_metrics.usage to null because the chat_history
-  // JSON didn't carry usage; the real per-model usage typically arrives
-  // later on the OTLP channel. Without this back-fill, the session
-  // detail page's token totals stay at 0 even though raw_report has
-  // the data. Only writes when the current value is missing/empty so we
-  // don't clobber a fresher value from a different path.
-  if (Array.isArray(patch.usage) && patch.usage.length > 0) {
-    // Cost is computed from the same `patch.usage` we're about to merge
-    // and is persisted in the SAME UPDATE so the two values can never
-    // drift. The WHERE clause gates BOTH writes on the row currently
-    // having no usage — that way a duplicate OTLP patch can't write a
-    // cost figure that doesn't correspond to the stored usage array.
-    //
-    // COALESCE on cost preserves any previously-set value (the column
-    // is otherwise only written here, so this is effectively a NULL→
-    // value transition, but the COALESCE keeps the column monotonic).
+  // Price loading + cost computation hit the prices table only (not the
+  // session row), so do them OUTSIDE the transaction below — the tx then
+  // contains nothing but the session-row writes.
+  let usageCost: number | null = null;
+  const hasUsage = Array.isArray(patch.usage) && patch.usage.length > 0;
+  if (hasUsage) {
     await ensurePricesLoaded();
-    const cost = costFromSessionUsage(patch.usage);
-    await sql`
-      UPDATE agent_transport_sessions
-      SET session_metrics = jsonb_set(
-            CASE
-              WHEN jsonb_typeof(session_metrics) = 'object'
-                THEN session_metrics
-              ELSE '{}'::jsonb
-            END,
-            '{usage}',
-            ${patch.usage}::jsonb,
-            true
-          ),
-          estimated_cost_usd = COALESCE(estimated_cost_usd, ${cost})
-      WHERE session_id = ${input.sessionId}
-        AND (
-          session_metrics IS NULL
-          OR jsonb_typeof(session_metrics->'usage') <> 'array'
-          OR jsonb_array_length(session_metrics->'usage') = 0
-        )
-    `;
+    usageCost = costFromSessionUsage(patch.usage);
   }
 
   const events = Array.isArray(patch.events) ? patch.events : null;
-  if (events) {
-    const rest = { ...patch };
-    delete rest.events;
+  const restWithoutEvents = events ? (() => { const r = { ...patch }; delete r.events; return r; })() : null;
 
-    await sql`
+  // Atomicity (C3): these UPDATEs all key on the same session_id and
+  // form one logical back-fill. Wrap them in a single transaction —
+  // mirroring how the recordings handler in src/index.ts uses
+  // sql.begin — so a mid-sequence failure can't leave the row with
+  // agent_id promoted but usage/raw_report half-applied.
+  await sql.begin(async (tx: any) => {
+    if (agentId) {
+      // Ensure the agents row exists BEFORE we set the FK column. The
+      // primary OTLP path upserts upstream in persistLiveKitOtlpLogs, but
+      // if agent_id arrives only via the rawReport body (no log.attributes
+      // counterpart), the upstream guard is skipped and this UPDATE would
+      // otherwise violate the agent_transport_sessions_agent_fkey added in
+      // migration 012. upsertAgentTx is idempotent and shares the tx so
+      // the agent row and the FK write commit/rollback together.
+      await upsertAgentTx(tx, { agentId, accountId: null, agentName });
+      await tx`
+        UPDATE agent_transport_sessions
+        SET agent_id = ${agentId}
+        WHERE session_id = ${input.sessionId} AND agent_id IS NULL
+      `;
+    }
+    if (agentName) {
+      await tx`
+        UPDATE agent_transport_sessions
+        SET agent_name = ${agentName}
+        WHERE session_id = ${input.sessionId} AND agent_name IS NULL
+      `;
+    }
+
+    // Promote usage into session_metrics.usage when it arrives via the
+    // OTLP "session report" patch. The recording multipart route may have
+    // initialized session_metrics.usage to null because the chat_history
+    // JSON didn't carry usage; the real per-model usage typically arrives
+    // later on the OTLP channel. Without this back-fill, the session
+    // detail page's token totals stay at 0 even though raw_report has
+    // the data. Only writes when the current value is missing/empty so we
+    // don't clobber a fresher value from a different path.
+    if (hasUsage) {
+      // Cost is computed from the same `patch.usage` we're about to merge
+      // and is persisted in the SAME UPDATE so the two values can never
+      // drift. The WHERE clause gates BOTH writes on the row currently
+      // having no usage — that way a duplicate OTLP patch can't write a
+      // cost figure that doesn't correspond to the stored usage array.
+      //
+      // COALESCE on cost preserves any previously-set value (the column
+      // is otherwise only written here, so this is effectively a NULL→
+      // value transition, but the COALESCE keeps the column monotonic).
+      await tx`
+        UPDATE agent_transport_sessions
+        SET session_metrics = jsonb_set(
+              CASE
+                WHEN jsonb_typeof(session_metrics) = 'object'
+                  THEN session_metrics
+                ELSE '{}'::jsonb
+              END,
+              '{usage}',
+              ${patch.usage}::jsonb,
+              true
+            ),
+            estimated_cost_usd = COALESCE(estimated_cost_usd, ${usageCost})
+        WHERE session_id = ${input.sessionId}
+          AND (
+            session_metrics IS NULL
+            OR jsonb_typeof(session_metrics->'usage') <> 'array'
+            OR jsonb_array_length(session_metrics->'usage') = 0
+          )
+      `;
+    }
+
+    if (events) {
+      await tx`
+        UPDATE agent_transport_sessions
+        SET raw_report = (
+          (
+            CASE
+              WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
+              ELSE '{}'::jsonb
+            END
+          ) || ${restWithoutEvents}::jsonb || jsonb_build_object(
+            'events',
+            COALESCE(
+              (
+                CASE
+                  WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
+                  ELSE '{}'::jsonb
+                END
+              )->'events',
+              '[]'::jsonb
+            ) || ${events}::jsonb
+          )
+        )
+        WHERE session_id = ${input.sessionId}
+      `;
+      return;
+    }
+
+    await tx`
       UPDATE agent_transport_sessions
       SET raw_report = (
-        (
-          CASE
-            WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-            ELSE '{}'::jsonb
-          END
-        ) || ${rest}::jsonb || jsonb_build_object(
-          'events',
-          COALESCE(
-            (
-              CASE
-                WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-                ELSE '{}'::jsonb
-              END
-            )->'events',
-            '[]'::jsonb
-          ) || ${events}::jsonb
-        )
-      )
+        CASE
+          WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
+          ELSE '{}'::jsonb
+        END
+      ) || ${patch}::jsonb
       WHERE session_id = ${input.sessionId}
     `;
-    return;
-  }
-
-  await sql`
-    UPDATE agent_transport_sessions
-    SET raw_report = (
-      CASE
-        WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-        ELSE '{}'::jsonb
-      END
-    ) || ${patch}::jsonb
-    WHERE session_id = ${input.sessionId}
-  `;
+  });
 }
 
 function stringFromMetadata(metadata: Record<string, unknown> | null, key: string): string | null {
@@ -315,6 +331,9 @@ export async function applySessionTagMetadata(
     accountId ??= tagValue(tag.name, "account_id:");
     agentId ??= tagValue(tag.name, "agent_id:");
     agentName ??= tagValue(tag.name, "agent_name:");
+    // Accept the legacy dotted emitter prefix too, so both old
+    // ("agent.name:") and new ("agent_name:") producers backfill the name.
+    agentName ??= tagValue(tag.name, "agent.name:");
     transport ??= tagValue(tag.name, "transport:");
 
     if (tag.name === "agent.session") {

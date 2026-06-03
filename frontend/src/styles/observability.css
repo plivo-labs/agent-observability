@@ -2094,7 +2094,7 @@ body {
   tabular-nums: 1;
 }
 .eval-passrate__value--good { color: hsl(var(--success-fg, 142 70% 28%)); }
-.eval-passrate__value--warn { color: hsl(38 80% 40%); }
+.eval-passrate__value--warn { color: hsl(var(--warning-fg)); }
 .eval-passrate__value--bad  { color: hsl(var(--destructive)); }
 .eval-passrate__track {
   flex: 1;
@@ -2111,7 +2111,7 @@ body {
   background: hsl(var(--primary));
 }
 .eval-passrate__bar--good { background: hsl(var(--success-fg, 142 70% 28%)); }
-.eval-passrate__bar--warn { background: hsl(38 80% 40%); }
+.eval-passrate__bar--warn { background: hsl(var(--warning-fg)); }
 .eval-passrate__bar--bad  { background: hsl(var(--destructive)); }
 
 /* ── Revamp: Trend dots ─────────────────────────────────── */
@@ -2124,7 +2124,7 @@ body {
 }
 .eval-trend-dots .dot--pass { background: hsl(var(--success-fg, 142 70% 28%)); border-color: transparent; }
 .eval-trend-dots .dot--fail { background: hsl(var(--destructive)); border-color: transparent; }
-.eval-trend-dots .dot--warn { background: hsl(38 80% 40%); border-color: transparent; }
+.eval-trend-dots .dot--warn { background: hsl(var(--warning-fg)); border-color: transparent; }
 
 .eval-trend-bars { display: inline-flex; gap: 2px; align-items: flex-end; height: 18px; }
 .eval-trend-bars .bar {
@@ -2135,7 +2135,7 @@ body {
 }
 .eval-trend-bars .bar--fail { background: hsl(var(--destructive)); }
 .eval-trend-bars .bar--pass { background: hsl(var(--success-fg, 142 70% 28%)); }
-.eval-trend-bars .bar--warn { background: hsl(38 80% 40%); }
+.eval-trend-bars .bar--warn { background: hsl(var(--warning-fg)); }
 
 /* ── Revamp: Action buttons ─────────────────────────────── */
 .eval-action-btn {
@@ -2159,8 +2159,8 @@ body {
 }
 .eval-action-btn--primary:hover { opacity: 0.9; }
 .eval-action-btn--accent {
-  background: hsl(270 60% 44%);
-  color: #fff;
+  background: hsl(var(--accent-purple));
+  color: hsl(var(--accent-purple-foreground));
   border-color: transparent;
 }
 .eval-action-btn--accent:hover { opacity: 0.9; }
@@ -2195,14 +2195,14 @@ body {
   white-space: nowrap;
 }
 .eval-status-pill .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
-.eval-status-pill--pass { color: hsl(var(--success-fg, 142 70% 28%)); background: hsl(142 76% 96%); }
-.eval-status-pill--fail { color: hsl(var(--destructive)); background: hsl(0 85% 97%); }
-.eval-status-pill--warn { color: hsl(38 80% 40%); background: hsl(38 96% 94%); }
-.dark .eval-status-pill--pass { background: hsl(142 45% 10%); color: hsl(142 65% 70%); }
-.dark .eval-status-pill--fail { background: hsl(0 55% 12%); color: hsl(0 85% 70%); }
-.dark .eval-status-pill--warn { background: hsl(38 55% 11%); color: hsl(38 85% 72%); }
-.eval-status-pill--accent { color: hsl(270 60% 44%); background: hsl(270 60% 44% / 0.1); }
-.dark .eval-status-pill--accent { color: hsl(270 70% 70%); background: hsl(270 60% 44% / 0.2); }
+.eval-status-pill--pass { color: hsl(var(--success-fg, 142 70% 28%)); background: hsl(var(--success-bg)); }
+.eval-status-pill--fail { color: hsl(var(--destructive)); background: hsl(var(--destructive-bg)); }
+.eval-status-pill--warn { color: hsl(var(--warning-fg)); background: hsl(var(--warning-bg)); }
+.dark .eval-status-pill--pass { background: hsl(var(--success-bg)); color: hsl(var(--success-fg)); }
+.dark .eval-status-pill--fail { background: hsl(var(--destructive-bg)); color: hsl(var(--destructive)); }
+.dark .eval-status-pill--warn { background: hsl(var(--warning-bg)); color: hsl(var(--warning-fg)); }
+.eval-status-pill--accent { color: hsl(var(--accent-purple)); background: hsl(var(--accent-purple) / 0.1); }
+.dark .eval-status-pill--accent { color: hsl(var(--accent-purple)); background: hsl(var(--accent-purple) / 0.2); }
 
 /* ── Revamp: Table header sort ──────────────────────────── */
 .eval-th-sort {
@@ -2271,7 +2271,7 @@ body {
 }
 .eval-activity-row.pass .verdict-bar { background: hsl(var(--success-fg, 142 70% 28%)); }
 .eval-activity-row.fail .verdict-bar { background: hsl(var(--destructive)); }
-.eval-activity-row.warn .verdict-bar { background: hsl(38 80% 40%); }
+.eval-activity-row.warn .verdict-bar { background: hsl(var(--warning-fg)); }
 
 /* ── Revamp: Compare screen ─────────────────────────────── */
 .eval-compare-header {
@@ -2288,7 +2288,7 @@ body {
   padding: 14px 16px;
 }
 .eval-compare-card.a { border-left: 3px solid hsl(var(--muted-foreground)); }
-.eval-compare-card.b { border-left: 3px solid hsl(270 60% 55%); }
+.eval-compare-card.b { border-left: 3px solid hsl(var(--accent-purple)); }
 .eval-compare-card .lbl {
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -2338,17 +2338,17 @@ body {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: hsl(var(--primary-foreground));
   flex-shrink: 0;
   font-size: 14px;
 }
-.eval-verdict.regress { border-color: hsl(var(--destructive)); background: hsl(0 85% 97%); }
+.eval-verdict.regress { border-color: hsl(var(--destructive)); background: hsl(var(--destructive-bg)); }
 .eval-verdict.regress .eval-verdict__icon { background: hsl(var(--destructive)); }
-.eval-verdict.improve { border-color: hsl(142 70% 28%); background: hsl(142 76% 96%); }
-.eval-verdict.improve .eval-verdict__icon { background: hsl(142 70% 28%); }
+.eval-verdict.improve { border-color: hsl(var(--success-fg)); background: hsl(var(--success-bg)); }
+.eval-verdict.improve .eval-verdict__icon { background: hsl(var(--success-fg)); }
 .eval-verdict.neutral .eval-verdict__icon { background: hsl(var(--muted-foreground)); }
-.dark .eval-verdict.regress { background: hsl(0 55% 12%); }
-.dark .eval-verdict.improve { background: hsl(142 45% 10%); }
+.dark .eval-verdict.regress { background: hsl(var(--destructive-bg)); }
+.dark .eval-verdict.improve { background: hsl(var(--success-bg)); }
 .eval-verdict__title { font-weight: 600; font-size: 13px; }
 .eval-verdict__sub { font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 2px; }
 
@@ -2416,7 +2416,7 @@ body {
   max-width: 100%;
 }
 .eval-compare-kpi-tile .bar--a { background: hsl(var(--muted-foreground) / 0.35); }
-.eval-compare-kpi-tile .bar--b { background: hsl(270 60% 55%); }
+.eval-compare-kpi-tile .bar--b { background: hsl(var(--accent-purple)); }
 
 .eval-diff-section { margin-top: 8px; }
 .eval-diff-section__head {
@@ -2433,7 +2433,7 @@ body {
 }
 .eval-diff-section__head.regress { color: hsl(var(--destructive)); }
 .eval-diff-section__head.fixed { color: hsl(var(--success-fg, 142 70% 28%)); }
-.eval-diff-section__head.failing { color: hsl(38 80% 40%); }
+.eval-diff-section__head.failing { color: hsl(var(--warning-fg)); }
 .eval-diff-section__head .count {
   font-family: var(--font-mono);
   background: hsl(var(--card));
@@ -2467,11 +2467,11 @@ body {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
-  color: #fff;
+  color: hsl(var(--primary-foreground));
 }
 .eval-diff-row .marker--regress { background: hsl(var(--destructive)); }
 .eval-diff-row .marker--fixed { background: hsl(var(--success-fg, 142 70% 28%)); }
-.eval-diff-row .marker--failing { background: hsl(38 80% 40%); }
+.eval-diff-row .marker--failing { background: hsl(var(--warning-fg)); }
 .eval-diff-row .name {
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -2645,3 +2645,782 @@ body {
   font-size: 12px;
   color: hsl(var(--muted-foreground));
 }
+
+/* =========================================================================
+ * INSTRUMENT PANEL — override layer
+ *
+ * Re-skins the prior "Neo" component shapes (rounded cards, soft drop
+ * shadows, slate-zinc palette) into the editorial instrument-panel
+ * aesthetic: paper background with a 32px grid, hairline rules, near-zero
+ * radius, near-zero elevation, letter-spacing as the hierarchy signal,
+ * brand red as a rationed verb.
+ *
+ * Loaded last so these win over the hardcoded radii / shadows above
+ * without touching every selector in the file.
+ * ====================================================================== */
+
+/* Kill the persistent drop shadow on every panel surface — the instrument
+ * panel is intentionally flat. */
+:root { --card-shadow: none; }
+.obs-panel,
+.conv-card,
+.tool-card,
+.metric-tile,
+.tl-card,
+.events-card,
+.cfg-card,
+.perf-card,
+.tokens-card,
+.obs-session-head,
+.eval-stat,
+.eval-kpi,
+.eval-compare-card,
+.eval-compare-delta,
+.eval-compare-kpi-tile,
+.eval-panel,
+.drawer,
+.tool-card,
+.turn,
+.fail-block,
+.eval-activity-row,
+.eval-diff-row,
+.eval-verdict {
+  box-shadow: none !important;
+}
+
+/* Flatten every hardcoded radius. The instrument-panel rule is r=0; pills
+ * and badges opt back into 2px ("stamped"); mechanical controls (status
+ * chips, switches, meter tracks) keep 999px. */
+.eval-kpi,
+.eval-stat,
+.eval-panel,
+.eval-compare-card,
+.eval-compare-kpi-tile,
+.eval-action-btn,
+.eval-activity-row,
+.eval-diff-row,
+.eval-verdict,
+.eval-search,
+.eval-seg,
+.eval-seg button,
+.obs-panel,
+.obs-search,
+.obs-filter,
+.obs-viewbtn,
+.obs-iconbtn,
+.obs-cmdk,
+.obs-kbd,
+.obs-paginate .pager button,
+.obs-paginate .rpp select,
+.obs-toolbar,
+.obs-toolbar input[type="text"],
+.obs-toolbar input[type="search"],
+.obs-toolbar input:not([type]),
+.obs-toolbar input[type="number"],
+.obs-toolbar button,
+.metric-tile,
+.tl-card,
+.tl-lane,
+.tl-wave i,
+.events-card,
+.events-head .timemode,
+.ev-detail,
+.cfg-card,
+.cfg-body,
+.cfg-head .copy,
+.perf-card,
+.conv-card,
+.conv-head,
+.tool-card,
+.tool-card .out,
+.tokens-card,
+.obs-session-head,
+.obs-session-head .top .id,
+.turn,
+.turn-head,
+.turn-foot,
+.fail-block,
+.fail-block .ctx,
+.user-msg,
+.msg-bubble,
+.msg-avatar,
+.msg-metrics,
+.drawer,
+.drawer-top,
+.drawer-top .x,
+.drawer-stats,
+.drawer-stats .s,
+.stack-bar,
+.stack-bar > i,
+.line-chart .plot,
+.chart-bars .bar,
+.chart-bars .bar.p95,
+.eval-diff-section__head,
+.eval-compare-vs,
+.tl-player .play,
+.tl-player .vol-slider,
+.tl-player .vol-slider::after,
+.obs-nav-brand .dot,
+.eval-stat.hero,
+.tl-turn-row .chip,
+.turn-badge,
+.cap,
+.framework,
+.eval-fw-pill,
+.transport,
+.tl-wave,
+.eval-trend-dots .dot,
+.eval-trend-bars .bar,
+.dur-bad,
+.passrate .fail,
+.eval-passrate__value,
+.eval-runs-tbl,
+.eval-runs-tbl td.empty,
+.ev-row .tag {
+  border-radius: 0 !important;
+}
+
+/* Pills / stamped badges — 2px so they read like rubber-stamps on paper. */
+.cap,
+.framework,
+.eval-fw-pill,
+.turn-badge,
+.ev-row .tag,
+.eval-trend-dots .dot,
+.tl-turn-row .chip,
+.dur-bad,
+.passrate .fail,
+.eval-diff-row .marker {
+  border-radius: 2px !important;
+}
+
+/* Mechanical controls — keep 999px (the lozenge / track / switch / LED
+ * pattern). These are intentionally NOT square. */
+.state-chip,
+.status-chip,
+.eval-status-pill,
+.eval-status-pill .dot,
+.transport,
+.eval-passrate__track,
+.passrate .meter,
+.tl-player .play,
+.tl-player .vol-slider,
+.eval-compare-vs,
+.eval-diff-section__head .count,
+.turn-num,
+.status-pill,
+.status-pill .dot,
+.msg-row.user .msg-bubble,
+.msg-row.agent .msg-bubble,
+.eval-verdict__icon,
+.eval-kpi__bar > span {
+  border-radius: 999px !important;
+}
+
+/* Restore paper grid on body — observability.css's earlier `background:
+ * var(--app-bg)` shorthand wipes the background-image set in index.css. */
+body {
+  background-color: hsl(var(--background)) !important;
+  background-image:
+    linear-gradient(to right,  hsl(var(--bg3)) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--bg3)) 1px, transparent 1px) !important;
+  background-size: 32px 32px !important;
+  background-position: -1px -1px !important;
+  background-attachment: fixed !important;
+}
+
+/* Panels lift off the paper via a single hairline border. No more
+ * --app-bg page-fill — the bg2 token used as page bg gets remapped so
+ * panels sit on warm paper, not on a cool greyish lift. */
+:root {
+  --app-bg: transparent;
+}
+.obs-app {
+  background: transparent;
+}
+
+/* ── Header chrome ────────────────────────────────────────────────────── */
+.obs-nav {
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--foreground));   /* ink emphasis */
+  height: 56px;
+  padding: 0 22px;
+}
+.obs-nav-brand {
+  font-family: "Sora", "Inter", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: hsl(var(--foreground));
+}
+.obs-nav-brand .dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 0 !important;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  display: grid;
+  place-items: center;
+  position: relative;
+  font: 700 16px/1 "Sora", serif;
+}
+.obs-nav-brand .dot::after {
+  /* a hairline tick mark at the bottom-right of the brand glyph — the
+   * little "scientific instrument" detail. */
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  background: hsl(var(--accent));
+}
+.obs-iconbtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 0 !important;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--secondary));
+  transition: border-color .12s, background .12s, color .12s;
+}
+.obs-iconbtn:hover {
+  background: hsl(var(--foreground));
+  border-color: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+
+/* ── Command bar / cmdk hint ──────────────────────────────────────────── */
+.obs-cmdk {
+  border-radius: 0 !important;
+  border-color: hsl(var(--border));
+  background: hsl(var(--card));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+}
+.obs-cmdk:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+.obs-kbd {
+  border-radius: 2px !important;
+  border-bottom-width: 1px;
+  background: hsl(var(--background));
+  border-color: hsl(var(--border));
+  color: hsl(var(--secondary));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ── Tabs (header tabs and shadcn tabs both) — instrument-tab pattern ── */
+.obs-tab,
+.obs-page [role="tab"] {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  border-radius: 0 !important;
+  padding: 10px 14px !important;
+  height: auto !important;
+  background: transparent !important;
+  border-bottom: 2px solid transparent !important;
+  color: hsl(var(--tertiary)) !important;
+}
+.obs-tab:hover,
+.obs-page [role="tab"]:hover {
+  color: hsl(var(--foreground)) !important;
+  background: transparent !important;
+}
+.obs-tab.active,
+.obs-page [role="tab"][data-state="active"] {
+  color: hsl(var(--foreground)) !important;
+  background: transparent !important;
+  border-bottom-color: hsl(var(--accent)) !important;
+  font-weight: 600 !important;
+}
+.obs-tab .count {
+  border-radius: 2px !important;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: hsl(var(--tertiary));
+}
+.obs-tab.active .count {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  border-color: hsl(var(--foreground));
+}
+
+/* ── Tables — instrument log row pattern ──────────────────────────────── */
+.obs-table thead th {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: hsl(var(--background));
+  border-bottom: 1px solid hsl(var(--foreground));   /* ink rule beneath header */
+  color: hsl(var(--tertiary));
+  padding: 14px 16px;
+}
+.obs-table tbody td {
+  border-bottom: 1px dashed hsl(var(--border));
+  padding: 12px 16px;
+  font-variant-numeric: tabular-nums;
+}
+.obs-table tbody tr:last-child td { border-bottom: 1px solid hsl(var(--border)); }
+.obs-table tbody tr:hover { background: hsl(var(--muted)) !important; }
+
+.eval-runs-tbl thead tr {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.18em;
+  font-size: 10px;
+  border-bottom: 1px solid hsl(var(--foreground));
+}
+.eval-runs-tbl td {
+  border-bottom: 1px dashed hsl(var(--border));
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Eyebrow labels everywhere — letter-spacing is the hierarchy ─────── */
+.eval-kpi__label,
+.metric-tile .hd,
+.eval-stat .hd,
+.section-label,
+.tool-card .section .lbl,
+.eval-compare-card .lbl,
+.eval-compare-kpi-tile .lbl,
+.eval-activity-day,
+.cfg-head,
+.drawer-stats .s .k,
+.events-head .title,
+.conv-head .t,
+.perf-card h3 {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  color: hsl(var(--tertiary)) !important;
+}
+.events-head .title,
+.conv-head .t,
+.perf-card h3,
+.cfg-head {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Hero stat values — Sora display, tighter tracking */
+.eval-stat .val,
+.metric-tile .val,
+.eval-kpi__value {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Hero KPI is now distinguished by an ink border-top, not a fill */
+.eval-stat.hero {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-top: 2px solid hsl(var(--foreground));
+}
+
+/* ── Panels — hairline borders, paper-card body ──────────────────────── */
+.obs-panel,
+.events-card,
+.cfg-card,
+.perf-card,
+.tl-card,
+.conv-card,
+.eval-kpi,
+.eval-stat,
+.eval-compare-card,
+.eval-compare-kpi-tile,
+.eval-panel,
+.metric-tile,
+.tool-card,
+.obs-session-head,
+.eval-activity-row,
+.eval-diff-row,
+.eval-verdict {
+  border-color: hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+/* Toolbar — instrument bar */
+.obs-toolbar {
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--foreground));
+  padding: 12px 18px;
+}
+.obs-search,
+.obs-toolbar input[type="text"],
+.obs-toolbar input[type="search"],
+.obs-toolbar input:not([type]),
+.obs-toolbar input[type="number"] {
+  border-color: hsl(var(--border));
+  background: hsl(var(--background));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.obs-search:focus-within,
+.obs-toolbar input:focus-visible {
+  border-color: hsl(var(--foreground)) !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+.obs-filter {
+  border: 1px dashed hsl(var(--border));
+  background: hsl(var(--card));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+}
+.obs-filter:hover {
+  background: hsl(var(--muted));
+  border-color: hsl(var(--foreground));
+  color: hsl(var(--foreground));
+}
+.obs-filter.applied {
+  border-style: solid;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  border-color: hsl(var(--foreground));
+}
+.obs-toolbar button {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+
+/* ── Action buttons — primary is filled ink, hover flips to accent red ── */
+.eval-action-btn {
+  border-color: hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  height: 32px;
+  padding: 0 14px;
+}
+.eval-action-btn:hover {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  border-color: hsl(var(--foreground));
+}
+.eval-action-btn--primary {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  border-color: hsl(var(--foreground));
+}
+.eval-action-btn--primary:hover {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+.eval-action-btn--accent {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+.eval-action-btn--accent:hover {
+  opacity: 1;
+  background: hsl(var(--foreground));
+  border-color: hsl(var(--foreground));
+}
+
+/* ── Status chips — duotone "soft bg + base fg" stays, just flatter ──── */
+.status-chip,
+.eval-status-pill {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 10px;
+  height: 22px;
+  padding: 0 10px;
+}
+
+.cap,
+.framework,
+.eval-fw-pill,
+.turn-badge,
+.ev-row .tag {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+  font-size: 10px !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  font-weight: 600 !important;
+}
+
+/* ── Sub-tabs (the bottom-underlined kind) — accent red is the verb ──── */
+.obs-subtabs .t,
+.obs-subtabs .t.active {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+  border-radius: 0;
+}
+.obs-subtabs .t.active {
+  border-bottom-color: hsl(var(--accent)) !important;
+  font-weight: 600;
+}
+.obs-subtabs .t .count {
+  border-radius: 2px;
+  background: transparent;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--tertiary));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+}
+.obs-subtabs .t.active .count {
+  background: hsl(var(--foreground));
+  border-color: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+
+/* ── Page heading + breadcrumbs ─────────────────────────────────────── */
+.obs-head h1 {
+  font-family: "Sora", "Inter", sans-serif;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+.obs-head .sub {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+}
+.obs-head .total {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+}
+.obs-head .total b {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+.obs-crumbs,
+.eval-breadcrumbs {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+.obs-crumbs .cur,
+.eval-breadcrumbs__current {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.10em;
+  font-weight: 600;
+}
+
+/* ── Pagination — instrument feel ───────────────────────────────────── */
+.obs-paginate {
+  background: hsl(var(--card));
+  border-top: 1px solid hsl(var(--foreground));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+.obs-paginate .pager button {
+  border: 1px solid hsl(var(--border));
+}
+.obs-paginate .pager button:hover:not(:disabled) {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  border-color: hsl(var(--foreground));
+}
+.obs-paginate .rpp select {
+  border-color: hsl(var(--border));
+  background: hsl(var(--card));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+/* ── Drawer (case detail) ───────────────────────────────────────────── */
+.drawer {
+  background: hsl(var(--card));
+  border-left: 1px solid hsl(var(--foreground));
+  box-shadow: none;
+}
+.drawer-top {
+  border-bottom-color: hsl(var(--foreground));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.drawer-stats {
+  background: hsl(var(--background));
+  border-color: hsl(var(--border));
+}
+
+/* ── Code blocks / JSON viewer — monochrome ink on paper ─────────────── */
+.cfg-body,
+.fail-block .ctx,
+.ev-detail,
+.turn-body.mono,
+.tool-card .out,
+.tool-card .kv {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+  font-size: 12px;
+}
+.cfg-body {
+  background: hsl(var(--background));
+}
+
+/* ── Charts — accent the active series with brand red ────────────────── */
+.chart-bars .bar.p95 {
+  background: hsl(var(--accent));
+}
+.chart-bars .bar {
+  background: hsl(var(--foreground) / 0.35);
+}
+.line-chart .plot,
+.chart-bars .plot {
+  border-left-color: hsl(var(--foreground));
+  border-bottom-color: hsl(var(--foreground));
+}
+.chart-bars .plot .grid i {
+  border-top-style: dashed;
+  border-top-color: hsl(var(--border));
+}
+
+/* ── Hero metric coloring — warn/bad use brand-red verb ──────────────── */
+.metric-tile.warn { border-color: hsl(var(--warning)); }
+.metric-tile.bad  { border-color: hsl(var(--accent)); }
+.metric-tile.bad .val { color: hsl(var(--accent)); }
+
+/* Session header ID chip — mono stamp */
+.obs-session-head .top .id {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 2px !important;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+/* Section divider between KV columns — dashed hairline */
+.obs-kv + .obs-kv {
+  border-left: 1px dashed hsl(var(--border));
+}
+.obs-kv .k {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.obs-kv .v {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Eval activity row — flat, hairline left bar instead of soft pill */
+.eval-activity-row {
+  border-radius: 0 !important;
+  border-left-width: 2px;
+  border-left-style: solid;
+  border-left-color: hsl(var(--border));
+}
+.eval-activity-row.pass { border-left-color: hsl(var(--success-fg)); }
+.eval-activity-row.fail { border-left-color: hsl(var(--accent)); }
+.eval-activity-row.warn { border-left-color: hsl(var(--warning)); }
+.eval-activity-row .verdict-bar { display: none; }
+
+/* Eval verdict banner */
+.eval-verdict.regress {
+  background: hsl(var(--destructive-bg));
+  border-color: hsl(var(--accent));
+}
+.eval-verdict.improve {
+  background: hsl(var(--success-bg));
+  border-color: hsl(var(--success-fg));
+}
+.eval-verdict__icon {
+  border-radius: 0 !important;
+}
+
+/* Toggle "data-state" attributes inherit. Ensure shadcn buttons inside
+ * the dashboard render square + hairline by default. */
+.obs-page button[data-slot="button"],
+.obs-page button[data-slot="select-trigger"] {
+  border-radius: 0 !important;
+}
+
+/* Cards / floating surfaces rendered by shadcn — flatten + remove float shadow */
+[data-slot="card"],
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="select-content"],
+[data-slot="dialog-content"],
+[data-slot="sheet-content"],
+[data-slot="hover-card-content"],
+[data-slot="tooltip-content"],
+[data-slot="command"],
+[data-slot="command-item"],
+[data-slot="calendar"] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+[data-slot="card"],
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="select-content"],
+[data-slot="dialog-content"],
+[data-slot="sheet-content"],
+[data-slot="hover-card-content"],
+[data-slot="tooltip-content"] {
+  border: 1px solid hsl(var(--border));
+}
+
+/* Floating menus mounted with an ink top rule — feel "stamped onto paper". */
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="select-content"],
+[data-slot="hover-card-content"] {
+  border-top: 2px solid hsl(var(--foreground)) !important;
+}
+
+/* Generic shadow kill anywhere inside the dashboard. Selectors that need a
+ * legitimate shadow (toggle switch knob, etc.) re-opt-in below. */
+.obs-app [class*="shadow-"] { box-shadow: none !important; }
+
+/* Skeletons inherit the paper card surface (no fake "soft loading" tint). */
+[data-slot="skeleton"] {
+  border-radius: 0 !important;
+  background: hsl(var(--muted)) !important;
+}
+
+/* The shadcn `Separator` thickness becomes a hairline rule. */
+[data-slot="separator-root"] {
+  background: hsl(var(--border)) !important;
+}
+

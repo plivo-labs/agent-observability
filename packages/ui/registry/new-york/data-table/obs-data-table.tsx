@@ -51,7 +51,7 @@ export function ObsDataTable<TData>({
         `p-2` on every cell, which reads as "no padding" against the card
         edge. Inner cells keep their default 2-unit horizontal padding.
       */}
-      <div className="overflow-hidden rounded-md border bg-card shadow-sm [&_tr>:first-child]:pl-4 [&_tr>:last-child]:pr-4">
+      <div className="overflow-hidden rounded-none border border-border bg-card shadow-none [&_tr>:first-child]:pl-4 [&_tr>:last-child]:pr-4">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (

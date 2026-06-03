@@ -21,7 +21,7 @@ const PercentilesTooltip = ({
   if (!active || !payload?.length) return null
   const d = payload[0].payload
   return (
-    <div className="rounded-lg border bg-background p-3 text-s-400 shadow-md">
+    <div className="rounded-none border border-foreground bg-card p-3 text-[12px] font-mono shadow-none">
       <p className="font-medium mb-1">{d.name}</p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
         <span className="text-muted-foreground">Avg</span>

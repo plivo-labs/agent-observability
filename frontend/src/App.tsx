@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, Moon, RefreshCw, Sun } from 'lucide-react'
+import { Moon, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionDetailPage } from '@/components/session-detail-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
@@ -43,9 +43,16 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     <div className="obs-app">
       <nav className="obs-nav">
         <Link to="/" className="obs-nav-brand">
-          <span className="dot"><Activity size={13} strokeWidth={2} /></span>
-          Agent Observability
+          <span className="dot" aria-hidden>Ω</span>
+          <span>Agent Observability</span>
         </Link>
+        <span
+          aria-hidden
+          className="hidden md:inline-flex items-center text-[10px] uppercase ml-3 px-2 py-[3px] border border-border text-tertiary"
+          style={{ letterSpacing: '0.16em', fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace' }}
+        >
+          BUILD 04 · LIVE
+        </span>
         <div className="obs-nav-spacer" />
         <div className="obs-nav-right">
           <button
@@ -54,7 +61,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             title="Refresh"
             onClick={() => window.location.reload()}
           >
-            <RefreshCw size={16} />
+            <RefreshCw size={15} strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -62,7 +69,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             onClick={toggleDark}
             title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
           >
-            {dark ? <Sun size={16} /> : <Moon size={16} />}
+            {dark ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
           </button>
         </div>
       </nav>

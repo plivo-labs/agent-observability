@@ -66,7 +66,7 @@ export interface InitObservabilityOptions {
  *
  *      - `agent_id:<value>` (always)
  *      - `account_id:<value>` (when supplied)
- *      - `agent.name:<value>` (when supplied)
+ *      - `agent_name:<value>` (when supplied)
  *      - `transport:<value>` (when supplied)
  *      - `agent.session` (wrapper with everything in metadata)
  *
@@ -108,7 +108,7 @@ export function initObservability(tagger: Tagger, options: InitObservabilityOpti
     tagger.add(`account_id:${options.accountId}`, { metadata: { account_id: options.accountId } });
   }
   if (options.agentName) {
-    tagger.add(`agent.name:${options.agentName}`, { metadata: { agent_name: options.agentName } });
+    tagger.add(`agent_name:${options.agentName}`, { metadata: { agent_name: options.agentName } });
   }
   if (options.transport) {
     tagger.add(`transport:${options.transport}`, { metadata: { transport: options.transport } });

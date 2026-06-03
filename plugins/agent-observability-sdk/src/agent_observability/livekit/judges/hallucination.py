@@ -8,10 +8,9 @@ Runs on a session in isolation — no ground truth required.
 
 from __future__ import annotations
 
-from livekit.agents.evals.judge import _LLMJudge
 from livekit.agents.llm import LLM
 
-from agent_observability.livekit.judges._instructions import HALLUCINATION
+from agent_observability.livekit.judges._base import _LLMJudge, static_judge
 
 
 def hallucination_judge(llm: LLM | None = None) -> _LLMJudge:
@@ -21,4 +20,4 @@ def hallucination_judge(llm: LLM | None = None) -> _LLMJudge:
     call outputs, or the agent's instructions; fail if any critical fact
     is fabricated. Style and formatting differences are NOT failures.
     """
-    return _LLMJudge(llm=llm, name="hallucination", instructions=HALLUCINATION)
+    return static_judge("hallucination", llm=llm)

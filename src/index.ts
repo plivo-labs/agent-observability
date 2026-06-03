@@ -7,7 +7,7 @@ import { serveStatic } from "hono/bun";
 import { config, s3Enabled, basicAuthEnabled } from "./config.js";
 import { uploadRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags } from "./db.js";
-import { upsertAgent } from "./agents/upsert.js";
+import { upsertAgentTx } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
@@ -241,29 +241,33 @@ app.post("/observability/recordings/v0", async (c) => {
       ? rawReport.agent_name
       : null;
 
-  // Save to database
+  // Save to database. Agent upsert and session insert share one
+  // transaction so a session insert failure can't leave an orphan agent
+  // row (the FK on agent_transport_sessions.agent_id otherwise tempts
+  // exactly that race).
   try {
-    // The agent row must exist before INSERT INTO sessions (FK on agent).
-    if (agentId) {
-      await upsertAgent({ agentId, accountId, agentName: agentNameFromReport });
-    }
-    await insertSession({
-      sessionId,
-      accountId,
-      agentId,
-      agentName: agentNameFromReport,
-      transport,
-      startedAt,
-      endedAt,
-      durationMs,
-      turnCount,
-      hasStt,
-      hasLlm,
-      hasTts,
-      chatHistory: chatItems,
-      sessionMetrics: { per_turn: metrics, usage: normalizeKeys(rawReport?.usage) ?? null },
-      rawReport: rawReport != null ? normalizeRawReport(normalizeKeys(rawReport)) : null,
-      recordUrl,
+    await sql.begin(async (tx: any) => {
+      if (agentId) {
+        await upsertAgentTx(tx, { agentId, accountId, agentName: agentNameFromReport });
+      }
+      await insertSession({
+        sessionId,
+        accountId,
+        agentId,
+        agentName: agentNameFromReport,
+        transport,
+        startedAt,
+        endedAt,
+        durationMs,
+        turnCount,
+        hasStt,
+        hasLlm,
+        hasTts,
+        chatHistory: chatItems,
+        sessionMetrics: { per_turn: metrics, usage: normalizeKeys(rawReport?.usage) ?? null },
+        rawReport: rawReport != null ? normalizeRawReport(normalizeKeys(rawReport)) : null,
+        recordUrl,
+      }, tx);
     });
     if (sessionId) {
       await applyStoredSessionTags(sessionId);

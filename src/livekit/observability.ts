@@ -182,6 +182,122 @@ async function persistTag(
   await applySessionTagMetadata(sessionId, [{ name, metadata }]);
 }
 
+// Per-log dispatch context. Each handler reads the decoded log plus the
+// resolved sessionId/observedAt, and may bump the running `result`
+// counters or stage a raw_report patch into `rawReportPatches`.
+interface OtlpHandlerCtx {
+  log: DecodedOtlpLog;
+  sessionId: string;
+  observedAt: Date | null;
+  result: PersistResult;
+  rawReportPatches: Map<string, RawReportPatch>;
+}
+
+type OtlpHandler = (ctx: OtlpHandlerCtx) => Promise<void>;
+
+async function handleSessionReport({ log, sessionId, observedAt, result, rawReportPatches }: OtlpHandlerCtx): Promise<void> {
+  const rawSessionReport = asRecord(log.attributes["session.report"]);
+  const options = asRecord(log.attributes["session.options"]);
+  const tags = asStringArray(log.attributes["session.tags"]);
+  const agentId = asString(log.attributes.agent_id);
+  const agentName = asString(log.attributes.agent_name);
+  const sdkVersion = asString(log.attributes.sdk_version);
+  const usage = asArray(log.attributes.usage);
+  // Upsert the agent so the FK on (agent_id, account_id) is
+  // satisfied when the session row eventually lands. account_id
+  // isn't on this OTLP record; the '' bucket gets used here, and a
+  // subsequent OTLP "tag" with account_id:<value> or the multipart
+  // recording report can re-upsert with the real account.
+  if (agentId) {
+    await upsertAgent({ agentId, accountId: null, agentName });
+  }
+  mergeRawReportPatch(rawReportPatches, sessionId, {
+    ...(rawSessionReport ?? {}),
+    ...(options ? { options } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(agentId ? { agent_id: agentId } : {}),
+    ...(agentName ? { agent_name: agentName } : {}),
+    ...(sdkVersion ? { sdk_version: sdkVersion } : {}),
+    ...(usage ? { usage } : {}),
+  });
+
+  for (const tagName of tags) {
+    await persistTag(sessionId, tagName, null, observedAt);
+    result.tags += 1;
+  }
+}
+
+async function handleChatItem({ log, sessionId, rawReportPatches }: OtlpHandlerCtx): Promise<void> {
+  const event = eventFromChatItem(log);
+  if (event) {
+    mergeRawReportPatch(rawReportPatches, sessionId, { events: [event] });
+  }
+}
+
+async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
+  const tag = asRecord(log.attributes.tag);
+  const name = asString(tag?.name);
+  if (!name) {
+    return;
+  }
+  const metadata = asRecord(tag?.metadata);
+  await persistTag(sessionId, name, metadata, observedAt);
+  result.tags += 1;
+}
+
+async function handleEvaluation({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
+  const evaluation = asRecord(log.attributes.evaluation);
+  if (!evaluation) {
+    return;
+  }
+  const judgeName = asString(evaluation.name);
+  if (!judgeName) {
+    return;
+  }
+  await insertLiveKitEvaluation({
+    sessionId,
+    source: "livekit_tagger",
+    judgeName,
+    tag: asString(evaluation.tag),
+    verdict: asString(evaluation.verdict),
+    reasoning: asString(evaluation.reasoning),
+    instructions: asString(evaluation.instructions),
+    observedAt,
+    raw: evaluation,
+  });
+  result.evaluations += 1;
+}
+
+async function handleOutcome({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
+  const outcome = asRecord(log.attributes.outcome);
+  if (!outcome) {
+    return;
+  }
+  const name = asString(outcome?.outcome);
+  if (!name) {
+    return;
+  }
+  await upsertSessionOutcome({
+    sessionId,
+    source: "livekit_tagger",
+    outcome: name,
+    reason: asString(outcome?.reason),
+    observedAt,
+    raw: outcome,
+  });
+  result.outcomes += 1;
+}
+
+// String-keyed dispatch on log.body. Replaces the former linear
+// if-chain; an unknown body is simply ignored (no handler entry).
+const OTLP_HANDLERS: Record<string, OtlpHandler> = {
+  "session report": handleSessionReport,
+  "chat item": handleChatItem,
+  "tag": handleTag,
+  "evaluation": handleEvaluation,
+  "outcome": handleOutcome,
+};
+
 export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<PersistResult> {
   const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0 };
   const rawReportPatches = new Map<string, RawReportPatch>();
@@ -194,103 +310,12 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
 
     const observedAt = normalizeTimestamp(log.timestamp);
     const body = asString(log.body);
-
-    if (body === "session report") {
-      const rawSessionReport = asRecord(log.attributes["session.report"]);
-      const options = asRecord(log.attributes["session.options"]);
-      const tags = asStringArray(log.attributes["session.tags"]);
-      const agentId = asString(log.attributes.agent_id);
-      const agentName = asString(log.attributes.agent_name);
-      const sdkVersion = asString(log.attributes.sdk_version);
-      const usage = asArray(log.attributes.usage);
-      // Upsert the agent so the FK on (agent_id, account_id) is
-      // satisfied when the session row eventually lands. account_id
-      // isn't on this OTLP record; the '' bucket gets used here, and a
-      // subsequent OTLP "tag" with account_id:<value> or the multipart
-      // recording report can re-upsert with the real account.
-      if (agentId) {
-        await upsertAgent({ agentId, accountId: null, agentName });
-      }
-      mergeRawReportPatch(rawReportPatches, sessionId, {
-        ...(rawSessionReport ?? {}),
-        ...(options ? { options } : {}),
-        ...(tags.length > 0 ? { tags } : {}),
-        ...(agentId ? { agent_id: agentId } : {}),
-        ...(agentName ? { agent_name: agentName } : {}),
-        ...(sdkVersion ? { sdk_version: sdkVersion } : {}),
-        ...(usage ? { usage } : {}),
-      });
-
-      for (const tagName of asStringArray(log.attributes["session.tags"])) {
-        await persistTag(sessionId, tagName, null, observedAt);
-        result.tags += 1;
-      }
+    const handler = body ? OTLP_HANDLERS[body] : undefined;
+    if (!handler) {
       continue;
     }
 
-    if (body === "chat item") {
-      const event = eventFromChatItem(log);
-      if (event) {
-        mergeRawReportPatch(rawReportPatches, sessionId, { events: [event] });
-      }
-      continue;
-    }
-
-    if (body === "tag") {
-      const tag = asRecord(log.attributes.tag);
-      const name = asString(tag?.name);
-      if (!name) {
-        continue;
-      }
-      const metadata = asRecord(tag?.metadata);
-      await persistTag(sessionId, name, metadata, observedAt);
-      result.tags += 1;
-      continue;
-    }
-
-    if (body === "evaluation") {
-      const evaluation = asRecord(log.attributes.evaluation);
-      if (!evaluation) {
-        continue;
-      }
-      const judgeName = asString(evaluation.name);
-      if (!judgeName) {
-        continue;
-      }
-      await insertLiveKitEvaluation({
-        sessionId,
-        source: "livekit_tagger",
-        judgeName,
-        tag: asString(evaluation.tag),
-        verdict: asString(evaluation.verdict),
-        reasoning: asString(evaluation.reasoning),
-        instructions: asString(evaluation.instructions),
-        observedAt,
-        raw: evaluation,
-      });
-      result.evaluations += 1;
-      continue;
-    }
-
-    if (body === "outcome") {
-      const outcome = asRecord(log.attributes.outcome);
-      if (!outcome) {
-        continue;
-      }
-      const name = asString(outcome?.outcome);
-      if (!name) {
-        continue;
-      }
-      await upsertSessionOutcome({
-        sessionId,
-        source: "livekit_tagger",
-        outcome: name,
-        reason: asString(outcome?.reason),
-        observedAt,
-        raw: outcome,
-      });
-      result.outcomes += 1;
-    }
+    await handler({ log, sessionId, observedAt, result, rawReportPatches });
   }
 
   for (const [sessionId, patch] of rawReportPatches) {

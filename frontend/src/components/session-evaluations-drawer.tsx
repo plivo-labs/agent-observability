@@ -95,7 +95,7 @@ export function SummaryTile({
   children?: ReactNode
 }) {
   return (
-    <div className="rounded-lg border bg-card p-3 shadow-sm">
+    <div className="rounded-none border border-border bg-card p-3 shadow-none">
       <div className="text-xxs-600 uppercase tracking-[0.08em] text-muted-foreground">
         {label}
       </div>

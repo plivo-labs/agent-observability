@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { escapeLikePattern } from "../response.js";
 
 // ── List ────────────────────────────────────────────────────────────────────
 //
@@ -65,10 +66,6 @@ export interface ListAgentsOpts {
   agentName?: string | null;
 }
 
-/** Internal — escape SQL LIKE metacharacters in user-supplied substrings. */
-function escapeLike(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-}
 
 export async function listAgents(
   opts: ListAgentsOpts = {},
@@ -82,7 +79,7 @@ export async function listAgents(
   // agents table is the entity. LEFT JOIN session aggregates + eval
   // aggregates. An agent that exists in `agents` but has no events yet
   // (rare) still appears with zero counts.
-  const agentNameLike = agentName ? `%${escapeLike(agentName.toLowerCase())}%` : null;
+  const agentNameLike = agentName ? `%${escapeLikePattern(agentName.toLowerCase())}%` : null;
 
   const result = await sql.unsafe(
     `WITH sess AS (
@@ -278,6 +275,29 @@ export async function getAgentStats(
     )
   `;
 
+  // Perceived-latency definition, in ONE place, referenced by both the
+  // bucket query and the totals query below (they used to carry two
+  // copy-pasted copies that could drift). Canonical fallback:
+  //   e2e_latency ?? llm_node_ttft
+  // e2e_latency is the audio-pipeline measure (STT→LLM→TTS round trip);
+  // text-only sessions have no e2e_latency on their per-turn metrics —
+  // they only carry llm_node_ttft — so fall back to that. Same rule the
+  // read path uses (src/turn-rules.ts perceivedMs / metrics.ts); without
+  // it, text-mode agents show an empty p95 chart on the Overview tab.
+  // Result is multiplied by 1000 (seconds → ms). `m` must be the
+  // per-turn element alias produced by PER_TURN_ELEMS.
+  const PERCEIVED_MS_SQL = `
+    COALESCE(
+      NULLIF(m->>'e2e_latency', '')::float,
+      NULLIF(m->>'llm_node_ttft', '')::float
+    ) * 1000`;
+
+  // Companion WHERE filter: keep only per-turn rows carrying a numeric
+  // value for at least one of the two fields PERCEIVED_MS_SQL reads.
+  const PERCEIVED_MS_WHERE = `
+    (m->>'e2e_latency') ~ '^[0-9.]+$'
+       OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'`;
+
   const [bucketRows, totalsRow, providerRows, transportRows] = await Promise.all([
     // Per-bucket aggregates.
     //
@@ -306,21 +326,13 @@ export async function getAgentStats(
          GROUP BY date_trunc($3, ended_at)
        ),
        turns AS (
-         -- Perceived latency: e2e_latency is the audio-pipeline measure
-         -- (STT→LLM→TTS round trip). Text-only sessions have no e2e_latency
-         -- field on per-turn metrics — they only carry llm_node_ttft — so
-         -- fall back to that. Same fallback metrics.ts uses on the read
-         -- path; without it, text-mode agents show an empty p95 chart on
-         -- the Overview tab even though we have the latency data.
+         -- Perceived latency fallback shared via PERCEIVED_MS_SQL /
+         -- PERCEIVED_MS_WHERE (defined above; one definition, two queries).
          SELECT
            date_trunc($3, win.ended_at) AS bucket,
-           COALESCE(
-             NULLIF(m->>'e2e_latency', '')::float,
-             NULLIF(m->>'llm_node_ttft', '')::float
-           ) * 1000 AS perceived_ms
+           ${PERCEIVED_MS_SQL} AS perceived_ms
          FROM win, ${PER_TURN_ELEMS('win.session_metrics')} AS m
-         WHERE (m->>'e2e_latency') ~ '^[0-9.]+$'
-            OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'
+         WHERE ${PERCEIVED_MS_WHERE}
        ),
        turn_buckets AS (
          SELECT
@@ -352,15 +364,11 @@ export async function getAgentStats(
            AND ($3::text IS NULL OR account_id = $3)
        ),
        turns AS (
-         -- See bucket query above for the e2e_latency vs llm_node_ttft
-         -- fallback rationale (text-only sessions only carry the latter).
-         SELECT COALESCE(
-                  NULLIF(m->>'e2e_latency', '')::float,
-                  NULLIF(m->>'llm_node_ttft', '')::float
-                ) * 1000 AS perceived_ms
+         -- Same PERCEIVED_MS_SQL / PERCEIVED_MS_WHERE fragments as the
+         -- bucket query above — one definition, referenced twice.
+         SELECT ${PERCEIVED_MS_SQL} AS perceived_ms
          FROM win, ${PER_TURN_ELEMS('win.session_metrics')} AS m
-         WHERE (m->>'e2e_latency') ~ '^[0-9.]+$'
-            OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'
+         WHERE ${PERCEIVED_MS_WHERE}
        )
        SELECT
          (SELECT COUNT(*) FROM win)::int AS total_sessions,
@@ -510,7 +518,7 @@ export async function listConversationEvals(
   // doesn't get interpreted as a LIKE wildcard. Mirrors how listAgents +
   // listEvalRuns handle their substring filters.
   const sessionIdLike = opts.sessionId && opts.sessionId.length > 0
-    ? `%${escapeLike(opts.sessionId.toLowerCase())}%`
+    ? `%${escapeLikePattern(opts.sessionId.toLowerCase())}%`
     : null;
   const failedOnly = opts.failedOnly === true;
 

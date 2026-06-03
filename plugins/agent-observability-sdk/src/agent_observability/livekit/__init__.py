@@ -13,17 +13,20 @@ Three helpers, three problems:
 * :func:`init_observability` — bootstrap the current session. Resolves
   the upload URL (raising if unset) and emits the tag bundle the
   server's ingest path expects (``agent_id:<value>``, optional
-  ``account_id:``, ``agent.name:``, ``transport:`` + a wrapper
+  ``account_id:``, ``agent_name:``, ``transport:`` + a wrapper
   ``agent.session`` metadata blob). One call replaces ~20 lines of
   hand-rolled ``tagger.add(...)`` plumbing.
 * :func:`run_judges_on_report` — wrap the ``JudgeGroup`` setup,
   exception handling, structured logging, and ``llm.aclose()`` cleanup
   for the common case of running judges against ``ctx.make_session_report()``.
 * :func:`ensure_observability_url` — soft-contract URL resolver that
-  logs at INFO when set and WARN when not. :func:`init_observability`
-  builds on it but escalates to ``RuntimeError`` when missing; pull this
-  one in directly when you need the non-fatal flavour (tests, local-only
-  workers, opt-in observability).
+  logs at INFO when set and WARN when not, and mirrors the
+  ``AGENT_OBSERVABILITY_URL`` fallback into ``LIVEKIT_OBSERVABILITY_URL``.
+  :func:`init_observability` builds on it but escalates to
+  ``RuntimeError`` when missing; pull this one in directly when you need
+  the non-fatal flavour (tests, local-only workers, opt-in
+  observability). For the value without the env mutation or logging, use
+  the pure :func:`resolve_observability_url`.
 
 Import surface::
 
@@ -31,17 +34,22 @@ Import surface::
         init_observability,
         run_judges_on_report,
         ensure_observability_url,
+        resolve_observability_url,
     )
 """
 
 from __future__ import annotations
 
-from agent_observability.livekit.env import ensure_observability_url
+from agent_observability.livekit.env import (
+    ensure_observability_url,
+    resolve_observability_url,
+)
 from agent_observability.livekit.evaluation import run_judges_on_report
 from agent_observability.livekit.tags import init_observability
 
 __all__ = [
     "ensure_observability_url",
     "init_observability",
+    "resolve_observability_url",
     "run_judges_on_report",
 ]

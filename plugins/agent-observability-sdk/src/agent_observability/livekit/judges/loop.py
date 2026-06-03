@@ -11,12 +11,11 @@ recent messages.
 
 from __future__ import annotations
 
-from livekit.agents.evals.judge import _LLMJudge
 from livekit.agents.llm import LLM
 
-from agent_observability.livekit.judges._instructions import LOOP_DETECTION
+from agent_observability.livekit.judges._base import _LLMJudge, static_judge
 
 
 def loop_detection_judge(llm: LLM | None = None) -> _LLMJudge:
     """Detect whether the agent is stuck repeating its own recent messages."""
-    return _LLMJudge(llm=llm, name="loop_detection", instructions=LOOP_DETECTION)
+    return static_judge("loop_detection", llm=llm)

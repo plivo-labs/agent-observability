@@ -9,38 +9,47 @@ import { cn } from "@/lib/utils"
  * install this component in their own workspace get their theme's values
  * automatically — do not hardcode hex/rgb anywhere.
  *
- * Defaults tuned to Neo: 32px height, 8px radius (`rounded-lg`),
+ * Defaults tuned to Neo: 32px height, 8px radius (`rounded-none`),
  * `text-s-500` type, solid `--primary` surface on the default variant.
  */
+/**
+ * Instrument Panel button. Square corners (radius 0), mono-uppercase
+ * labels with `tracking-section` letter-spacing on default/sm/lg sizes,
+ * hairline borders, hover-invert for outline/dashed. The brand red
+ * `--accent` is reserved as a "verb" — used only on the primary hover
+ * state and destructive variant.
+ */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[13px]",
+  "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-none font-medium whitespace-nowrap transition-[background,color,border-color,transform] duration-150 outline-none focus-visible:ring-1 focus-visible:ring-foreground/40 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[13px]",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground hover:bg-primary/90",
+          "bg-foreground text-background border border-foreground hover:bg-accent hover:border-accent",
         destructive:
-          "bg-foreground text-foreground-foreground hover:bg-foreground/90 focus-visible:ring-destructive/20",
+          "bg-accent text-accent-foreground border border-accent hover:bg-foreground hover:border-foreground",
         outline:
-          "border border-input bg-background text-foreground hover:bg-bg2 hover:border-secondary/40 [&_svg]:text-tertiary hover:[&_svg]:text-secondary",
-        /** Dashed-border filter pill used by data-table toolbars. Becomes
-         *  solid when something is filtered (the consumer toggles the class
-         *  by switching to variant="outline"). */
+          "border border-foreground bg-background text-foreground hover:bg-foreground hover:text-background [&_svg]:text-tertiary hover:[&_svg]:text-background",
+        /** Dashed-border filter pill — becomes solid when filter is applied. */
         dashed:
-          "border border-dashed border-input bg-background text-secondary hover:bg-bg2 hover:text-foreground hover:border-secondary/40 [&_svg]:text-tertiary hover:[&_svg]:text-secondary",
+          "border border-dashed border-border bg-card text-tertiary hover:bg-muted hover:text-foreground hover:border-foreground [&_svg]:text-tertiary hover:[&_svg]:text-foreground",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/90",
+          "bg-card text-foreground border border-border hover:bg-muted",
         ghost:
-          "text-secondary hover:bg-bg2 hover:text-foreground",
+          "text-tertiary border border-transparent hover:bg-muted hover:text-foreground",
         link:
-          "text-link underline-offset-4 hover:underline",
+          "text-foreground underline-offset-4 hover:underline hover:text-accent",
       },
       size: {
-        /** 32px tall — the default per Neo. */
-        default: "h-8 px-3 text-s-500",
-        xs: "h-6 gap-1 px-2 text-xxs-600 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7 gap-1 px-2.5 text-xs-500 [&_svg:not([class*='size-'])]:size-[12px]",
-        lg: "h-10 px-5 text-p-500",
+        /** 32px tall — mono-uppercase tracked label. */
+        default:
+          "h-8 px-3 text-[11px] font-semibold uppercase tracking-section font-mono",
+        xs:
+          "h-6 gap-1 px-2 text-[10px] font-semibold uppercase tracking-wider font-mono [&_svg:not([class*='size-'])]:size-3",
+        sm:
+          "h-7 gap-1 px-2.5 text-[10px] font-semibold uppercase tracking-wide font-mono [&_svg:not([class*='size-'])]:size-[12px]",
+        lg:
+          "h-10 px-5 text-[12px] font-semibold uppercase tracking-section font-mono",
         icon: "size-8",
         "icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3",
         "icon-sm": "size-7 [&_svg:not([class*='size-'])]:size-[13px]",

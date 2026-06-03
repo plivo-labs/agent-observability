@@ -25,6 +25,7 @@
 // (conservative — don't show a partial sum as if it were complete).
 
 import { priceFor } from "./pricing.js";
+import { isAgentTurn } from "../turn-rules.js";
 
 // LiveKit emits per-turn timing in seconds. We store milliseconds.
 const TTFT_KEYS = ["llm_node_ttft", "llmNodeTtft"];
@@ -113,8 +114,8 @@ export function computeCaseMetrics(events: unknown[]): CaseMetrics {
 
     if (type === "message") {
       // Turn = one assistant message. User messages and other roles
-      // don't count as agent turns.
-      if (ev.role === "assistant") turnCount += 1;
+      // don't count as agent turns. Shared rule: turn-rules.isAgentTurn.
+      if (isAgentTurn(ev.role)) turnCount += 1;
       if (ev.interrupted === true) interruptionCount += 1;
 
       const metrics = ev.metrics;

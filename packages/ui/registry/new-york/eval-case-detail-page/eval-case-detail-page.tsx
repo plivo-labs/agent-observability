@@ -22,37 +22,6 @@ import type {
 } from "@/lib/observability-types";
 import { cn } from "@/lib/utils";
 
-interface MetricsSummary {
-	turnsWithMetrics: number;
-	avgTtftMs: number | null;
-	avgTtfbMs: number | null;
-}
-
-function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
-	const ttfts: number[] = [];
-	const ttfbs: number[] = [];
-	let turns = 0;
-	for (const ev of events) {
-		if (ev.type !== "message") continue;
-		const metrics = (ev as RunEventMessage).metrics;
-		if (!metrics) continue;
-		turns += 1;
-		const ttft = metrics.llm_node_ttft;
-		if (typeof ttft === "number") ttfts.push(ttft * 1000);
-		const ttfb = metrics.llm_node_ttfb;
-		if (typeof ttfb === "number") ttfbs.push(ttfb * 1000);
-	}
-	return {
-		turnsWithMetrics: turns,
-		avgTtftMs: ttfts.length
-			? ttfts.reduce((a, b) => a + b, 0) / ttfts.length
-			: null,
-		avgTtfbMs: ttfbs.length
-			? ttfbs.reduce((a, b) => a + b, 0) / ttfbs.length
-			: null,
-	};
-}
-
 // ── Verdict ──────────────────────────────────────────────────────────────────
 
 function pickPrimaryJudgment(
@@ -111,9 +80,9 @@ function VerdictBanner({ judgment }: { judgment: JudgmentResult }) {
 			className={cn(
 				"rounded-md border px-3 py-2.5",
 				failed &&
-					"border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/30",
+					"border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]",
 				passed &&
-					"border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/30",
+					"border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]",
 				!failed && !passed && "border-border bg-muted/40",
 			)}
 		>
@@ -122,9 +91,9 @@ function VerdictBanner({ judgment }: { judgment: JudgmentResult }) {
 					className={cn(
 						"flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xxs-600",
 						failed &&
-							"bg-rose-200 text-rose-900 dark:bg-rose-900/60 dark:text-rose-100",
+							"bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]",
 						passed &&
-							"bg-emerald-200 text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100",
+							"bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg))]",
 						!failed && !passed && "bg-muted text-muted-foreground",
 					)}
 				>
@@ -150,9 +119,9 @@ function VerdictBanner({ judgment }: { judgment: JudgmentResult }) {
 								className={cn(
 									"inline-flex items-center rounded px-1.5 py-0.5 text-xxs-600 font-mono",
 									failed
-										? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200"
+										? "bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]"
 										: passed
-											? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+											? "bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg))]"
 											: "bg-muted text-muted-foreground",
 								)}
 							>
@@ -242,17 +211,17 @@ type Tone = "muted" | "sky" | "violet" | "rose" | "ink";
 
 const TONE_BG: Record<Tone, string> = {
 	muted: "bg-muted-foreground/60",
-	sky: "bg-sky-500",
-	violet: "bg-violet-500",
-	rose: "bg-rose-500",
+	sky: "bg-[hsl(var(--info))]",
+	violet: "bg-[hsl(var(--accent-purple))]",
+	rose: "bg-[hsl(var(--destructive))]",
 	ink: "bg-foreground",
 };
 
 const TONE_TEXT: Record<Tone, string> = {
 	muted: "text-muted-foreground",
-	sky: "text-sky-700 dark:text-sky-300",
-	violet: "text-violet-700 dark:text-violet-300",
-	rose: "text-rose-700 dark:text-rose-400",
+	sky: "text-[hsl(var(--info))]",
+	violet: "text-[hsl(var(--accent-purple))]",
+	rose: "text-[hsl(var(--destructive))]",
 	ink: "text-foreground",
 };
 
@@ -408,7 +377,7 @@ function ToolResultRow({ event }: { event: RunEventFunctionCallOutput }) {
 				{event.is_error && (
 					<Badge
 						variant="outline"
-						className="text-xxs-600 text-rose-700 border-rose-300 shrink-0"
+						className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] shrink-0"
 					>
 						error
 					</Badge>
@@ -417,7 +386,7 @@ function ToolResultRow({ event }: { event: RunEventFunctionCallOutput }) {
 					className={cn(
 						"font-mono text-xxs-400 truncate",
 						event.is_error
-							? "text-rose-700 dark:text-rose-300"
+							? "text-[hsl(var(--destructive))]"
 							: "text-muted-foreground",
 					)}
 				></span>
@@ -449,7 +418,7 @@ function HandoffRow({ event }: { event: RunEventAgentHandoff }) {
 				<span className="font-mono text-xs-600 text-foreground">
 					{event.from_agent ?? "?"}
 				</span>
-				<span className="font-mono text-xs-600 text-sky-700 dark:text-sky-400">
+				<span className="font-mono text-xs-600 text-[hsl(var(--info))]">
 					→
 				</span>
 				<span className="font-mono text-xs-600 text-foreground">
@@ -492,10 +461,6 @@ export const EvalCaseDetailPage = ({
 	onBack?: () => void;
 }) => {
 	const { evalCase, loading, error } = useEvalCase(runId, caseId);
-	const summary = useMemo(
-		() => (evalCase ? computeCaseMetrics(evalCase.events) : null),
-		[evalCase],
-	);
 	const primaryJudgment = useMemo(
 		() => (evalCase ? pickPrimaryJudgment(evalCase.judgments) : null),
 		[evalCase],
@@ -548,11 +513,11 @@ export const EvalCaseDetailPage = ({
 							<span className="text-muted-foreground/50">·</span>
 							<span className="text-muted-foreground/70">events</span>
 							<span>{evalCase.events.length}</span>
-							{summary?.avgTtftMs != null && (
+							{evalCase.ttft_avg_ms != null && (
 								<>
 									<span className="text-muted-foreground/50">·</span>
 									<span className="text-muted-foreground/70">TTFT</span>
-									<span>{formatMs(summary.avgTtftMs)}</span>
+									<span>{formatMs(evalCase.ttft_avg_ms)}</span>
 								</>
 							)}
 							{evalCase.total_tokens > 0 && (

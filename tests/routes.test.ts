@@ -14,6 +14,11 @@ const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 // Route `sql.unsafe(...)` through the same queue as `sql\`...\`` so the
 // existing `.mockResolvedValueOnce(...)` pattern works for both call styles.
 mockSql.unsafe = mockSql;
+// `sql.begin(fn)` is used by the recordings handler so the agent upsert
+// and session insert share one transaction. The mock just invokes the
+// callback with the same handle — no real isolation, but the test
+// surface only cares that the inner calls happen.
+mockSql.begin = (fn: (tx: any) => Promise<unknown>) => fn(mockSql);
 
 const TEST_USER = "test-user";
 const TEST_PASS = "test-pass";

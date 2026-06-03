@@ -16,13 +16,10 @@ instructions" model, which doesn't generalize beyond that runtime.
 
 from __future__ import annotations
 
-from livekit.agents.evals.judge import _LLMJudge
 from livekit.agents.llm import LLM
 
-from agent_observability.livekit.judges._instructions import (
-    FREEFLOW_RESPONSE_ACCURACY,
-    RIGID_RESPONSE_ACCURACY,
-)
+from agent_observability.livekit.judges._base import _LLMJudge, static_judge
+from agent_observability.livekit.judges._instructions import RIGID_RESPONSE_ACCURACY
 
 
 def rigid_response_accuracy_judge(
@@ -48,8 +45,4 @@ def freeflow_response_accuracy_judge(llm: LLM | None = None) -> _LLMJudge:
     connected to the conversation (acknowledges history, stays on topic),
     fail if it ignores history or repeats answered questions.
     """
-    return _LLMJudge(
-        llm=llm,
-        name="freeflow_response_accuracy",
-        instructions=FREEFLOW_RESPONSE_ACCURACY,
-    )
+    return static_judge("freeflow_response_accuracy", llm=llm)

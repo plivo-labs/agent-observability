@@ -16,10 +16,9 @@ intents" model, which doesn't generalize beyond that runtime.
 from __future__ import annotations
 
 from livekit.agents.evals import JudgmentResult
-from livekit.agents.evals.judge import _LLMJudge
 from livekit.agents.llm import LLM
 
-from agent_observability.livekit.judges._instructions import HOLD_REQUESTED_INTENT_ACCURACY
+from agent_observability.livekit.judges._base import _LLMJudge, static_judge
 
 
 def hold_requested_intent_accuracy_judge(llm: LLM | None = None) -> _LLMJudge:
@@ -29,11 +28,7 @@ def hold_requested_intent_accuracy_judge(llm: LLM | None = None) -> _LLMJudge:
     No ground truth needed — the judge reads the latest agent message and
     the user's preceding turn from the conversation.
     """
-    return _LLMJudge(
-        llm=llm,
-        name="hold_requested_intent_accuracy",
-        instructions=HOLD_REQUESTED_INTENT_ACCURACY,
-    )
+    return static_judge("hold_requested_intent_accuracy", llm=llm)
 
 
 class IntentAccuracyJudge:

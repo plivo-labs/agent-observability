@@ -18,4 +18,8 @@
  */
 
 export { initObservability, type Tagger, type InitObservabilityOptions } from "./tags.js";
-export { ensureObservabilityUrl, type EnsureObservabilityUrlOptions } from "./env.js";
+export {
+  ensureObservabilityUrl,
+  resolveObservabilityUrl,
+  type EnsureObservabilityUrlOptions,
+} from "./env.js";

@@ -6,6 +6,8 @@
  * Content fields may be string arrays — we join them.
  */
 
+import { isAgentTurn, perceivedMs } from "./turn-rules.js";
+
 interface TurnRecord {
   turn_number: number;
   turn_id: string;
@@ -190,7 +192,8 @@ export function buildSessionMetrics(
           typeof item.transcript_confidence === "number"
             ? item.transcript_confidence
             : undefined;
-      } else if (item.type === "message" && role === "assistant") {
+      } else if (item.type === "message" && isAgentTurn(role)) {
+        // One turn per assistant message (turn-rules.isAgentTurn).
         turnNumber++;
 
         // Extract user-side timestamps BEFORE merge (both sides have started/stopped_speaking_at)
@@ -212,7 +215,10 @@ export function buildSessionMetrics(
         const llmMs = toMs(m.llm_node_ttft);
         const ttsMs = toMs(m.tts_node_ttfb);
         const e2eMs = toMs(m.e2e_latency);
-        const perceivedMs = e2eMs ?? (llmMs != null && ttsMs != null ? llmMs + ttsMs : llmMs);
+        // Canonical perceived latency: e2e_latency ?? llm_node_ttft. The
+        // old +tts fallback is dropped — see src/turn-rules.ts perceivedMs
+        // and the matching agents/db.ts PERCEIVED_MS_SQL fragment.
+        const userPerceivedMs = perceivedMs(e2eMs, llmMs);
 
         const agentText = text;
         // Only count TTS characters when the audio pipeline actually
@@ -221,6 +227,12 @@ export function buildSessionMetrics(
         // assistant produces text but no TTS runs; counting agent_text
         // length there mislabels prose length as TTS work and clutters
         // the Token Usage panel with a metric that has no audio cost.
+        //
+        // This is a PER-TURN TTS-synthesis gate and is deliberately NOT
+        // turn-rules.sawAudioEvidence(): that predicate answers the
+        // session-level "did audio run anywhere" question (and excludes
+        // tts_metadata), whereas here a turn with only tts_metadata still
+        // counts as having synthesized speech.
         const ttsRan =
           ttsMs != null ||
           (ttsMeta != null &&
@@ -239,7 +251,7 @@ export function buildSessionMetrics(
           user_stopped_speaking_at: userStoppedAt,
           agent_started_speaking_at: agentStartedAt,
           agent_stopped_speaking_at: agentStoppedAt,
-          user_perceived_ms: perceivedMs,
+          user_perceived_ms: userPerceivedMs,
           stt_delay_ms: sttMs,
           llm_ttft_ms: llmMs,
           tts_ttfb_ms: ttsMs,
