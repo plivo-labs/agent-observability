@@ -1397,6 +1397,7 @@
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
         "sheet",
         "skeleton",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/kpi.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/eval-case-detail-page.json"
       ],
       "files": [
@@ -1459,9 +1460,10 @@
       "name": "kpi",
       "type": "registry:component",
       "title": "KPI Tile + Sparkline",
-      "description": "Reusable KPI tile (label / value / sub / sparkline / fill bar) with the small uppercase tracked label typography used across agent overview, sessions list, simulation evals, and conversation evals.",
+      "description": "Reusable KPI tile (label / value / sub / hint / value-tone / sparkline / fill bar) with the small uppercase tracked label typography used across agent overview, sessions list, simulation evals, conversation evals, and the eval-run detail KPI strip.",
       "registryDependencies": [
-        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json"
       ],
       "files": [
         {

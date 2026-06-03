@@ -6,6 +6,8 @@
  * visual language stays consistent.
  */
 
+import type { ValueTone } from '@/lib/observability-format'
+
 interface SparklineProps {
   values: number[]
   color?: string
@@ -46,11 +48,28 @@ export function Sparkline({
   )
 }
 
+/** Maps the shared `ValueTone` vocabulary to an inline color so a consolidated
+ *  call site keeps its pass / latency / ASR coloring. Applied inline (not via a
+ *  utility class) so it wins over the `.eval-kpi__value` rule in observability.css. */
+const KPI_TONE_COLOR: Record<Exclude<ValueTone, 'default'>, string> = {
+  good: 'hsl(var(--success-fg, var(--success)))',
+  warn: 'hsl(var(--warning-fg, var(--warning)))',
+  bad: 'hsl(var(--destructive))',
+  mute: 'hsl(var(--muted-foreground))',
+}
+
 interface KpiTileProps {
   label: string
-  value: string
+  value: string | number
   unit?: string
   sub?: string
+  /** Tone-coloured hint line (eval-run-detail KPIs). Rendered below the
+   *  value; `sub` keeps the lighter delta styling for the other tiles. */
+  hint?: string
+  hintTone?: ValueTone
+  /** Tints the value. Defaults to the standard foreground when omitted, so
+   *  existing spark/bar tiles render exactly as before. */
+  valueTone?: ValueTone
   /** Time-series for the sparkline. Drawn at the bottom-right of the
    *  tile. Hidden when fewer than 2 datapoints. */
   sparkValues?: number[]
@@ -65,19 +84,29 @@ export function KpiTile({
   value,
   unit,
   sub,
+  hint,
+  hintTone = 'mute',
+  valueTone = 'default',
   sparkValues,
   sparkColor,
   barPct,
   barVariant,
 }: KpiTileProps) {
+  const valueColor = valueTone === 'default' ? undefined : KPI_TONE_COLOR[valueTone]
+  const hintColor = hintTone === 'default' ? undefined : KPI_TONE_COLOR[hintTone]
   return (
     <div className="eval-kpi">
       <div className="eval-kpi__label">{label}</div>
-      <div className="eval-kpi__value">
+      <div className="eval-kpi__value" style={valueColor ? { color: valueColor } : undefined}>
         {value}
         {unit && <span className="unit">{unit}</span>}
       </div>
       {sub && <div className="eval-kpi__delta">{sub}</div>}
+      {hint && (
+        <div className="eval-kpi__hint" style={hintColor ? { color: hintColor } : undefined}>
+          {hint}
+        </div>
+      )}
       {sparkValues && sparkValues.length >= 2 && (
         <div className="eval-kpi__spark">
           <Sparkline

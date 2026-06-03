@@ -1,6 +1,6 @@
 import { formatCost, formatMs, formatTokens } from '@/lib/observability-format'
 import type { EvalRunDetail } from '@/lib/observability-types'
-import { Kpi } from './primitives'
+import { KpiTile } from '@/components/kpi'
 import {
   TTFB_BAD_MS,
   TTFT_BAD_MS,
@@ -29,19 +29,19 @@ export function KpiStrip({
       className="grid gap-2.5"
       style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}
     >
-      <Kpi
+      <KpiTile
         label="Pass rate"
         value={stats.passRate.toFixed(0)}
         unit="%"
         valueTone={passRateTone(stats.passRate)}
         hint={`${run.passed}✓ ${run.failed > 0 ? ` · ${run.failed}✗` : ''}`}
       />
-      <Kpi
+      <KpiTile
         label="Cases"
         value={run.total}
         hint={`${run.passed}✓${run.failed ? ` · ${run.failed}✗` : ''}${run.errored ? ` · ${run.errored}!` : ''}`}
       />
-      <Kpi
+      <KpiTile
         label="p95 TTFT"
         value={ttftParts.value}
         unit={ttftParts.unit ?? undefined}
@@ -49,7 +49,7 @@ export function KpiStrip({
         hint={run.ttft_avg_ms != null ? `avg ${formatMs(run.ttft_avg_ms)}` : undefined}
       />
       {view === 'voice' && (
-        <Kpi
+        <KpiTile
           label="p95 TTFB"
           value={ttfbParts.value}
           unit={ttfbParts.unit ?? undefined}
@@ -57,7 +57,7 @@ export function KpiStrip({
           hint={run.ttfb_avg_ms != null ? `avg ${formatMs(run.ttfb_avg_ms)}` : undefined}
         />
       )}
-      <Kpi
+      <KpiTile
         label="Tokens"
         value={formatTokens(run.total_tokens)}
         hint={
@@ -67,7 +67,7 @@ export function KpiStrip({
         }
         valueTone={run.total_tokens === 0 ? 'mute' : 'default'}
       />
-      <Kpi
+      <KpiTile
         label="LLM cost"
         value={formatCost(run.estimated_cost_usd)}
         hint={
@@ -77,7 +77,7 @@ export function KpiStrip({
         }
         valueTone={run.estimated_cost_usd == null ? 'mute' : 'default'}
       />
-      <Kpi
+      <KpiTile
         label="Tool calls"
         value={stats.totalToolCalls > 0 ? stats.totalToolCalls : '—'}
         hint={
@@ -88,7 +88,7 @@ export function KpiStrip({
         valueTone={stats.totalToolCalls === 0 ? 'mute' : 'default'}
       />
       {run.prompt_tokens > 0 && (
-        <Kpi
+        <KpiTile
           label="Cache %"
           value={((run.cached_prompt_tokens / run.prompt_tokens) * 100).toFixed(1)}
           unit="%"
@@ -96,7 +96,7 @@ export function KpiStrip({
         />
       )}
       {stats.avgAsr != null && (
-        <Kpi
+        <KpiTile
           label="ASR conf."
           value={(stats.avgAsr * 100).toFixed(1)}
           unit="%"

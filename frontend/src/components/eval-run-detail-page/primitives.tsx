@@ -4,55 +4,11 @@ import { Check, Copy, ExternalLink, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import type { CaseStatus, EvalRunDetail } from '@/lib/observability-types'
-import {
-  type StatusFilter,
-  type ValueTone,
-  valueToneClass,
-} from './model'
+import { type StatusFilter } from './model'
 
-// ── KPI tile ───────────────────────────────────────────────────────────────
-
-export function Kpi({
-  label,
-  value,
-  unit,
-  hint,
-  hintTone = 'mute',
-  valueTone = 'default',
-}: {
-  label: string
-  value: string | number
-  unit?: string
-  hint?: string
-  hintTone?: ValueTone
-  valueTone?: ValueTone
-}) {
-  return (
-    <div className="rounded-lg border bg-card px-4 py-3.5 flex flex-col gap-1.5 min-w-0">
-      <span className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
-        {label}
-      </span>
-      <div className="flex items-baseline gap-1.5">
-        <span
-          className={cn(
-            'text-[28px] leading-none font-semibold tabular-nums tracking-tight',
-            valueToneClass[valueTone],
-          )}
-        >
-          {value}
-        </span>
-        {unit && (
-          <span className="text-[12px] text-muted-foreground tabular-nums">{unit}</span>
-        )}
-      </div>
-      {hint && (
-        <span className={cn('text-[11px] tabular-nums', valueToneClass[hintTone])}>
-          {hint}
-        </span>
-      )}
-    </div>
-  )
-}
+// The KPI tile that used to live here is now the shared `KpiTile`
+// (`@/components/kpi`), extended with the value-tone / hint props this strip
+// needs. See kpi-strip.tsx.
 
 // ── Status dot ─────────────────────────────────────────────────────────────
 

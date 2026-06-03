@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Iterable, Mapping, Any
 
-from livekit.agents.evals.judge import _LLMJudge
 from livekit.agents.llm import LLM
 
+from agent_observability.livekit.judges._base import _LLMJudge
 from agent_observability.livekit.judges._instructions import (
     INSTRUCTION_ADHERENCE,
     INTENT_IDENTIFICATION,

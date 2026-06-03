@@ -41,11 +41,19 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import {
+  ASR_BAD,
+  ASR_WARN,
+  TTFB_BAD_MS,
+  TTFT_BAD_MS,
+  asrTone,
+  fmtMsParts,
   formatCost,
   formatDate,
   formatDuration,
   formatMs,
   formatTokens,
+  latencyTone,
+  passRateTone,
 } from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
@@ -55,15 +63,14 @@ import type {
   EvalRunDetail,
   RunEvent,
 } from '@/lib/observability-types'
+import { KpiTile } from '@/components/kpi'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 import { AgentScopeHeader } from '@/components/agent-scope-header'
 
 // ── Constants ───────────────────────────────────────────────────────────────
-
-const TTFT_BAD_MS = 10_000
-const TTFB_BAD_MS = 1_500
-const ASR_BAD = 0.88
-const ASR_WARN = 0.92
+// Latency / ASR thresholds + tone helpers (latencyTone / asrTone /
+// passRateTone / fmtMsParts) live in observability-format so the same values
+// back both these KPIs and the per-session metric summary.
 
 const COLOR_TTFT = 'hsl(var(--accent-purple))'
 const COLOR_TTFB = 'hsl(var(--success-fg,var(--success)))'
@@ -87,38 +94,7 @@ function detectMetricsView(run: EvalRunDetail, cases: EvalCaseRow[]): MetricsVie
   return hasTtfb ? 'voice' : 'text'
 }
 
-// ── Tones / formatting ──────────────────────────────────────────────────────
-
-type ValueTone = 'default' | 'good' | 'warn' | 'bad' | 'mute'
-const valueToneClass: Record<ValueTone, string> = {
-  default: 'text-foreground',
-  good: 'text-[hsl(var(--success-fg,var(--success)))]',
-  warn: 'text-[hsl(var(--warning-fg,var(--warning)))]',
-  bad: 'text-[hsl(var(--destructive))]',
-  mute: 'text-muted-foreground',
-}
-
-const latencyTone = (ms: number | null, badMs: number): ValueTone =>
-  ms == null ? 'mute' : ms > badMs ? 'bad' : 'default'
-
-const asrTone = (avg: number | null): ValueTone => {
-  if (avg == null) return 'mute'
-  if (avg < ASR_BAD) return 'bad'
-  if (avg < ASR_WARN) return 'warn'
-  return 'good'
-}
-
-const passRateTone = (pct: number): ValueTone =>
-  pct >= 90 ? 'good' : pct >= 70 ? 'warn' : 'bad'
-
-// Split a ms value into a numeric part and unit so callers can render the
-// unit subdued without re-parsing the formatted string.
-function fmtMsParts(ms: number | null | undefined): { value: string; unit: string | null } {
-  if (ms == null) return { value: '—', unit: null }
-  if (ms < 1) return { value: '<1', unit: 'ms' }
-  if (ms < 1000) return { value: String(Math.round(ms)), unit: 'ms' }
-  return { value: (ms / 1000).toFixed(2), unit: 's' }
-}
+// ── ASR confidence (derived per-case) ───────────────────────────────────────
 
 function caseAsrConfidence(events: RunEvent[]): number | null {
   const vals: number[] = []
@@ -143,48 +119,8 @@ function caseAsrConfidence(events: RunEvent[]): number | null {
 }
 
 // ── Tiny primitives ─────────────────────────────────────────────────────────
-
-function Kpi({
-  label,
-  value,
-  unit,
-  hint,
-  hintTone = 'mute',
-  valueTone = 'default',
-}: {
-  label: string
-  value: string | number
-  unit?: string
-  hint?: string
-  hintTone?: ValueTone
-  valueTone?: ValueTone
-}) {
-  return (
-    <div className="rounded-lg border bg-card px-4 py-3.5 flex flex-col gap-1.5 min-w-0">
-      <span className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
-        {label}
-      </span>
-      <div className="flex items-baseline gap-1.5">
-        <span
-          className={cn(
-            'text-[28px] leading-none font-semibold tabular-nums tracking-tight',
-            valueToneClass[valueTone],
-          )}
-        >
-          {value}
-        </span>
-        {unit && (
-          <span className="text-[12px] text-muted-foreground tabular-nums">{unit}</span>
-        )}
-      </div>
-      {hint && (
-        <span className={cn('text-[11px] tabular-nums', valueToneClass[hintTone])}>
-          {hint}
-        </span>
-      )}
-    </div>
-  )
-}
+// The KPI tile is the shared `KpiTile` (`@/components/kpi`), extended with the
+// value-tone / hint props this strip needs.
 
 const STATUS_DOT: Record<CaseStatus, { dot: string; text: string }> = {
   passed: {
@@ -387,19 +323,19 @@ function KpiStrip({
 
   return (
     <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
-      <Kpi
+      <KpiTile
         label="Pass rate"
         value={stats.passRate.toFixed(0)}
         unit="%"
         valueTone={passRateTone(stats.passRate)}
         hint={`${run.passed}✓ ${run.failed > 0 ? ` · ${run.failed}✗` : ''}`}
       />
-      <Kpi
+      <KpiTile
         label="Cases"
         value={run.total}
         hint={`${run.passed}✓${run.failed ? ` · ${run.failed}✗` : ''}${run.errored ? ` · ${run.errored}!` : ''}`}
       />
-      <Kpi
+      <KpiTile
         label="p95 TTFT"
         value={ttftParts.value}
         unit={ttftParts.unit ?? undefined}
@@ -407,7 +343,7 @@ function KpiStrip({
         hint={run.ttft_avg_ms != null ? `avg ${formatMs(run.ttft_avg_ms)}` : undefined}
       />
       {view === 'voice' && (
-        <Kpi
+        <KpiTile
           label="p95 TTFB"
           value={ttfbParts.value}
           unit={ttfbParts.unit ?? undefined}
@@ -415,7 +351,7 @@ function KpiStrip({
           hint={run.ttfb_avg_ms != null ? `avg ${formatMs(run.ttfb_avg_ms)}` : undefined}
         />
       )}
-      <Kpi
+      <KpiTile
         label="Tokens"
         value={formatTokens(run.total_tokens)}
         hint={
@@ -425,7 +361,7 @@ function KpiStrip({
         }
         valueTone={run.total_tokens === 0 ? 'mute' : 'default'}
       />
-      <Kpi
+      <KpiTile
         label="LLM cost"
         value={formatCost(run.estimated_cost_usd)}
         hint={
@@ -435,7 +371,7 @@ function KpiStrip({
         }
         valueTone={run.estimated_cost_usd == null ? 'mute' : 'default'}
       />
-      <Kpi
+      <KpiTile
         label="Tool calls"
         value={stats.totalToolCalls > 0 ? stats.totalToolCalls : '—'}
         hint={
@@ -446,7 +382,7 @@ function KpiStrip({
         valueTone={stats.totalToolCalls === 0 ? 'mute' : 'default'}
       />
       {run.prompt_tokens > 0 && (
-        <Kpi
+        <KpiTile
           label="Cache %"
           value={((run.cached_prompt_tokens / run.prompt_tokens) * 100).toFixed(1)}
           unit="%"
@@ -454,7 +390,7 @@ function KpiStrip({
         />
       )}
       {stats.avgAsr != null && (
-        <Kpi
+        <KpiTile
           label="ASR conf."
           value={(stats.avgAsr * 100).toFixed(1)}
           unit="%"

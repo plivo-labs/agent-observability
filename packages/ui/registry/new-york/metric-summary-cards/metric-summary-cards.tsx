@@ -1,5 +1,5 @@
 import { Coins, DollarSign, Gauge, MessageCircle, OctagonX, Wrench } from 'lucide-react'
-import { formatCost, formatMs } from '@/lib/observability-format'
+import { formatCost, formatMs, perceivedLatencyTone } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
 import { usePerformance, useSession } from '@/lib/observability-hooks'
 
@@ -27,14 +27,6 @@ function MetricTile({
       {sub && <div className="sub">{sub}</div>}
     </div>
   )
-}
-
-/** User-perceived speech latency thresholds. Good < 1s, warn 1–2s, bad > 2s. */
-function latencyTone(ms: number | null): Tone | undefined {
-  if (ms == null) return undefined
-  if (ms < 1000) return 'good'
-  if (ms < 2000) return 'warn'
-  return 'bad'
 }
 
 /** Split a formatted ms string like "1.42s" or "382ms" into number + unit so
@@ -82,7 +74,7 @@ export const MetricSummaryCards = ({
         label="p95 perceived latency"
         value={renderLatency(p95)}
         sub={p95 != null ? 'user perceived' : undefined}
-        tone={latencyTone(p95)}
+        tone={perceivedLatencyTone(p95)}
       />
       <MetricTile
         icon={<Coins size={12} />}

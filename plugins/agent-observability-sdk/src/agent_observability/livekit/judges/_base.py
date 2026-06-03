@@ -32,10 +32,18 @@ from livekit.agents.evals.judge import _LLMJudge
 from livekit.agents.llm import LLM
 
 from agent_observability.livekit.judges._instructions import (
+    BOT_DETECTION,
+    CALL_SCREENING,
+    CONVERSATION_STATUS,
+    DO_NOT_DISTURB,
     FREEFLOW_RESPONSE_ACCURACY,
     HALLUCINATION,
     HOLD_REQUESTED_INTENT_ACCURACY,
     LOOP_DETECTION,
+    LOW_ENGAGEMENT,
+    USER_SENTIMENT,
+    VOICEMAIL_DETECTION,
+    WRONG_NUMBER,
 )
 
 __all__ = ["_LLMJudge", "STATIC_JUDGE_INSTRUCTIONS", "static_judge"]
@@ -48,6 +56,17 @@ STATIC_JUDGE_INSTRUCTIONS: dict[str, str] = {
     "freeflow_response_accuracy": FREEFLOW_RESPONSE_ACCURACY,
     "hold_requested_intent_accuracy": HOLD_REQUESTED_INTENT_ACCURACY,
     "loop_detection": LOOP_DETECTION,
+    # Conversation-level classifiers (cx-sqs-worker eval metrics). The
+    # registry key is the judge's public ``name=`` — which differs from
+    # the factory name for the voice classifiers (e.g. ``voicemail_detected``).
+    "voicemail_detected": VOICEMAIL_DETECTION,
+    "bot_detected": BOT_DETECTION,
+    "call_screening": CALL_SCREENING,
+    "low_engagement": LOW_ENGAGEMENT,
+    "wrong_number": WRONG_NUMBER,
+    "do_not_disturb": DO_NOT_DISTURB,
+    "user_sentiment": USER_SENTIMENT,
+    "conversation_status": CONVERSATION_STATUS,
 }
 
 

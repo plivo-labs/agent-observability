@@ -1,11 +1,22 @@
 import type { CaseStatus, EvalCaseRow, EvalRunDetail, RunEvent } from '@/lib/observability-types'
 
-// ── Latency / ASR thresholds ────────────────────────────────────────────────
-
-export const TTFT_BAD_MS = 10_000
-export const TTFB_BAD_MS = 1_500
-export const ASR_BAD = 0.88
-export const ASR_WARN = 0.92
+// ── Latency / ASR thresholds + tones ────────────────────────────────────────
+// The thresholds and tone helpers now live in observability-format so the same
+// values back both the eval-run-detail KPIs and the per-session metric summary.
+// Re-exported here so this module stays the one import surface for the
+// decomposed eval-run-detail files.
+export {
+  TTFT_BAD_MS,
+  TTFB_BAD_MS,
+  ASR_BAD,
+  ASR_WARN,
+  asrTone,
+  fmtMsParts,
+  latencyTone,
+  passRateTone,
+  valueToneClass,
+} from '@/lib/observability-format'
+export type { ValueTone } from '@/lib/observability-format'
 
 // ── Chart colors ────────────────────────────────────────────────────────────
 
@@ -64,39 +75,7 @@ export interface OverCasesDatum {
 
 export type StatusFilter = CaseStatus | 'all'
 
-// ── Tones / formatting ──────────────────────────────────────────────────────
-
-export type ValueTone = 'default' | 'good' | 'warn' | 'bad' | 'mute'
-
-export const valueToneClass: Record<ValueTone, string> = {
-  default: 'text-foreground',
-  good: 'text-[hsl(var(--success-fg,var(--success)))]',
-  warn: 'text-[hsl(var(--warning-fg,var(--warning)))]',
-  bad: 'text-[hsl(var(--destructive))]',
-  mute: 'text-muted-foreground',
-}
-
-export const latencyTone = (ms: number | null, badMs: number): ValueTone =>
-  ms == null ? 'mute' : ms > badMs ? 'bad' : 'default'
-
-export const asrTone = (avg: number | null): ValueTone => {
-  if (avg == null) return 'mute'
-  if (avg < ASR_BAD) return 'bad'
-  if (avg < ASR_WARN) return 'warn'
-  return 'good'
-}
-
-export const passRateTone = (pct: number): ValueTone =>
-  pct >= 90 ? 'good' : pct >= 70 ? 'warn' : 'bad'
-
-// Split a ms value into a numeric part and unit so callers can render the
-// unit subdued without re-parsing the formatted string.
-export function fmtMsParts(ms: number | null | undefined): { value: string; unit: string | null } {
-  if (ms == null) return { value: '—', unit: null }
-  if (ms < 1) return { value: '<1', unit: 'ms' }
-  if (ms < 1000) return { value: String(Math.round(ms)), unit: 'ms' }
-  return { value: (ms / 1000).toFixed(2), unit: 's' }
-}
+// ── ASR confidence (derived per-case) ───────────────────────────────────────
 
 export function caseAsrConfidence(events: RunEvent[]): number | null {
   const vals: number[] = []
