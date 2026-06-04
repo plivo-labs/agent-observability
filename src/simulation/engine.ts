@@ -70,6 +70,12 @@ export interface SimCaseResult {
    *  `scopes` is the additive leveled-judge block (flow/agent/task/node),
    *  present only when leveled judging was requested. */
   judge?: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string; scopes?: JudgeScopes };
+  /** Per-case leveled-judge tree (flow→agent→task→node) for THIS persona. Built
+   *  in `synthesize` from this case's own judge output (scopes when present,
+   *  else the demo stub). The selector in the report renders this so changing
+   *  persona changes the whole tree. `SimResult.judgeTree` stays the worst-case
+   *  tree for back-compat. */
+  judgeTree?: JudgeTree;
 }
 export interface JudgeNode { scope: string; status: CaseStatus; verdict: string; turn?: number }
 export interface JudgeTask { id: string; name: string; score: number; status: CaseStatus; verdict: string; turn?: number; nodes?: JudgeNode[] }
@@ -80,6 +86,21 @@ export interface JudgeTree {
   agents: JudgeAgent[];
   nodes: JudgeNode[];
 }
+/* ---------- streaming events (NDJSON wire shape — see routes.ts) ----------
+ * `onEvent` is a plain SYNC callback that must be safe to call from concurrent
+ * per-persona tasks. Each persona has a stable `caseIndex` == its position in
+ * the resolved personas array. */
+export interface SimStartEvent { type: "start"; cases: { index: number; personaName: string; personaType: PersonaType }[] }
+export interface SimTurnEvent { type: "turn"; caseIndex: number; turn: { role: "user" | "agent"; t: string; ms: number | null; flag: string | null } }
+export interface SimCaseDoneEvent { type: "case_done"; caseIndex: number; status: CaseStatus; score: number }
+export type SimEvent = SimStartEvent | SimTurnEvent | SimCaseDoneEvent;
+export type SimOnEvent = (evt: SimEvent) => void;
+
+/** Normalize an engine Turn into the wire turn shape (ms/flag default to null). */
+function wireTurn(t: Turn): SimTurnEvent["turn"] {
+  return { role: t.role === "agent" ? "agent" : "user", t: t.t, ms: t.ms ?? null, flag: t.flag ?? null };
+}
+
 export interface SimResult {
   engine: "llm" | "demo";
   note?: string;
@@ -109,6 +130,31 @@ const RUBRIC_AXES = [
 ];
 
 const llmEnabled = () => !!config.SIM_LLM_API_KEY || azureLlmEnabled;
+
+/* Max personas whose conversation+judging run concurrently. The LLM path makes
+ * one Azure/OpenAI call per turn (and one per judge), so we cap fan-out to keep
+ * a large persona set from triggering 429s. For the typical 1-8 personas this
+ * still parallelizes the whole batch (or most of it). */
+const PERSONA_CONCURRENCY = 5;
+
+/* Run `task(i)` for i in [0, n) with at most `limit` in flight at once.
+ * Tasks run for their side effects (each writes into a pre-sized result array
+ * by index); a single task throwing rejects the whole batch (callers wrap the
+ * pool so an LLM failure falls back to demo, and abort is handled by `signal`).
+ * Minimal inline pool — no new deps. */
+async function runPool(n: number, limit: number, task: (i: number) => Promise<void>): Promise<void> {
+  if (n <= 0) return;
+  const width = Math.max(1, Math.min(limit, n));
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= n) return;
+      await task(i);
+    }
+  };
+  await Promise.all(Array.from({ length: width }, () => worker()));
+}
 
 /* ---------- small helpers ---------- */
 function hash(s: string): number {
@@ -396,16 +442,23 @@ function synthesize(engine: "llm" | "demo", prompt: string, req: SimRequest, cas
   const axesSrc = (req.rubric?.criteria && req.rubric.criteria.length)
     ? req.rubric.criteria.map((cr) => ({ name: cr.name, weight: cr.weight ?? 1 }))
     : RUBRIC_AXES;
+  // Build a leveled-judge tree for EACH case from that persona's own judge
+  // output (scopes when leveled judging ran, else the prompt-derived demo stub),
+  // and attach it to the case. This is what makes the report's Leveled judge
+  // genuinely per-persona — selecting a persona now changes the whole tree.
+  const treeFor = (c: SimCaseResult): JudgeTree =>
+    c.judge?.scopes ? buildJudgeTreeFromScopes(c.judge.scopes, req.rubric?.criteria ?? [], agentName, c) : buildJudgeTree(agentName, c);
+  for (const c of cases) c.judgeTree = treeFor(c);
   return {
     engine,
     note: engine === "demo" ? "Demo data — no SIM_LLM_API_KEY configured. Results are derived from your prompt + selected personas, not a live judge." : undefined,
     runId: newId("run_sim", prompt + Date.now()),
     agentName, mode: req.mode, threshold: req.threshold, rubricName: req.rubric?.name,
     overall, passN, total: cases.length, cases,
-    // Producer: when the worst case carries a real leveled-judge 'scopes' block,
-    // map it into the existing tree shape; otherwise keep the demo stub (so
-    // flow-only / demo runs still render a tree rather than an empty one).
-    judgeTree: worst?.judge?.scopes ? buildJudgeTreeFromScopes(worst.judge.scopes, req.rubric?.criteria ?? [], agentName, worst) : buildJudgeTree(agentName, worst),
+    // Producer: the worst case's own per-case tree (built above) is the
+    // overall/back-compat `result.judgeTree`. The per-case trees live on
+    // `cases[i].judgeTree` and drive the per-persona selector in the report.
+    judgeTree: worst?.judgeTree ?? treeFor(worst),
     rubricAxes: axesSrc.map((a, i) => ({ name: a.name, weight: a.weight, score: Math.max(30, Math.min(96, Math.round(overall + (hash(prompt + a.name) - 0.5) * 30 - i * 2))) })),
     worstMoments: failing.slice(0, 3).map((c) => ({
       case: c.personaName,
@@ -448,8 +501,9 @@ async function chat(messages: { role: string; content: string }[], opts: { json?
   return data.choices?.[0]?.message?.content ?? "";
 }
 
-async function llmConversation(prompt: string, p: Persona, maxTurns: number): Promise<Turn[]> {
+async function llmConversation(prompt: string, p: Persona, maxTurns: number, emit?: (t: Turn) => void): Promise<Turn[]> {
   const turns: Turn[] = [];
+  const push = (t: Turn) => { turns.push(t); emit?.(t); };
   const targetSys = { role: "system", content: prompt };
   const personaSys = {
     role: "system",
@@ -459,19 +513,19 @@ async function llmConversation(prompt: string, p: Persona, maxTurns: number): Pr
   let agentMsgs = [targetSys, { role: "user", content: "(call connected — greet the caller)" }];
   let greeting = (await chat(agentMsgs, { max: 120 })).trim();
   const t0 = Date.now();
-  turns.push({ role: "agent", t: greeting, ms: Date.now() - t0 });
+  push({ role: "agent", t: greeting, ms: Date.now() - t0 });
 
   for (let i = 0; i < maxTurns; i++) {
     // persona responds to the latest agent line
     const convoForPersona = [personaSys, ...turns.map((t) => ({ role: t.role === "agent" ? "user" : "assistant", content: t.t }))];
     const userLine = (await chat(convoForPersona, { max: 80 })).trim();
-    if (!userLine || /\[hangup\]/i.test(userLine)) { turns.push({ role: "user", t: userLine.replace(/\[hangup\]/i, "").trim() || "Okay, thanks. Bye." }); break; }
-    turns.push({ role: "user", t: userLine });
+    if (!userLine || /\[hangup\]/i.test(userLine)) { push({ role: "user", t: userLine.replace(/\[hangup\]/i, "").trim() || "Okay, thanks. Bye." }); break; }
+    push({ role: "user", t: userLine });
     // agent responds
     const convoForAgent = [targetSys, ...turns.map((t) => ({ role: t.role === "agent" ? "assistant" : "user", content: t.t }))];
     const ta = Date.now();
     const agentLine = (await chat(convoForAgent, { max: 150 })).trim();
-    turns.push({ role: "agent", t: agentLine, ms: Date.now() - ta });
+    push({ role: "agent", t: agentLine, ms: Date.now() - ta });
   }
   return turns;
 }
@@ -511,26 +565,39 @@ const livekitJudgeEnabled = (req: SimRequest) => trumanEnabled && !!req.rubric?.
 const judgeScopesFor = (req: SimRequest): string[] => (req.scopes?.length ? req.scopes : ["flow"]);
 
 /** Demo-generated cases, re-judged by LiveKit when configured (conversation is prompt-derived; verdict is live). */
-async function demoCases(prompt: string, agentName: string, personas: Persona[], req: SimRequest): Promise<SimCaseResult[]> {
-  const out: SimCaseResult[] = [];
-  for (const p of personas) {
+async function demoCases(prompt: string, agentName: string, personas: Persona[], req: SimRequest, onEvent?: SimOnEvent, signal?: AbortSignal): Promise<SimCaseResult[]> {
+  // Pre-sized by index so results stay in persona order even though personas
+  // finish out of order under concurrency.
+  const out: SimCaseResult[] = new Array(personas.length);
+  await runPool(personas.length, PERSONA_CONCURRENCY, async (idx) => {
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    const p = personas[idx];
     const dc = demoCase(prompt, agentName, p, req.threshold);
+    // The demo transcript is built synchronously, so emit each turn (tagged with
+    // this persona's caseIndex) before judging. Across personas these interleave.
+    if (onEvent) for (const t of dc.transcript) onEvent({ type: "turn", caseIndex: idx, turn: wireTurn(t) });
     if (livekitJudgeEnabled(req)) {
       try {
         const j = await judgeViaTruman(dc.transcript, req.rubric!.criteria!, judgeScopesFor(req));
         dc.score = j.score; dc.status = j.status; dc.summary = j.summary; dc.judge = j.judge;
       } catch { /* keep demo score */ }
     }
-    out.push(dc);
-  }
+    out[idx] = dc;
+    onEvent?.({ type: "case_done", caseIndex: idx, status: dc.status, score: dc.score });
+  });
   return out;
 }
 
-async function runLlm(prompt: string, req: SimRequest, personas: Persona[], agentName: string): Promise<SimResult> {
+async function runLlm(prompt: string, req: SimRequest, personas: Persona[], agentName: string, onEvent?: SimOnEvent, signal?: AbortSignal): Promise<SimResult> {
   const maxTurns = 5;
-  const cases: SimCaseResult[] = [];
-  for (const p of personas) {
-    const transcript = await llmConversation(prompt, p, maxTurns);
+  // Pre-sized by index so cases[] stays in persona order even though personas
+  // finish out of order. Each persona runs its full conversation + judging
+  // independently; the pool caps how many overlap (LLM rate limits).
+  const cases: SimCaseResult[] = new Array(personas.length);
+  await runPool(personas.length, PERSONA_CONCURRENCY, async (idx) => {
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    const p = personas[idx];
+    const transcript = await llmConversation(prompt, p, maxTurns, onEvent ? (t) => onEvent({ type: "turn", caseIndex: idx, turn: wireTurn(t) }) : undefined);
     let j: { score: number; status: CaseStatus; summary: string; flagTurn?: number; flag?: string; judge?: SimCaseResult["judge"] };
     if (livekitJudgeEnabled(req)) {
       try { j = await judgeViaTruman(transcript, req.rubric!.criteria!, judgeScopesFor(req)); }
@@ -540,12 +607,13 @@ async function runLlm(prompt: string, req: SimRequest, personas: Persona[], agen
     }
     if (j.flagTurn != null && transcript[j.flagTurn]) transcript[j.flagTurn].flag = j.flag;
     const durationS = Math.round(transcript.reduce((a, t) => a + (t.ms ?? 1500), 0) / 1000);
-    cases.push({
+    cases[idx] = {
       pid: p.id, personaName: p.name, personaType: p.type, avatar: p.avatar,
       score: j.score, status: j.status, turns: transcript.length, durationS,
       summary: j.summary || "", transcript, judge: j.judge,
-    });
-  }
+    };
+    onEvent?.({ type: "case_done", caseIndex: idx, status: j.status, score: j.score });
+  });
   return synthesize("llm", prompt, req, cases, agentName);
 }
 
@@ -747,7 +815,7 @@ export async function runCall(input: { prompt: string; persona: any; criteria: C
   };
 }
 
-export async function runSimulation(req: SimRequest): Promise<SimResult> {
+export async function runSimulation(req: SimRequest, signal?: AbortSignal, onEvent?: SimOnEvent): Promise<SimResult> {
   let prompt = (req.prompt && req.prompt.trim()) || "";
   let personaIds = [...req.personaIds];
   let inline = [...(req.personas ?? [])];
@@ -783,16 +851,23 @@ export async function runSimulation(req: SimRequest): Promise<SimResult> {
   const agentName = deriveAgentName(prompt);
   const personas = resolvePersonas(eff);
 
+  // Announce the cases (in persona order) before any turn is produced.
+  onEvent?.({ type: "start", cases: personas.map((p, index) => ({ index, personaName: p.name, personaType: p.type })) });
+
   if (llmEnabled()) {
     try {
-      return await runLlm(prompt, eff, personas, agentName);
+      return await runLlm(prompt, eff, personas, agentName, onEvent, signal);
     } catch (e) {
-      const demo = synthesize("demo", prompt, eff, await demoCases(prompt, agentName, personas, eff), agentName);
+      // A real abort propagates out — don't swallow it into a demo run.
+      if (signal?.aborted || (e as Error)?.name === "AbortError") throw e;
+      // LLM path failed mid-run; fall back to a fresh prompt-derived demo run
+      // (still streamed via onEvent so the client sees the demo transcript).
+      const demo = synthesize("demo", prompt, eff, await demoCases(prompt, agentName, personas, eff, onEvent, signal), agentName);
       demo.note = `LLM run failed (${(e as Error).message}); showing prompt-derived demo data${livekitJudgeEnabled(eff) ? ", judged live by LiveKit" : ""}.`;
       return demo;
     }
   }
-  const result = synthesize("demo", prompt, eff, await demoCases(prompt, agentName, personas, eff), agentName);
+  const result = synthesize("demo", prompt, eff, await demoCases(prompt, agentName, personas, eff, onEvent, signal), agentName);
   if (livekitJudgeEnabled(eff)) result.note = "Conversation is prompt-derived demo (no SIM_LLM_API_KEY); verdict judged live by LiveKit judges.";
   return result;
 }

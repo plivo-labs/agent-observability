@@ -60,6 +60,32 @@ function scopeReason(crits: { name: string; pass: boolean; justification: string
   return src.map((c) => c.justification).filter(Boolean).join(" ") || fallback;
 }
 
+/* Compact full-report blob persisted onto eval_runs.sim_report, so the Evals
+ * run-detail page can render a simulation's complete report later. Pulled
+ * straight off SimResult. Passed DIRECTLY into `${value}::jsonb` downstream
+ * (never JSON.stringify'd before ::jsonb) per the CLAUDE.md gotcha. */
+function buildSimReport(result: SimResult): Record<string, unknown> {
+  // Per-case leveled-judge trees keyed by persona/case name, so the Evals
+  // run-detail can render the SELECTED persona's tree (not just the worst-case
+  // `judgeTree`). The EvalCaseRow.name === SimCaseResult.personaName, so the
+  // run-detail page looks the tree up by the selected case's name. Older runs
+  // won't have this key → the page falls back to `judgeTree`.
+  const caseTrees: Record<string, unknown> = {};
+  for (const c of result.cases) if (c.judgeTree) caseTrees[c.personaName] = c.judgeTree;
+  return {
+    overallScore: result.overall,
+    passRate: result.total ? result.passN / result.total : 0,
+    threshold: result.threshold,
+    rubricAxes: result.rubricAxes,
+    worstMoments: result.worstMoments,
+    fixes: result.fixes,
+    judgeTree: result.judgeTree,
+    caseTrees,
+    engine: result.engine,
+    personaCount: result.cases.length,
+  };
+}
+
 export function simResultToEvalPayload(result: SimResult): EvalPayloadV0 {
   const finished = Math.floor(Date.now() / 1000);
   const totalDur = result.cases.reduce((a, c) => a + (c.durationS || 0), 0);
@@ -76,6 +102,7 @@ export function simResultToEvalPayload(result: SimResult): EvalPayloadV0 {
       started_at: finished - totalDur,
       finished_at: finished,
       ci: null,
+      sim_report: buildSimReport(result),
     },
     cases: result.cases.map((c) => ({
       case_id: randomUUID(),

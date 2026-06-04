@@ -27,7 +27,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         testing_framework, testing_framework_version,
         started_at, finished_at, duration_ms,
         total, passed, failed, errored, skipped,
-        ci
+        ci, sim_report
       ) VALUES (
         ${run.run_id},
         ${run.account_id ?? null},
@@ -44,7 +44,8 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.failed},
         ${summary.errored},
         ${summary.skipped},
-        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb
+        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
+        ${(run.sim_report ?? null) as any}::jsonb
       )
     `;
 
@@ -124,14 +125,22 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
 }
 
 export async function getEvalRun(runId: string): Promise<any | null> {
+  // Detail view additionally carries the full simulation report blob (sim
+  // runs only; null for live-call / pytest / vitest). Parse the jsonb so the
+  // route returns a structured object, not a string.
   const rows = await sql.unsafe(
-    `SELECT ${RUN_SELECT_COLS}
+    `SELECT ${RUN_SELECT_COLS}, sim_report
      FROM eval_runs
      WHERE run_id = $1
      LIMIT 1`,
     [runId],
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  if (typeof row.sim_report === "string") {
+    try { row.sim_report = JSON.parse(row.sim_report); } catch { /* leave as-is */ }
+  }
+  return row;
 }
 
 export async function listEvalCases(runId: string): Promise<any[]> {
