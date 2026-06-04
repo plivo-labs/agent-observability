@@ -381,6 +381,12 @@ app.get("/api/sessions/:id", async (c) => {
 if (process.env.NODE_ENV === "production") {
   app.use("/assets/*", serveStatic({ root: "./frontend/dist" }));
   app.use("/favicon*", serveStatic({ root: "./frontend/dist" }));
+  // AudioWorklet modules live at the dist root (Vite copies them from public/).
+  // Serve them explicitly so the SPA catch-all below doesn't return index.html
+  // for them — otherwise addModule() receives HTML and live-call audio fails
+  // with "Unable to load a worklet's module".
+  app.use("/pcm-player-worklet.js", serveStatic({ root: "./frontend/dist" }));
+  app.use("/mic-capture-worklet.js", serveStatic({ root: "./frontend/dist" }));
   app.get("*", serveStatic({ root: "./frontend/dist", path: "index.html" }));
 }
 
