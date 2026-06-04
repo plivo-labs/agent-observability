@@ -10,21 +10,26 @@ import { formatDuration } from '@/lib/observability-format'
 export function CapsChips({
   stt, llm, tts,
 }: { stt: boolean; llm: boolean; tts: boolean }) {
-  const capabilities = [
-    stt && { label: 'STT', className: 'cap-stt' },
-    llm && { label: 'LLM', className: 'cap-llm' },
-    tts && { label: 'TTS', className: 'cap-tts' },
-  ].filter(Boolean) as Array<{ label: string; className: string }>
-
-  if (capabilities.length === 0) {
-    return <span className="muted">—</span>
+  if (!stt && !llm && !tts) {
+    return <span className="ao-mono muted">—</span>
   }
-
+  // Truman-inspired pipeline rail: render the whole STT → LLM → TTS pipeline,
+  // lit stages = active, dim = absent — more legible than separate chips.
+  const stages = [
+    { label: 'STT', on: stt },
+    { label: 'LLM', on: llm },
+    { label: 'TTS', on: tts },
+  ]
   return (
-    <div className="caps">
-      {capabilities.map((capability) => (
-        <span key={capability.label} className={`cap ${capability.className}`}>
-          {capability.label}
+    <div className="ao-pipeline">
+      {stages.map((s, i) => (
+        <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center' }}>
+          <span className={`ao-pipe-stage${s.on ? ' on' : ''}`}>
+            <span className="dot" />{s.label}
+          </span>
+          {i < stages.length - 1 && (
+            <span className={`ao-pipe-rail${s.on && stages[i + 1].on ? ' on' : ''}`} />
+          )}
         </span>
       ))}
     </div>
@@ -34,19 +39,19 @@ export function CapsChips({
 export function TransportPill({ value }: { value: Transport | null }) {
   if (value === 'sip') {
     return (
-      <span className="transport">
+      <span className="ao-badge is-neutral">
         <Phone size={12} /> SIP
       </span>
     )
   }
   if (value === 'audio_stream') {
     return (
-      <span className="transport">
+      <span className="ao-badge is-neutral">
         <AudioLines size={12} /> Audio Stream
       </span>
     )
   }
-  return <span className="muted">—</span>
+  return <span className="ao-mono muted">—</span>
 }
 
 /**
@@ -58,12 +63,12 @@ export function TransportPill({ value }: { value: Transport | null }) {
 export function DurationCell({ ms }: { ms: number | null }) {
   if (ms != null && ms < 0) {
     return (
-      <span className="dur-bad">
+      <span className="ao-badge is-danger">
         <TriangleAlert size={12} /> invalid
       </span>
     )
   }
-  return <span className="mono tnum">{formatDuration(ms)}</span>
+  return <span className="ao-mono tnum">{formatDuration(ms)}</span>
 }
 
 /** Framework pill (evals list) — `flask-conical` icon + name + muted version. */

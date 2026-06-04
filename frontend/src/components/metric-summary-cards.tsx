@@ -11,20 +11,23 @@ function MetricTile({
   value,
   sub,
   tone,
+  feature,
 }: {
   icon: React.ReactNode
   label: string
   value: React.ReactNode
   sub?: string
   tone?: Tone
+  feature?: boolean
 }) {
+  const toneClass = tone === 'good' ? ' is-good' : tone === 'warn' ? ' is-warn' : tone === 'bad' ? ' is-bad' : ''
   return (
-    <div className={`metric-tile${tone ? ' ' + tone : ''}`}>
-      <div className="hd">
+    <div className={`ao-stat${feature ? ' ao-stat--feature is-accent' : ''}${toneClass}`}>
+      <div className="ao-stat-label">
         {icon} {label}
       </div>
-      <div className="val">{value}</div>
-      {sub && <div className="sub">{sub}</div>}
+      <div className="ao-stat-value">{value}</div>
+      {sub && <div className="ao-stat-meta">{sub}</div>}
     </div>
   )
 }
@@ -70,13 +73,21 @@ export const MetricSummaryCards = ({
     return (
       <>
         {num}
-        <span style={{ fontSize: '0.6em', fontWeight: 500, marginLeft: 2 }}>{unit}</span>
+        {unit && <span className="unit">{unit}</span>}
       </>
     )
   }
 
   return (
-    <div className="obs-metrics">
+    <div className="ao-stat-row ao-stagger">
+      <MetricTile
+        icon={<Gauge size={12} />}
+        label="P95 Latency"
+        value={renderLatency(p95)}
+        sub={p95 != null ? 'user perceived' : undefined}
+        tone={latencyTone(p95)}
+        feature
+      />
       <MetricTile icon={<MessageCircle size={12} />} label="Turns" value={summary.total_turns} />
       <MetricTile
         icon={<OctagonX size={12} />}
@@ -92,13 +103,6 @@ export const MetricSummaryCards = ({
         tone={latencyTone(turnDecisionMs)}
       />
       <MetricTile icon={<Wrench size={12} />} label="Tool Calls" value={summary.total_tool_calls} />
-      <MetricTile
-        icon={<Gauge size={12} />}
-        label="P95 Latency"
-        value={renderLatency(p95)}
-        sub={p95 != null ? 'user perceived' : undefined}
-        tone={latencyTone(p95)}
-      />
       <MetricTile
         icon={<Timer size={12} />}
         label="Avg Latency"

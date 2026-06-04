@@ -21,20 +21,21 @@ import { readSimRun, writeSimRun, clearSimRun } from './run-persistence'
 const scoreText = (s: number) => (s >= 80 ? 'text-success' : s >= 65 ? 'text-warning' : 'text-destructive')
 const scoreStroke = (s: number) => (s >= 80 ? 'hsl(var(--success))' : s >= 65 ? 'hsl(var(--warning))' : 'hsl(var(--destructive))')
 const scoreBar = (s: number) => (s >= 80 ? 'bg-success' : s >= 65 ? 'bg-warning' : 'bg-destructive')
+const scoreTone = (s: number) => (s >= 80 ? 'is-good' : s >= 65 ? 'is-warn' : 'is-bad')
 const initials = (name: string) => name.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
 /* ---------- primitives ---------- */
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn('rounded-lg border border-border bg-card', className)}>{children}</div>
+  return <div className={cn('ao-panel', className)}>{children}</div>
 }
 function CardHead({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn('flex items-center gap-2 border-b border-border px-4 py-3', className)}>{children}</div>
+  return <div className={cn('ao-panel-head', className)}>{children}</div>
 }
 function CardTitle({ children }: { children: React.ReactNode }) {
-  return <span className="text-sm font-semibold text-foreground">{children}</span>
+  return <span className="ao-panel-title">{children}</span>
 }
 function CardSub({ children }: { children: React.ReactNode }) {
-  return <span className="text-xs text-muted-foreground">{children}</span>
+  return <span className="ao-panel-sub">{children}</span>
 }
 
 function ScoreRing({ score, max = 100, size = 64, stroke = 6, showMax }: { score: number; max?: number; size?: number; stroke?: number; showMax?: boolean }) {
@@ -58,18 +59,17 @@ function ScoreRing({ score, max = 100, size = 64, stroke = 6, showMax }: { score
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { cls: string; label: string; dot?: boolean }> = {
-    pass: { cls: 'bg-success/15 text-success', label: 'Pass' },
-    fail: { cls: 'bg-destructive/15 text-destructive', label: 'Fail' },
-    warn: { cls: 'bg-warning/15 text-warning', label: 'At risk' },
-    live: { cls: 'bg-primary/15 text-primary', label: 'Live', dot: true },
-    info: { cls: 'bg-primary/10 text-primary', label: 'info' },
-    neutral: { cls: 'bg-muted text-muted-foreground', label: status },
+  const map: Record<string, { tone: string; label: string; dot?: boolean }> = {
+    pass: { tone: 'is-success', label: 'Pass' },
+    fail: { tone: 'is-danger', label: 'Fail' },
+    warn: { tone: 'is-warning', label: 'At risk' },
+    live: { tone: 'is-accent', label: 'Live', dot: true },
+    info: { tone: 'is-accent', label: 'info' },
+    neutral: { tone: 'is-neutral', label: status },
   }
   const m = map[status] ?? map.neutral
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', m.cls)}>
-      {m.dot && <span className="size-1.5 rounded-full bg-current animate-pulse" />}
+    <span className={cn('ao-badge whitespace-nowrap', m.tone, m.dot && 'ao-badge--dot is-pulse')}>
       {m.label}
     </span>
   )
@@ -88,11 +88,9 @@ function ScopeTag({ scope }: { scope: string }) {
 
 function Seg({ options, value, onChange }: { options: { id: string; label: React.ReactNode }[]; value: string; onChange: (v: string) => void }) {
   return (
-    <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5">
+    <div className="ao-seg">
       {options.map((o) => (
-        <button key={o.id} onClick={() => onChange(o.id)}
-          className={cn('flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors',
-            value === o.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+        <button key={o.id} onClick={() => onChange(o.id)} className={cn('ao-seg-item', value === o.id && 'is-active')}>
           {o.label}
         </button>
       ))}
@@ -101,22 +99,37 @@ function Seg({ options, value, onChange }: { options: { id: string; label: React
 }
 
 function Stepper({ phase }: { phase: 'setup' | 'running' | 'report' }) {
-  const steps = [{ id: 'setup', label: 'Define' }, { id: 'running', label: 'Run' }, { id: 'report', label: 'Report' }]
+  const steps = [
+    { id: 'setup', label: 'Define', hint: 'Prompt · personas · rubric' },
+    { id: 'running', label: 'Run', hint: 'Drive conversations' },
+    { id: 'report', label: 'Report', hint: 'Leveled judge verdicts' },
+  ]
   const idx = steps.findIndex((s) => s.id === phase)
   return (
-    <div className="mb-6 flex items-center gap-2">
-      {steps.map((s, i) => (
-        <div key={s.id} className="flex items-center gap-2">
-          <div className={cn('flex items-center gap-2 text-sm', i === idx ? 'font-semibold text-foreground' : i < idx ? 'text-foreground' : 'text-muted-foreground')}>
-            <span className={cn('flex size-6 items-center justify-center rounded-full text-xs font-semibold',
-              i < idx ? 'bg-primary text-primary-foreground' : i === idx ? 'border-2 border-primary text-primary' : 'border border-border')}>
-              {i < idx ? <Check size={13} /> : i + 1}
-            </span>
-            {s.label}
+    <div className="mb-6 flex flex-wrap items-stretch gap-2.5">
+      {steps.map((s, i) => {
+        const done = i < idx
+        const active = i === idx
+        return (
+          <div key={s.id} className="flex items-center gap-2.5">
+            <div className={cn('flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors',
+              active ? 'border-[hsl(var(--link))] bg-[hsl(var(--link)/0.08)] shadow-sm'
+                : done ? 'border-border bg-card' : 'border-dashed border-border bg-transparent')}>
+              <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold',
+                done ? 'bg-[hsl(var(--link))] text-white'
+                  : active ? 'border-2 border-[hsl(var(--link))] text-[hsl(var(--link))]'
+                    : 'border border-border text-muted-foreground')}>
+                {done ? <Check size={13} /> : i + 1}
+              </span>
+              <div className="flex flex-col leading-tight">
+                <span className={cn('text-sm font-semibold', active || done ? 'text-foreground' : 'text-muted-foreground')}>{s.label}</span>
+                <span className="hidden text-[11px] text-muted-foreground sm:block">{s.hint}</span>
+              </div>
+            </div>
+            {i < steps.length - 1 && <div className={cn('h-px w-8 shrink-0', done ? 'bg-[hsl(var(--link))]' : 'bg-border')} />}
           </div>
-          {i < steps.length - 1 && <div className={cn('h-px w-10', i < idx ? 'bg-primary' : 'bg-border')} />}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -214,10 +227,11 @@ function JudgeCard({ tree, onJump }: { tree: JudgeTreeT; onJump: (turn: number) 
   return (
     <Card>
       <CardHead>
-        <Scale size={18} className="text-primary" />
-        <div className="flex flex-col"><CardTitle>Leveled judge · {tree.caseLabel}</CardTitle><CardSub>Worst case · one verdict per node · task · agent · flow</CardSub></div>
-        <div className="flex-1" />
-        <StatusBadge status="info" /><span className="-ml-1 text-xs text-primary">LiveKit-native</span>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Scale size={18} className="shrink-0 text-[hsl(var(--link))]" />
+          <div className="flex min-w-0 flex-col"><CardTitle>Leveled judge · {tree.caseLabel}</CardTitle><CardSub>Worst case · one verdict per node · task · agent · flow</CardSub></div>
+        </div>
+        <span className="ao-badge is-accent shrink-0">LiveKit-native</span>
       </CardHead>
       <div className="border-b border-border px-4 py-3">
         <Seg value={level} onChange={setLevel} options={['all', 'flow', 'agent', 'task', 'node'].map((l) => ({
@@ -226,7 +240,7 @@ function JudgeCard({ tree, onJump }: { tree: JudgeTreeT; onJump: (turn: number) 
       </div>
       <JudgeTree tree={tree} onJump={onJump} />
       <div className="border-t border-border bg-muted/30 px-4 py-3.5">
-        <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Pipeline nodes</div>
+        <div className="ao-section-label">Pipeline nodes</div>
         <div className="flex flex-wrap gap-2.5">
           {tree.nodes.map((n, i) => (
             <div key={i} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
@@ -282,19 +296,22 @@ function YamlBlock({ src }: { src: string }) {
   )
 }
 
-function PageHeader({ title, sub, actions }: { title: React.ReactNode; sub: React.ReactNode; actions?: React.ReactNode }) {
+function PageHeader({ eyebrow, title, sub, actions }: { eyebrow?: React.ReactNode; title: React.ReactNode; sub: React.ReactNode; actions?: React.ReactNode }) {
   return (
-    <div className="mb-5 flex items-start justify-between gap-4">
-      <div><h1 className="text-[26px] font-semibold leading-8 text-foreground">{title}</h1><div className="mt-1 text-sm text-muted-foreground">{sub}</div></div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
-    </div>
+    <header className="ao-hero">
+      <div className="min-w-0">
+        {eyebrow && <div className="ao-hero-eyebrow">{eyebrow}</div>}
+        <h1 className="ao-hero-title">{title}</h1>
+        <p className="ao-hero-sub">{sub}</p>
+      </div>
+      {actions && <div className="ao-hero-actions">{actions}</div>}
+    </header>
   )
 }
 
-const btn = 'inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50'
-const btnPrimary = cn(btn, 'bg-primary text-primary-foreground hover:bg-primary/90 px-3.5 py-2')
-const btnOut = cn(btn, 'border border-border bg-card hover:bg-accent px-3 py-2')
-const btnOutSm = cn(btn, 'border border-border bg-card hover:bg-accent px-2.5 py-1 text-xs')
+const btnPrimary = 'ao-btn ao-btn--primary'
+const btnOut = 'ao-btn ao-btn--outline'
+const btnOutSm = 'ao-btn ao-btn--outline ao-btn--sm'
 
 export interface RunConfig { prompt?: string; yaml?: string; mode: string; personaIds: string[]; personas?: Persona[]; rubric?: { id?: string; name?: string; criteria?: { name: string; question: string; weight?: number }[]; pass_threshold?: number }; autoGen: boolean; threshold: number; phoneNumber?: string }
 
@@ -348,31 +365,36 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
 
   return (
     <div className="animate-in fade-in duration-300">
-      <PageHeader title="New simulation" sub="Paste a prompt or upload a YAML, pick personas, and run a persona-driven sweep." />
+      <PageHeader
+        eyebrow={<><Sparkles /> Define · Run · Report</>}
+        title="New simulation"
+        sub="Paste a prompt or upload a YAML, pick personas, and run a persona-driven sweep scored by the leveled judge." />
       <Stepper phase="setup" />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.6fr_1fr] lg:items-start">
         <div className="flex flex-col gap-5">
           <Card>
-            <CardHead><CardTitle>Agent under test</CardTitle><div className="flex-1" />
+            <CardHead>
+              <div className="flex min-w-0 items-center gap-2.5"><FileCode size={16} className="shrink-0 text-muted-foreground" /><CardTitle>Agent under test</CardTitle></div>
               <Seg value={tab} onChange={setTab} options={[{ id: 'prompt', label: <><TextCursorInput size={14} /> Paste a prompt</> }, { id: 'yaml', label: <><FileCode size={14} /> Upload YAML</> }]} />
             </CardHead>
-            <div className="p-4">
+            <div className="ao-panel-body">
               {tab === 'prompt' ? (
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">System prompt</label>
-                  <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={6}
-                    className="w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-[13px] leading-relaxed outline-none focus:ring-2 focus:ring-ring" />
-                  <div className="mt-2 flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">Or reference a registered <span className="font-mono">agent_id</span> / phone number.</span>
+                <div className="flex flex-col gap-3">
+                  <div className="ao-field">
+                    <label className="ao-label">System prompt</label>
+                    <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={6} className="ao-textarea mono" />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="ao-hint">Or reference a registered <span className="font-mono">agent_id</span> / phone number.</span>
                     <Seg value={mode} onChange={setMode} options={['text', 'voice', 'text_then_voice'].map((m) => ({ id: m, label: <span className="font-mono text-[11px]">{m}</span> }))} />
                   </div>
                 </div>
               ) : (
                 <div>
-                  <div className="mb-3.5 flex flex-col items-center gap-1 rounded-lg border border-dashed border-border bg-muted/30 py-7 text-center">
-                    <UploadCloud size={30} className="text-muted-foreground" />
-                    <div className="text-sm font-semibold text-foreground">Drop <span className="font-mono">sim.yaml</span> here</div>
-                    <div className="text-xs text-muted-foreground">Validated with Zod · friendly per-field errors · maps 1:1 onto a reusable scenario</div>
+                  <div className="ao-empty mb-3.5">
+                    <div className="ao-empty-icon"><UploadCloud /></div>
+                    <div className="ao-empty-title">Drop <span className="font-mono">sim.yaml</span> here</div>
+                    <div className="ao-empty-text">Validated with Zod · friendly per-field errors · maps 1:1 onto a reusable scenario</div>
                   </div>
                   <YamlBlock src={SIM_YAML} />
                 </div>
@@ -380,11 +402,16 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
             </div>
           </Card>
           <Card>
-            <CardHead><CardTitle>Personas</CardTitle><CardSub>{selected.length + chosenGen.length} selected</CardSub><div className="flex-1" /><button className={btnOutSm}><Plus size={13} /> New persona</button></CardHead>
-            <div className="p-4">
+            <CardHead>
+              <div className="flex min-w-0 items-center gap-2.5"><CardTitle>Personas</CardTitle><CardSub>{selected.length + chosenGen.length} selected</CardSub></div>
+              <button className={btnOutSm}><Plus size={13} /> New persona</button>
+            </CardHead>
+            <div className="ao-panel-body">
               <div className="mb-3.5 flex flex-wrap gap-1.5">
                 {['all', ...PERSONA_TYPES].map((t) => (
-                  <span key={t} onClick={() => setTypeFilter(t)} className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium', typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>
+                  <span key={t} onClick={() => setTypeFilter(t)}
+                    className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                      typeFilter === t ? 'bg-[hsl(var(--link))] text-white' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>
                 ))}
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -392,17 +419,17 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               </div>
               <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border" />AI-generated personas<div className="h-px flex-1 bg-border" /></div>
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5"><Sparkles size={16} className="text-primary" /><div className="flex flex-col"><span className="text-sm font-semibold text-foreground">Generate personas from the prompt</span><span className="text-xs text-muted-foreground">red_team + edge_case · tailored to this agent · preview-then-approve</span></div></div>
+                <div className="flex items-center gap-2.5"><Sparkles size={16} className="text-[hsl(var(--link))]" /><div className="flex flex-col"><span className="text-sm font-semibold text-foreground">Generate personas from the prompt</span><span className="text-xs text-muted-foreground">red_team + edge_case · tailored to this agent · preview-then-approve</span></div></div>
                 <button className={btnOutSm} onClick={doGenerate} disabled={genLoading}>
                   {genLoading ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />} {genList.length ? 'Regenerate' : 'Generate 3'}
                 </button>
               </div>
-              {genErr && <div className="mt-2 text-xs text-destructive">{genErr}</div>}
+              {genErr && <div className="ao-error mt-2">{genErr}</div>}
               {genList.length > 0 && (
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {genList.map((p) => (
                     <div key={p.id} className="relative">
-                      <span className="absolute right-2 top-2 z-10 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">AI</span>
+                      <span className="absolute right-2 top-2 z-10 rounded-full bg-[hsl(var(--link)/0.15)] px-1.5 py-0.5 text-[10px] font-semibold text-[hsl(var(--link))]">AI</span>
                       <button
                         onClick={(e) => { e.stopPropagation(); if (!savedGen.includes(p.id)) saveGen(p) }}
                         className={cn('absolute bottom-2 right-2 z-10 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
@@ -419,17 +446,16 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
         </div>
         <div className="flex flex-col gap-5 lg:sticky lg:top-4">
           <Card>
-            <CardHead><CardTitle>Rubric &amp; judge</CardTitle></CardHead>
-            <div className="p-4">
-              <div className="mb-3">
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Rubric</label>
-                <select value={rubricId} onChange={(e) => onRubricChange(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring">
+            <CardHead><div className="flex min-w-0 items-center gap-2.5"><Scale size={16} className="shrink-0 text-muted-foreground" /><CardTitle>Rubric &amp; judge</CardTitle></div></CardHead>
+            <div className="ao-panel-body">
+              <div className="ao-field mb-3">
+                <label className="ao-label">Rubric</label>
+                <select value={rubricId} onChange={(e) => onRubricChange(e.target.value)} className="ao-input">
                   {rubrics.length === 0 && <option>builtin · 7-axis</option>}
                   {rubrics.map((r) => <option key={r.id} value={r.id}>{r.name}{r.builtin ? ' · builtin' : ''}</option>)}
                 </select>
                 {selectedRubric && (
-                  <div className="mt-2 flex flex-col gap-1">
+                  <div className="mt-1 flex flex-col gap-1">
                     {selectedRubric.criteria.map((c) => (
                       <div key={c.name} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
                         <Check size={12} className="mt-0.5 shrink-0 text-success" />
@@ -439,32 +465,34 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                   </div>
                 )}
               </div>
-              <div className="mb-3.5 flex flex-col gap-2 text-sm">
+              <div className="mb-3.5 flex flex-col gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-sm">
                 {[['Pass threshold', `${threshold} / 100`], ['Judge model', 'gpt-4o'], ['Levels', 'flow·agent·task·node'], ['Parallelism', '5']].map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between"><span className="text-muted-foreground">{k}</span><span className="font-mono text-xs text-foreground">{v}</span></div>
+                  <div key={k} className="flex items-center justify-between"><span className="text-muted-foreground">{k}</span><span className="ao-mono text-xs text-foreground">{v}</span></div>
                 ))}
               </div>
-              <input type="range" min={40} max={95} value={threshold} onChange={(e) => setThreshold(+e.target.value)} className="w-full accent-[hsl(var(--primary))]" />
-              <div className="mt-2 text-xs text-muted-foreground">Verdicts are produced by the LiveKit-native leveled judge — the same one used in CI evals and production monitoring.</div>
+              <label className="ao-label mb-1.5 flex items-center justify-between">Pass threshold <span className="ao-mono text-foreground">{threshold}</span></label>
+              <input type="range" min={40} max={95} value={threshold} onChange={(e) => setThreshold(+e.target.value)} className="w-full accent-[hsl(var(--link))]" />
+              <div className="ao-hint mt-2">Verdicts are produced by the LiveKit-native leveled judge — the same one used in CI evals and production monitoring.</div>
             </div>
           </Card>
           {isVoice && (
             <Card>
-              <CardHead><CardTitle>Voice target</CardTitle></CardHead>
-              <div className="p-4">
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Phone number to dial</label>
-                <input value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 555 000 0000"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring" />
-                <div className="mt-2 text-[11px] text-muted-foreground">
-                  {mode === 'voice'
-                    ? 'Each persona places a real call to this number (Plivo charge).'
-                    : 'Text runs first; failed personas can be escalated to real calls to this number.'}
+              <CardHead><div className="flex min-w-0 items-center gap-2.5"><Phone size={16} className="shrink-0 text-muted-foreground" /><CardTitle>Voice target</CardTitle></div></CardHead>
+              <div className="ao-panel-body">
+                <div className="ao-field">
+                  <label className="ao-label">Phone number to dial <span className="req">*</span></label>
+                  <input value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 555 000 0000" className="ao-input mono" />
+                  <span className="ao-hint">
+                    {mode === 'voice'
+                      ? 'Each persona places a real call to this number (Plivo charge).'
+                      : 'Text runs first; failed personas can be escalated to real calls to this number.'}
+                  </span>
                 </div>
               </div>
             </Card>
           )}
           <button className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run} disabled={needsPhone}><Play size={17} /> {mode === 'voice' ? 'Place calls' : 'Run simulation'}</button>
-          {needsPhone && <div className="text-center text-xs text-warning">Enter a phone number for {mode} mode.</div>}
+          {needsPhone && <div className="ao-error text-center text-warning">Enter a phone number for {mode} mode.</div>}
           <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">{mode}</span></div>
         </div>
       </div>
@@ -499,28 +527,50 @@ function RunningPhase({ config, result, error, onDone, onBack, onCancel }: { con
   if (error) {
     return (
       <div className="animate-in fade-in duration-300">
-        <PageHeader title="Simulation failed" sub="The run could not complete." actions={<button className={btnOut} onClick={onBack}><RotateCw size={15} /> Back to setup</button>} />
-        <Card><div className="flex items-start gap-3 p-5"><TriangleAlert size={18} className="mt-0.5 text-destructive" /><div className="text-sm text-foreground">{error}</div></div></Card>
+        <PageHeader eyebrow={<><TriangleAlert /> Run failed</>} title="Simulation failed" sub="The run could not complete." actions={<button className={btnOut} onClick={onBack}><RotateCw size={15} /> Back to setup</button>} />
+        <Card><div className="ao-alert is-danger m-4"><TriangleAlert size={16} /><div className="text-sm">{error}</div></div></Card>
       </div>
     )
   }
 
+  const elapsed = (clock / 1000).toFixed(1)
+  const avgProg = Math.round(states.reduce((a, s) => a + s.prog, 0) / Math.max(1, states.length))
+
   return (
     <div className="animate-in fade-in duration-300">
-      <PageHeader title={<span className="flex items-center gap-2.5">Running simulation <StatusBadge status="live" /></span>}
+      <PageHeader eyebrow={<><Loader className="animate-spin" /> Running</>}
+        title={<span className="flex items-center gap-2.5">Running simulation <StatusBadge status="live" /></span>}
         sub={`Driving ${list.length} persona conversations · mode ${config.mode}`}
         actions={!result && <button className={btnOut} onClick={onCancel}><X size={15} /> Cancel simulation</button>} />
       <Stepper phase="running" />
+      <div className="ao-stat-row ao-stagger mb-5">
+        <div className="ao-stat ao-stat--feature is-accent">
+          <div className="ao-stat-label"><Play size={14} /> Conversations</div>
+          <div className="ao-stat-value">{list.length}</div>
+        </div>
+        <div className="ao-stat">
+          <div className="ao-stat-label"><Sparkles size={14} /> Progress</div>
+          <div className="ao-stat-value">{result ? 100 : avgProg}<span className="unit">%</span></div>
+        </div>
+        <div className="ao-stat">
+          <div className="ao-stat-label"><Timer size={14} /> Elapsed</div>
+          <div className="ao-stat-value">{elapsed}<span className="unit">s</span></div>
+        </div>
+        <div className="ao-stat">
+          <div className="ao-stat-label"><Scale size={14} /> Mode</div>
+          <div className="ao-stat-value font-mono" style={{ fontSize: 18 }}>{config.mode}</div>
+        </div>
+      </div>
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.6fr_1fr] lg:items-start">
         <Card>
-          <CardHead><CardTitle>Personas</CardTitle><CardSub>parallelism 5</CardSub></CardHead>
+          <CardHead><div className="flex min-w-0 items-center gap-2.5"><CardTitle>Personas</CardTitle><CardSub>parallelism 5</CardSub></div></CardHead>
           <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">{list.map((p, i) => <PersonaCard key={p.id} p={p} state={states[i]} />)}</div>
         </Card>
         <Card className="lg:sticky lg:top-4">
-          <CardHead><Loader size={16} className="animate-spin text-primary" /><CardTitle>Running the judge</CardTitle></CardHead>
+          <CardHead><div className="flex min-w-0 items-center gap-2.5"><Loader size={16} className="animate-spin text-[hsl(var(--link))]" /><CardTitle>Running the judge</CardTitle></div></CardHead>
           <div className="flex flex-col gap-3 p-5 text-sm text-muted-foreground">
             <div>Each persona converses with the agent, then the leveled judge scores it at flow · agent · task · node.</div>
-            <div className="flex items-center gap-2"><span className="size-2 animate-pulse rounded-full bg-primary" /> {result ? 'Complete — opening report…' : 'Judging in progress…'}</div>
+            <div className="flex items-center gap-2"><span className="size-2 animate-pulse rounded-full bg-[hsl(var(--link))]" /> {result ? 'Complete — opening report…' : 'Judging in progress…'}</div>
           </div>
         </Card>
       </div>
@@ -547,38 +597,68 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
   }
   const kase = cases[sel]
 
+  const failN = cases.length - result.passN
+  const passRate = cases.length ? Math.round((result.passN / cases.length) * 100) : 0
+
   return (
     <div className="animate-in fade-in duration-300">
-      <PageHeader title="Simulation report"
-        sub={<><span className="font-medium text-foreground">{result.agentName}</span> · {cases.length} personas · mode <span className="font-mono">{result.mode}</span> · <span className="font-mono">{result.runId}</span></>}
+      <PageHeader
+        eyebrow={<><Scale /> Report · {result.runId}</>}
+        title="Simulation report"
+        sub={<><span className="font-medium text-foreground">{result.agentName}</span> · {cases.length} personas · mode <span className="font-mono">{result.mode}</span></>}
         actions={<>
           {result.engine === 'demo'
-            ? <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning" title={result.note}><TriangleAlert size={13} /> Demo data</span>
-            : <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success"><span className="size-1.5 rounded-full bg-current" /> Live judge</span>}
+            ? <span className="ao-badge is-warning" title={result.note}><TriangleAlert size={13} /> Demo data</span>
+            : <span className="ao-badge is-success ao-badge--dot">Live judge</span>}
           <button className={btnOut}><Download size={15} /> Export</button>
           <button className={btnOut} disabled={!result.evalRunId} onClick={() => result.evalRunId && navigate(`/evals/${result.evalRunId}`)}><GitPullRequest size={15} /> Open as eval</button>
           <button className={btnPrimary} onClick={onRerun}><RotateCw size={15} /> Re-run</button>
         </>} />
 
       {result.note && (
-        <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/8 px-3.5 py-2.5 text-sm text-foreground">
-          <TriangleAlert size={16} className="mt-0.5 shrink-0 text-warning" /><span>{result.note}</span>
-        </div>
+        <div className="ao-alert is-warning mb-4"><TriangleAlert size={16} /><span>{result.note}</span></div>
       )}
 
+      {/* KPI summary */}
+      <div className="ao-stat-row ao-stagger mb-5">
+        <div className={cn('ao-stat ao-stat--feature', scoreTone(result.overall))}>
+          <div className="ao-stat-label"><Scale size={14} /> Overall score</div>
+          <div className="ao-stat-value">{result.overall}<span className="suffix">/100</span></div>
+          <div className="ao-stat-meta">threshold {result.threshold}</div>
+        </div>
+        <div className={cn('ao-stat', result.passN >= cases.length * 0.7 ? 'is-good' : 'is-bad')}>
+          <div className="ao-stat-label"><CheckCircle2 size={14} /> Pass rate</div>
+          <div className="ao-stat-value">{passRate}<span className="unit">%</span></div>
+          <div className="ao-stat-meta"><span className="ao-delta-up">{result.passN} pass</span> · <span className="ao-delta-down">{failN} fail</span></div>
+        </div>
+        <div className="ao-stat">
+          <div className="ao-stat-label"><Sparkles size={14} /> Personas</div>
+          <div className="ao-stat-value">{cases.length}</div>
+          <div className="ao-stat-meta">mode {result.mode}</div>
+        </div>
+        <div className="ao-stat">
+          <div className="ao-stat-label"><Scale size={14} /> Rubric</div>
+          <div className="ao-stat-value font-mono" style={{ fontSize: 16 }}>{result.rubricName ?? '7-axis'}</div>
+          <div className="ao-stat-meta">flow · agent · task · node</div>
+        </div>
+      </div>
+
       <Card className="mb-5">
-        <CardHead><CardTitle>Run result</CardTitle><CardSub>{result.agentName} · {cases.length} personas</CardSub><div className="flex-1" /><StatusBadge status={result.passN >= cases.length * 0.7 ? 'pass' : 'fail'} /></CardHead>
+        <CardHead>
+          <div className="flex min-w-0 items-center gap-2.5"><CardTitle>Run result</CardTitle><CardSub>{result.agentName} · {cases.length} personas</CardSub></div>
+          <StatusBadge status={result.passN >= cases.length * 0.7 ? 'pass' : 'fail'} />
+        </CardHead>
         <div className="grid grid-cols-1 gap-6 p-5 md:grid-cols-[auto_1fr] md:items-center">
           <div className="flex items-center gap-4">
             <ScoreRing score={result.overall} size={92} stroke={8} showMax />
             <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2"><StatusBadge status="pass" /><span className="text-sm text-muted-foreground">{result.passN} passed</span><StatusBadge status="fail" /><span className="text-sm text-muted-foreground">{cases.length - result.passN} failed</span></div>
+              <div className="flex items-center gap-2"><StatusBadge status="pass" /><span className="text-sm text-muted-foreground">{result.passN} passed</span><StatusBadge status="fail" /><span className="text-sm text-muted-foreground">{failN} failed</span></div>
               <div className="text-sm text-muted-foreground">Pass threshold <b className="text-foreground">{result.threshold}</b>{result.rubricName && <> · rubric <b className="text-foreground">{result.rubricName}</b></>}</div>
               <div className="text-sm text-muted-foreground">Judge levels <span className="font-mono">flow · agent · task · node</span></div>
             </div>
           </div>
           <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">7-axis rubric</div>
+            <div className="ao-section-label">7-axis rubric</div>
             {result.rubricAxes.map((a) => (
               <div key={a.name} className="flex items-center gap-3 py-0.5">
                 <span className="w-44 shrink-0 text-sm text-foreground">{a.name}</span>
@@ -593,32 +673,38 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
       <div className="mb-5"><JudgeCard tree={result.judgeTree} onJump={jump} /></div>
 
       <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-[1.6fr_1fr] lg:items-start">
-        <Card>
-          <CardHead><CardTitle>Cases</CardTitle><CardSub>{cases.length} persona conversations</CardSub></CardHead>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border text-left text-xs text-muted-foreground"><th className="px-4 py-2 font-medium">Persona</th><th className="px-4 py-2 font-medium">Type</th><th className="px-4 py-2 font-medium">Result</th><th className="px-4 py-2 text-right font-medium">Score</th><th className="px-4 py-2 text-right font-medium">Turns</th></tr></thead>
+        <Card className="ao-panel--flush">
+          <CardHead><div className="flex min-w-0 items-center gap-2.5"><CardTitle>Cases</CardTitle><CardSub>{cases.length} persona conversations</CardSub></div></CardHead>
+          <table className="ao-table">
+            <thead><tr><th>Persona</th><th>Type</th><th>Result</th><th className="num">Score</th><th className="num">Turns</th></tr></thead>
             <tbody>
               {cases.map((c, i) => (
-                <tr key={i} onClick={() => { setSel(i); setHl(null) }} className={cn('cursor-pointer border-b border-border/60 hover:bg-muted/40', sel === i ? 'bg-muted/60' : '')}>
-                  <td className="px-4 py-2.5"><div className="flex items-center gap-2.5"><span className="flex size-6 items-center justify-center rounded-md text-[11px] font-semibold text-white" style={{ background: c.avatar }}>{initials(c.personaName)}</span>{c.personaName}</div></td>
-                  <td className="px-4 py-2.5"><span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{c.personaType.replace('_', ' ')}</span></td>
-                  <td className="px-4 py-2.5"><StatusBadge status={c.status} /></td>
-                  <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', scoreText(c.score))}>{c.score}</td>
-                  <td className="px-4 py-2.5 text-right text-muted-foreground">{c.turns}</td>
+                <tr key={i} onClick={() => { setSel(i); setHl(null) }} className={cn(sel === i && 'is-active')}>
+                  <td><div className="flex items-center gap-2.5"><span className="flex size-6 items-center justify-center rounded-md text-[11px] font-semibold text-white" style={{ background: c.avatar }}>{initials(c.personaName)}</span>{c.personaName}</div></td>
+                  <td><span className="ao-mono rounded bg-muted px-1.5 py-0.5 text-[11px]">{c.personaType.replace('_', ' ')}</span></td>
+                  <td><StatusBadge status={c.status} /></td>
+                  <td className={cn('num font-semibold', scoreText(c.score))}>{c.score}</td>
+                  <td className="num muted">{c.turns}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
         <Card className="lg:sticky lg:top-4">
-          <CardHead><div className="flex size-6 items-center justify-center rounded-md text-[11px] font-semibold text-white" style={{ background: kase.avatar }}>{initials(kase.personaName)}</div><div className="flex flex-col"><CardTitle>{kase.personaName}</CardTitle><CardSub>{kase.summary}</CardSub></div><div className="flex-1" /><StatusBadge status={kase.status} /></CardHead>
+          <CardHead>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-white" style={{ background: kase.avatar }}>{initials(kase.personaName)}</span>
+              <div className="flex min-w-0 flex-col"><CardTitle>{kase.personaName}</CardTitle><CardSub>{kase.summary}</CardSub></div>
+            </div>
+            <StatusBadge status={kase.status} />
+          </CardHead>
           <div className="max-h-[62vh] overflow-auto p-4"><Transcript turns={kase.transcript} highlight={hl} refMap={tref} /></div>
         </Card>
       </div>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <Card>
-          <CardHead><AlertOctagon size={17} className="text-destructive" /><CardTitle>Worst moments</CardTitle></CardHead>
+          <CardHead><div className="flex min-w-0 items-center gap-2.5"><AlertOctagon size={16} className="shrink-0 text-destructive" /><CardTitle>Worst moments</CardTitle></div></CardHead>
           <div className="flex flex-col divide-y divide-border/60">
             {result.worstMoments.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">No failing cases — nothing flagged.</div>}
             {result.worstMoments.map((w, i) => (
@@ -627,7 +713,10 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
           </div>
         </Card>
         <Card>
-          <CardHead><Wrench size={17} className="text-primary" /><CardTitle>Recommended fixes</CardTitle><div className="flex-1" /><button className={btnOutSm}><CopyIcon size={13} /> Copy</button></CardHead>
+          <CardHead>
+            <div className="flex min-w-0 items-center gap-2.5"><Wrench size={16} className="shrink-0 text-[hsl(var(--link))]" /><CardTitle>Recommended fixes</CardTitle></div>
+            <button className={btnOutSm}><CopyIcon size={13} /> Copy</button>
+          </CardHead>
           <div className="flex flex-col divide-y divide-border/60">
             {result.fixes.map((f, i) => (
               <div key={i} className="flex gap-3 px-4 py-3"><span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">{i + 1}</span><div><div className="text-sm font-semibold text-foreground">{f.title}</div><div className="text-sm text-muted-foreground">{f.body}</div></div></div>
@@ -731,7 +820,7 @@ export function SimulatePage() {
           <Card className="animate-in fade-in duration-300">
             <div className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex items-center gap-2.5 text-sm">
-                <Phone size={16} className="shrink-0 text-primary" />
+                <Phone size={16} className="shrink-0 text-[hsl(var(--link))]" />
                 <span><b>{failed.length}</b> persona{failed.length > 1 ? 's' : ''} failed the text sim — escalate {failed.length > 1 ? 'them' : 'it'} to real phone calls in the Live tab.</span>
               </div>
               <button onClick={escalate} className={btnPrimary}><Phone size={15} /> Escalate to Live calls</button>
@@ -744,8 +833,8 @@ export function SimulatePage() {
   return (
     <div className="flex flex-col gap-4">
       {resumable && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/8 px-3.5 py-2.5 text-sm animate-in fade-in duration-300">
-          <span className="flex items-center gap-2"><TriangleAlert size={16} className="shrink-0 text-warning" /> Your last simulation was interrupted by a refresh and couldn't be resumed.</span>
+        <div className="ao-alert is-warning flex-wrap justify-between animate-in fade-in duration-300">
+          <span className="flex items-center gap-2"><TriangleAlert size={16} /> Your last simulation was interrupted by a refresh and couldn't be resumed.</span>
           <span className="flex items-center gap-2">
             <button onClick={() => { const c = resumable; setResumable(null); run(c) }} className={btnOutSm}><RotateCw size={13} /> Re-run</button>
             <button onClick={() => { setResumable(null); clearSimRun() }} className={btnOutSm}>Dismiss</button>

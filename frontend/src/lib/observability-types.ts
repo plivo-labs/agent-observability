@@ -310,6 +310,8 @@ export interface EvalCaseRow {
   events: RunEvent[]
   judgments: JudgmentResult[]
   failure: Failure | null
+  /** Audio recording proxy URL (live-call cases only); null/absent otherwise. */
+  recording_url?: string | null
   created_at: string
 }
 

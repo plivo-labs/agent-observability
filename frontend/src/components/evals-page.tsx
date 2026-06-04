@@ -1,7 +1,16 @@
 import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
-import type { ColumnDef } from '@tanstack/react-table'
-import { Bot, FlaskConical, Trash2, type LucideIcon } from 'lucide-react'
+import type { ColumnDef, Row } from '@tanstack/react-table'
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  FlaskConical,
+  Layers,
+  Trash2,
+  XCircle,
+  type LucideIcon,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -15,8 +24,9 @@ import {
 } from '@/components/ui/dialog'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
-import { ObsDataTable } from '@/components/data-table/obs-data-table'
+import { DataTablePagination } from '@/components/data-table/data-table-pagination'
 import { useDataTable } from '@/components/data-table/use-data-table'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRuns } from '@/lib/observability-hooks'
@@ -39,11 +49,26 @@ const TESTING_FRAMEWORK_OPTIONS = [
 
 function PassRateBar({ passed, total }: { passed: number; total: number }) {
   const pct = total > 0 ? Math.round((passed / total) * 100) : 0
+  // Tone the fill by health so a sweep of the column reads at a glance.
+  const tone =
+    pct >= 90
+      ? 'hsl(var(--success))'
+      : pct >= 60
+        ? 'hsl(var(--warning))'
+        : 'hsl(var(--destructive))'
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
-      <span className="font-mono text-xs-600 tabular-nums w-10">{pct}%</span>
+      <span
+        className="font-mono text-xs-600 tabular-nums w-10"
+        style={{ color: total > 0 ? tone : undefined }}
+      >
+        {pct}%
+      </span>
       <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden max-w-[90px]">
-        <div className="h-full bg-foreground" style={{ width: `${pct}%` }} />
+        <div
+          className="h-full rounded-full transition-[width]"
+          style={{ width: `${pct}%`, background: total > 0 ? tone : 'hsl(var(--muted-foreground))' }}
+        />
       </div>
     </div>
   )
@@ -76,6 +101,154 @@ function FrameworkBadge({ name, version }: { name: string | null; version: strin
 
 function TestingFrameworkBadge({ name, version }: { name: string; version: string | null }) {
   return <FrameworkPill name={name} version={version} icon={FlaskConical} />
+}
+
+// Derive a Truman-style verdict from the run's case tallies:
+//   pass    — every case finished and passed (total > 0)
+//   fail    — at least one case failed or errored
+//   pending — nothing has finished yet (in-flight / queued)
+function deriveVerdict(run: EvalRunRow): { label: string; tone: string } {
+  const failed = run.failed + run.errored
+  if (failed > 0) {
+    return {
+      label: 'fail',
+      tone:
+        'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',
+    }
+  }
+  if (run.total > 0 && run.passed >= run.total) {
+    return {
+      label: 'pass',
+      tone: 'text-[hsl(var(--success))] border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)]',
+    }
+  }
+  return {
+    label: 'pending',
+    tone: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)]',
+  }
+}
+
+// One eval run rendered as a Truman "Recent runs" card: sharp-radius panel,
+// title + mono meta line + verdict pill, a pass summary body, and a
+// localized timestamp footer. Clickable → run detail (via onOpen).
+function RunCard({
+  row,
+  onOpen,
+}: {
+  row: Row<EvalRunRow>
+  onOpen: (runId: string) => void
+}) {
+  const run = row.original
+  const verdict = deriveVerdict(run)
+  const title = run.agent_id || `Run ${run.run_id.slice(0, 8)}`
+  const failed = run.failed + run.errored
+  const summary =
+    run.total > 0
+      ? `${run.passed}/${run.total} cases passed${failed > 0 ? ` · ${failed} failed` : ''}`
+      : 'No cases recorded yet.'
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        const t = e.target as HTMLElement
+        if (t.closest('button, a, input, select, [role="menuitem"]')) return
+        onOpen(run.run_id)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(run.run_id)
+        }
+      }}
+      data-state={row.getIsSelected() ? 'selected' : undefined}
+      className={cn(
+        'group block cursor-pointer border bg-card px-5 py-4 shadow-sm transition-colors',
+        'rounded-[var(--radius)] hover:border-[hsl(var(--muted-foreground)/0.4)] hover:bg-muted/30',
+        row.getIsSelected() && 'border-[hsl(var(--primary))] bg-muted/30',
+      )}
+      style={{ borderRadius: 'var(--radius)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <Checkbox
+            aria-label={`Select run ${run.run_id}`}
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-base text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+              {title}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground" style={{ fontFamily: 'var(--mono)' }}>
+              {run.account_id && (
+                <>
+                  <span className="truncate">{run.account_id}</span>
+                  <span aria-hidden>·</span>
+                </>
+              )}
+              <span>run {run.run_id.slice(0, 8)}</span>
+              <span aria-hidden>·</span>
+              <span>{formatDuration(run.duration_ms)}</span>
+              {run.testing_framework && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="truncate">{run.testing_framework}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        <span
+          className={cn(
+            'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+            verdict.tone,
+          )}
+        >
+          {verdict.label}
+        </span>
+      </div>
+
+      <div className="mt-3 line-clamp-2 text-sm text-muted-foreground">
+        <span className="text-foreground">{summary}</span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <PassRateBar passed={run.passed} total={run.total} />
+        <FrameworkBadge name={run.framework} version={run.framework_version} />
+        <TestingFrameworkBadge
+          name={run.testing_framework}
+          version={run.testing_framework_version}
+        />
+      </div>
+
+      <div className="mt-3 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80" style={{ fontFamily: 'var(--mono)' }}>
+        {formatDate(run.started_at)}
+      </div>
+    </div>
+  )
+}
+
+function RunCardSkeleton() {
+  return (
+    <div
+      className="border bg-card px-5 py-4 shadow-sm"
+      style={{ borderRadius: 'var(--radius)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-3 w-64" />
+        </div>
+        <Skeleton className="h-5 w-14 rounded-full" />
+      </div>
+      <Skeleton className="mt-3 h-4 w-40" />
+      <Skeleton className="mt-3 h-4 w-56" />
+    </div>
+  )
 }
 
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
@@ -289,6 +462,23 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   const totalCount = meta.total_count
   const pageCount = Math.max(1, Math.ceil(totalCount / perPage))
 
+  // Page-scoped aggregates for the KPI rail — derived purely from the runs
+  // already in hand (the current page), no extra fetch. Reads as "this view".
+  const stats = useMemo(() => {
+    let cases = 0
+    let passed = 0
+    let failed = 0
+    for (const r of runs) {
+      cases += r.total
+      passed += r.passed
+      failed += r.failed + r.errored
+    }
+    const passRate = cases > 0 ? Math.round((passed / cases) * 100) : 0
+    return { cases, passed, failed, passRate }
+  }, [runs])
+  const passRateTone =
+    stats.cases === 0 ? '' : stats.passRate >= 90 ? 'is-good' : stats.passRate >= 60 ? 'is-warn' : 'is-bad'
+
   const { table } = useDataTable({
     data: runs,
     columns,
@@ -296,6 +486,8 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     initialState: { pagination: { pageIndex: 0, pageSize: 10 } },
     getRowId: (row) => row.run_id,
   })
+
+  const rows = table.getRowModel().rows
 
   const { api } = useObservabilityContext()
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -320,28 +512,67 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   }
 
   return (
-    <div className="w-full p-6 flex flex-col gap-4 min-w-0">
-      <div className="flex items-center justify-between">
+    <div className="w-full p-6 flex flex-col gap-5 min-w-0">
+      <header className="ao-hero ao-reveal">
         <div>
-          <h1 className="text-h2-600 font-semibold m-0">Evals</h1>
-          <div className="text-s-400 text-muted-foreground">Test runs across your agents.</div>
+          <div className="ao-hero-eyebrow">
+            <FlaskConical /> Evals
+          </div>
+          <h1 className="ao-hero-title">Eval runs</h1>
+          <p className="ao-hero-sub">
+            Every test run across your agents — by framework, testing harness, and pass rate.
+          </p>
         </div>
-        <div className="text-s-400 text-muted-foreground">
-          <b className="text-foreground">{totalCount}</b> total
+        <div className="ao-hero-actions">
+          <span className="ao-badge is-neutral ao-badge--dot">
+            {totalCount} {totalCount === 1 ? 'run' : 'runs'}
+          </span>
+        </div>
+      </header>
+
+      <div className="ao-stat-row ao-stagger ao-reveal ao-reveal-2">
+        <div className="ao-stat ao-stat--feature is-accent">
+          <div className="ao-stat-label">
+            <Layers /> Runs
+          </div>
+          <div className="ao-stat-value">{totalCount}</div>
+          <div className="ao-stat-meta">
+            {runs.length} on this page
+          </div>
+        </div>
+        <div className={cn('ao-stat', passRateTone)}>
+          <div className="ao-stat-label">Pass rate</div>
+          <div className="ao-stat-value">
+            {stats.passRate}
+            <span className="unit">%</span>
+          </div>
+          <div className="ao-stat-meta">across {stats.cases} cases</div>
+        </div>
+        <div className="ao-stat is-good">
+          <div className="ao-stat-label">
+            <CheckCircle2 /> Passed
+          </div>
+          <div className="ao-stat-value">{stats.passed}</div>
+          <div className="ao-stat-meta">cases on this page</div>
+        </div>
+        <div className={cn('ao-stat', stats.failed > 0 && 'is-bad')}>
+          <div className="ao-stat-label">
+            <XCircle /> Failed
+          </div>
+          <div className="ao-stat-value">{stats.failed}</div>
+          <div className="ao-stat-meta">incl. errored</div>
         </div>
       </div>
 
       {error && (
-        <div
-          role="alert"
-          className="border border-border bg-muted text-foreground px-4 py-2.5 rounded-lg text-s-400"
-        >
-          Failed to load eval runs: {error}
+        <div role="alert" className="ao-alert is-danger">
+          <AlertTriangle />
+          <span>Failed to load eval runs: {error}</span>
         </div>
       )}
 
       {selectedCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-card">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-card shadow-sm">
           <span className="text-s-500">
             <b>{selectedCount}</b> selected
           </span>
@@ -365,13 +596,34 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         </div>
       )}
 
-      <ObsDataTable
-        table={table}
-        toolbar={<DataTableToolbar table={table} />}
-        onRowClick={(row) => onRunClick?.(row.original.run_id)}
-        totalRowCount={totalCount}
-        loading={loading}
-      />
+      <div className="ao-reveal ao-reveal-3 flex flex-col gap-2.5">
+        <DataTableToolbar table={table} />
+        {loading && rows.length === 0 ? (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <RunCardSkeleton key={`sk-${i}`} />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div
+            className="flex h-24 items-center justify-center border bg-card text-muted-foreground shadow-sm"
+            style={{ borderRadius: 'var(--radius)' }}
+          >
+            No results.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {rows.map((row) => (
+              <RunCard
+                key={row.id}
+                row={row}
+                onOpen={(runId) => onRunClick?.(runId)}
+              />
+            ))}
+          </div>
+        )}
+        <DataTablePagination table={table} totalRowCount={totalCount} />
+      </div>
 
       <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
         <DialogContent>

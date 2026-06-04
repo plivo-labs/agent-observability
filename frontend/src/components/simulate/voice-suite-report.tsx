@@ -3,14 +3,12 @@
  * verdict, cost, and the recording. Used for `voice` mode and for the
  * `text_then_voice` escalation. The rich in-call streaming (transcript/audio/
  * take-mic) lives in the Live tab; this is the post-call view. */
-import { Check, Loader, Phone, X } from 'lucide-react'
+import { AlertTriangle, Check, Loader, Phone, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { CallBatchResult } from './sim-data'
 
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
 const isTerminal = (s?: string) => s === 'done' || s === 'failed'
-const verdictPill = (v: 'pass' | 'fail') =>
-  cn('rounded-full px-2 py-0.5 text-xs font-semibold', v === 'pass' ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive')
 
 export function VoiceSuiteReport({
   mode, suite, error, placing, failedCount, escalated, onEscalate,
@@ -28,29 +26,35 @@ export function VoiceSuiteReport({
   const passN = calls.filter((c) => c.verdict === 'pass').length
 
   return (
-    <div className="rounded-lg border border-border bg-card">
-      <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-        <Phone size={16} className="text-success" />
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-foreground">
-            Real voice calls {mode === 'text_then_voice' ? '(escalated failures)' : ''}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {suite?.agentName ? <>→ {suite.agentName} · </> : null}
-            {calls.length ? `${calls.length} call${calls.length > 1 ? 's' : ''}` : 'no calls yet'}
-            {done && calls.length ? ` · ${passN}/${calls.length} passed` : ''}
+    <div className="ao-panel">
+      <div className="ao-panel-head">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Phone size={16} className="shrink-0 text-success" />
+          <div className="flex min-w-0 flex-col">
+            <span className="ao-panel-title">
+              Real voice calls {mode === 'text_then_voice' ? '(escalated failures)' : ''}
+            </span>
+            <span className="ao-panel-sub">
+              {suite?.agentName ? <>→ {suite.agentName} · </> : null}
+              {calls.length ? `${calls.length} call${calls.length > 1 ? 's' : ''}` : 'no calls yet'}
+              {done && calls.length ? ` · ${passN}/${calls.length} passed` : ''}
+            </span>
           </div>
         </div>
-        {!done && (placing || calls.length > 0) && <Loader size={15} className="animate-spin text-muted-foreground" />}
+        {!done && (placing || calls.length > 0)
+          ? <span className="ao-badge is-accent ao-badge--dot is-pulse shrink-0">In progress</span>
+          : done && calls.length
+            ? <span className={cn('ao-badge shrink-0', passN === calls.length ? 'is-success' : 'is-danger')}>{passN}/{calls.length} passed</span>
+            : null}
       </div>
 
-      <div className="p-4">
+      <div className="ao-panel-body">
         {/* text_then_voice: one-click escalate (avoids silently placing paid calls) */}
         {mode === 'text_then_voice' && !escalated && (
           failedCount > 0 ? (
-            <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/8 px-3.5 py-2.5 text-sm">
-              <span><b>{failedCount}</b> persona{failedCount > 1 ? 's' : ''} failed the text sim. Escalate to real calls? <span className="text-muted-foreground">(rings the phone — Plivo charge)</span></span>
-              <button onClick={onEscalate} className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium hover:bg-primary/90" style={{ color: 'hsl(var(--primary-foreground))' }}>
+            <div className="ao-alert is-warning mb-3 flex-wrap justify-between">
+              <span className="flex items-start gap-2"><AlertTriangle size={16} /><span><b>{failedCount}</b> persona{failedCount > 1 ? 's' : ''} failed the text sim. Escalate to real calls? <span className="opacity-80">(rings the phone — Plivo charge)</span></span></span>
+              <button onClick={onEscalate} className="ao-btn ao-btn--primary ao-btn--sm shrink-0">
                 <Phone size={14} /> Escalate {failedCount}
               </button>
             </div>
@@ -59,12 +63,12 @@ export function VoiceSuiteReport({
           )
         )}
 
-        {error && <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive">{error}</div>}
+        {error && <div className="ao-alert is-danger mb-3"><AlertTriangle size={16} /><span>{error}</span></div>}
         {placing && calls.length === 0 && <div className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader size={14} className="animate-spin" /> Placing real calls…</div>}
 
         <div className="flex flex-col gap-2.5">
           {calls.map((c, i) => (
-            <div key={i} className="rounded-lg border border-border p-3">
+            <div key={i} className="rounded-lg border border-border bg-card p-3 transition-colors">
               <div className="flex items-center gap-2.5">
                 <div className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold text-white" style={{ background: c.avatar }}>{initials(c.personaName)}</div>
                 <div className="min-w-0 flex-1">
@@ -72,8 +76,8 @@ export function VoiceSuiteReport({
                   <div className="text-xs text-muted-foreground">{c.personaType.replace('_', ' ')}</div>
                 </div>
                 {isTerminal(c.status) || !c.status
-                  ? <span className={verdictPill(c.verdict)}>{c.verdict === 'pass' ? 'Pass' : 'Fail'}</span>
-                  : <span className="inline-flex items-center gap-1 text-[11px] text-success"><span className="size-1.5 rounded-full bg-current animate-pulse" />{c.status}</span>}
+                  ? <span className={cn('ao-badge', c.verdict === 'pass' ? 'is-success' : 'is-danger')}>{c.verdict === 'pass' ? 'Pass' : 'Fail'}</span>
+                  : <span className="ao-badge is-success ao-badge--dot is-pulse">{c.status}</span>}
               </div>
 
               {(isTerminal(c.status) || !c.status) && (c.judge?.criteria?.length ?? 0) > 0 && (
@@ -86,7 +90,7 @@ export function VoiceSuiteReport({
                   ))}
                 </div>
               )}
-              {c.error && <div className="mt-1.5 text-[11px] text-destructive">{c.error}</div>}
+              {c.error && <div className="ao-error mt-1.5 text-[11px]">{c.error}</div>}
               {c.recordingUrl && <audio controls preload="none" src={c.recordingUrl} className="mt-2 h-8 w-full" />}
             </div>
           ))}
