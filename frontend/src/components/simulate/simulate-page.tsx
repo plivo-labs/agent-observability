@@ -13,9 +13,10 @@ import { cn } from '@/lib/utils'
 import {
   DEFAULT_PROMPT, PERSONA_TYPES, PERSONAS, SIM_YAML, generatePersonas, listLibraryPersonas,
   listRubrics, runSimulation, savePersonaToLibrary,
-  type CaseStatus, type JudgeTreeT, type Persona, type Rubric, type Severity, type SimResult, type Turn,
+  type CaseStatus, type JudgeTreeT, type Persona, type PersonaType, type Rubric, type Severity, type SimResult, type Turn,
 } from './sim-data'
 import { readSimRun, writeSimRun, clearSimRun } from './run-persistence'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 /* ---------- helpers ---------- */
 const scoreText = (s: number) => (s >= 80 ? 'text-success' : s >= 65 ? 'text-warning' : 'text-destructive')
@@ -322,6 +323,15 @@ const btnPrimary = 'ao-btn ao-btn--primary'
 const btnOut = 'ao-btn ao-btn--outline'
 const btnOutSm = 'ao-btn ao-btn--outline ao-btn--sm'
 
+/* Truman-style "Coverage" presets → AO persona-type arrays the generate endpoint takes. */
+const COVERAGE_OPTIONS: { id: string; label: string; types: PersonaType[] }[] = [
+  { id: 'mixed', label: 'Mixed coverage', types: ['baseline', 'edge_case', 'workflow', 'knowledge', 'red_team'] },
+  { id: 'workflow', label: 'Workflow', types: ['workflow'] },
+  { id: 'edge', label: 'Edge cases', types: ['edge_case'] },
+  { id: 'redteam', label: 'Red teaming', types: ['red_team'] },
+  { id: 'knowledge', label: 'Knowledge base', types: ['knowledge'] },
+]
+
 export interface RunConfig { prompt?: string; yaml?: string; mode: string; personaIds: string[]; personas?: Persona[]; rubric?: { id?: string; name?: string; criteria?: { name: string; question: string; weight?: number }[]; pass_threshold?: number }; autoGen: boolean; threshold: number; phoneNumber?: string }
 
 /* ---------- Define ---------- */
@@ -337,6 +347,11 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
   const [savedGen, setSavedGen] = useState<string[]>([])
   const [genLoading, setGenLoading] = useState(false)
   const [genErr, setGenErr] = useState<string | null>(null)
+  const [genCount, setGenCount] = useState(3) // how many AI personas to generate (backend clamps 1–8)
+  const [coverage, setCoverage] = useState('mixed') // what kind of personas (Truman-style single Coverage select)
+  const [genLang, setGenLang] = useState('en') // language to generate personas in
+  const [genDir, setGenDir] = useState('') // optional extra direction folded into the prompt
+  const [genOpen, setGenOpen] = useState(false) // the "Generate AI personas" popup form
   const [threshold, setThreshold] = useState(70)
   const [rubrics, setRubrics] = useState<Rubric[]>([])
   const [rubricId, setRubricId] = useState('')
@@ -360,9 +375,14 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
       .catch((e) => setGenErr(e.message))
   }
   const doGenerate = () => {
+    const cov = COVERAGE_OPTIONS.find((c) => c.id === coverage) ?? COVERAGE_OPTIONS[0]
+    let p = tab === 'yaml' ? SIM_YAML : prompt
+    const dir = genDir.trim()
+    if (dir) p += `\n\nExtra direction for the personas: ${dir}`
+    if (genLang && genLang.trim().toLowerCase() !== 'en') p += `\n\nWrite the personas in language: ${genLang.trim()}.`
     setGenLoading(true); setGenErr(null)
-    generatePersonas(tab === 'yaml' ? SIM_YAML : prompt, 3, ['red_team', 'edge_case'])
-      .then((r) => { setGenList(r.personas); setSelGen(r.personas.map((p) => p.id)) })
+    generatePersonas(p, genCount, cov.types)
+      .then((r) => { setGenList(r.personas); setSelGen(r.personas.map((p) => p.id)); setGenOpen(false) })
       .catch((e) => setGenErr(e.message))
       .finally(() => setGenLoading(false))
   }
@@ -428,12 +448,59 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               </div>
               <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border" />AI-generated personas<div className="h-px flex-1 bg-border" /></div>
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5"><Sparkles size={16} className="text-[hsl(var(--link))]" /><div className="flex flex-col"><span className="text-sm font-semibold text-foreground">Generate personas from the prompt</span><span className="text-xs text-muted-foreground">red_team + edge_case · tailored to this agent · preview-then-approve</span></div></div>
-                <button className={btnOutSm} onClick={doGenerate} disabled={genLoading}>
-                  {genLoading ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />} {genList.length ? 'Regenerate' : 'Generate 3'}
+                <div className="flex items-center gap-2.5"><Sparkles size={16} className="text-[hsl(var(--link))]" /><div className="flex flex-col"><span className="text-sm font-semibold text-foreground">Generate personas from the prompt</span><span className="text-xs text-muted-foreground">tailored to this agent · preview-then-approve</span></div></div>
+                <button className={btnOutSm} onClick={() => setGenOpen(true)} disabled={genLoading}>
+                  {genLoading ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />} {genList.length ? 'Regenerate' : 'Generate AI personas'}
                 </button>
               </div>
-              {genErr && <div className="ao-error mt-2">{genErr}</div>}
+              {genErr && !genOpen && <div className="ao-error mt-2">{genErr}</div>}
+
+              <Dialog open={genOpen} onOpenChange={setGenOpen}>
+                <DialogContent className="sm:max-w-2xl">
+                  <DialogHeader>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--success))]">Personas · {tab === 'yaml' ? 'from YAML' : 'from prompt'}</span>
+                    <DialogTitle className="text-xl font-semibold uppercase tracking-tight">Auto-generate personas</DialogTitle>
+                    <DialogDescription>Reads your agent prompt and drafts test personas. Preview and approve before they run.</DialogDescription>
+                  </DialogHeader>
+                  <div className="flex flex-col gap-4">
+                    <div className="grid gap-4 sm:grid-cols-[110px_1fr_90px]">
+                      <div className="ao-field">
+                        <label className="ao-label">How many</label>
+                        <input type="number" min={1} max={8} value={genCount}
+                          onChange={(e) => setGenCount(Math.max(1, Math.min(8, Number(e.target.value) || 1)))}
+                          className="ao-input mono" />
+                      </div>
+                      <div className="ao-field">
+                        <label className="ao-label">Coverage</label>
+                        <select value={coverage} onChange={(e) => setCoverage(e.target.value)} className="ao-input">
+                          {COVERAGE_OPTIONS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="ao-field">
+                        <label className="ao-label">Language</label>
+                        <input value={genLang} onChange={(e) => setGenLang(e.target.value)} placeholder="en" className="ao-input" />
+                      </div>
+                    </div>
+                    <div className="ao-field">
+                      <label className="ao-label">Extra direction</label>
+                      <textarea value={genDir} onChange={(e) => setGenDir(e.target.value)} rows={4}
+                        placeholder="Optional: focus on refunds, booking changes, compliance objections, tool failures…"
+                        className="ao-textarea" />
+                    </div>
+                    {genErr && <div className="ao-error">{genErr}</div>}
+                    <div>
+                      <button className="ao-btn ao-btn--sm font-mono uppercase tracking-[0.12em]"
+                        style={{ background: 'hsl(var(--warning) / 0.12)', borderColor: 'hsl(var(--warning) / 0.4)', color: 'hsl(var(--warning))' }}
+                        onClick={doGenerate} disabled={genLoading}>
+                        {genLoading ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />} Generate {genCount} {genCount === 1 ? 'persona' : 'personas'}
+                      </button>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <button className={btnOutSm} onClick={() => setGenOpen(false)} disabled={genLoading}>Close</button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
               {genList.length > 0 && (
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {genList.map((p) => (

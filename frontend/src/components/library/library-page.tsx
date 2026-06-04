@@ -13,13 +13,23 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { VoicePicker } from '@/components/simulate/voice-picker'
 
 const PERSONA_TYPES = ['baseline', 'edge_case', 'workflow', 'knowledge', 'red_team'] as const
+const GENDERS = ['unspecified', 'male', 'female', 'nonbinary'] as const
+const SPEEDS = ['slow', 'normal', 'fast'] as const
+const INTERRUPT_LEVELS = ['low', 'medium', 'high'] as const
+const NOISE_LEVELS = ['none', 'office', 'street', 'cafe'] as const
 const AVATARS = ['#6366f1', '#0ea5e9', '#e11d48', '#f59e0b', '#8b5cf6', '#14b8a6', '#16a34a', '#3b82f6']
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
-interface Persona { id: string; name: string; type: string; goal: string; opener: string; voice: string; avatar: string; builtin: boolean; source: string }
+interface Persona {
+  id: string; name: string; type: string; goal: string; opener: string; voice: string; avatar: string
+  language?: string; gender?: string; accent?: string; speaking_speed?: string; interruption_level?: string; background_noise?: string; enabled?: boolean
+  builtin: boolean; source: string
+}
 interface Criterion { name: string; question: string; weight?: number }
 interface Rubric { id: string; name: string; criteria: Criterion[]; pass_threshold: number; builtin: boolean }
 interface Scenario { id: string; name: string; yaml: string; created_at: string }
@@ -59,7 +69,10 @@ function CardGridSkeleton() {
 }
 
 /* ============================ Personas ============================ */
-const emptyPersona = { name: '', type: 'red_team', goal: '', opener: '', voice: 'cartesia/sonic', avatar: AVATARS[0] }
+const emptyPersona = {
+  name: '', type: 'red_team', goal: '', opener: '', voice: '', avatar: AVATARS[0],
+  language: 'en', gender: 'unspecified', accent: 'neutral', speaking_speed: 'normal', interruption_level: 'medium', background_noise: 'none', enabled: true,
+}
 
 function PersonasTab() {
   const [items, setItems] = useState<Persona[]>([])
@@ -74,7 +87,16 @@ function PersonasTab() {
   useEffect(() => { load() }, [])
 
   const openNew = () => { setEditing(null); setForm(emptyPersona); setErr(null); setOpen(true) }
-  const openEdit = (p: Persona) => { setEditing(p); setForm({ name: p.name, type: p.type, goal: p.goal, opener: p.opener, voice: p.voice, avatar: p.avatar }); setErr(null); setOpen(true) }
+  const openEdit = (p: Persona) => {
+    setEditing(p)
+    setForm({
+      name: p.name, type: p.type, goal: p.goal, opener: p.opener, voice: p.voice, avatar: p.avatar,
+      language: p.language ?? 'en', gender: p.gender ?? 'unspecified', accent: p.accent ?? 'neutral',
+      speaking_speed: p.speaking_speed ?? 'normal', interruption_level: p.interruption_level ?? 'medium',
+      background_noise: p.background_noise ?? 'none', enabled: p.enabled ?? true,
+    })
+    setErr(null); setOpen(true)
+  }
   const save = async () => {
     setBusy(true); setErr(null)
     try {
@@ -133,29 +155,59 @@ function PersonasTab() {
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>{editing ? 'Edit persona' : 'New persona'}</DialogTitle></DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="ao-field"><label className="ao-label">Name <span className="req">*</span></label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Refund Demander" /></div>
-            <div className="ao-field-row">
+          <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+              <div className="ao-field"><label className="ao-label">Name <span className="req">*</span></label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Refund Demander" /></div>
+              <div className="ao-field"><label className="ao-label">Voice (ElevenLabs) <span className="req">*</span></label><VoicePicker value={form.voice} onChange={(v) => setForm({ ...form, voice: v })} /></div>
+              <div className="ao-field"><label className="ao-label">Language</label><Input value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} placeholder="en" /></div>
+              <div className="ao-field"><label className="ao-label">Gender</label>
+                <Select value={form.gender} onValueChange={(v) => setForm({ ...form, gender: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{GENDERS.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label">Accent</label><Input value={form.accent} onChange={(e) => setForm({ ...form, accent: e.target.value })} placeholder="neutral" /></div>
+              <div className="ao-field"><label className="ao-label">Speaking speed</label>
+                <Select value={form.speaking_speed} onValueChange={(v) => setForm({ ...form, speaking_speed: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{SPEEDS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label">Interruption level</label>
+                <Select value={form.interruption_level} onValueChange={(v) => setForm({ ...form, interruption_level: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{INTERRUPT_LEVELS.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label">Background noise</label>
+                <Select value={form.background_noise} onValueChange={(v) => setForm({ ...form, background_noise: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{NOISE_LEVELS.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
               <div className="ao-field"><label className="ao-label">Type</label>
                 <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{PERSONA_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replace('_', ' ')}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="ao-field"><label className="ao-label">Voice</label><Input value={form.voice} onChange={(e) => setForm({ ...form, voice: e.target.value })} /></div>
+              <div className="ao-field"><label className="ao-label">Colour</label>
+                <div className="flex h-9 items-center gap-2">{AVATARS.map((a) => <button key={a} type="button" onClick={() => setForm({ ...form, avatar: a })} className={cn('size-7 rounded-md transition', form.avatar === a ? 'ring-2 ring-ring ring-offset-2 ring-offset-background' : 'hover:scale-110')} style={{ background: a }} />)}</div>
+              </div>
             </div>
-            <div className="ao-field"><label className="ao-label">Goal</label><textarea value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} rows={2} className="ao-textarea" placeholder="What this caller tries to do" /></div>
             <div className="ao-field"><label className="ao-label">Opener</label><Input value={form.opener} onChange={(e) => setForm({ ...form, opener: e.target.value })} placeholder="Their first line" /></div>
-            <div className="ao-field"><label className="ao-label">Colour</label>
-              <div className="mt-1 flex gap-2">{AVATARS.map((a) => <button key={a} onClick={() => setForm({ ...form, avatar: a })} className={cn('size-7 rounded-md transition', form.avatar === a ? 'ring-2 ring-ring ring-offset-2 ring-offset-background' : 'hover:scale-110')} style={{ background: a }} />)}</div>
-            </div>
+            <div className="ao-field"><label className="ao-label">System prompt</label><textarea value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} rows={4} className="ao-textarea" placeholder="What this caller tries to do — their motivation, constraints, and behaviour" /></div>
+            <label className="flex items-center gap-2 text-sm text-foreground">
+              <Checkbox checked={form.enabled} onCheckedChange={(c) => setForm({ ...form, enabled: c === true })} />
+              Available for scenarios
+            </label>
             {err && <div className="ao-error">{err}</div>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save} disabled={busy || !form.name.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create persona'}</Button>
+            <Button onClick={save} disabled={busy || !form.name.trim() || !form.voice.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save persona' : 'Create persona'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
