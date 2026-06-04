@@ -178,6 +178,26 @@ export const takeoverStart = (runId: string) => tFetch(`/v1/runs/${runId}/takeov
 export const takeoverStop = (runId: string) => tFetch(`/v1/runs/${runId}/takeover/stop`, { method: "POST" });
 export const endCall = (runId: string) => tFetch(`/v1/runs/${runId}/end-call`, { method: "POST" });
 
+/** Proxy Truman's GET /v1/voices (ElevenLabs catalog) through AO so the Bearer
+ *  stays server-side. Returns the BARE array as-is. Best-effort: any failure
+ *  (disabled, non-2xx, network) yields [] so the frontend picker degrades to a
+ *  plain text input. */
+export async function fetchVoices(): Promise<any[]> {
+  if (!config.TRUMAN_API_URL || !config.TRUMAN_API_TOKEN) return [];
+  try {
+    const res = await fetch(`${base()}/v1/voices`, {
+      headers: { authorization: `Bearer ${config.TRUMAN_API_TOKEN}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error(`[sim] fetchVoices failed: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 /** Stream a finished run's recording through AO (so the Truman token isn't exposed). */
 export async function trumanAudioUpstream(runId: string): Promise<Response> {
   return fetch(`${base()}/v1/runs/${runId}/audio.ogg?token=${encodeURIComponent(config.TRUMAN_API_TOKEN ?? "")}`, {

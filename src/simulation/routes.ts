@@ -5,7 +5,7 @@ import { runSimulation, runCall, generatePersonas, PERSONA_CATALOG, type Persona
 import { persistSimRun, persistCallRun, persistCallBatch } from "./persist.js";
 import { buildErrorResponse, newApiId } from "../response.js";
 import { config, trumanEnabled } from "../config.js";
-import { trumanHealthy, trumanAudioUpstream, takeoverStart, takeoverStop, endCall } from "./truman.js";
+import { trumanHealthy, trumanAudioUpstream, takeoverStart, takeoverStop, endCall, fetchVoices } from "./truman.js";
 import { createLiveSuite, reconcileSuite } from "./live.js";
 
 const callRequestSchema = z.object({
@@ -50,6 +50,12 @@ export function registerSimulationRoutes(app: Hono) {
       console.error(`[sim] generate failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("generate_failed", "Persona generation failed"), 500);
     }
+  });
+
+  // ElevenLabs voice catalog (proxied from Truman, token kept server-side).
+  // Returns the bare array; degrades to [] (status 200) if Truman is off/errors.
+  app.get("/api/voices", async (c) => {
+    return c.json(await fetchVoices());
   });
 
   // Which Live mode is active — so the UI can badge real vs shell, and poll.
