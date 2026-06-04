@@ -74,6 +74,11 @@ export interface MetricsSummary {
   interruptions: number
   avg_user_perceived_ms?: number
   p95_user_perceived_ms?: number
+  // Turn-detection (end-of-utterance) decision latency + barge-in rate.
+  // Present for LiveKit/real-call sessions; absent (→ '—') for text sims.
+  avg_turn_decision_ms?: number
+  p95_turn_decision_ms?: number
+  interruption_rate?: number
   latency?: Record<string, LatencyPercentiles>
   usage?: {
     total_llm_tokens: number

@@ -59,6 +59,11 @@ interface MetricsSummary {
   interruptions: number;
   avg_user_perceived_ms?: number;
   p95_user_perceived_ms?: number;
+  // Turn-detection (end-of-utterance) decision latency + how often a turn was
+  // interrupted. Used by the Monitor "Turn Detection" + "Barge-in" cards.
+  avg_turn_decision_ms?: number;
+  p95_turn_decision_ms?: number;
+  interruption_rate?: number;
   providers?: {
     stt_provider?: string;
     stt_model?: string;
@@ -331,6 +336,9 @@ export function buildSessionMetrics(
   const perceivedValues = turns
     .map((t) => t.user_perceived_ms)
     .filter((v): v is number => v != null);
+  const turnDecisionValues = turns
+    .map((t) => t.turn_decision_ms)
+    .filter((v): v is number => v != null);
 
   // If per-turn tokens are missing, compute from session-level usage data.
   // Usage entries have: { provider, model, input_tokens?, output_tokens?, characters_count?, audio_duration? }
@@ -367,6 +375,9 @@ export function buildSessionMetrics(
     interruptions: totalInterruptions,
     avg_user_perceived_ms: perceivedValues.length > 0 ? computeAvg(perceivedValues) : undefined,
     p95_user_perceived_ms: perceivedValues.length > 0 ? computePercentile(perceivedValues, 0.95) : undefined,
+    avg_turn_decision_ms: turnDecisionValues.length > 0 ? computeAvg(turnDecisionValues) : undefined,
+    p95_turn_decision_ms: turnDecisionValues.length > 0 ? computePercentile(turnDecisionValues, 0.95) : undefined,
+    interruption_rate: turns.length > 0 ? totalInterruptions / turns.length : undefined,
     providers: (firstStt || firstLlm || firstTts) ? {
       stt_provider: firstStt?.stt_provider,
       stt_model: firstStt?.stt_model,

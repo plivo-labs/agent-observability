@@ -15,6 +15,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:9090',
         changeOrigin: true,
+        ws: true, // proxy WebSocket upgrades (live transcript/audio/takeover) to the backend
       },
     },
   },

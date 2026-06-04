@@ -33,6 +33,8 @@ const FRAMEWORK_OPTIONS = [
 const TESTING_FRAMEWORK_OPTIONS = [
   { label: 'pytest', value: 'pytest' },
   { label: 'Vitest', value: 'vitest' },
+  { label: 'Simulation', value: 'simulation' },
+  { label: 'Live call', value: 'live-call' },
 ]
 
 function PassRateBar({ passed, total }: { passed: number; total: number }) {
