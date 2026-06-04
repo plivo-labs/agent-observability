@@ -36,12 +36,9 @@ async def _handle_job(payload: dict, plivo_client: plivo.RestClient) -> None:
 
     target = loaded.agent.phone_number
     answer_url = f"{settings.public_answer_url}?run_id={run_id}"
-    log.info(
-        "place_call: run_id=%s target=%s answer_url=%s",
-        run_id,
-        target,
-        answer_url,
-    )
+    # Do not log the dialed phone number (target) in clear text — CodeQL flags
+    # it as sensitive. run_id + answer_url are enough to trace a call.
+    log.info("place_call: run_id=%s answer_url=%s", run_id, answer_url)
 
     try:
         resp = plivo_client.calls.create(

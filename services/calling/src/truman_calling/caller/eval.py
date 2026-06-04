@@ -7,6 +7,7 @@ import logging
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import aiohttp
 from openai import AsyncAzureOpenAI
@@ -49,7 +50,23 @@ def _slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip()) or "unknown"
 
 
+# SSRF guard — the recording URL arrives in the Plivo callback payload, so it is
+# attacker-influenceable. Only fetch https URLs on a known Plivo / S3 host.
+_ALLOWED_RECORDING_HOSTS = ("plivo.com", "amazonaws.com")
+
+
+def _validate_recording_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not any(
+        host == d or host.endswith("." + d) for d in _ALLOWED_RECORDING_HOSTS
+    ):
+        raise ValueError(f"refusing to fetch recording from untrusted URL: host={host!r}")
+    return url
+
+
 async def download_recording(record_url: str, dest: Path) -> Path:
+    record_url = _validate_recording_url(record_url)
     auth = aiohttp.BasicAuth(settings.plivo_auth_id, settings.plivo_auth_token)
     async with aiohttp.ClientSession(auth=auth) as session:
         async with session.get(record_url) as resp:
