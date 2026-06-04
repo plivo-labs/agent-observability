@@ -1,4 +1,4 @@
-import { Coins, Gauge, MessageCircle, OctagonX, Timer, Wrench } from 'lucide-react'
+import { Coins, Gauge, MessageCircle, OctagonX, Split, Timer, Wrench } from 'lucide-react'
 import { formatMs } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
 import { usePerformance } from '@/lib/observability-hooks'
@@ -59,6 +59,10 @@ export const MetricSummaryCards = ({
   const avg = summary.avg_user_perceived_ms ?? summary.latency?.user_perceived_ms?.avg ?? null
   const totalTokens = summary.total_llm_tokens ?? summary.usage?.total_llm_tokens ?? 0
   const interruptions = summary.interruptions ?? summary.interruption?.total_interruptions ?? 0
+  // Turn-detection (end-of-turn decision) latency + barge-in rate. Present for
+  // real-call / LiveKit sessions; '—' (and no rate) for text sims.
+  const turnDecisionMs = summary.p95_turn_decision_ms ?? summary.avg_turn_decision_ms ?? null
+  const interruptionRate = summary.interruption_rate
 
   const renderLatency = (ms: number | null) => {
     if (ms == null) return '—'
@@ -74,7 +78,19 @@ export const MetricSummaryCards = ({
   return (
     <div className="obs-metrics">
       <MetricTile icon={<MessageCircle size={12} />} label="Turns" value={summary.total_turns} />
-      <MetricTile icon={<OctagonX size={12} />} label="Interruptions" value={interruptions} />
+      <MetricTile
+        icon={<OctagonX size={12} />}
+        label="Barge-in"
+        value={interruptions}
+        sub={interruptionRate != null ? `${Math.round(interruptionRate * 100)}% of turns` : undefined}
+      />
+      <MetricTile
+        icon={<Split size={12} />}
+        label="Turn Detection"
+        value={renderLatency(turnDecisionMs)}
+        sub={turnDecisionMs != null ? 'end-of-turn decision' : undefined}
+        tone={latencyTone(turnDecisionMs)}
+      />
       <MetricTile icon={<Wrench size={12} />} label="Tool Calls" value={summary.total_tool_calls} />
       <MetricTile
         icon={<Gauge size={12} />}

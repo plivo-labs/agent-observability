@@ -12,6 +12,11 @@ import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
+import { registerSimulationRoutes } from "./simulation/routes.js";
+import { registerLibraryRoutes } from "./simulation/library.js";
+import { registerScheduleRoutes, startScheduler } from "./simulation/schedules.js";
+import { startLiveReconciler } from "./simulation/live.js";
+import { registerLiveWsRoutes, websocket } from "./simulation/ws.js";
 import { sortSessionEvents } from "./events.js";
 import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
 import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
@@ -53,6 +58,15 @@ app.get("/health", (c) => {
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
 
 registerEvalRoutes(app);
+
+// ── Simulation endpoints (run a persona sweep against a prompt) ──────────────
+
+registerSimulationRoutes(app);
+registerLibraryRoutes(app);
+registerScheduleRoutes(app);
+registerLiveWsRoutes(app);
+startScheduler();
+startLiveReconciler();
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 
@@ -373,4 +387,5 @@ if (process.env.NODE_ENV === "production") {
 export default {
   port: config.PORT,
   fetch: app.fetch,
+  websocket,
 };
