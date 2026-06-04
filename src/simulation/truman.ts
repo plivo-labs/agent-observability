@@ -21,7 +21,7 @@ import { sql } from "../db.js";
 import { deriveAgentName, type CallResult, type Criterion, type CriterionVerdict, type Turn } from "./engine.js";
 
 const base = () => (config.TRUMAN_API_URL ?? "").replace(/\/$/, "");
-const fp = (obj: unknown) => createHash("sha1").update(JSON.stringify(obj)).digest("hex").slice(0, 16);
+const fp = (obj: unknown) => createHash("sha256").update(JSON.stringify(obj)).digest("hex").slice(0, 16);
 
 async function tFetch(path: string, opts: { method?: string; body?: unknown } = {}): Promise<any> {
   const res = await fetch(`${base()}${path}`, {

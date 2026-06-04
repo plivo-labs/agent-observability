@@ -84,6 +84,9 @@ export async function persistCallBatch(agentName: string, calls: CallResult[]): 
         events: c.transcript.map((t) => ({ type: "message", role: t.role === "agent" ? "assistant" : "user", content: t.t, ms: t.ms, flag: t.flag })),
         judgments: c.judge.criteria.map((cr) => ({ name: cr.name, verdict: cr.pass ? "pass" : "fail", reasoning: cr.justification })),
         failure: c.verdict === "fail" ? { message: c.judge.notes, type: "CriteriaFailed" } : null,
+        // Live calls carry a Truman run id → proxy the recording so the Evals
+        // page can play each call. Null for demo/text-sim cases (no real audio).
+        recording_url: c.trumanRunId ? `/api/calls/audio/${c.trumanRunId}` : null,
       })),
     };
     await insertEvalRun(payload);
@@ -124,6 +127,7 @@ export async function persistCallRun(result: CallResult): Promise<string | null>
         events: result.transcript.map((t) => ({ type: "message", role: t.role === "agent" ? "assistant" : "user", content: t.t, ms: t.ms, flag: t.flag })),
         judgments: result.judge.criteria.map((c) => ({ name: c.name, verdict: c.pass ? "pass" : "fail", reasoning: c.justification })),
         failure: result.verdict === "fail" ? { message: result.judge.notes, type: "CriteriaFailed" } : null,
+        recording_url: result.trumanRunId ? `/api/calls/audio/${result.trumanRunId}` : null,
       }],
     };
     await insertEvalRun(payload);
