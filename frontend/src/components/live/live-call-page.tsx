@@ -214,7 +214,7 @@ export function LiveCallPage() {
           </div>
           <div className="ao-hero-actions">
             {liveMode === 'truman'
-              ? <span className="ao-badge is-success ao-badge--dot is-pulse">Real · Truman</span>
+              ? <span className="ao-badge is-success ao-badge--dot is-pulse">Real call</span>
               : <span className="ao-badge is-warning ao-badge--dot">Shell · demo</span>}
           </div>
         </header>
@@ -222,12 +222,12 @@ export function LiveCallPage() {
         {liveMode === 'truman' ? (
           <div className="ao-alert mb-4 ao-reveal ao-reveal-1">
             <Phone />
-            <span><b>Real calls via Truman.</b> Each persona places a real phone call to <span className="font-mono">{phoneNo.trim() || 'the number you enter below'}</span> over LiveKit + Plivo; Truman judges the recorded transcript against your rubric. Calls run asynchronously — the suite updates live as each finishes. (Dialing needs Truman's caller worker running.)</span>
+            <span><b>Real calls.</b> Each persona places a real phone call to <span className="font-mono">{phoneNo.trim() || 'the number you enter below'}</span> over LiveKit + Plivo; the LiveKit judge scores the recorded transcript against your rubric. Calls run asynchronously — the suite updates live as each finishes. (Dialing needs AO's caller worker running — <span className="font-mono">bun run caller:worker</span>.)</span>
           </div>
         ) : (
           <div className="ao-alert is-warning mb-4 ao-reveal ao-reveal-1">
             <TriangleAlert />
-            <span><b>Live-call shell.</b> Real PSTN dialing is served by the Truman caller — set <span className="font-mono">TRUMAN_API_URL</span> to place real calls. Here calls are engine-driven; the suite, lifecycle, transcript, takeover and criteria scoring match Truman.</span>
+            <span><b>Live-call shell.</b> Real PSTN dialing is served by AO's vendored caller — set <span className="font-mono">TRUMAN_API_URL</span> + run the caller worker to place real calls. Here calls are engine-driven; the suite, lifecycle, transcript, takeover and criteria scoring match a real call.</span>
           </div>
         )}
 
@@ -242,7 +242,7 @@ export function LiveCallPage() {
                   <label className="ao-label">Agent</label>
                   <div className="relative">
                     <Bot size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <select value={agentId} onChange={(e) => onAgentChange(e.target.value)} className="ao-input w-full pl-8">
+                    <select value={agentId} onChange={(e) => onAgentChange(e.target.value)} className="ao-input w-full" style={{ paddingLeft: '2.25rem' }}>
                       <option value="">Custom prompt</option>
                       {agents.map((a) => <option key={a.id} value={a.id}>{a.name}{a.builtin ? ' · builtin' : ''}</option>)}
                     </select>
@@ -259,7 +259,8 @@ export function LiveCallPage() {
                   </div>
                   <div className="ao-field">
                     <label className="ao-label">Opener override</label>
-                    <input value={opener} onChange={(e) => setOpener(e.target.value)} placeholder="auto per persona" className="ao-input w-full" />
+                    <input value={opener} onChange={(e) => setOpener(e.target.value)} placeholder="auto per persona" className="ao-input w-full" title="The first line each caller speaks when the call connects. Leave blank to use each persona's own opener." />
+                    <span className="mt-1 block text-xs text-muted-foreground">First line each caller says when the call connects — blank uses each persona's own opener.</span>
                   </div>
                 </div>
               </div>
@@ -317,7 +318,7 @@ export function LiveCallPage() {
       <header className="ao-hero ao-reveal">
         <div>
           <div className="ao-hero-eyebrow"><Radio /> Live suite</div>
-          <h1 className="ao-hero-title flex items-center gap-2.5">{batch?.agentName}{isTruman && <span className="ao-badge is-success ao-badge--dot is-pulse">real · Truman</span>}</h1>
+          <h1 className="ao-hero-title flex items-center gap-2.5">{batch?.agentName}{isTruman && <span className="ao-badge is-success ao-badge--dot is-pulse">real call</span>}</h1>
           <p className="ao-hero-sub flex items-center gap-2"><span className="ao-mono">{phoneNo}</span> · <Timer size={13} /> {fmtClock(elapsed)} · {calls.length} calls</p>
         </div>
         <div className="ao-hero-actions">
