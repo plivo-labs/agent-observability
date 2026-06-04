@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 export interface Voice {
   voice_id: string
@@ -85,22 +86,21 @@ export function VoicePicker({
 
   return (
     <div className={cn('flex items-stretch gap-2', className)}>
-      <select
-        className="ao-input flex-1"
-        value={value}
-        disabled={loading}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {!value && <option value="">{loading ? 'Loading voices…' : 'Select a voice…'}</option>}
-        {(voices ?? []).map((v) => {
-          const hint = voiceHint(v)
-          return (
-            <option key={v.voice_id} value={v.voice_id}>
-              {v.name}{hint ? ` — ${hint}` : ''}{v.is_default ? ' (default)' : ''}
-            </option>
-          )
-        })}
-      </select>
+      <Select value={value || undefined} onValueChange={onChange} disabled={loading}>
+        <SelectTrigger className="flex-1" aria-label="Voice">
+          <SelectValue placeholder={loading ? 'Loading voices…' : 'Select a voice…'} />
+        </SelectTrigger>
+        <SelectContent className="max-h-[320px]">
+          {(voices ?? []).map((v) => {
+            const hint = voiceHint(v)
+            return (
+              <SelectItem key={v.voice_id} value={v.voice_id}>
+                {v.name}{hint ? ` — ${hint}` : ''}{v.is_default ? ' (default)' : ''}
+              </SelectItem>
+            )
+          })}
+        </SelectContent>
+      </Select>
       <button
         type="button"
         onClick={toggle}

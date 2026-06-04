@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
-import type { ColumnDef, Row } from '@tanstack/react-table'
+import type { ColumnDef, Row, Table } from '@tanstack/react-table'
 import {
   Activity,
   AlertTriangle,
@@ -33,9 +33,14 @@ import { useObservabilityContext } from '@/lib/observability-provider'
 import type { AgentSessionRow } from '@/lib/observability-types'
 import { CapsChips, DurationCell, TransportPill } from '@/components/obs-cells'
 
+// Transport filter options. Must mirror the values that actually land in
+// `agent_transport_sessions.transport` — real Live/Truman calls persist as
+// `phone`, text sims as `text` — otherwise the filter never matches a row.
 const TRANSPORT_OPTIONS = [
+  { label: 'Phone', value: 'phone' },
   { label: 'SIP', value: 'sip' },
   { label: 'Audio Stream', value: 'audio_stream' },
+  { label: 'Text', value: 'text' },
 ]
 
 // Human label for the neutral status pill. Transport when present, else state.
@@ -45,6 +50,66 @@ const TRANSPORT_LABELS: Record<string, string> = {
   text: 'Text',
   terminal_text: 'Terminal Text',
   phone: 'Phone',
+}
+
+// Shared column layout. The header row and every data/skeleton row consume the
+// SAME width classes here so the labels can't drift out of alignment with the
+// cells beneath them. Order mirrors the rendered cells in `SessionCard`:
+//   (checkbox) · Session · Pipeline · Started · Turns · Duration · Transport
+const COL = {
+  select: 'flex w-4 shrink-0 items-center',
+  // SESSION gets a healthy share but is capped so it can't swallow the row and
+  // leave a void before PIPELINE. A flexible spacer (COL.spacer) absorbs any
+  // leftover width on very wide viewports, keeping the data columns grouped.
+  session: 'min-w-0 flex-1 max-w-[360px]',
+  // Invisible elastic gap — soaks up extra width so the columns stay balanced
+  // instead of one column stretching. Not rendered as a visible header label.
+  spacer: 'hidden flex-1 lg:block',
+  pipeline: 'hidden w-[180px] shrink-0 overflow-hidden lg:block',
+  started: 'hidden w-[168px] shrink-0 truncate whitespace-nowrap sm:block',
+  turns: 'w-[80px] shrink-0 whitespace-nowrap text-right',
+  duration: 'w-[72px] shrink-0 whitespace-nowrap text-right',
+  transport: 'w-[104px] shrink-0',
+} as const
+
+// Subtle, on-theme column header — small uppercase mono labels with a bottom
+// border, matching the Neo/Truman `.ao-stat-label` aesthetic. Reads as headers,
+// not as another data row. Carries the select-all checkbox in the first slot.
+function SessionListHeader({
+  table,
+}: {
+  table: Table<AgentSessionRow>
+}) {
+  const labelCls =
+    'text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80'
+  return (
+    <div
+      className="flex items-center gap-3 border-b border-border px-3 pb-1.5"
+      style={{ fontFamily: 'var(--mono)' }}
+    >
+      <div className={COL.select}>
+        <Checkbox
+          aria-label="Select all rows on this page"
+          checked={
+            table.getIsAllPageRowsSelected()
+              ? true
+              : table.getIsSomePageRowsSelected()
+                ? 'indeterminate'
+                : false
+          }
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+      <span className={cn(COL.session, labelCls)}>Session</span>
+      <span className={COL.spacer} aria-hidden />
+      <span className={cn(COL.pipeline, labelCls)}>Pipeline</span>
+      <span className={cn(COL.started, labelCls)}>Started</span>
+      <span className={cn(COL.turns, labelCls)}>Turns</span>
+      <span className={cn(COL.duration, labelCls)}>Duration</span>
+      <span className={cn(COL.transport, labelCls)}>Transport</span>
+    </div>
+  )
 }
 
 // One agent session rendered as a Truman "Recent runs" card: sharp-radius panel,
@@ -83,59 +148,48 @@ function SessionCard({
       }}
       data-state={row.getIsSelected() ? 'selected' : undefined}
       className={cn(
-        'group block cursor-pointer border bg-card px-5 py-4 shadow-sm transition-colors',
+        'group flex cursor-pointer items-center gap-3 border bg-card px-3 py-2 transition-colors',
         'rounded-[var(--radius)] hover:border-[hsl(var(--muted-foreground)/0.4)] hover:bg-muted/30',
         row.getIsSelected() && 'border-[hsl(var(--primary))] bg-muted/30',
       )}
       style={{ borderRadius: 'var(--radius)' }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <Checkbox
-            aria-label={`Select session ${session.session_id}`}
-            checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
-            onClick={(e) => e.stopPropagation()}
-            className="mt-1 shrink-0"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-base text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
-              {title}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground" style={{ fontFamily: 'var(--mono)' }}>
-              {session.transport && (
-                <>
-                  <span className="truncate">{TRANSPORT_LABELS[session.transport] ?? session.transport}</span>
-                  <span aria-hidden>·</span>
-                </>
-              )}
-              <span>{idShort}</span>
-              <span aria-hidden>·</span>
-              <span>{session.turn_count} turns</span>
-              <span aria-hidden>·</span>
-              <span>{formatDuration(session.duration_ms)}</span>
-            </div>
-          </div>
-        </div>
-        <span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border-border">
-          {pill}
+      <div className={COL.select}>
+        <Checkbox
+          aria-label={`Select session ${session.session_id}`}
+          checked={row.getIsSelected()}
+          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+      <div className={cn(COL.session, 'flex items-center gap-2')}>
+        <span className="truncate text-sm text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+          {title}
+        </span>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70" style={{ fontFamily: 'var(--mono)' }}>
+          {idShort}
         </span>
       </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      <div className={COL.spacer} aria-hidden />
+      <div className={COL.pipeline}>
         <CapsChips
           stt={!textOnly && session.has_stt}
           llm={session.has_llm}
           tts={!textOnly && session.has_tts}
         />
-        <span className="text-xs uppercase tracking-wide text-muted-foreground" style={{ fontFamily: 'var(--mono)' }}>
-          {session.turn_count} {session.turn_count === 1 ? 'turn' : 'turns'}
-        </span>
       </div>
-
-      <div className="mt-3 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80" style={{ fontFamily: 'var(--mono)' }}>
+      <span className={cn(COL.started, 'truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }} title={formatDate(session.started_at)}>
         {formatDate(session.started_at)}
-      </div>
+      </span>
+      <span className={cn(COL.turns, 'text-[10px] uppercase tracking-[0.16em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+        {session.turn_count} {session.turn_count === 1 ? 'turn' : 'turns'}
+      </span>
+      <span className={cn(COL.duration, 'text-[10px] tabular-nums text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+        {formatDuration(session.duration_ms)}
+      </span>
+      <span className={cn(COL.transport, 'truncate rounded-full border px-2 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border-border')}>
+        {pill}
+      </span>
     </div>
   )
 }
@@ -143,18 +197,21 @@ function SessionCard({
 function SessionCardSkeleton() {
   return (
     <div
-      className="border bg-card px-5 py-4 shadow-sm"
+      className="flex items-center gap-3 border bg-card px-3 py-2"
       style={{ borderRadius: 'var(--radius)' }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-2">
-          <Skeleton className="h-5 w-48" />
-          <Skeleton className="h-3 w-64" />
-        </div>
-        <Skeleton className="h-5 w-16 rounded-full" />
+      <div className={COL.select}>
+        <Skeleton className="h-4 w-4" />
       </div>
-      <Skeleton className="mt-3 h-4 w-40" />
-      <Skeleton className="mt-3 h-3 w-32" />
+      <Skeleton className={cn(COL.session, 'h-4')} />
+      <div className={COL.spacer} aria-hidden />
+      <div className={COL.pipeline}>
+        <Skeleton className="h-4 w-[120px]" />
+      </div>
+      <Skeleton className={cn(COL.started, 'h-3')} />
+      <Skeleton className={cn(COL.turns, 'h-3')} />
+      <Skeleton className={cn(COL.duration, 'h-3')} />
+      <Skeleton className={cn(COL.transport, 'h-5 rounded-full')} />
     </div>
   )
 }
@@ -172,14 +229,21 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
   // string. We expand it server-side into a 00:00 → next-midnight window so
   // the query returns every session that started during that calendar day.
+  //
+  // The `started_at` URL key is owned by `useDataTable` (the toolbar's date
+  // picker writes it). That column has no `meta.options`, so `useDataTable`
+  // registers it with a *single-string* parser and serializes the picked epoch
+  // ms as a plain string. We must read it back with the SAME `parseAsString`
+  // shape — registering a second hook with a different parser (e.g.
+  // `parseAsArrayOf`) makes the two nuqs hooks disagree on the key's
+  // serialization and the picked value never lands in the URL.
   const [startedAt] = useQueryState(
     'started_at',
-    parseAsArrayOf(parseAsString, ',').withDefault([]),
+    parseAsString.withDefault(''),
   )
   const startedDay = useMemo(() => {
-    const v = startedAt[0]
-    if (!v) return undefined
-    const d = new Date(Number(v))
+    if (!startedAt) return undefined
+    const d = new Date(Number(startedAt))
     return Number.isNaN(d.getTime()) ? undefined : d
   }, [startedAt])
   const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
@@ -484,7 +548,8 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
       <div className="ao-reveal ao-reveal-3 flex flex-col gap-2.5">
         <DataTableToolbar table={table} />
         {loading && rows.length === 0 ? (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <SessionListHeader table={table} />
             {Array.from({ length: 5 }).map((_, i) => (
               <SessionCardSkeleton key={`sk-${i}`} />
             ))}
@@ -501,7 +566,8 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <SessionListHeader table={table} />
             {rows.map((row) => (
               <SessionCard
                 key={row.id}

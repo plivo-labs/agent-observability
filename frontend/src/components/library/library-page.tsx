@@ -164,32 +164,32 @@ function PersonasTab() {
               <div className="ao-field"><label className="ao-label">Language</label><Input value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} placeholder="en" /></div>
               <div className="ao-field"><label className="ao-label">Gender</label>
                 <Select value={form.gender} onValueChange={(v) => setForm({ ...form, gender: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{GENDERS.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="ao-field"><label className="ao-label">Accent</label><Input value={form.accent} onChange={(e) => setForm({ ...form, accent: e.target.value })} placeholder="neutral" /></div>
               <div className="ao-field"><label className="ao-label">Speaking speed</label>
                 <Select value={form.speaking_speed} onValueChange={(v) => setForm({ ...form, speaking_speed: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{SPEEDS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="ao-field"><label className="ao-label">Interruption level</label>
                 <Select value={form.interruption_level} onValueChange={(v) => setForm({ ...form, interruption_level: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{INTERRUPT_LEVELS.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="ao-field"><label className="ao-label">Background noise</label>
                 <Select value={form.background_noise} onValueChange={(v) => setForm({ ...form, background_noise: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{NOISE_LEVELS.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="ao-field"><label className="ao-label">Type</label>
                 <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{PERSONA_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replace('_', ' ')}</SelectItem>)}</SelectContent>
                 </Select>
               </div>

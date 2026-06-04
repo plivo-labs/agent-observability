@@ -89,6 +89,11 @@ export interface SimCaseResult {
    *  `scopes` is the additive leveled-judge block (flow/agent/task/node),
    *  present only when leveled judging was requested. */
   judge?: { criteria: CriterionVerdict[]; overall: 'pass' | 'fail'; notes: string; scopes?: JudgeScopes }
+  /** Per-case leveled-judge tree for THIS persona (built backend-side in
+   *  `synthesize`). The report's Leveled judge renders the selected case's tree
+   *  so changing persona changes the whole tree; falls back to the run-level
+   *  `SimResult.judgeTree` for older runs that lack it. */
+  judgeTree?: JudgeTreeT
 }
 export interface JudgeNode { scope: string; status: CaseStatus; verdict: string; turn?: number }
 export interface JudgeTask { id: string; name: string; score: number; status: CaseStatus; verdict: string; turn?: number; nodes?: JudgeNode[] }
@@ -337,4 +342,129 @@ export async function runSimulation(req: SimRequest, signal?: AbortSignal): Prom
     throw new Error(msg)
   }
   return res.json()
+}
+
+/* ---------- server-side simulation JOB (resumable across refresh / nav) ----------
+ * POST /api/simulations/jobs starts the run on the SERVER and returns a jobId
+ * immediately; the run continues even if this tab unmounts or the page reloads.
+ * GET /api/simulations/jobs/:id returns the JobState (status + cases incl.
+ * turns-so-far + result/runId/error). The page polls this to drive the live UI
+ * and re-fetches the same jobId on mount to RESUME. A 404 means the server has
+ * no record (expired / backend restart) — only then fall back to Re-run. */
+export interface JobTurn { role: 'agent' | 'user'; t: string; ms: number | null; flag: string | null }
+export interface JobCase {
+  index: number
+  personaName: string
+  personaType: PersonaType
+  status?: CaseStatus
+  score?: number
+  turns: JobTurn[]
+}
+export interface JobState {
+  id: string
+  status: 'running' | 'done' | 'error'
+  startedAt: number
+  updatedAt: number
+  cases: JobCase[]
+  result?: SimResult
+  runId?: string | null
+  error?: string
+}
+
+export async function startSimulationJob(req: SimRequest): Promise<{ jobId: string }> {
+  const res = await fetch('/api/simulations/jobs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    let msg = `Simulation failed to start (${res.status})`
+    try { const e = await res.json(); msg = e?.error?.message ?? msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+/** Fetch a job's current state. Throws with `.notFound = true` on a 404 so the
+ *  caller can distinguish "server has no record" (fall back to Re-run) from a
+ *  transient network error (keep polling). */
+export async function getSimulationJob(jobId: string): Promise<JobState> {
+  const res = await fetch(`/api/simulations/jobs/${jobId}`)
+  if (!res.ok) {
+    const err = new Error(`Simulation job poll failed (${res.status})`) as Error & { notFound?: boolean }
+    if (res.status === 404) err.notFound = true
+    throw err
+  }
+  return res.json()
+}
+
+/* ---------- streaming simulation (live transcript via NDJSON) ----------
+ * POST /api/simulations/stream returns a newline-delimited JSON stream. Each
+ * non-empty line is one event of the shape:
+ *   {"type":"start","cases":[{"index":0,"personaName":"...","personaType":"..."}]}
+ *   {"type":"turn","caseIndex":0,"turn":{"role":"user","t":"...","ms":null,"flag":null}}
+ *   {"type":"case_done","caseIndex":0,"status":"pass","score":86}
+ *   {"type":"done","runId":"<uuid|null>","result":{...full SimResult...}}
+ *   {"type":"error","message":"..."}
+ * Handlers are dispatched as events arrive; the AbortSignal cancels the fetch. */
+export interface StreamCaseMeta { index: number; personaName: string; personaType: string }
+export interface StreamHandlers {
+  onStart: (cases: StreamCaseMeta[]) => void
+  onTurn: (caseIndex: number, turn: Turn) => void
+  onCaseDone: (caseIndex: number, status: string, score: number) => void
+  onDone: (result: SimResult, runId: string | null) => void
+  onError: (msg: string) => void
+}
+
+export async function runSimulationStream(req: SimRequest, handlers: StreamHandlers, signal?: AbortSignal): Promise<void> {
+  const res = await fetch('/api/simulations/stream', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  })
+  if (!res.ok || !res.body) {
+    let msg = `Simulation stream failed (${res.status})`
+    try { const e = await res.json(); msg = e?.error?.message ?? msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  const dispatch = (line: string) => {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    let evt: { type: string; [k: string]: unknown }
+    try { evt = JSON.parse(trimmed) } catch { return } // skip malformed lines
+    switch (evt.type) {
+      case 'start':
+        handlers.onStart((evt.cases as StreamCaseMeta[]) ?? [])
+        break
+      case 'turn':
+        handlers.onTurn(evt.caseIndex as number, evt.turn as Turn)
+        break
+      case 'case_done':
+        handlers.onCaseDone(evt.caseIndex as number, evt.status as string, evt.score as number)
+        break
+      case 'done':
+        handlers.onDone(evt.result as SimResult, (evt.runId as string | null) ?? null)
+        break
+      case 'error':
+        handlers.onError((evt.message as string) ?? 'Simulation failed')
+        break
+    }
+  }
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl)
+      buf = buf.slice(nl + 1)
+      dispatch(line)
+    }
+  }
+  buf += decoder.decode()
+  if (buf) dispatch(buf) // flush any trailing line without a newline
 }

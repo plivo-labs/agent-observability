@@ -16,7 +16,11 @@ const SIM_KEY = 'ao.sim.run'
 const VERSION = 1
 
 export interface LiveRun { v: number; suiteId: string; phoneNo?: string; startedAt?: number }
-export interface SimRun { v: number; config: RunConfig; escalated?: boolean; suiteId?: string; lastResult?: SimResult }
+// `jobId` is the SERVER-side handle for a text sim (POST /api/simulations/jobs):
+// it survives refresh / in-app nav and lets the page resume the run (or fetch
+// its finished result) on mount. `lastResult` stays as a client-side snapshot
+// fallback for already-finished runs.
+export interface SimRun { v: number; config: RunConfig; escalated?: boolean; suiteId?: string; jobId?: string; lastResult?: SimResult }
 
 function read<T extends { v: number }>(key: string): T | null {
   try {

@@ -95,6 +95,13 @@
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
+/* The shared cmdk search input (faceted filters, command palette) sits inside
+   its own bottom-divider row — the global focus ring rendered a stray grey
+   box/inset around it on auto-focus. It owns the whole row, so suppress it. */
+:where(input[data-slot="command-input"]):focus-visible,
+input[data-slot="command-input"] {
+  outline: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .obs-page { animation: none; }
@@ -612,6 +619,18 @@
 [data-slot="dialog-content"], [data-radix-dialog-content] {
   box-shadow: var(--ao-shadow-lg) !important;
   border-radius: var(--radius-lg);
+}
+/* Radix popover surfaces (filter dropdowns, date pickers, etc). The shadcn
+   `bg-popover` token (#fafafa) is nearly indistinguishable from the page white
+   AND from the `bg-card` session rows beneath it, so a floating filter panel
+   with no backdrop reads as "unboxed" and appears to overlap the rows. In the
+   flat (shadow-less) Truman aesthetic, separation has to come from the border:
+   lift the panel onto the card surface and give it a stronger foreground-tinted
+   ring + a soft ambient drop so it sits as a clean, clearly-bounded popover. */
+[data-slot="popover-content"] {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--foreground) / 0.18) !important;
+  box-shadow: 0 12px 32px -12px hsl(var(--foreground) / 0.28) !important;
 }
 .ao-drawer {
   position: absolute; top: 0; right: 0; bottom: 0;
