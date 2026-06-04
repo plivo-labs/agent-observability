@@ -67,7 +67,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${caseDurationMs},
           ${c.user_input ?? null},
           ${JSON.stringify(c.events ?? [])}::jsonb,
-          ${JSON.stringify(c.judgments ?? [])}::jsonb,
+          ${(c.judgments ?? []) as any}::jsonb,
           ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb,
           ${c.recording_url ?? null}
         )

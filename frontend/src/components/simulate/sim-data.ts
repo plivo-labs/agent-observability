@@ -62,11 +62,33 @@ run: { parallelism: 5, escalation: text_then_voice_on_fail }`
 /* ---------- result types (mirror the backend SimResult) ---------- */
 export type CaseStatus = 'pass' | 'fail'
 export interface Turn { role: 'agent' | 'user'; t: string; ms?: number; flag?: string }
+
+/* ---------- leveled-judge ('scopes') contract — mirrors the Python judge ----
+ * The Python /v1/judge returns this additive block ONLY when more than
+ * ["flow"] scopes are requested. It is carried through verbatim and mapped into
+ * the existing JudgeTree for rendering (buildJudgeTreeFromScopes). Per the
+ * contract: per-scope overall = ALL criteria pass; score = round(pass/total*100)
+ * for 0-100 DISPLAY only (node omits score). */
+export interface ScopeCriterion { name: string; pass: boolean; justification: string }
+export interface ScopeFlow { criteria: ScopeCriterion[]; overall: 'pass' | 'fail'; score: number }
+export interface ScopeAgent { agent_id: string; label: string; criteria: ScopeCriterion[]; overall: 'pass' | 'fail'; score: number }
+export interface ScopeTask { task_id: string; label: string; turn_range: [number, number]; criteria: ScopeCriterion[]; overall: 'pass' | 'fail'; score: number }
+export interface ScopeNode { turn_index: number; turn_id: string; role: string; text: string; criteria: ScopeCriterion[]; overall: 'pass' | 'fail' }
+export interface JudgeScopes {
+  flow: ScopeFlow
+  agent?: ScopeAgent[]
+  task?: ScopeTask[]
+  node?: ScopeNode[]
+}
+
 export interface SimCaseResult {
   pid: string; personaName: string; personaType: PersonaType; avatar: string
   score: number; status: CaseStatus; turns: number; durationS: number
   summary: string; transcript: Turn[]
-  judge?: { criteria: CriterionVerdict[]; overall: 'pass' | 'fail'; notes: string }
+  /** Per-criterion verdict when judged by LiveKit (via Truman /v1/judge).
+   *  `scopes` is the additive leveled-judge block (flow/agent/task/node),
+   *  present only when leveled judging was requested. */
+  judge?: { criteria: CriterionVerdict[]; overall: 'pass' | 'fail'; notes: string; scopes?: JudgeScopes }
 }
 export interface JudgeNode { scope: string; status: CaseStatus; verdict: string; turn?: number }
 export interface JudgeTask { id: string; name: string; score: number; status: CaseStatus; verdict: string; turn?: number; nodes?: JudgeNode[] }

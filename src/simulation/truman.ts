@@ -18,7 +18,7 @@
 import { createHash } from "crypto";
 import { config } from "../config.js";
 import { sql } from "../db.js";
-import { deriveAgentName, type CallResult, type Criterion, type CriterionVerdict, type Turn } from "./engine.js";
+import { deriveAgentName, type CallResult, type Criterion, type CriterionVerdict, type JudgeScopes, type Turn } from "./engine.js";
 
 const base = () => (config.TRUMAN_API_URL ?? "").replace(/\/$/, "");
 const fp = (obj: unknown) => createHash("sha256").update(JSON.stringify(obj)).digest("hex").slice(0, 16);
@@ -144,14 +144,22 @@ export async function getRun(runId: string): Promise<any> {
 
 /** Judge a transcript with LiveKit's judges via Truman's POST /v1/judge.
  *  Maps AO criteria {name,question,weight} → Truman {key,question,weight} and
- *  returns AO's {criteria, overall, notes} verdict shape. */
+ *  returns AO's {criteria, overall, notes} verdict shape.
+ *
+ *  Leveled judging: pass `scopes` (default ["flow"]) — when more than ["flow"]
+ *  is requested, the Python judge additively returns a `scopes` block
+ *  (flow/agent/task/node) alongside the top-level verdict. We carry it through
+ *  verbatim. With the default ["flow"] the response is byte-identical to today,
+ *  so cost is unchanged. */
 export async function judgeTranscript(
   transcript: string,
   criteria: Criterion[],
-): Promise<{ criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string }> {
+  scopes: string[] = ["flow"],
+): Promise<{ criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string; scopes?: JudgeScopes }> {
   const body = {
     transcript,
     criteria: criteria.map((c) => ({ key: c.name, question: c.question || c.name, weight: c.weight ?? 1 })),
+    scopes: scopes.length ? scopes : ["flow"],
   };
   const jr = await tFetch("/v1/judge", { method: "POST", body });
   return {
@@ -160,6 +168,8 @@ export async function judgeTranscript(
       : [],
     overall: jr?.overall === "pass" ? "pass" : "fail",
     notes: String(jr?.notes ?? ""),
+    // Carry the additive leveled-judge block verbatim when present.
+    ...(jr?.scopes && typeof jr.scopes === "object" ? { scopes: jr.scopes as JudgeScopes } : {}),
   };
 }
 
@@ -196,6 +206,8 @@ export function mapRun(run: any): {
         criteria: jr.criteria.map((c: any) => ({ name: String(c.name ?? c.key ?? ""), pass: !!c.pass, justification: String(c.justification ?? "") })),
         overall: (jr.overall === "pass" ? "pass" : "fail") as "pass" | "fail",
         notes: String(jr.notes ?? ""),
+        // Carry the additive leveled-judge block verbatim when Truman returns one.
+        ...(jr.scopes && typeof jr.scopes === "object" ? { scopes: jr.scopes as JudgeScopes } : {}),
       }
     : null;
   const verdict = run?.verdict === "pass" ? "pass" : run?.verdict === "fail" ? "fail" : null;

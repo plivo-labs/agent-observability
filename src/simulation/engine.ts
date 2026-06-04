@@ -43,12 +43,33 @@ export const PERSONA_CATALOG: Persona[] = [
 /* ---------- result types (shared shape with the frontend) ---------- */
 export interface Turn { role: "agent" | "user"; t: string; ms?: number; flag?: string }
 export type CaseStatus = "pass" | "fail";
+
+/* ---------- leveled-judge ('scopes') contract — mirrors the Python judge ----
+ * The Python /v1/judge returns this additive block ONLY when more than
+ * ["flow"] scopes are requested. We carry it through verbatim and map it into
+ * the existing JudgeTree for rendering (buildJudgeTreeFromScopes). Per the
+ * contract: per-scope overall = ALL criteria pass; score = round(pass/total*100)
+ * for 0-100 DISPLAY only (node omits score). */
+export interface ScopeCriterion { name: string; pass: boolean; justification: string }
+export interface ScopeFlow { criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
+export interface ScopeAgent { agent_id: string; label: string; criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
+export interface ScopeTask { task_id: string; label: string; turn_range: [number, number]; criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
+export interface ScopeNode { turn_index: number; turn_id: string; role: string; text: string; criteria: ScopeCriterion[]; overall: "pass" | "fail" }
+export interface JudgeScopes {
+  flow: ScopeFlow;
+  agent?: ScopeAgent[];
+  task?: ScopeTask[];
+  node?: ScopeNode[];
+}
+
 export interface SimCaseResult {
   pid: string; personaName: string; personaType: PersonaType; avatar: string;
   score: number; status: CaseStatus; turns: number; durationS: number;
   summary: string; transcript: Turn[];
-  /** Per-criterion verdict when judged by LiveKit (via Truman /v1/judge). */
-  judge?: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string };
+  /** Per-criterion verdict when judged by LiveKit (via Truman /v1/judge).
+   *  `scopes` is the additive leveled-judge block (flow/agent/task/node),
+   *  present only when leveled judging was requested. */
+  judge?: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string; scopes?: JudgeScopes };
 }
 export interface JudgeNode { scope: string; status: CaseStatus; verdict: string; turn?: number }
 export interface JudgeTask { id: string; name: string; score: number; status: CaseStatus; verdict: string; turn?: number; nodes?: JudgeNode[] }
@@ -262,6 +283,107 @@ function buildJudgeTree(agentName: string, worst: SimCaseResult): JudgeTree {
   };
 }
 
+/** Map the Python leveled-judge 'scopes' block into the EXISTING JudgeTree
+ *  shape the frontend renders. PURE function — no IO. Used as the judge-tree
+ *  PRODUCER whenever a real `scopes` block is present; `buildJudgeTree` above
+ *  stays the explicit demo/flow-only fallback (so those runs still render a
+ *  tree rather than an empty one).
+ *
+ *  Mapping (per the contract):
+ *    • flow  → tree.flow {score, max:100, status, verdict}
+ *    • agent → tree.agents[]; single agent => exactly ONE "Agent under test".
+ *    • task  → tasks under the FIRST agent (the agent-under-test), placed by
+ *              turn_range; nodes whose turn_index falls inside a task's range
+ *              are nested under it.
+ *    • node  → tree.nodes[] (turn-anchored), and nested into the matching task.
+ *  status is 'pass'/'fail' (== overall); verdict strings are derived from the
+ *  per-criterion justifications (failing criteria first). */
+export function buildJudgeTreeFromScopes(
+  scopes: JudgeScopes,
+  criteria: Criterion[],
+  agentName: string,
+  worst?: SimCaseResult,
+): JudgeTree {
+  const st = (overall: "pass" | "fail"): CaseStatus => (overall === "pass" ? "pass" : "fail");
+  // Build a verdict line from per-criterion results: surface the failing
+  // justifications first (those are why it failed), else the passing summary.
+  const verdictOf = (crits: ScopeCriterion[], passFallback: string, failFallback: string): string => {
+    if (!crits.length) return passFallback;
+    const failing = crits.filter((c) => !c.pass);
+    if (failing.length) return failing.map((c) => c.justification).filter(Boolean).join(" ") || failFallback;
+    return crits.map((c) => c.justification).filter(Boolean).join(" ") || passFallback;
+  };
+
+  const caseLabel = worst?.personaName ?? agentName;
+
+  // flow
+  const flow = {
+    score: scopes.flow?.score ?? 0,
+    max: 100,
+    status: st(scopes.flow?.overall ?? "fail"),
+    verdict: verdictOf(
+      scopes.flow?.criteria ?? [],
+      `${agentName} satisfied every criterion across the conversation.`,
+      `${agentName} failed one or more criteria across the conversation.`,
+    ),
+  };
+
+  // node[] — turn-anchored. Map to JudgeNode (scope is the on-turn tag).
+  const allNodes: JudgeNode[] = (scopes.node ?? []).map((n) => ({
+    scope: `node:turn ${n.turn_index + 1}`,
+    status: st(n.overall),
+    verdict: verdictOf(
+      n.criteria,
+      n.text ? `Turn ${n.turn_index + 1}: ${n.text.slice(0, 80)}` : `Turn ${n.turn_index + 1} passed.`,
+      `Turn ${n.turn_index + 1} failed one or more checks.`,
+    ),
+    turn: n.turn_index,
+  }));
+
+  // task[] — segments by turn_range; nest any nodes that fall inside the range.
+  const tasks: JudgeTask[] = (scopes.task ?? []).map((t) => {
+    const [start, end] = t.turn_range ?? [0, 0];
+    const inRange = allNodes.filter((n) => n.turn != null && n.turn >= start && n.turn <= end);
+    return {
+      id: t.task_id,
+      name: t.label,
+      score: t.score,
+      status: st(t.overall),
+      verdict: verdictOf(t.criteria, `Completed: ${t.label}.`, `Fell short on: ${t.label}.`),
+      turn: start,
+      ...(inRange.length ? { nodes: inRange } : {}),
+    };
+  });
+
+  // agent[] — partition at agent_handoff. Single-agent => exactly one entry.
+  // Tasks belong to the agent-under-test (the first/only agent).
+  const agentScopes = scopes.agent ?? [];
+  const agents: JudgeAgent[] = agentScopes.length
+    ? agentScopes.map((a, i) => ({
+        id: a.agent_id || `agent-${i}`,
+        name: a.label || "Agent under test",
+        score: a.score,
+        status: st(a.overall),
+        verdict: verdictOf(a.criteria, "Handled its segment of the conversation.", "Failed one or more criteria in its segment."),
+        // Attach tasks to the first agent (single-agent / agent-under-test case).
+        tasks: i === 0 ? tasks : [],
+      }))
+    : [
+        // No agent scope requested/returned — synthesize the single
+        // agent-under-test from flow so the tree still nests its tasks.
+        {
+          id: "agent_under_test",
+          name: "Agent under test",
+          score: flow.score,
+          status: flow.status,
+          verdict: flow.verdict,
+          tasks,
+        },
+      ];
+
+  return { caseLabel, flow, agents, nodes: allNodes };
+}
+
 function synthesize(engine: "llm" | "demo", prompt: string, req: SimRequest, cases: SimCaseResult[], agentName: string): SimResult {
   const overall = Math.round(cases.reduce((a, c) => a + c.score, 0) / cases.length);
   const passN = cases.filter((c) => c.status === "pass").length;
@@ -280,7 +402,10 @@ function synthesize(engine: "llm" | "demo", prompt: string, req: SimRequest, cas
     runId: newId("run_sim", prompt + Date.now()),
     agentName, mode: req.mode, threshold: req.threshold, rubricName: req.rubric?.name,
     overall, passN, total: cases.length, cases,
-    judgeTree: buildJudgeTree(agentName, worst),
+    // Producer: when the worst case carries a real leveled-judge 'scopes' block,
+    // map it into the existing tree shape; otherwise keep the demo stub (so
+    // flow-only / demo runs still render a tree rather than an empty one).
+    judgeTree: worst?.judge?.scopes ? buildJudgeTreeFromScopes(worst.judge.scopes, req.rubric?.criteria ?? [], agentName, worst) : buildJudgeTree(agentName, worst),
     rubricAxes: axesSrc.map((a, i) => ({ name: a.name, weight: a.weight, score: Math.max(30, Math.min(96, Math.round(overall + (hash(prompt + a.name) - 0.5) * 30 - i * 2))) })),
     worstMoments: failing.slice(0, 3).map((c) => ({
       case: c.personaName,
@@ -374,14 +499,16 @@ async function llmJudgeCase(prompt: string, p: Persona, transcript: Turn[], thre
 function transcriptToText(transcript: Turn[]): string {
   return transcript.map((t) => `${t.role === "agent" ? "agent" : "caller"}: ${t.t}`).join("\n");
 }
-async function judgeViaTruman(transcript: Turn[], criteria: Criterion[]): Promise<{ score: number; status: CaseStatus; summary: string; judge: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string } }> {
-  const jr = await judgeTranscript(transcriptToText(transcript), criteria);
+async function judgeViaTruman(transcript: Turn[], criteria: Criterion[], scopes: string[]): Promise<{ score: number; status: CaseStatus; summary: string; judge: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string; scopes?: JudgeScopes } }> {
+  const jr = await judgeTranscript(transcriptToText(transcript), criteria, scopes);
   const passN = jr.criteria.filter((c) => c.pass).length;
   const score = jr.criteria.length ? Math.round((passN / jr.criteria.length) * 100) : jr.overall === "pass" ? 100 : 0;
   return { score, status: jr.overall, summary: jr.notes, judge: jr };
 }
 /** Whether Simulate should route judging through LiveKit (criteria available + Truman on). */
 const livekitJudgeEnabled = (req: SimRequest) => trumanEnabled && !!req.rubric?.criteria?.length;
+/** Scopes to request from the leveled judge for this run; default ["flow"]. */
+const judgeScopesFor = (req: SimRequest): string[] => (req.scopes?.length ? req.scopes : ["flow"]);
 
 /** Demo-generated cases, re-judged by LiveKit when configured (conversation is prompt-derived; verdict is live). */
 async function demoCases(prompt: string, agentName: string, personas: Persona[], req: SimRequest): Promise<SimCaseResult[]> {
@@ -390,7 +517,7 @@ async function demoCases(prompt: string, agentName: string, personas: Persona[],
     const dc = demoCase(prompt, agentName, p, req.threshold);
     if (livekitJudgeEnabled(req)) {
       try {
-        const j = await judgeViaTruman(dc.transcript, req.rubric!.criteria!);
+        const j = await judgeViaTruman(dc.transcript, req.rubric!.criteria!, judgeScopesFor(req));
         dc.score = j.score; dc.status = j.status; dc.summary = j.summary; dc.judge = j.judge;
       } catch { /* keep demo score */ }
     }
@@ -406,7 +533,7 @@ async function runLlm(prompt: string, req: SimRequest, personas: Persona[], agen
     const transcript = await llmConversation(prompt, p, maxTurns);
     let j: { score: number; status: CaseStatus; summary: string; flagTurn?: number; flag?: string; judge?: SimCaseResult["judge"] };
     if (livekitJudgeEnabled(req)) {
-      try { j = await judgeViaTruman(transcript, req.rubric!.criteria!); }
+      try { j = await judgeViaTruman(transcript, req.rubric!.criteria!, judgeScopesFor(req)); }
       catch { j = await llmJudgeCase(prompt, p, transcript, req.threshold); }
     } else {
       j = await llmJudgeCase(prompt, p, transcript, req.threshold);
@@ -529,7 +656,7 @@ export interface CallResult {
   opener: string;
   transcript: Turn[];
   verdict: "pass" | "fail";
-  judge: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string };
+  judge: { criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string; scopes?: JudgeScopes };
   cost: { llm_tokens: number; tts_chars: number; stt_seconds: number; call_seconds: number; cents: number };
   durationS: number;
   /** Truman run id (real mode) — lets the UI open live transcript/audio/takeover streams for this call. */

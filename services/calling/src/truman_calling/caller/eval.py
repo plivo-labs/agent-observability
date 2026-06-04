@@ -26,6 +26,59 @@ _TRUMAN_CALLER_LABELS = {"assistant", "persona", "caller", "director", "speaker_
 def _criteria_from_bundled() -> list[dict]:
     return [{"key": k, "question": q} for k, q in rubric.CRITERIA]
 
+
+_VALID_LEVELS = ("flow", "agent", "task", "node")
+
+
+def _resolve_levels(loaded: Any) -> tuple[str, ...]:
+    """Derive the leveled-judge scopes from the run's judge.levels config.
+
+    There is no dedicated column for this, so we read it (best-effort) from the
+    places a run's judge config can ride: the rubric's `criteria` container (if a
+    dict with a `levels`/`judge` key), or the scenario `tags` (a `levels:flow,task`
+    marker, or a bare `level:<name>` tag). Default → ("flow",), which is
+    byte-identical to today (no `scopes` block)."""
+
+    def _coerce(raw: Any) -> tuple[str, ...] | None:
+        seq: list[str] = []
+        if isinstance(raw, str):
+            seq = [p.strip() for p in raw.replace(",", " ").split()]
+        elif isinstance(raw, (list, tuple)):
+            seq = [str(p).strip() for p in raw]
+        else:
+            return None
+        seq = [s for s in seq if s in _VALID_LEVELS]
+        return tuple(dict.fromkeys(seq)) or None  # dedupe, preserve order
+
+    try:
+        rb = getattr(loaded, "rubric", None)
+        crit = getattr(rb, "criteria", None) if rb is not None else None
+        if isinstance(crit, dict):
+            judge_cfg = crit.get("judge") if isinstance(crit.get("judge"), dict) else None
+            raw = (judge_cfg or {}).get("levels") if judge_cfg else crit.get("levels")
+            coerced = _coerce(raw)
+            if coerced:
+                return coerced
+    except Exception:
+        log.exception("failed to read judge.levels from rubric")
+
+    try:
+        tags = getattr(getattr(loaded, "scenario", None), "tags", None) or []
+        for t in tags:
+            ts = str(t)
+            if ts.startswith("levels:"):
+                coerced = _coerce(ts.split(":", 1)[1])
+                if coerced:
+                    return coerced
+            if ts.startswith("level:"):
+                coerced = _coerce(ts.split(":", 1)[1])
+                if coerced:
+                    return coerced
+    except Exception:
+        log.exception("failed to read judge levels from scenario tags")
+
+    return ("flow",)
+
 logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s %(levelname)s %(name)s | %(message)s",
@@ -295,8 +348,10 @@ async def _run_eval_pipeline(
             )
         return
 
-    criteria, rubric_name = await _resolve_rubric_for_run(run_id_raw)
-    result = await judge_transcript_text(transcript, criteria, caller_labels=_TRUMAN_CALLER_LABELS)
+    criteria, rubric_name, levels = await _resolve_rubric_for_run(run_id_raw)
+    result = await judge_transcript_text(
+        transcript, criteria, caller_labels=_TRUMAN_CALLER_LABELS, scopes=levels
+    )
 
     verdict = result.get("overall") if isinstance(result, dict) else None
     if run_id_raw:
@@ -323,9 +378,10 @@ async def _run_eval_pipeline(
     print(json.dumps(result_record, indent=2))
 
 
-async def _resolve_rubric_for_run(run_id_raw: str | None) -> tuple[list[dict], str]:
-    """Return (criteria, rubric_name). Criteria come from the run's DB rubric when
-    available, else the bundled spike rubric. Each criterion is {key, question}."""
+async def _resolve_rubric_for_run(run_id_raw: str | None) -> tuple[list[dict], str, tuple[str, ...]]:
+    """Return (criteria, rubric_name, levels). Criteria come from the run's DB rubric
+    when available, else the bundled spike rubric. Each criterion is {key, question}.
+    `levels` is the leveled-judge scope tuple for this run (default ("flow",))."""
     if run_id_raw:
         try:
             import uuid as _uuid
@@ -333,15 +389,18 @@ async def _resolve_rubric_for_run(run_id_raw: str | None) -> tuple[list[dict], s
             from truman_calling.caller.run_orchestrator import load_run
 
             loaded = await load_run(_uuid.UUID(run_id_raw))
+            rubric_criteria = loaded.rubric.criteria
+            # criteria may be a list (today) or a dict carrying {criteria, judge:{levels}}.
+            crit_list = rubric_criteria.get("criteria") if isinstance(rubric_criteria, dict) else rubric_criteria
             crit = [
                 {"key": str(c.get("key") or c.get("name") or f"c{i}"), "question": str(c.get("question") or "")}
-                for i, c in enumerate(loaded.rubric.criteria)
+                for i, c in enumerate(crit_list or [])
             ]
             if crit:
-                return crit, loaded.rubric.name
+                return crit, loaded.rubric.name, _resolve_levels(loaded)
         except Exception:
             log.exception("falling back to bundled spike rubric")
-    return _criteria_from_bundled(), rubric.NAME
+    return _criteria_from_bundled(), rubric.NAME, ("flow",)
 
 
 async def _persist_run_artifacts(

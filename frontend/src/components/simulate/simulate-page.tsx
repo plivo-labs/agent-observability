@@ -86,11 +86,16 @@ function ScopeTag({ scope }: { scope: string }) {
   return <span className={cn('rounded-md px-1.5 py-0.5 font-mono text-[11px] font-medium', colors[level] ?? 'bg-muted text-muted-foreground')}>{scope}</span>
 }
 
-function Seg({ options, value, onChange }: { options: { id: string; label: React.ReactNode }[]; value: string; onChange: (v: string) => void }) {
+function Seg({ options, value, onChange }: { options: { id: string; label: React.ReactNode; disabled?: boolean }[]; value: string; onChange: (v: string) => void }) {
   return (
     <div className="ao-seg">
       {options.map((o) => (
-        <button key={o.id} onClick={() => onChange(o.id)} className={cn('ao-seg-item', value === o.id && 'is-active')}>
+        <button
+          key={o.id}
+          onClick={() => !o.disabled && onChange(o.id)}
+          disabled={o.disabled}
+          className={cn('ao-seg-item', value === o.id && 'is-active', o.disabled && 'cursor-not-allowed opacity-40')}
+        >
           {o.label}
         </button>
       ))}
@@ -235,7 +240,11 @@ function JudgeCard({ tree, onJump }: { tree: JudgeTreeT; onJump: (turn: number) 
       </CardHead>
       <div className="border-b border-border px-4 py-3">
         <Seg value={level} onChange={setLevel} options={['all', 'flow', 'agent', 'task', 'node'].map((l) => ({
-          id: l, label: <>{l === 'all' ? 'All levels' : l[0].toUpperCase() + l.slice(1)}{l !== 'all' && <span className="ml-1 rounded bg-muted px-1 text-[10px]">{counts[l as keyof typeof counts]}</span>}</>,
+          id: l,
+          // Gate scopes not present in the data — flow is always there; agent/task/node
+          // are only populated when leveled judging ran, so disable empty levels.
+          disabled: l !== 'all' && l !== 'flow' && counts[l as keyof typeof counts] === 0,
+          label: <>{l === 'all' ? 'All levels' : l[0].toUpperCase() + l.slice(1)}{l !== 'all' && <span className="ml-1 rounded bg-muted px-1 text-[10px]">{counts[l as keyof typeof counts]}</span>}</>,
         }))} />
       </div>
       <JudgeTree tree={tree} onJump={onJump} />

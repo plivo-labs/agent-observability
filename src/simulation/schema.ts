@@ -40,6 +40,10 @@ export const simRequestSchema = z
         pass_threshold: z.coerce.number().int().min(0).max(100).optional(),
       })
       .optional(),
+    // Leveled-judge scopes to request from the judge. Default ["flow"] is
+    // byte-identical to today (cost unchanged); add agent/task/node to get the
+    // additive leveled-judge tree. Accepts a subset of these.
+    scopes: z.array(z.enum(["flow", "agent", "task", "node"])).optional(),
     autoGen: z.boolean().default(false),
     threshold: z.coerce.number().int().min(0).max(100).default(70),
   })

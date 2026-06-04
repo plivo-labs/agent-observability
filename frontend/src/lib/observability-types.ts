@@ -219,6 +219,11 @@ export interface JudgmentResult {
   intent: string
   verdict: JudgmentVerdict
   reasoning: string
+  // Judgments are loose JSON, so a leveled-judge run may additionally tag each
+  // judgment with an optional `scope` string (e.g. "flow" / "agent" / "task" /
+  // "node:turn 3") to indicate which leveled-judge slice produced it. No
+  // structural guarantee — readers should treat it as best-effort metadata.
+  scope?: string
 }
 
 export type FailureKind = 'assertion' | 'error' | 'timeout' | 'judge_failed'
