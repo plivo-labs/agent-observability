@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "obs-cells",
+  "title": "Observability Cells",
+  "description": "Shared list-cell renderers: capability pipeline rail, transport pill, duration cell, framework pill, pass-rate meter, status chip",
+  "dependencies": [
+    "lucide-react"
+  ],
+  "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/obs-cells/obs-cells.tsx",
+      "content": "/**\n * Shared Neo-styled cell renderers used by list pages. Keep these small and\n * class-driven — the styles live in `styles/observability.css`.\n */\n\nimport { AudioLines, FlaskConical, Phone, TriangleAlert } from 'lucide-react'\nimport type { CaseStatus, Transport } from '@/lib/observability-types'\nimport { formatDuration } from '@/lib/observability-format'\n\nexport function CapsChips({\n  stt, llm, tts,\n}: { stt: boolean; llm: boolean; tts: boolean }) {\n  if (!stt && !llm && !tts) {\n    return <span className=\"ao-mono muted\">—</span>\n  }\n  // Truman-inspired pipeline rail: render the whole STT → LLM → TTS pipeline,\n  // lit stages = active, dim = absent — more legible than separate chips.\n  const stages = [\n    { label: 'STT', on: stt },\n    { label: 'LLM', on: llm },\n    { label: 'TTS', on: tts },\n  ]\n  return (\n    <div className=\"ao-pipeline\">\n      {stages.map((s, i) => (\n        <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center' }}>\n          <span className={`ao-pipe-stage${s.on ? ' on' : ''}`}>\n            <span className=\"dot\" />{s.label}\n          </span>\n          {i < stages.length - 1 && (\n            <span className={`ao-pipe-rail${s.on && stages[i + 1].on ? ' on' : ''}`} />\n          )}\n        </span>\n      ))}\n    </div>\n  )\n}\n\nexport function TransportPill({ value }: { value: Transport | null }) {\n  if (value === 'sip') {\n    return (\n      <span className=\"ao-badge is-neutral\">\n        <Phone size={12} /> SIP\n      </span>\n    )\n  }\n  if (value === 'audio_stream') {\n    return (\n      <span className=\"ao-badge is-neutral\">\n        <AudioLines size={12} /> Audio Stream\n      </span>\n    )\n  }\n  return <span className=\"ao-mono muted\">—</span>\n}\n\n/**\n * Duration cell. Renders the formatted value in mono/tabular-nums when\n * valid; shows a warning affordance when the underlying ms is negative\n * (the \"invalid duration\" row the design calls out — happens when the\n * upstream pipeline mis-computes ended-at - started-at).\n */\nexport function DurationCell({ ms }: { ms: number | null }) {\n  if (ms != null && ms < 0) {\n    return (\n      <span className=\"ao-badge is-danger\">\n        <TriangleAlert size={12} /> invalid\n      </span>\n    )\n  }\n  return <span className=\"ao-mono tnum\">{formatDuration(ms)}</span>\n}\n\n/** Framework pill (evals list) — `flask-conical` icon + name + muted version. */\nexport function FrameworkPill({\n  name, version,\n}: { name: string; version?: string | null }) {\n  return (\n    <span className=\"framework\">\n      <FlaskConical size={12} /> {name}\n      {version && <span className=\"ver\">{version}</span>}\n    </span>\n  )\n}\n\n/**\n * Pass-rate meter: numeric label + fill bar + \"N failed\" chip when any\n * case failed. Variant maps to design thresholds (95 / 70 / below).\n */\nexport function PassRate({\n  passed, total, failed,\n}: { passed: number; total: number; failed: number }) {\n  const pct = total > 0 ? Math.round((passed / total) * 100) : 0\n  const variant = pct >= 95 ? 'good' : pct >= 70 ? 'warn' : 'bad'\n  return (\n    <div className={`passrate ${variant}`}>\n      <span className=\"label\">{pct}%</span>\n      <span className=\"meter\"><i style={{ width: `${pct}%` }} /></span>\n      {failed > 0 && <span className=\"fail\">{failed} failed</span>}\n    </div>\n  )\n}\n\n/** Eval case status chip — maps `.status-chip passed|failed|errored|skipped`. */\nexport function StatusChip({ status }: { status: CaseStatus }) {\n  return <span className={`status-chip ${status}`}>{status}</span>\n}\n",
+      "type": "registry:component"
+    }
+  ],
+  "type": "registry:component"
+}

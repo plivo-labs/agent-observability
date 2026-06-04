@@ -30,14 +30,20 @@ export function DataTableColumnHeader<TData, TValue>({
   className,
   ...props
 }: DataTableColumnHeaderProps<TData, TValue>) {
+  // Truman header treatment — uppercase tracked mono muted, matching the
+  // <TableHead> / .ao-table thead styling so every table header looks identical.
+  const headLabel =
+    "font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground";
+
   if (!column.getCanSort() && !column.getCanHide()) {
-    return <div className={cn(className)}>{label}</div>;
+    return <div className={cn(headLabel, className)}>{label}</div>;
   }
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         className={cn(
+          headLabel,
           "-ml-1.5 flex h-8 items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring data-[state=open]:bg-accent [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
           className,
         )}

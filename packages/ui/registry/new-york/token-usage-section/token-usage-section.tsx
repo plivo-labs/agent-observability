@@ -23,12 +23,22 @@ const buildTokenData = (metrics: SessionMetrics): TokenData => {
   return { prompt, completion, total, ttsChars, tokensPerTurn }
 }
 
-// Monochrome donut — prompt = full ink, completion = 40% ink. Relative
-// weight drives the visual signal instead of hue.
-const COLORS = [
-  'hsl(var(--foreground))',
-  'hsl(var(--foreground) / 0.4)',
-]
+const COLORS = ['hsl(var(--success))', 'hsl(var(--accent-purple))']
+
+const StatRow = ({
+  label,
+  value,
+  strong,
+}: {
+  label: string
+  value: string
+  strong?: boolean
+}) => (
+  <div className="flex items-baseline justify-between border-b border-border/60 py-1.5 last:border-b-0">
+    <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{label}</span>
+    <span className={`tabular-nums ${strong ? 'font-semibold text-foreground' : 'text-foreground'}`}>{value}</span>
+  </div>
+)
 
 export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {
   const { metrics: hookMetrics } = usePerformance()
@@ -48,10 +58,27 @@ export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionM
   if (!data || data.total === 0) return null
 
   return (
-    <div className="rounded-lg border bg-card p-5">
-      <span className="text-p-400 font-medium">Token Usage</span>
+    <div className="ao-chart">
+      <div className="ao-chart-head">
+        <div>
+          <div className="ao-chart-title">Token Usage</div>
+          <div className="ao-chart-sub">LLM prompt vs. completion split</div>
+        </div>
+        {chartData.length > 0 && (
+          <div className="ao-chart-legend">
+            <span className="ao-legend-item">
+              <span className="sw" style={{ background: COLORS[0] }} />
+              Prompt
+            </span>
+            <span className="ao-legend-item">
+              <span className="sw" style={{ background: COLORS[1] }} />
+              Completion
+            </span>
+          </div>
+        )}
+      </div>
 
-      <div className="mt-3 flex items-start gap-6">
+      <div className="flex items-center gap-6">
         {chartData.length > 0 && (
           <div className="h-32 w-32 shrink-0">
             <ResponsiveContainer width="100%" height="100%">
@@ -62,7 +89,7 @@ export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionM
                   cx="50%"
                   cy="50%"
                   outerRadius={55}
-                  innerRadius={30}
+                  innerRadius={32}
                   strokeWidth={0}
                 >
                   {chartData.map((_, i) => (
@@ -74,44 +101,16 @@ export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionM
           </div>
         )}
 
-        <div className="flex-1 space-y-2 text-s-400">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Total Tokens</span>
-            <span className="font-medium">{data.total.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Prompt</span>
-            <span>{data.prompt.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Completion</span>
-            <span>{data.completion.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Tokens/Turn</span>
-            <span>{data.tokensPerTurn}</span>
-          </div>
+        <div className="flex-1 text-s-400">
+          <StatRow label="Total Tokens" value={data.total.toLocaleString()} strong />
+          <StatRow label="Prompt" value={data.prompt.toLocaleString()} />
+          <StatRow label="Completion" value={data.completion.toLocaleString()} />
+          <StatRow label="Tokens / Turn" value={data.tokensPerTurn} />
           {data.ttsChars > 0 && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">TTS Characters</span>
-              <span>{data.ttsChars.toLocaleString()}</span>
-            </div>
+            <StatRow label="TTS Characters" value={data.ttsChars.toLocaleString()} />
           )}
         </div>
       </div>
-
-      {chartData.length > 0 && (
-        <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground" />
-            Prompt
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground/40" />
-            Completion
-          </span>
-        </div>
-      )}
     </div>
   )
 }

@@ -38,29 +38,28 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-/* WaveSurfer assigns wave/progress colors directly to canvas fillStyle,
- * which doesn't resolve CSS `var()` (vars are CSS-context only). So we
- * read the `H S% L%` triple via getComputedStyle and build literal
- * `hsl(...)` strings. Re-resolve on theme change since wavesurfer
- * caches the parsed color at paint time.
- *
- * Monochrome design: user voice is the lighter ink (muted-foreground),
- * agent voice is the darker ink (foreground). Differentiation by
- * weight, not hue. */
+/* WaveSurfer assigns wave/progress colors directly to canvas fillStyle.
+ * Canvas does NOT resolve CSS `var()` — that only works in stylesheet /
+ * inline-style contexts. So we read the raw `H S% L%` triple via
+ * getComputedStyle and build literal `hsl(...)` strings ourselves. We
+ * also re-resolve on theme change (the .dark class is toggled on
+ * <html>) and call setOptions, since wavesurfer caches the parsed
+ * color and won't repaint on its own. */
 function readVar(name: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  // Fallback if the var isn't defined yet (rare initial paint).
   return v || '0 0% 50%'
 }
 
 function resolveColors() {
-  const muted = readVar('--muted-foreground')
   const fg = readVar('--foreground')
+  const accent = readVar('--accent-purple')
   const primary = readVar('--primary')
   return {
-    userWave: `hsl(${muted} / 0.55)`,
-    userProgress: `hsl(${muted})`,
-    agentWave: `hsl(${fg} / 0.45)`,
-    agentProgress: `hsl(${fg})`,
+    userWave: `hsl(${fg} / 0.45)`,
+    userProgress: `hsl(${fg} / 0.85)`,
+    agentWave: `hsl(${accent} / 0.65)`,
+    agentProgress: `hsl(${accent})`,
     cursor: `hsl(${primary})`,
   }
 }
@@ -286,10 +285,10 @@ export function RecordingPlayer({
     userWs.seekTo(currentTimeMs / (dur * 1000))
   }, [currentTimeMs])
 
-  /* WaveSurfer caches resolved colors at draw time, so a `dark` class
-   * toggle on <html> won't repaint the canvas with the new theme's
-   * variables. Watch the class change, re-resolve CSS variables (canvas
-   * can't read them), and re-set the colors. */
+  /* WaveSurfer caches resolved colors at draw time, so toggling the
+   * `dark` class on <html> doesn't repaint the waves. Watch for that
+   * class change, re-resolve CSS variables (canvas can't read them),
+   * and call setOptions to force a repaint. */
   useEffect(() => {
     const root = document.documentElement
     const repaint = () => {
@@ -387,14 +386,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor="hsl(var(--muted-foreground))"
+        labelColor="hsl(var(--foreground) / 0.85)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor="hsl(var(--foreground))"
+        labelColor="hsl(var(--accent-purple))"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
