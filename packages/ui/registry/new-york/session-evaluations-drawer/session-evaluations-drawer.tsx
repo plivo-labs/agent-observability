@@ -86,9 +86,9 @@ function SummaryTile({
   children?: ReactNode
 }) {
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 flex min-h-6 items-center gap-2 text-sm font-medium">{value}</div>
+    <div className="ao-stat">
+      <div className="ao-stat-label">{label}</div>
+      <div className="flex min-h-7 items-center gap-2 text-sm font-medium">{value}</div>
       {children}
     </div>
   )
@@ -171,17 +171,20 @@ export function SessionEvaluationsDrawer({
         showCloseButton
       >
         <SheetHeader className="border-b px-5 py-4">
-          <SheetTitle className="flex items-center gap-2">
-            <ClipboardCheck size={16} />
-            Evaluations
+          <div className="ao-hero-eyebrow !mb-1">
+            <ClipboardCheck />
+            Evaluation
+          </div>
+          <SheetTitle className="font-[family-name:var(--font-display)] text-xl tracking-tight">
+            Judge results
           </SheetTitle>
           <SheetDescription>
-            {evaluations.length} evaluations
+            {evaluations.length} evaluation{evaluations.length !== 1 ? 's' : ''} for this session
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex flex-col gap-4 p-5">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="ao-stat-row">
             <SummaryTile
               label="Outcome"
               value={outcome ? <ResultBadge value={outcome.outcome} /> : 'Pending'}
@@ -194,15 +197,19 @@ export function SessionEvaluationsDrawer({
           </div>
 
           {!hasEvaluationData && (
-            <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-              No evaluations captured for this session.
+            <div className="ao-empty">
+              <div className="ao-empty-icon">
+                <ClipboardCheck />
+              </div>
+              <div className="ao-empty-title">No evaluations</div>
+              <div className="ao-empty-text">No evaluations were captured for this session.</div>
             </div>
           )}
 
           {evaluations.length > 0 && (
             <section className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <ListChecks size={14} />
+              <div className="ao-section-label !mb-0 flex items-center gap-2">
+                <ListChecks size={13} />
                 Judge results
               </div>
               {evaluations.map((evaluation, index) => (

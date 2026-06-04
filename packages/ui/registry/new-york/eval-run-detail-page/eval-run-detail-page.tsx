@@ -1,17 +1,24 @@
 import { useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { parseAsString, useQueryState } from 'nuqs'
-import { ArrowLeft, Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
+import {
+  AlertTriangle,
+  AudioLines,
+  ArrowLeft,
+  Bot,
+  ExternalLink,
+  FlaskConical,
+  GitBranch,
+  GitCommit,
+  Layers,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { Skeleton } from '@/components/ui/skeleton'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
@@ -39,14 +46,12 @@ function durationToneClass(ms: number | null): string {
   return 'text-[hsl(var(--destructive))]'
 }
 
-const STATUS_TONE: Record<CaseStatus, string> = {
-  passed:
-    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
-  failed:
-    'bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))]',
-  errored:
-    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
-  skipped: 'bg-muted text-muted-foreground border-border',
+/** Maps a case status to its `ao-badge` tone modifier. */
+const STATUS_BADGE_TONE: Record<CaseStatus, string> = {
+  passed: 'is-success',
+  failed: 'is-danger',
+  errored: 'is-warning',
+  skipped: 'is-neutral',
 }
 
 /** Mean of `metrics.llm_node_ttft` (seconds → ms) across all `message`
@@ -63,12 +68,7 @@ function caseAvgTtftMs(events: RunEvent[]): number | null {
 
 function StatusChip({ status }: { status: CaseStatus }) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center h-[22px] px-2 rounded-full border text-xxs-600 capitalize',
-        STATUS_TONE[status],
-      )}
-    >
+    <span className={cn('ao-badge ao-badge--dot capitalize', STATUS_BADGE_TONE[status])}>
       {status}
     </span>
   )
@@ -76,40 +76,41 @@ function StatusChip({ status }: { status: CaseStatus }) {
 
 type StatTone = 'good' | 'warn' | 'bad' | 'zero' | 'default'
 
-/** Card tones mirror the session-detail metric tiles: good/warn/bad pick
- * up the semantic token family (success / warning / destructive). `zero`
- * mutes the value so 0 counts don't compete with real signals. */
+/** Maps a metric tone to the shared `ao-stat` tone modifier. `zero` mutes
+ * the tile (no semantic color) so 0 counts don't compete with real signals. */
+function statToneClass(tone: StatTone): string {
+  switch (tone) {
+    case 'good':
+      return 'is-good'
+    case 'warn':
+      return 'is-warn'
+    case 'bad':
+      return 'is-bad'
+    default:
+      return ''
+  }
+}
+
+/** KPI tile built on the shared `ao-stat` language. `feature` adds the
+ * accent gradient edge for the headline metric. A thin token-tinted meter
+ * can pin to the bottom of the tile. */
 function StatCard({
   label,
   value,
   suffix,
   tone = 'default',
   meterPct,
+  feature,
+  icon,
 }: {
   label: string
   value: string | number
   suffix?: string
   tone?: StatTone
   meterPct?: number
+  feature?: boolean
+  icon?: React.ReactNode
 }) {
-  const valueClass =
-    tone === 'good'
-      ? 'text-[hsl(var(--success-fg,var(--success)))]'
-      : tone === 'warn'
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
-        : tone === 'bad'
-          ? 'text-[hsl(var(--destructive))]'
-          : tone === 'zero'
-            ? 'text-muted-foreground'
-            : ''
-  const borderClass =
-    tone === 'good'
-      ? 'border-[hsl(var(--success-border))]'
-      : tone === 'warn'
-        ? 'border-[hsl(var(--warning-border))]'
-        : tone === 'bad'
-          ? 'border-[hsl(var(--destructive-border))]'
-          : ''
   const meterClass =
     tone === 'good'
       ? 'bg-[hsl(var(--success-fg,var(--success)))]'
@@ -117,29 +118,28 @@ function StatCard({
         ? 'bg-[hsl(var(--warning-fg,var(--warning)))]'
         : tone === 'bad'
           ? 'bg-[hsl(var(--destructive))]'
-          : 'bg-foreground'
+          : tone === 'zero'
+            ? 'bg-muted-foreground/40'
+            : 'bg-foreground'
   return (
-    <Card className={cn('relative overflow-hidden', borderClass)}>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs-600 uppercase tracking-wide text-muted-foreground">
-          {label}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className={cn('text-h1-600 font-semibold tabular-nums flex items-baseline gap-2', valueClass)}>
-          {value}
-          {suffix && <span className="text-p-500 text-muted-foreground">{suffix}</span>}
+    <div className={cn('ao-stat relative overflow-hidden', feature && 'ao-stat--feature', statToneClass(tone))}>
+      <div className="ao-stat-label">
+        {icon}
+        {label}
+      </div>
+      <div className={cn('ao-stat-value', tone === 'zero' && 'text-muted-foreground')}>
+        {value}
+        {suffix && <span className="unit">{suffix}</span>}
+      </div>
+      {meterPct != null && (
+        <div className="absolute left-0 right-0 bottom-0 h-[3px] bg-muted">
+          <div
+            className={cn('h-full transition-[width]', meterClass)}
+            style={{ width: `${Math.max(0, Math.min(100, meterPct))}%` }}
+          />
         </div>
-        {meterPct != null && (
-          <div className="absolute left-0 right-0 bottom-0 h-[3px] bg-muted">
-            <div
-              className={cn('h-full', meterClass)}
-              style={{ width: `${Math.max(0, Math.min(100, meterPct))}%` }}
-            />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+      )}
+    </div>
   )
 }
 
@@ -315,87 +315,116 @@ export const EvalRunDetailPage = ({
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-5 p-6" aria-busy="true">
-        <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-[110px] rounded-xl" />
+      <div className="p-6 flex flex-col gap-6" aria-busy="true">
+        <div className="ao-skeleton ao-skeleton--title" style={{ width: 280 }} />
+        <div className="ao-stat-row">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="ao-stat">
+              <div className="ao-skeleton" style={{ height: 12, width: '50%' }} />
+              <div className="ao-skeleton" style={{ height: 30, width: '60%', marginTop: 10 }} />
+            </div>
           ))}
         </div>
-        <Skeleton className="h-[300px] w-full rounded-xl" />
+        <div className="ao-panel">
+          <div className="ao-panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="ao-skeleton ao-skeleton--line" />
+            <div className="ao-skeleton ao-skeleton--line" style={{ width: '85%' }} />
+            <div className="ao-skeleton ao-skeleton--line" style={{ width: '70%' }} />
+            <div className="ao-skeleton ao-skeleton--line" style={{ width: '90%' }} />
+          </div>
+        </div>
       </div>
     )
   }
 
   if (error || !run || !stats) {
     return (
-      <div className="p-12 text-center text-foreground">
-        <p>Failed to load eval run: {error ?? 'not found'}</p>
+      <div className="p-6">
         {onBack && (
-          <Button variant="ghost" size="sm" onClick={onBack} className="mt-4">
-            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
-          </Button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 text-s-500 text-muted-foreground hover:text-foreground transition-colors bg-transparent border-none p-0 w-fit cursor-pointer mb-5"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to evals
+          </button>
         )}
+        <div className="ao-empty">
+          <div className="ao-empty-icon">
+            <AlertTriangle />
+          </div>
+          <div className="ao-empty-title">Couldn't load this eval run</div>
+          <div className="ao-empty-text">{error ?? 'The run was not found, or has been deleted.'}</div>
+          {onBack && (
+            <div className="ao-empty-actions">
+              <button type="button" className="ao-btn ao-btn--outline" onClick={onBack}>
+                <ArrowLeft className="h-3.5 w-3.5" /> Back to evals
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     )
   }
 
+  const filteredCount = table.getFilteredRowModel().rows.length
+
   return (
-    <div className="p-6 flex flex-col gap-5 relative">
+    <div className="p-6 flex flex-col gap-6 relative">
       {onBack && (
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-s-500 text-muted-foreground hover:text-foreground transition-colors bg-transparent border-none p-0 w-fit cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-s-500 text-muted-foreground hover:text-foreground transition-colors bg-transparent border-none p-0 w-fit cursor-pointer ao-reveal"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Back to evals
         </button>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-3">
-            <h1 className="text-h2-600 font-semibold m-0">
-              {run.agent_id ?? <span className="text-muted-foreground">—</span>}
-            </h1>
+      <header className="ao-hero ao-reveal ao-reveal-1">
+        <div className="min-w-0">
+          <div className="ao-hero-eyebrow">
+            <FlaskConical /> Eval run
+          </div>
+          <h1 className="ao-hero-title truncate">
+            {run.agent_id ?? <span className="text-muted-foreground">Unnamed agent</span>}
+          </h1>
+          <div className="flex items-center gap-2 flex-wrap mt-2">
             {run.framework && (
-              <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
-                <Bot className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="ao-badge is-neutral">
+                <Bot className="h-3 w-3 shrink-0" />
                 {run.framework}
                 {run.framework_version && (
-                  <span className="text-muted-foreground font-mono text-[11px]">
-                    {run.framework_version}
-                  </span>
+                  <span className="ao-mono ml-0.5">{run.framework_version}</span>
                 )}
               </span>
             )}
-            <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
-              <FlaskConical className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="ao-badge is-neutral">
+              <FlaskConical className="h-3 w-3 shrink-0" />
               {run.testing_framework}
               {run.testing_framework_version && (
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  {run.testing_framework_version}
-                </span>
+                <span className="ao-mono ml-0.5">{run.testing_framework_version}</span>
               )}
             </span>
+            <span className="ao-mono">{run.run_id}</span>
           </div>
-          <div className="font-mono text-xs-400 text-muted-foreground">{run.run_id}</div>
         </div>
-        <div className="text-right text-s-400 text-muted-foreground">
-          <b className="block text-foreground text-s-600">
-            Started {formatDate(run.started_at)}
-          </b>
-          <span>Duration {formatDuration(run.duration_ms)}</span>
+        <div className="ao-hero-actions">
+          <div className="text-right text-s-400 text-muted-foreground">
+            <b className="block text-foreground text-s-600">Started {formatDate(run.started_at)}</b>
+            <span className="ao-mono">Duration {formatDuration(run.duration_ms)}</span>
+          </div>
         </div>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="ao-stat-row ao-stagger">
         <StatCard
           label="Pass rate"
           value={stats.passRate}
           suffix="%"
           tone={passRateTone(stats.passRate)}
           meterPct={stats.passRate}
+          feature
         />
         <StatCard
           label="Passed"
@@ -427,56 +456,101 @@ export const EvalRunDetailPage = ({
       </div>
 
       {run.ci && (
-        <Card>
-          <CardContent className="flex flex-wrap items-center gap-4 py-3">
-            <span className="text-xs-600 text-muted-foreground uppercase tracking-wider">CI</span>
-            {run.ci.provider && (
-              <span className="text-s-400 capitalize">{String(run.ci.provider)}</span>
-            )}
-            {run.ci.git_branch && (
-              <span className="inline-flex items-center gap-1 text-s-400">
-                <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-                {String(run.ci.git_branch)}
-              </span>
-            )}
-            {run.ci.git_sha && (
-              <span className="inline-flex items-center gap-1 text-s-400 font-mono">
-                <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
-                {String(run.ci.git_sha).slice(0, 7)}
-              </span>
-            )}
+        <section className="ao-panel ao-reveal ao-reveal-2">
+          <div className="ao-panel-head">
+            <div className="ao-panel-title">
+              <GitBranch /> Continuous integration
+            </div>
             {run.ci.run_url && (
               <a
                 href={String(run.ci.run_url)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-s-400 text-primary hover:underline"
+                className="ao-btn ao-btn--ghost ao-btn--sm"
               >
                 View run <ExternalLink className="h-3 w-3" />
               </a>
             )}
-            {run.ci.commit_message && (
-              <span className="text-s-400 text-muted-foreground italic truncate max-w-[40ch]">
-                "{String(run.ci.commit_message)}"
-              </span>
+          </div>
+          <div className="ao-panel-body flex flex-wrap items-center gap-x-6 gap-y-2.5">
+            {run.ci.provider && (
+              <div className="flex flex-col gap-0.5">
+                <span className="ao-section-label">Provider</span>
+                <span className="text-s-500 capitalize">{String(run.ci.provider)}</span>
+              </div>
             )}
-          </CardContent>
-        </Card>
+            {run.ci.git_branch && (
+              <div className="flex flex-col gap-0.5">
+                <span className="ao-section-label">Branch</span>
+                <span className="inline-flex items-center gap-1.5 text-s-500">
+                  <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+                  {String(run.ci.git_branch)}
+                </span>
+              </div>
+            )}
+            {run.ci.git_sha && (
+              <div className="flex flex-col gap-0.5">
+                <span className="ao-section-label">Commit</span>
+                <span className="inline-flex items-center gap-1.5 ao-mono">
+                  <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
+                  {String(run.ci.git_sha).slice(0, 7)}
+                </span>
+              </div>
+            )}
+            {run.ci.commit_message && (
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="ao-section-label">Message</span>
+                <span className="text-s-400 text-muted-foreground italic truncate max-w-[44ch]">
+                  "{String(run.ci.commit_message)}"
+                </span>
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
-      <div>
-        <h2 className="text-h4-600 font-semibold mb-3">
-          Cases{' '}
-          <span className="text-muted-foreground text-s-400">
-            ({table.getFilteredRowModel().rows.length} of {run.cases.length})
-          </span>
-        </h2>
+      {run.cases.some((c) => c.recording_url) && (
+        <section className="ao-panel ao-reveal ao-reveal-3">
+          <div className="ao-panel-head">
+            <div>
+              <div className="ao-panel-title"><AudioLines /> Recordings</div>
+              <div className="ao-panel-sub">
+                {run.cases.filter((c) => c.recording_url).length} call{run.cases.filter((c) => c.recording_url).length === 1 ? '' : 's'} recorded
+              </div>
+            </div>
+          </div>
+          <div className="ao-panel-body flex flex-col gap-3">
+            {run.cases.filter((c) => c.recording_url).map((c) => (
+              <div key={c.case_id} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleRowClick(c.case_id)}
+                  className="ao-mono text-s-500 text-left text-foreground hover:text-[hsl(var(--link))] sm:w-48 sm:shrink-0 truncate"
+                >
+                  {c.name}
+                </button>
+                <audio controls preload="none" src={c.recording_url!} className="w-full flex-1" />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="ao-reveal ao-reveal-3 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="ao-panel-title">
+            <Layers /> Cases
+            <span className="ao-badge is-neutral ml-1">
+              {filteredCount} of {run.cases.length}
+            </span>
+          </div>
+        </div>
         <ObsDataTable
           table={table}
           toolbar={<DataTableToolbar table={table} />}
           onRowClick={(row) => handleRowClick(row.original.case_id)}
         />
-      </div>
+      </section>
 
       {!onCaseClick && (
         <Sheet

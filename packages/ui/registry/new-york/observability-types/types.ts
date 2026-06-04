@@ -141,8 +141,8 @@ export interface SessionExternalEvaluation {
   verdict: SessionEvaluationVerdict | null
   reasoning: string | null
   instructions: string | null
-  raw: Record<string, unknown> | null
   observed_at: string | null
+  raw: Record<string, unknown> | null
   created_at: string
 }
 
@@ -150,8 +150,8 @@ export interface SessionOutcome {
   source: string
   outcome: string
   reason: string | null
-  raw: Record<string, unknown> | null
   observed_at: string | null
+  raw: Record<string, unknown> | null
   created_at: string
   updated_at?: string
 }
@@ -310,6 +310,8 @@ export interface EvalCaseRow {
   events: RunEvent[]
   judgments: JudgmentResult[]
   failure: Failure | null
+  /** Audio recording proxy URL (live-call cases only); null/absent otherwise. */
+  recording_url?: string | null
   created_at: string
 }
 

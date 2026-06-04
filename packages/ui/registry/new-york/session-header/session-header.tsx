@@ -1,15 +1,22 @@
-import { ClipboardCheck } from 'lucide-react'
+import { ClipboardCheck, Download, Hash, Radio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import type { AgentSessionRow } from '@/lib/observability-types'
 import { useSession } from '@/lib/observability-hooks'
+import { CapsChips } from '@/components/obs-cells'
 
-const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div className="flex items-baseline justify-between py-1.5">
-    <span className="text-s-400 text-muted-foreground">{label}</span>
-    <span className="text-s-400 text-right">{children}</span>
-  </div>
-)
+const PRIMARY_FG = { color: 'hsl(var(--primary-foreground))' }
+
+function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[hsl(var(--tertiary))]">
+        {label}
+      </span>
+      <span className="min-w-0 text-sm text-foreground">{children}</span>
+    </div>
+  )
+}
 
 interface SessionHeaderProps {
   session?: AgentSessionRow
@@ -29,15 +36,12 @@ export const SessionHeader = ({
 }: SessionHeaderProps) => {
   const { session: hookSession } = useSession()
   const session = sessionProp ?? hookSession
-
   if (!session) return null
 
-  const textOnly = isTextOnlySession(session)
-  const capabilities = [
-    !textOnly && session.has_stt && 'STT',
-    session.has_llm && 'LLM',
-    !textOnly && session.has_tts && 'TTS',
-  ].filter(Boolean)
+  const isLive = session.state !== 'ended'
+  const stateLabel = session.state
+    ? session.state.charAt(0).toUpperCase() + session.state.slice(1)
+    : 'Unknown'
   const evaluationCount = session.evaluations?.length ?? 0
   // `evaluations:enabled` is emitted by the Python adapter when judges are
   // configured (or by callers passing `metadata.evaluations=true`). Surfacing
@@ -45,50 +49,75 @@ export const SessionHeader = ({
   // judge results land. Node sessions never carry this tag.
   const hasEvaluationFlag = session.tags?.some((tag) => tag.name === 'evaluations:enabled') ?? false
   const hasEvaluationData = evaluationCount > 0 || session.outcome != null || hasEvaluationFlag
+  const textOnly = isTextOnlySession(session)
 
   return (
-    <div className="rounded-lg border bg-card">
-      {/* Title row */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b">
-        <span className="text-p-400 font-medium">Session</span>
-        <div className="flex items-center gap-3">
-          {onEvaluationsClick && hasEvaluationData && (
-            <Button variant="outline" size="sm" onClick={onEvaluationsClick}>
-              <ClipboardCheck size={13} />
-              Evaluation
-              {evaluationCount > 0 && <span>({evaluationCount})</span>}
-            </Button>
-          )}
-          <span className="text-p-400 font-medium tabular-nums">
-            {formatDuration(session.duration_ms)}
+    <header className="ao-hero ao-reveal">
+      <div className="min-w-0">
+        <div className="ao-hero-eyebrow">
+          <Radio /> Session
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="ao-hero-title flex items-center gap-2 break-all font-mono !text-[22px] tracking-tight">
+            <Hash size={18} className="shrink-0 text-[hsl(var(--tertiary))]" />
+            {session.session_id}
+          </h1>
+          <span className={`ao-badge ao-badge--dot ${isLive ? 'is-success is-pulse' : 'is-neutral'}`}>
+            {stateLabel}
           </span>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-start gap-x-10 gap-y-4">
+          <MetaItem label="Capabilities">
+            <CapsChips
+              stt={!textOnly && session.has_stt}
+              llm={session.has_llm}
+              tts={!textOnly && session.has_tts}
+            />
+          </MetaItem>
+          <MetaItem label="Turns">
+            <span className="font-mono tabular-nums">{session.turn_count ?? '—'}</span>
+          </MetaItem>
+          <MetaItem label="Started">{formatDate(session.started_at)}</MetaItem>
+          <MetaItem label="Ended">{formatDate(session.ended_at)}</MetaItem>
+          <MetaItem label="Recording">
+            {session.record_url ? (
+              <a
+                className="inline-flex items-center gap-1.5 text-[hsl(var(--link))] hover:underline"
+                href={session.record_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Download size={13} /> Download
+              </a>
+            ) : (
+              <span className="text-[hsl(var(--tertiary))]">—</span>
+            )}
+          </MetaItem>
         </div>
       </div>
 
-      {/* Two-column key-value grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x">
-        <div className="flex flex-col px-5 py-3">
-          <Row label="Session ID">
-            <span className="text-xs">{session.session_id}</span>
-          </Row>
-          <Row label="Capabilities">{capabilities.length > 0 ? capabilities.join(', ') : '—'}</Row>
-          <Row label="Turns">{session.turn_count ?? '—'}</Row>
+      <div className="ao-hero-actions flex-col items-end">
+        <div className="font-mono text-2xl font-semibold tabular-nums tracking-tight text-foreground">
+          {formatDuration(session.duration_ms)}
         </div>
-        <div className="flex flex-col px-5 py-3">
-          <Row label="Started">{formatDate(session.started_at)}</Row>
-          <Row label="Ended">{formatDate(session.ended_at)}</Row>
-          <Row label="Status">
-            <span className="capitalize">{session.state || '—'}</span>
-          </Row>
-          {session.record_url && (
-            <Row label="Recording">
-              <a href={session.record_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-xs">
-                Download
-              </a>
-            </Row>
-          )}
-        </div>
+        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[hsl(var(--tertiary))]">
+          Duration
+        </span>
+        {onEvaluationsClick && hasEvaluationData && (
+          <Button
+            variant="default"
+            size="sm"
+            className="mt-2"
+            style={PRIMARY_FG}
+            onClick={onEvaluationsClick}
+          >
+            <ClipboardCheck size={13} />
+            Evaluation
+            {evaluationCount > 0 && <span>({evaluationCount})</span>}
+          </Button>
+        )}
       </div>
-    </div>
+    </header>
   )
 }
