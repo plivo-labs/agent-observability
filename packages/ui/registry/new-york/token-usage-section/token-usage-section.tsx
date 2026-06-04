@@ -23,12 +23,7 @@ const buildTokenData = (metrics: SessionMetrics): TokenData => {
   return { prompt, completion, total, ttsChars, tokensPerTurn }
 }
 
-// Monochrome donut — prompt = full ink, completion = 40% ink. Relative
-// weight drives the visual signal instead of hue.
-const COLORS = [
-  'hsl(var(--foreground))',
-  'hsl(var(--foreground) / 0.4)',
-]
+const COLORS = ['hsl(var(--success))', 'hsl(var(--accent-purple))']
 
 export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {
   const { metrics: hookMetrics } = usePerformance()

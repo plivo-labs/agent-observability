@@ -1,30 +1,40 @@
 import { useState } from 'react'
-import { ChevronDown, Clock } from 'lucide-react'
+import { ChevronRight, Clock } from 'lucide-react'
 import dayjs from 'dayjs'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { useEvents } from '@/lib/observability-hooks'
 import { getEventCreatedAt, getEventTimeRange } from '@/lib/observability-events'
 import type { SessionEvent } from '@/lib/observability-types'
 
-// Default Neo event badge palette. Consumers can override per-type badges by
-// passing `typeBadgeClass` or by targeting `[data-event-type="..."]` in CSS.
-export const DEFAULT_TYPE_BADGE_CLASS: Record<string, string> = {
-  agent_state_changed: 'ev-tag-agent',
-  user_state_changed: 'ev-tag-user',
-  user_input_transcribed: 'ev-tag-user',
-  conversation_item_added: 'ev-tag-conv',
-  speech_created: 'ev-tag-speech',
-  close: 'ev-tag-agent',
+/** Maps LiveKit event kinds to tonal Badge classes (success / warning /
+ * info / accent-purple) so each event type reads at a glance. */
+const EV_BADGE_TONE: Record<string, string> = {
+  conversation_item_added:
+    'bg-[hsl(var(--info-bg))] text-[hsl(var(--info))] border-[hsl(var(--info-border))]',
+  speech_created:
+    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
+  agent_state_changed:
+    'bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))] border-[hsl(var(--accent-purple-border))]',
+  user_state_changed:
+    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
+  user_input_transcribed:
+    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
+  close:
+    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
 }
-
-const FALLBACK_BADGE_CLASS = 'ev-tag-conv'
+const EV_BADGE_FALLBACK =
+  'bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))] border-[hsl(var(--accent-purple-border))]'
 
 type TimeMode = 'relative' | 'absolute'
+
+function formatRelative(offsetSec: number): string {
+  const sign = offsetSec >= 0 ? '+' : '−'
+  return `${sign}${Math.abs(offsetSec).toFixed(3)}s`
+}
+
+function formatAbsolute(unixSeconds: number): string {
+  return dayjs(unixSeconds * 1000).format('HH:mm:ss.SSS')
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -84,13 +94,23 @@ function getFunctionCallOutput(item: Record<string, unknown> | null): Record<str
   return item.type === 'function_call_output' ? item : asRecord(item.function_call_output)
 }
 
+function getAgentConfigUpdate(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'agent_config_update' ? item : asRecord(item.agent_config_update)
+}
+
+function getAgentHandoff(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'agent_handoff' ? item : asRecord(item.agent_handoff)
+}
+
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--tertiary))]">
         {label}
       </div>
-      <div className="min-w-0 text-[13px] text-foreground">
+      <div className="min-w-0 text-[13px] text-[hsl(var(--foreground))]">
         {children}
       </div>
     </div>
@@ -99,7 +119,7 @@ function DetailField({ label, children }: { label: string; children: React.React
 
 function CodeBlock({ value }: { value: unknown }) {
   return (
-    <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-card p-3 font-mono text-[12px] leading-relaxed text-muted-foreground">
+    <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 font-mono text-[12px] leading-relaxed text-[hsl(var(--secondary))]">
       {prettyJson(value)}
     </pre>
   )
@@ -112,17 +132,17 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--info))]">
+          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--info))]">
             Tool call
           </span>
-          <span className="truncate text-[14px] font-semibold text-foreground">
+          <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
             {String(functionCall.name ?? 'unknown')}
           </span>
         </div>
         <div className="grid gap-3">
           {functionCall.call_id != null && (
             <DetailField label="Call ID">
-              <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[12px]">
+              <code className="break-all rounded bg-[hsl(var(--bg2))] px-1.5 py-0.5 font-mono text-[12px]">
                 {String(functionCall.call_id)}
               </code>
             </DetailField>
@@ -142,22 +162,21 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className={cn(
-            'rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+          <span className={`rounded border px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] ${
             isError
-              ? 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-destructive'
-              : 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]',
-          )}>
+              ? 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]'
+              : 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]'
+          }`}>
             Tool result
           </span>
-          <span className="truncate text-[14px] font-semibold text-foreground">
+          <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
             {String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}
           </span>
         </div>
         <div className="grid gap-3">
           {functionCallOutput.call_id != null && (
             <DetailField label="Call ID">
-              <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[12px]">
+              <code className="break-all rounded bg-[hsl(var(--bg2))] px-1.5 py-0.5 font-mono text-[12px]">
                 {String(functionCallOutput.call_id)}
               </code>
             </DetailField>
@@ -177,145 +196,222 @@ function EventDetail({ event }: { event: SessionEvent }) {
   )
 }
 
-function summarize(event: SessionEvent): string {
-  const e = event as Record<string, any>
-  switch (event.type) {
-    case 'agent_state_changed':
-      return `agent: ${e.old_state} → ${e.new_state}`
-    case 'user_state_changed':
-      return `user: ${e.old_state} → ${e.new_state}`
-    case 'user_input_transcribed': {
-      const tag = e.is_final ? 'final' : 'partial'
-      return `${tag}: "${e.transcript ?? ''}"`
-    }
-    case 'conversation_item_added': {
-      const item = getConversationItem(event) ?? {}
-      if (item.type === 'message') {
-        const content = Array.isArray(item.content)
-          ? item.content.join(' ')
-          : item.content ?? ''
-        const preview = String(content).slice(0, 120)
-        const ellipsis = String(content).length > 120 ? '…' : ''
-        return `${item.role}: "${preview}${ellipsis}"`
-      }
-      const functionCall = getFunctionCall(item)
-      if (functionCall) {
-        const args = preview(functionCall.arguments)
-        return `tool call: ${functionCall.name ?? 'unknown'}${args ? ` ${args}` : ''}`
-      }
-      const functionCallOutput = getFunctionCallOutput(item)
-      if (functionCallOutput) {
-        const output = preview(functionCallOutput.output)
-        return `tool result: ${functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown'}${output ? ` "${output}"` : ''}`
-      }
-      const handoff = item.type === 'agent_handoff' ? item : asRecord(item.agent_handoff)
-      if (handoff) {
-        // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
-        // agent_handoff items. Older payloads (and the eval path) use
-        // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
-        const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
-        const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
-        // Drop the arrow when one side is missing — the first handoff in a
-        // session has no previous agent, so `handoff to: X` reads more
-        // naturally than `— → X`.
-        if (from != null && to != null) return `handoff: ${from} → ${to}`
-        if (to != null) return `handoff to: ${to}`
-        if (from != null) return `handoff from: ${from}`
-      }
-      return `item: ${item.type ?? 'unknown'}`
-    }
-    case 'speech_created':
-      return `speech (source=${e.source}${e.user_initiated ? ', user-initiated' : ''})`
-    case 'close':
-      return `session closed (reason=${e.reason ?? 'unknown'})`
-    default:
-      return event.type
-  }
-}
+// ── Conversation-item renderers ─────────────────────────────────────────────
+// `conversation_item_added` carries a nested `item` whose shape is one of a
+// handful of kinds. Each renderer pulls its own sub-object (items may be flat
+// — `item.type === 'X'` — or wrapped — `item.X = {...}`) and returns `null`
+// to defer to the next renderer. The order in `ITEM_RENDER_ORDER` encodes the
+// original precedence; a single generic fallback closes out anything unknown.
+type ItemRenderer = (item: Record<string, unknown>) => React.ReactNode | null
 
-function formatRelative(offsetSec: number): string {
-  const sign = offsetSec >= 0 ? '+' : '−'
-  return `${sign}${Math.abs(offsetSec).toFixed(3)}s`
-}
-
-function formatAbsolute(unixSeconds: number): string {
-  return dayjs(unixSeconds * 1000).format('HH:mm:ss.SSS')
-}
-
-const EventRow = ({
-  event,
-  relSeconds,
-  eventTime,
-  timeMode,
-  badgeClass,
-}: {
-  event: SessionEvent
-  relSeconds: number | null
-  eventTime: number | null
-  timeMode: TimeMode
-  badgeClass: string
-}) => {
-  const timeLabel = eventTime == null
-    ? 'n/a'
-    : timeMode === 'relative'
-      ? formatRelative(relSeconds ?? 0)
-      : formatAbsolute(eventTime)
-  return (
-    <Collapsible className="ev-row-wrap group/event">
-      <CollapsibleTrigger
-        className={cn('ev-row', timeMode === 'absolute' && 'absolute-time')}
-      >
-        <ChevronDown
-          size={13}
-          className="caret -rotate-90 group-data-[state=open]/event:rotate-0"
-        />
-        <span className="t">
-          {timeLabel}
-        </span>
-        <span
-          data-event-type={event.type}
-          className={cn('tag', badgeClass)}
-        >
-          <span>{event.type}</span>
-        </span>
-        <span className="msg">
-          {summarize(event)}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
-        <EventDetail event={event} />
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-export interface SessionEventsProps {
-  /** Per-type badge className overrides — merged over the defaults. */
-  typeBadgeClass?: Partial<Record<string, string>>
-  /** Fallback className used when an event type has no mapping. */
-  fallbackBadgeClass?: string
-}
-
-export const SessionEvents = ({
-  typeBadgeClass,
-  fallbackBadgeClass = FALLBACK_BADGE_CLASS,
-}: SessionEventsProps = {}) => {
-  const events = useEvents()
-  const [timeMode, setTimeMode] = useState<TimeMode>('relative')
-
-  const badgeClassFor = (type: string): string => {
-    // User override wins; otherwise fall back to the component default.
+const ITEM_RENDERERS: Record<string, ItemRenderer> = {
+  message(item) {
+    if (item.type !== 'message') return null
+    const content = Array.isArray(item.content)
+      ? item.content.join(' ')
+      : String(item.content ?? '')
+    const text = content.slice(0, 120)
+    const ellipsis = content.length > 120 ? '…' : ''
     return (
-      typeBadgeClass?.[type] ??
-      DEFAULT_TYPE_BADGE_CLASS[type] ??
-      fallbackBadgeClass
+      <>
+        {String(item.role ?? 'unknown')}: <q>{text}{ellipsis}</q>
+      </>
+    )
+  },
+  function_call(item) {
+    const functionCall = getFunctionCall(item)
+    if (!functionCall) return null
+    const args = preview(functionCall.arguments)
+    return (
+      <>
+        tool call: <b>{String(functionCall.name ?? 'unknown')}</b>
+        {args && <> <code>{args}</code></>}
+      </>
+    )
+  },
+  function_call_output(item) {
+    const functionCallOutput = getFunctionCallOutput(item)
+    if (!functionCallOutput) return null
+    return (
+      <>
+        tool result: <b>{String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}</b>
+        {functionCallOutput.output != null && <> <q>{preview(functionCallOutput.output)}</q></>}
+      </>
+    )
+  },
+  agent_handoff(item) {
+    const handoff = getAgentHandoff(item)
+    if (!handoff) return null
+    // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
+    // agent_handoff items. Older payloads (and the eval path) use
+    // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
+    const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
+    const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
+    // Drop the arrow entirely when one side is missing — the first
+    // handoff in a session has no previous agent, so `handoff to: X`
+    // reads more naturally than `— → X`.
+    if (from != null && to != null) {
+      return (
+        <>
+          handoff: <b>{String(from)}</b>
+          <span className="arrow"> → </span>
+          {String(to)}
+        </>
+      )
+    }
+    if (to != null) return <>handoff to: <b>{String(to)}</b></>
+    if (from != null) return <>handoff from: <b>{String(from)}</b></>
+    // Shouldn't happen — fall through to the generic item renderer.
+    return null
+  },
+  agent_config_update(item) {
+    const configUpdate = getAgentConfigUpdate(item)
+    if (!configUpdate) return null
+    // Mid-session config swap — surface the two fields readers actually
+    // need to recognize the new identity (tools the agent gained,
+    // first line of the new instructions). The full instructions live
+    // on the Config tab; pulling them into the events row would push
+    // every other event off-screen.
+    const toolsAdded = Array.isArray(configUpdate.tools_added)
+      ? (configUpdate.tools_added as unknown[]).map(String)
+      : []
+    const toolsRemoved = Array.isArray(configUpdate.tools_removed)
+      ? (configUpdate.tools_removed as unknown[]).map(String)
+      : []
+    const instructions = typeof configUpdate.instructions === 'string'
+      ? configUpdate.instructions
+      : ''
+    const firstLine = instructions.split('\n')[0].slice(0, 120)
+    const ellipsis = instructions.length > firstLine.length ? '…' : ''
+    const parts: React.ReactNode[] = []
+    if (toolsAdded.length > 0) {
+      parts.push(
+        <span key="added">
+          <span className="text-muted-foreground">tools+</span>{' '}
+          <code>{toolsAdded.join(', ')}</code>
+        </span>,
+      )
+    }
+    if (toolsRemoved.length > 0) {
+      parts.push(
+        <span key="removed">
+          <span className="text-muted-foreground">tools−</span>{' '}
+          <code>{toolsRemoved.join(', ')}</code>
+        </span>,
+      )
+    }
+    if (firstLine.trim()) {
+      parts.push(
+        <q key="instructions">{firstLine}{ellipsis}</q>,
+      )
+    }
+    return (
+      <>
+        config update
+        {parts.length > 0 && <> · </>}
+        {parts.flatMap((p, i) => (i === 0 ? [p] : [<> · </>, p]))}
+      </>
+    )
+  },
+}
+
+// Precedence for the item renderers above — must stay in this order so a
+// payload that matches more than one probe renders the same way it always has.
+const ITEM_RENDER_ORDER = [
+  'message',
+  'function_call',
+  'function_call_output',
+  'agent_handoff',
+  'agent_config_update',
+] as const
+
+/** Generic fallback for unrecognized items. Items may be either flat
+ * (`item.type === 'X'`) or wrapped (`item.X = {...}`); when neither pattern
+ * matched anything we recognize, surface the first wrapper-looking key so the
+ * reader at least sees what KIND of item it was instead of a bare "unknown". */
+function renderGenericItem(item: Record<string, unknown>): React.ReactNode {
+  if (item.type) {
+    return (
+      <>
+        item: <b>{String(item.type)}</b>
+      </>
     )
   }
+  const wrappedKey = Object.keys(item).find((k) => {
+    const v = item[k]
+    return v != null && typeof v === 'object'
+  })
+  if (wrappedKey) {
+    return (
+      <>
+        item: <b>{wrappedKey}</b>
+      </>
+    )
+  }
+  return <>item: <b>unknown</b></>
+}
 
-  if (events == null || events.length === 0) {
+// ── Event renderers ─────────────────────────────────────────────────────────
+// One short one-line summary per event kind — mirrors the design's ev-row
+// message. Keyed by `event.type`; the default falls back to the raw type.
+type EventRenderer = (event: SessionEvent, e: Record<string, unknown>) => React.ReactNode
+
+const EVENT_RENDERERS: Record<string, EventRenderer> = {
+  agent_state_changed: (_event, e) => (
+    <>
+      agent: {String(e.old_state ?? '?')}
+      <span className="arrow"> → </span>
+      {String(e.new_state ?? '?')}
+    </>
+  ),
+  user_state_changed: (_event, e) => (
+    <>
+      user: {String(e.old_state ?? '?')}
+      <span className="arrow"> → </span>
+      {String(e.new_state ?? '?')}
+    </>
+  ),
+  user_input_transcribed: (_event, e) => {
+    const tag = e.is_final ? 'final' : 'partial'
+    return (
+      <>
+        {tag}: <q>{String(e.transcript ?? '')}</q>
+      </>
+    )
+  },
+  conversation_item_added: (event) => {
+    const item = getConversationItem(event) ?? {}
+    for (const kind of ITEM_RENDER_ORDER) {
+      const rendered = ITEM_RENDERERS[kind](item)
+      if (rendered != null) return rendered
+    }
+    return renderGenericItem(item)
+  },
+  speech_created: (_event, e) => (
+    <>
+      speech <q>source={String(e.source ?? '?')}{e.user_initiated ? ', user-initiated' : ''}</q>
+    </>
+  ),
+  close: (_event, e) => <>session closed (reason={String(e.reason ?? 'unknown')})</>,
+}
+
+/** Short one-line summary for an event — mirrors the design's ev-row message. */
+function EventMessage({ event }: { event: SessionEvent }) {
+  const e = event as Record<string, unknown>
+  const renderer = EVENT_RENDERERS[event.type]
+  if (renderer) return <>{renderer(event, e)}</>
+  return <>{event.type}</>
+}
+
+export const SessionEvents = () => {
+  const events = useEvents()
+  const [timeMode, setTimeMode] = useState<TimeMode>('relative')
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
+
+  if (!events || events.length === 0) {
     return (
       <div className="events-card">
-        <div className="py-8 text-center text-sm text-muted-foreground">
+        <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))', font: 'var(--text-s-400)' }}>
           No events captured for this session.
         </div>
       </div>
@@ -325,46 +421,77 @@ export const SessionEvents = ({
   const timeRange = getEventTimeRange(events)
   const t0 = timeRange?.start ?? 0
   const tEnd = timeRange?.end ?? t0
-
   const rangeLabel =
     timeMode === 'relative'
       ? `${formatRelative(0)} → ${formatRelative(tEnd - t0)}`
       : `${formatAbsolute(t0)} → ${formatAbsolute(tEnd)}`
 
+  const toggle = (i: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
+  }
+
   return (
     <div className="events-card">
       <div className="events-head">
         <div className="title">
-          <span>{events.length} events</span>
-          <span className="rng">{rangeLabel}</span>
+          {events.length} events <span className="rng">{rangeLabel}</span>
         </div>
         <button
           type="button"
           className="timemode"
-          onClick={() =>
-            setTimeMode((m) => (m === 'relative' ? 'absolute' : 'relative'))
-          }
+          onClick={() => setTimeMode((m) => (m === 'relative' ? 'absolute' : 'relative'))}
         >
-          <Clock size={12} />
-          {timeMode === 'relative' ? 'Relative' : 'Absolute'}
+          <Clock size={12} /> {timeMode === 'relative' ? 'Relative' : 'Absolute'}
         </button>
       </div>
       <div className="events-list">
-        <ul>
-          {events.map((event, i) => {
-            const eventTime = getEventCreatedAt(event)
-            return (
-              <EventRow
-                key={i}
-                event={event}
-                eventTime={eventTime}
-                relSeconds={eventTime == null ? null : eventTime - t0}
-                timeMode={timeMode}
-                badgeClass={badgeClassFor(event.type)}
-              />
-            )
-          })}
-        </ul>
+        {events.map((event, i) => {
+          const createdAt = getEventCreatedAt(event)
+          const timeLabel = createdAt == null
+            ? 'n/a'
+            : timeMode === 'relative'
+              ? formatRelative(createdAt - t0)
+              : formatAbsolute(createdAt)
+          const tagTone = EV_BADGE_TONE[event.type] ?? EV_BADGE_FALLBACK
+          const isOpen = expanded.has(i)
+          return (
+            <div key={i} className={`ev-row-wrap${isOpen ? ' open' : ''}`}>
+              <div
+                className={`ev-row${timeMode === 'absolute' ? ' absolute-time' : ''}`}
+                onClick={() => toggle(i)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    toggle(i)
+                  }
+                }}
+              >
+                <div className="caret"><ChevronRight size={14} /></div>
+                <div className="t">{timeLabel}</div>
+                <div>
+                  <Badge
+                    variant="outline"
+                    data-event-type={event.type}
+                    className={`tag h-5 rounded px-2 py-0 font-mono text-[10px] font-semibold tracking-[0.06em] ${tagTone}`}
+                  >
+                    <span>{event.type}</span>
+                  </Badge>
+                </div>
+                <div className="msg"><EventMessage event={event} /></div>
+              </div>
+              {isOpen && (
+                <EventDetail event={event} />
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

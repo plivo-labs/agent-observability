@@ -94,10 +94,20 @@ function getFunctionCallOutput(item: Record<string, unknown> | null): Record<str
   return item.type === 'function_call_output' ? item : asRecord(item.function_call_output)
 }
 
+function getAgentConfigUpdate(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'agent_config_update' ? item : asRecord(item.agent_config_update)
+}
+
+function getAgentHandoff(item: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!item) return null
+  return item.type === 'agent_handoff' ? item : asRecord(item.agent_handoff)
+}
+
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--tertiary))]">
+      <div className="text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--tertiary))]">
         {label}
       </div>
       <div className="min-w-0 text-[13px] text-[hsl(var(--foreground))]">
@@ -122,7 +132,7 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--info))]">
+          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--info))]">
             Tool call
           </span>
           <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
@@ -152,7 +162,7 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className={`rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+          <span className={`rounded border px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] ${
             isError
               ? 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]'
               : 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]'
@@ -186,107 +196,211 @@ function EventDetail({ event }: { event: SessionEvent }) {
   )
 }
 
+// ── Conversation-item renderers ─────────────────────────────────────────────
+// `conversation_item_added` carries a nested `item` whose shape is one of a
+// handful of kinds. Each renderer pulls its own sub-object (items may be flat
+// — `item.type === 'X'` — or wrapped — `item.X = {...}`) and returns `null`
+// to defer to the next renderer. The order in `ITEM_RENDER_ORDER` encodes the
+// original precedence; a single generic fallback closes out anything unknown.
+type ItemRenderer = (item: Record<string, unknown>) => React.ReactNode | null
+
+const ITEM_RENDERERS: Record<string, ItemRenderer> = {
+  message(item) {
+    if (item.type !== 'message') return null
+    const content = Array.isArray(item.content)
+      ? item.content.join(' ')
+      : String(item.content ?? '')
+    const text = content.slice(0, 120)
+    const ellipsis = content.length > 120 ? '…' : ''
+    return (
+      <>
+        {String(item.role ?? 'unknown')}: <q>{text}{ellipsis}</q>
+      </>
+    )
+  },
+  function_call(item) {
+    const functionCall = getFunctionCall(item)
+    if (!functionCall) return null
+    const args = preview(functionCall.arguments)
+    return (
+      <>
+        tool call: <b>{String(functionCall.name ?? 'unknown')}</b>
+        {args && <> <code>{args}</code></>}
+      </>
+    )
+  },
+  function_call_output(item) {
+    const functionCallOutput = getFunctionCallOutput(item)
+    if (!functionCallOutput) return null
+    return (
+      <>
+        tool result: <b>{String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}</b>
+        {functionCallOutput.output != null && <> <q>{preview(functionCallOutput.output)}</q></>}
+      </>
+    )
+  },
+  agent_handoff(item) {
+    const handoff = getAgentHandoff(item)
+    if (!handoff) return null
+    // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
+    // agent_handoff items. Older payloads (and the eval path) use
+    // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
+    const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
+    const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
+    // Drop the arrow entirely when one side is missing — the first
+    // handoff in a session has no previous agent, so `handoff to: X`
+    // reads more naturally than `— → X`.
+    if (from != null && to != null) {
+      return (
+        <>
+          handoff: <b>{String(from)}</b>
+          <span className="arrow"> → </span>
+          {String(to)}
+        </>
+      )
+    }
+    if (to != null) return <>handoff to: <b>{String(to)}</b></>
+    if (from != null) return <>handoff from: <b>{String(from)}</b></>
+    // Shouldn't happen — fall through to the generic item renderer.
+    return null
+  },
+  agent_config_update(item) {
+    const configUpdate = getAgentConfigUpdate(item)
+    if (!configUpdate) return null
+    // Mid-session config swap — surface the two fields readers actually
+    // need to recognize the new identity (tools the agent gained,
+    // first line of the new instructions). The full instructions live
+    // on the Config tab; pulling them into the events row would push
+    // every other event off-screen.
+    const toolsAdded = Array.isArray(configUpdate.tools_added)
+      ? (configUpdate.tools_added as unknown[]).map(String)
+      : []
+    const toolsRemoved = Array.isArray(configUpdate.tools_removed)
+      ? (configUpdate.tools_removed as unknown[]).map(String)
+      : []
+    const instructions = typeof configUpdate.instructions === 'string'
+      ? configUpdate.instructions
+      : ''
+    const firstLine = instructions.split('\n')[0].slice(0, 120)
+    const ellipsis = instructions.length > firstLine.length ? '…' : ''
+    const parts: React.ReactNode[] = []
+    if (toolsAdded.length > 0) {
+      parts.push(
+        <span key="added">
+          <span className="text-muted-foreground">tools+</span>{' '}
+          <code>{toolsAdded.join(', ')}</code>
+        </span>,
+      )
+    }
+    if (toolsRemoved.length > 0) {
+      parts.push(
+        <span key="removed">
+          <span className="text-muted-foreground">tools−</span>{' '}
+          <code>{toolsRemoved.join(', ')}</code>
+        </span>,
+      )
+    }
+    if (firstLine.trim()) {
+      parts.push(
+        <q key="instructions">{firstLine}{ellipsis}</q>,
+      )
+    }
+    return (
+      <>
+        config update
+        {parts.length > 0 && <> · </>}
+        {parts.flatMap((p, i) => (i === 0 ? [p] : [<> · </>, p]))}
+      </>
+    )
+  },
+}
+
+// Precedence for the item renderers above — must stay in this order so a
+// payload that matches more than one probe renders the same way it always has.
+const ITEM_RENDER_ORDER = [
+  'message',
+  'function_call',
+  'function_call_output',
+  'agent_handoff',
+  'agent_config_update',
+] as const
+
+/** Generic fallback for unrecognized items. Items may be either flat
+ * (`item.type === 'X'`) or wrapped (`item.X = {...}`); when neither pattern
+ * matched anything we recognize, surface the first wrapper-looking key so the
+ * reader at least sees what KIND of item it was instead of a bare "unknown". */
+function renderGenericItem(item: Record<string, unknown>): React.ReactNode {
+  if (item.type) {
+    return (
+      <>
+        item: <b>{String(item.type)}</b>
+      </>
+    )
+  }
+  const wrappedKey = Object.keys(item).find((k) => {
+    const v = item[k]
+    return v != null && typeof v === 'object'
+  })
+  if (wrappedKey) {
+    return (
+      <>
+        item: <b>{wrappedKey}</b>
+      </>
+    )
+  }
+  return <>item: <b>unknown</b></>
+}
+
+// ── Event renderers ─────────────────────────────────────────────────────────
+// One short one-line summary per event kind — mirrors the design's ev-row
+// message. Keyed by `event.type`; the default falls back to the raw type.
+type EventRenderer = (event: SessionEvent, e: Record<string, unknown>) => React.ReactNode
+
+const EVENT_RENDERERS: Record<string, EventRenderer> = {
+  agent_state_changed: (_event, e) => (
+    <>
+      agent: {String(e.old_state ?? '?')}
+      <span className="arrow"> → </span>
+      {String(e.new_state ?? '?')}
+    </>
+  ),
+  user_state_changed: (_event, e) => (
+    <>
+      user: {String(e.old_state ?? '?')}
+      <span className="arrow"> → </span>
+      {String(e.new_state ?? '?')}
+    </>
+  ),
+  user_input_transcribed: (_event, e) => {
+    const tag = e.is_final ? 'final' : 'partial'
+    return (
+      <>
+        {tag}: <q>{String(e.transcript ?? '')}</q>
+      </>
+    )
+  },
+  conversation_item_added: (event) => {
+    const item = getConversationItem(event) ?? {}
+    for (const kind of ITEM_RENDER_ORDER) {
+      const rendered = ITEM_RENDERERS[kind](item)
+      if (rendered != null) return rendered
+    }
+    return renderGenericItem(item)
+  },
+  speech_created: (_event, e) => (
+    <>
+      speech <q>source={String(e.source ?? '?')}{e.user_initiated ? ', user-initiated' : ''}</q>
+    </>
+  ),
+  close: (_event, e) => <>session closed (reason={String(e.reason ?? 'unknown')})</>,
+}
+
 /** Short one-line summary for an event — mirrors the design's ev-row message. */
 function EventMessage({ event }: { event: SessionEvent }) {
   const e = event as Record<string, unknown>
-  switch (event.type) {
-    case 'agent_state_changed':
-      return (
-        <>
-          agent: {String(e.old_state ?? '?')}
-          <span className="arrow"> → </span>
-          {String(e.new_state ?? '?')}
-        </>
-      )
-    case 'user_state_changed':
-      return (
-        <>
-          user: {String(e.old_state ?? '?')}
-          <span className="arrow"> → </span>
-          {String(e.new_state ?? '?')}
-        </>
-      )
-    case 'user_input_transcribed': {
-      const tag = e.is_final ? 'final' : 'partial'
-      return (
-        <>
-          {tag}: <q>{String(e.transcript ?? '')}</q>
-        </>
-      )
-    }
-    case 'conversation_item_added': {
-      const item = getConversationItem(event) ?? {}
-      if (item.type === 'message') {
-        const content = Array.isArray(item.content)
-          ? item.content.join(' ')
-          : String(item.content ?? '')
-        const preview = content.slice(0, 120)
-        const ellipsis = content.length > 120 ? '…' : ''
-        return (
-          <>
-            {String(item.role ?? 'unknown')}: <q>{preview}{ellipsis}</q>
-          </>
-        )
-      }
-      const functionCall = getFunctionCall(item)
-      if (functionCall) {
-        const args = preview(functionCall.arguments)
-        return (
-          <>
-            tool call: <b>{String(functionCall.name ?? 'unknown')}</b>
-            {args && <> <code>{args}</code></>}
-          </>
-        )
-      }
-      const functionCallOutput = getFunctionCallOutput(item)
-      if (functionCallOutput) {
-        return (
-          <>
-            tool result: <b>{String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}</b>
-            {functionCallOutput.output != null && <> <q>{preview(functionCallOutput.output)}</q></>}
-          </>
-        )
-      }
-      const handoff = item.type === 'agent_handoff' ? item : asRecord(item.agent_handoff)
-      if (handoff) {
-        // LiveKit's SDK ships `new_agent_id` / `previous_agent_id` on
-        // agent_handoff items. Older payloads (and the eval path) use
-        // `from_agent` / `to_agent` / `old_agent` / `new_agent`. Accept any.
-        const from = handoff.from_agent ?? handoff.previous_agent_id ?? handoff.old_agent_id ?? handoff.old_agent
-        const to = handoff.to_agent ?? handoff.new_agent_id ?? handoff.new_agent
-        // Drop the arrow entirely when one side is missing — the first
-        // handoff in a session has no previous agent, so `handoff to: X`
-        // reads more naturally than `— → X`.
-        if (from != null && to != null) {
-          return (
-            <>
-              handoff: <b>{String(from)}</b>
-              <span className="arrow"> → </span>
-              {String(to)}
-            </>
-          )
-        }
-        if (to != null) return <>handoff to: <b>{String(to)}</b></>
-        if (from != null) return <>handoff from: <b>{String(from)}</b></>
-        // Shouldn't happen — fall through to the generic item renderer.
-      }
-      return (
-        <>
-          item: <b>{String(item.type ?? 'unknown')}</b>
-        </>
-      )
-    }
-    case 'speech_created':
-      return (
-        <>
-          speech <q>source={String(e.source ?? '?')}{e.user_initiated ? ', user-initiated' : ''}</q>
-        </>
-      )
-    case 'close':
-      return <>session closed (reason={String(e.reason ?? 'unknown')})</>
-    default:
-      return <>{event.type}</>
-  }
+  const renderer = EVENT_RENDERERS[event.type]
+  if (renderer) return <>{renderer(event, e)}</>
+  return <>{event.type}</>
 }
 
 export const SessionEvents = () => {
@@ -365,7 +479,7 @@ export const SessionEvents = () => {
                   <Badge
                     variant="outline"
                     data-event-type={event.type}
-                    className={`tag h-5 rounded px-2 py-0 font-mono text-[11px] font-semibold tracking-wide ${tagTone}`}
+                    className={`tag h-5 rounded px-2 py-0 font-mono text-[10px] font-semibold tracking-[0.06em] ${tagTone}`}
                   >
                     <span>{event.type}</span>
                   </Badge>

@@ -211,12 +211,12 @@ All chart components accept a single optional prop:
 A minimal app to showcase all components and pages with mock data:
 
 ```bash
-cd packages/ui/preview
+cd docs
 bun install
 bun run dev
 ```
 
-Opens at http://localhost:5174. The sidebar lets you browse individual components, charts, and full pages. The preview imports directly from registry source — changes to components reflect immediately with hot reload.
+Opens at http://localhost:5174. The sidebar lets you browse individual components, charts, and full pages. The docs site imports directly from registry source — changes to components reflect immediately with hot reload.
 
 ## Tests
 
@@ -254,9 +254,12 @@ packages/ui/
 │   └── session-detail-page/
 ├── public/r/                        # Built registry JSON (committed; served via raw.githubusercontent.com)
 ├── tests/                           # Unit tests
-├── preview/                         # Preview app
 └── package.json
 ```
+
+The live docs / preview site lives at `docs/` (repo root), not under
+`packages/ui/`. It still imports verbatim from
+`packages/ui/registry/new-york/` so registry edits hot-reload.
 
 ## Releasing
 

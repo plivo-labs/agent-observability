@@ -16,23 +16,40 @@ import { DataTableColumnHeader } from '@/components/data-table/data-table-column
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { ObsDataTable } from '@/components/data-table/obs-data-table'
 import { useDataTable } from '@/components/data-table/use-data-table'
-import { formatDate } from '@/lib/observability-format'
-import { useSessions } from '@/lib/observability-hooks'
+import { formatCost, formatDate, formatDuration, formatMs } from '@/lib/observability-format'
+import { useAgentStats, useSessions } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
-import type { AgentSessionRow } from '@/lib/observability-types'
-import { CapsChips, DurationCell, TransportPill } from '@/components/obs-cells'
+import type { AgentSessionRow, AgentStatsRange } from '@/lib/observability-types'
+import { DurationCell, TransportPill } from '@/components/obs-cells'
+import { KpiTile } from '@/components/kpi'
 
 const TRANSPORT_OPTIONS = [
   { label: 'SIP', value: 'sip' },
   { label: 'Audio Stream', value: 'audio_stream' },
+  { label: 'Text', value: 'text' },
+  { label: 'Terminal', value: 'terminal_text' },
 ]
 
-export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
+export const SessionsPage = ({
+  onSessionClick,
+  agentId,
+  range = '7d',
+}: {
+  onSessionClick?: (sessionId: string) => void
+  /** When set, locks the list to this agent — every fetch includes
+   * `agent_id=<value>` so the page can be embedded inside the agent
+   * detail dashboard without an extra filter UI. */
+  agentId?: string
+  /** Window for the KPI tile sparklines. The agent detail header's
+   * range picker propagates here so the strip stays in sync with the
+   * Overview tab. Standalone (cross-agent) callers can leave the
+   * default 7d. */
+  range?: AgentStatsRange
+}) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
-  // Column ids below (`account_id`, `transport`, `started_at`) become the URL keys.
+  // Column ids below (`transport`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
-  const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [transport] = useQueryState(
     'transport',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -62,7 +79,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     perPage,
     (page - 1) * perPage,
     {
-      accountId: accountId || undefined,
+      agentId,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
       transport: transport.length ? transport : undefined,
@@ -104,26 +121,10 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         accessorKey: 'session_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Session ID" />,
         cell: ({ row }) => (
-          <span>{row.original.session_id}</span>
+          <span className="font-mono">{row.original.session_id}</span>
         ),
         enableSorting: false,
         meta: { label: 'Session ID' },
-      },
-      {
-        id: 'account_id',
-        accessorKey: 'account_id',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
-        cell: ({ row }) =>
-          row.original.account_id ? (
-            <span className="muted" style={{ fontSize: 12 }}>
-              {row.original.account_id}
-            </span>
-          ) : (
-            <span className="muted">—</span>
-          ),
-        enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
       },
       {
         id: 'transport',
@@ -172,26 +173,18 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
         meta: { label: 'Duration' },
       },
       {
+        // The agent_transport_sessions.turn_count column counts message items
+        // (user + assistant). The session-detail KPI tile shows
+        // summary.total_turns (logical user→assistant pairs), which is the
+        // canonical "turn count" elsewhere. Same column, two semantics —
+        // surface this one as "Messages" so neither lies, and let the KPI
+        // tile own the word "Turns".
         id: 'turn_count',
         accessorKey: 'turn_count',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Turns" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Messages" />,
         cell: ({ row }) => <span className="tnum">{row.original.turn_count}</span>,
         enableSorting: false,
-        meta: { label: 'Turns' },
-      },
-      {
-        id: 'capabilities',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Capabilities" />,
-        cell: ({ row }) => {
-          const textOnly = row.original.transport === 'text' || row.original.transport === 'terminal_text'
-          return (
-            <CapsChips
-              stt={!textOnly && row.original.has_stt}
-              llm={row.original.has_llm}
-              tts={!textOnly && row.original.has_tts}
-            />
-          )
-        },
+        meta: { label: 'Messages' },
       },
     ],
     [],
@@ -199,6 +192,23 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
 
   const totalCount = meta.total_count
   const pageCount = Math.max(1, Math.ceil(totalCount / perPage))
+
+  // Real time-series KPIs come from /api/agents/:id/stats which
+  // pre-aggregates session counts, latency, durations, and
+  // interruptions into per-day buckets. We only fetch when embedded
+  // (agentId provided) — the cross-agent /sessions list (gone in this
+  // IA but harmless to defend) would otherwise hit a 404. 7d gives a
+  // sparkline 7-points wide which is the visual sweet spot.
+  const { stats: agentStats } = useAgentStats(agentId, range)
+  const kpiSeries = useMemo(() => {
+    const buckets = agentStats?.buckets ?? []
+    return {
+      sessions: buckets.map((b) => b.session_count),
+      p95Latency: buckets.map((b) => b.p95_user_perceived_ms ?? 0),
+      avgDuration: buckets.map((b) => b.avg_duration_ms ?? 0),
+      cost: buckets.map((b) => b.estimated_cost_usd ?? 0),
+    }
+  }, [agentStats])
 
   const { table } = useDataTable({
     data: sessions,
@@ -230,14 +240,69 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
     }
   }
 
+  // When embedded inside the agent-detail dashboard, the parent already
+  // renders the breadcrumb + agent header — re-rendering an "obs-head"
+  // here adds a duplicate H1 ("Sessions") and a 30-day subtitle that
+  // doesn't match the picked range. Mirror AgentRunsPage's embedded
+  // behavior: drop the head block entirely and let the parent govern
+  // the top region; the `<b>{totalCount}</b> total` still surfaces in
+  // the table toolbar.
+  const embedded = !!agentId
+
   return (
     <>
-      <div className="obs-head">
-        <div>
-          <h1>Sessions</h1>
-          <div className="sub">Every agent session captured in the last 30 days.</div>
+      {!embedded && (
+        <div className="obs-head">
+          <div>
+            <h1>Sessions</h1>
+            <div className="sub">All sessions captured for this agent.</div>
+          </div>
+          <div className="total"><b>{totalCount}</b> total</div>
         </div>
-        <div className="total"><b>{totalCount}</b> total</div>
+      )}
+
+      <div className="eval-kpi-grid" style={{ marginBottom: 16 }}>
+        <KpiTile
+          label="Sessions"
+          value={(agentStats?.total_sessions ?? 0).toLocaleString()}
+          sub={`${range} window · ${totalCount.toLocaleString()} all-time`}
+          sparkValues={kpiSeries.sessions}
+          sparkColor="hsl(270 60% 55%)"
+        />
+        <KpiTile
+          label="p95 perceived latency"
+          value={
+            agentStats?.p95_user_perceived_ms != null
+              ? formatMs(agentStats.p95_user_perceived_ms)
+              : '—'
+          }
+          sub={`user perceived · ${range}`}
+          sparkValues={kpiSeries.p95Latency}
+          sparkColor="hsl(210 90% 42%)"
+        />
+        <KpiTile
+          label="Avg duration"
+          value={
+            kpiSeries.avgDuration.length
+              ? formatDuration(
+                  Math.round(
+                    kpiSeries.avgDuration.reduce((s, v) => s + v, 0) /
+                      kpiSeries.avgDuration.length,
+                  ),
+                )
+              : '—'
+          }
+          sub={`per session · ${range}`}
+          sparkValues={kpiSeries.avgDuration}
+          sparkColor="hsl(35 90% 45%)"
+        />
+        <KpiTile
+          label="Total LLM cost"
+          value={formatCost(agentStats?.total_estimated_cost_usd ?? null)}
+          sub={`priced on token usage · ${range}`}
+          sparkValues={kpiSeries.cost}
+          sparkColor="hsl(0 70% 50%)"
+        />
       </div>
 
       {error && (

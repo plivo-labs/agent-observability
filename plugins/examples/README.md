@@ -87,7 +87,7 @@ Both servers expose two endpoints:
 
 | Endpoint | What it does |
 |----------|--------------|
-| `POST /run/pytest` / `POST /run/vitest` | Invokes the test framework in-process on `pytest/pytest_generated_agent.py` / `vitest/vitest_generated_agent.ts`. A custom reporter/plugin captures per-case outcomes and durations; results come back as JSON. Third-party plugins (including `pytest-agent-observability` / `vitest-agent-observability` when installed) fire their hooks as usual and upload results to the dashboard. |
+| `POST /run/pytest` / `POST /run/vitest` | Invokes the test framework in-process on `pytest/pytest_generated_agent.py` / `vitest/vitest_generated_agent.ts`. A custom reporter/plugin captures per-case outcomes and durations; results come back as JSON. Third-party plugins (including `agent-observability-sdk` / `agent-observability-sdk` (Node) when installed) fire their hooks as usual and upload results to the dashboard. |
 | `POST /run/scenarios` | Bypasses the test-framework framing entirely. Imports `pytest_generated_agent` / `vitest_generated_agent` and calls its exported `run_all()`. Same generated scenarios, same agent, same judgments — returned as raw JSON. |
 
 Both endpoints accept `{"n": 5}` to control how many scenarios the LLM
@@ -98,7 +98,7 @@ Example:
 ```bash
 # Python side — `uv run` auto-installs inline deps declared in the file
 export OPENAI_API_KEY=sk-...
-uv run plugins/examples/pytest/fastapi_runner.py
+uv run plugins/examples/python/fastapi_runner.py
 
 curl -X POST http://localhost:8080/run/pytest \
      -H content-type:application/json -d '{"n": 5}' | jq
@@ -106,7 +106,7 @@ curl -X POST http://localhost:8080/run/scenarios \
      -H content-type:application/json -d '{"n": 5}' | jq
 
 # Node side
-cd plugins/examples/vitest && bun install       # once
+cd plugins/examples/node && bun install          # once
 export OPENAI_API_KEY=sk-...
 bun run runner
 
@@ -126,11 +126,11 @@ curl -X POST http://localhost:8080/run/scenarios \
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
 | `OPENAI_API_KEY` | yes | every example | Backs both the agent's own LLM (via `livekit-plugins-openai`) and the LLM judge. The generated-scenario examples also use it to call `chat.completions` with JSON-schema output for scenario generation. |
-| `AGENT_OBSERVABILITY_URL` | no | all pytest/vitest examples | Dashboard base URL (e.g. `http://localhost:9090`). Read by `pytest-agent-observability` / `vitest-agent-observability` when installed — if unset, tests still run but no eval data is uploaded. |
-| `AGENT_OBSERVABILITY_AGENT_ID` | no | all pytest/vitest examples | Tag that groups eval runs under one agent in the dashboard. Pair with `AGENT_OBSERVABILITY_URL`. |
+| `AGENT_OBSERVABILITY_URL` | no | all pytest/vitest examples | Dashboard base URL (e.g. `http://localhost:9090`). Read by `agent-observability-sdk` / `agent-observability-sdk` (Node) when installed — if unset, tests still run but no eval data is uploaded. |
+| `AGENT_OBSERVABILITY_AGENT_ID` | no | all pytest/vitest examples | Opaque agent id that groups eval runs under one agent in the dashboard — any stable string works (UUID4, customer-scheme id, k8s deployment name, slug). Each example file sets its own default in `__main__`; set this only if you want to override. Pair with `AGENT_OBSERVABILITY_URL`. |
 | `AGENT_OBSERVABILITY_GENERATED_N` | no | generated-scenario examples | How many scenarios the LLM should produce per run. Default `10`. The FastAPI/Bun endpoints also accept `{"n": N}` in the request body, which overrides this. |
 | `PORT` | no | `fastapi_runner.py`, `bun_runner.ts` | HTTP port for the runner servers. Default `8080`. |
-| `PYTEST_DISABLE_PLUGIN_AUTOLOAD` | no | FastAPI in-process runner | Set to `1` only if you want to suppress auto-discovery of installed pytest plugins (including `pytest-agent-observability`) during a `pytest.main()` call. Leave unset to keep default behavior. |
+| `PYTEST_DISABLE_PLUGIN_AUTOLOAD` | no | FastAPI in-process runner | Set to `1` only if you want to suppress auto-discovery of installed pytest plugins (including `agent-observability-sdk`) during a `pytest.main()` call. Leave unset to keep default behavior. |
 
 Not used by these examples, but note for completeness: if your
 agent-observability server is gated with basic auth, it reads
@@ -150,10 +150,14 @@ an ephemeral venv on first invocation. No `pip install` step.
 ```bash
 export OPENAI_API_KEY=sk-...
 export AGENT_OBSERVABILITY_URL=http://localhost:9090     # optional
-export AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot     # optional
+# Any stable opaque id that uniquely identifies this agent — the examples use
+# UUID4 by convention, but any string works (slug, customer id, deployment name).
+# obs groups runs by this value; "demo-bank-bot" elsewhere in the file is just
+# the human label.
+export AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c   # optional
 
-uv run plugins/examples/pytest_banking_agent.py
-uv run plugins/examples/pytest_generated_agent.py
+uv run plugins/examples/python/pytest_banking_agent.py
+uv run plugins/examples/python/pytest_generated_agent.py
 uv run plugins/examples/fastapi_runner.py       # starts the HTTP server
 ```
 
@@ -166,9 +170,10 @@ and its async plugin, so `uv run` wires everything up in one command.
 bun add @livekit/agents @livekit/agents-plugin-inference zod vitest openai
 export OPENAI_API_KEY=sk-...
 export AGENT_OBSERVABILITY_URL=http://localhost:9090     # optional
-export AGENT_OBSERVABILITY_AGENT_ID=demo-support-bot     # optional
-npx vitest run plugins/examples/vitest_banking_agent.ts
-npx vitest run plugins/examples/vitest_generated_agent.ts
+# Any stable opaque id; matches the python sibling so both surface under one agent.
+export AGENT_OBSERVABILITY_AGENT_ID=348315ff-9d63-46f5-9415-53aabb72f56c   # optional
+npx vitest run plugins/examples/node/vitest_banking_agent.ts
+npx vitest run plugins/examples/node/vitest_generated_agent.ts
 ```
 
 Tests call a real LLM — they aren't free, but they're cheap: text-only with

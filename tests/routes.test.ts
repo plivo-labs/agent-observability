@@ -14,6 +14,11 @@ const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 // Route `sql.unsafe(...)` through the same queue as `sql\`...\`` so the
 // existing `.mockResolvedValueOnce(...)` pattern works for both call styles.
 mockSql.unsafe = mockSql;
+// `sql.begin(fn)` is used by the recordings handler so the agent upsert
+// and session insert share one transaction. The mock just invokes the
+// callback with the same handle — no real isolation, but the test
+// surface only cares that the inner calls happen.
+mockSql.begin = (fn: (tx: any) => Promise<unknown>) => fn(mockSql);
 
 const TEST_USER = "test-user";
 const TEST_PASS = "test-pass";
@@ -340,8 +345,123 @@ describe("POST /observability/recordings/v0", () => {
     expect(res.status).toBe(401);
   });
 
+  // ── agent_id ingest extraction ─────────────────────────────────────────
+  //
+  // Three extraction paths from rawReport (in order of precedence):
+  //   1. rawReport.agent_id (top-level field)
+  //   2. rawReport.tags[] entry matching /^agent_id:.+/
+  // When neither is present the route still accepts the upload with
+  // agentId=null — agent_transport_sessions.agent_id is nullable (mig
+  // 014), and the OTLP "tag" body that arrives ~1s later carries
+  // `agent_id:<uuid>` which `applySessionTagMetadata` backfills via
+  // an UPDATE keyed on session_id. Same shape `account_id` follows.
+  // Header-only POSTs (no chat_history blob) also accept with null.
+
+  test("accepts with agent_id=null when rawReport carries no agent identifier", async () => {
+    const chatHistory = JSON.stringify({
+      // No agent_id, no tags carrying it. The route used to 400 here;
+      // we now accept and rely on the OTLP backfill path.
+      items: [
+        { id: "m1", type: "message", role: "user" },
+      ],
+    });
+    const form = new FormData();
+    form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
+    expect(call.agentId).toBeNull();
+  });
+
+  test("extracts agent_id from rawReport.tags[] when no top-level field", async () => {
+    const chatHistory = JSON.stringify({
+      // No top-level agent_id — the SDK's `_ensure_transport_tags`
+      // path puts the id in the tags array via "agent_id:<uuid>".
+      tags: [
+        "account_id:acct-123",
+        "agent_id:99999999-aaaa-bbbb-cccc-dddddddddddd",
+        "transport:audio_stream",
+      ],
+      items: [],
+    });
+    const form = new FormData();
+    form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
+    expect(call.agentId).toBe("99999999-aaaa-bbbb-cccc-dddddddddddd");
+  });
+
+  test("top-level rawReport.agent_id beats the tags[] fallback", async () => {
+    // Both paths populated — the explicit field wins. Pinning this so a
+    // future refactor doesn't silently flip the precedence.
+    const chatHistory = JSON.stringify({
+      agent_id: "top-level-wins-uuid",
+      tags: ["agent_id:tags-fallback-uuid"],
+      items: [],
+    });
+    const form = new FormData();
+    form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
+    expect(call.agentId).toBe("top-level-wins-uuid");
+  });
+
+  test("accepts with agent_id=null when rawReport is absent (header-only POST)", async () => {
+    // No chat_history blob → rawReport stays null → no extractor source.
+    // insertSession runs with agentId=null; OTLP tag arriving later
+    // backfills the column via applySessionTagMetadata.
+    const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "no-history" })], { type: "application/json" }));
+
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: basicAuthHeader() },
+        body: form,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockInsertSession).toHaveBeenCalledTimes(1);
+    const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
+    expect(call.agentId).toBeNull();
+  });
+
   test("accepts valid request and calls insertSession", async () => {
     const chatHistory = JSON.stringify({
+      // Happy path: top-level agent_id ships in chat_history and is
+      // extracted here at multipart time. The SDK also puts it on the
+      // OTLP session-report log's attributes for the backfill channel,
+      // but when this field is populated up front the UPDATE is a no-op.
+      agent_id: "11111111-2222-3333-4444-555555555555",
       items: [
         { id: "m1", type: "message", role: "user", metrics: { transcription_delay: 0.12 } },
         { id: "m2", type: "message", role: "assistant", metrics: { llm_node_ttft: 0.4, tts_node_ttfb: 0.08 } },
@@ -367,7 +487,10 @@ describe("POST /observability/recordings/v0", () => {
     // Verify insertSession was called with parsed data
     expect(mockInsertSession).toHaveBeenCalledTimes(1);
     const call = (mockInsertSession.mock.calls as any[])[0][0] as any;
-    expect(call.turnCount).toBe(2);
+    // 1 assistant message → 1 turn (logical user→assistant pair).
+    // parse.ts counts only assistant items so this column agrees with
+    // metrics.ts:summary.total_turns on the same dialog.
+    expect(call.turnCount).toBe(1);
     expect(call.hasStt).toBe(true);
     expect(call.hasLlm).toBe(true);
     expect(call.hasTts).toBe(true);

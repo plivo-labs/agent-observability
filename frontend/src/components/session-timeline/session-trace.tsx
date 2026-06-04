@@ -218,7 +218,7 @@ interface TooltipState {
 function TraceTooltip({ tip }: { tip: TooltipState }) {
   return (
     <div
-      className="pointer-events-none fixed z-50 rounded-md border bg-background p-2.5 shadow-lg text-[11px] max-w-[260px]"
+      className="pointer-events-none fixed z-50 rounded-none border border-foreground bg-card p-2.5 shadow-none text-[11px] max-w-[260px] font-mono"
       style={{ left: tip.x + 12, top: tip.y - 8 }}
     >
       <div className="flex items-center justify-between gap-3 mb-1">

@@ -1,0 +1,59 @@
+name: Deploy docs to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'packages/ui/registry/**'
+      - 'packages/ui/package.json'
+      - 'packages/ui/bun.lock'
+      - '.env.example'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install UI package dependencies
+        working-directory: packages/ui
+        run: bun install --frozen-lockfile
+
+      - name: Install docs dependencies
+        working-directory: docs
+        run: bun install --frozen-lockfile
+
+      - name: Build docs
+        working-directory: docs
+        run: bun run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

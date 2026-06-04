@@ -70,6 +70,20 @@ export const SessionHeader = ({
         <KVRow label="Session ID">
           <span>{session.session_id}</span>
         </KVRow>
+        <KVRow label="Agent">
+          {session.agent_id || session.agent_name ? (
+            <div className="flex flex-col items-end leading-tight">
+              <span>{session.agent_name || session.agent_id}</span>
+              {session.agent_name && session.agent_id && (
+                <span className="text-muted-foreground text-[11px] font-mono">
+                  {session.agent_id}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span style={{ color: 'hsl(var(--tertiary))' }}>—</span>
+          )}
+        </KVRow>
         <KVRow label="Capabilities">
           <CapsChips
             stt={!textOnly && session.has_stt}
@@ -77,7 +91,11 @@ export const SessionHeader = ({
             tts={!textOnly && session.has_tts}
           />
         </KVRow>
-        <KVRow label="Turns">{session.turn_count ?? '—'}</KVRow>
+        {/* Turn count lives on the KPI tile below, reading the computed
+         *  summary.total_turns (logical user→assistant pairs). This used to
+         *  duplicate it from session.turn_count, which historically counted
+         *  every message item — so the header would say 8 while the KPI
+         *  said 4 on the same session. One source, no contradiction. */}
       </div>
 
       <div className="obs-kv">

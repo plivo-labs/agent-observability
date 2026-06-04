@@ -71,10 +71,28 @@ function normalizeAgentFramework(name: unknown): unknown {
 
 const TESTING_FRAMEWORKS = new Set(["pytest", "vitest"]);
 
+// Run lifecycle status. Plugins post 'running' at session-start, then
+// the terminal status (derived from pytest's exitstatus) at session-
+// finish. The server's read-time overlay flips long-stale 'running'
+// runs (>1h since last activity) to 'completed' so a hard-killed
+// run (SIGKILL, OOM, machine death) doesn't stay stuck on the dashboard.
+export const evalRunStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export type EvalRunStatus = z.infer<typeof evalRunStatusSchema>;
+
 const evalRunObjectSchema = z.object({
   run_id: z.string().uuid(),
+  // Optional human-readable label for the run (e.g. "Nightly smoke",
+  // "PR #482"). Loose validation — store whatever the plugin sends.
+  name: z.string().nullable().optional(),
   account_id: z.string().nullable().optional(),
   agent_id: z.string().nullable().optional(),
+  agent_name: z.string().nullable().optional(),
   // Agent framework family (livekit / pipecat / …). Optional because it
   // may not be detectable in every environment.
   framework: z.string().nullable().optional(),
@@ -83,7 +101,13 @@ const evalRunObjectSchema = z.object({
   testing_framework: z.string().min(1),
   testing_framework_version: z.string().nullable().optional(),
   started_at: z.number(),                 // unix seconds
-  finished_at: z.number(),
+  // Nullable for in-flight 'running' runs — the plugin's session-start
+  // POST sends finished_at=null, and the session-finish POST overwrites
+  // with the actual finish time.
+  finished_at: z.number().nullable().optional(),
+  // Defaults to 'completed' to keep legacy single-POST plugins working
+  // without any payload change.
+  status: evalRunStatusSchema.default("completed"),
   ci: ciMetadataSchema.nullable().optional(),
 });
 

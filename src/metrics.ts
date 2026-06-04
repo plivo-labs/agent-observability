@@ -6,6 +6,8 @@
  * Content fields may be string arrays — we join them.
  */
 
+import { isAgentTurn, perceivedMs } from "./turn-rules.js";
+
 interface TurnRecord {
   turn_number: number;
   turn_id: string;
@@ -190,7 +192,8 @@ export function buildSessionMetrics(
           typeof item.transcript_confidence === "number"
             ? item.transcript_confidence
             : undefined;
-      } else if (item.type === "message" && role === "assistant") {
+      } else if (item.type === "message" && isAgentTurn(role)) {
+        // One turn per assistant message (turn-rules.isAgentTurn).
         turnNumber++;
 
         // Extract user-side timestamps BEFORE merge (both sides have started/stopped_speaking_at)
@@ -212,10 +215,30 @@ export function buildSessionMetrics(
         const llmMs = toMs(m.llm_node_ttft);
         const ttsMs = toMs(m.tts_node_ttfb);
         const e2eMs = toMs(m.e2e_latency);
-        const perceivedMs = e2eMs ?? (llmMs != null && ttsMs != null ? llmMs + ttsMs : llmMs);
+        // Canonical perceived latency: e2e_latency ?? llm_node_ttft. The
+        // old +tts fallback is dropped — see src/turn-rules.ts perceivedMs
+        // and the matching agents/db.ts PERCEIVED_MS_SQL fragment.
+        const userPerceivedMs = perceivedMs(e2eMs, llmMs);
 
         const agentText = text;
-        const ttsChars = agentText.length;
+        // Only count TTS characters when the audio pipeline actually
+        // synthesized speech — TTS metadata or a tts_node_ttfb on the
+        // turn are the reliable signals. On a text-only session the
+        // assistant produces text but no TTS runs; counting agent_text
+        // length there mislabels prose length as TTS work and clutters
+        // the Token Usage panel with a metric that has no audio cost.
+        //
+        // This is a PER-TURN TTS-synthesis gate and is deliberately NOT
+        // turn-rules.sawAudioEvidence(): that predicate answers the
+        // session-level "did audio run anywhere" question (and excludes
+        // tts_metadata), whereas here a turn with only tts_metadata still
+        // counts as having synthesized speech.
+        const ttsRan =
+          ttsMs != null ||
+          (ttsMeta != null &&
+            typeof ttsMeta === "object" &&
+            !Array.isArray(ttsMeta));
+        const ttsChars = ttsRan ? agentText.length : 0;
 
         const turn: TurnRecord = {
           turn_number: turnNumber,
@@ -228,7 +251,7 @@ export function buildSessionMetrics(
           user_stopped_speaking_at: userStoppedAt,
           agent_started_speaking_at: agentStartedAt,
           agent_stopped_speaking_at: agentStoppedAt,
-          user_perceived_ms: perceivedMs,
+          user_perceived_ms: userPerceivedMs,
           stt_delay_ms: sttMs,
           llm_ttft_ms: llmMs,
           tts_ttfb_ms: ttsMs,
@@ -335,7 +358,7 @@ export function buildSessionMetrics(
   // If per-turn tokens are missing, compute from session-level usage data.
   // Usage entries have: { provider, model, input_tokens?, output_tokens?, characters_count?, audio_duration? }
   // LLM entries have input_tokens/output_tokens; TTS entries have characters_count; STT have audio_duration only.
-  if (totalTokens === 0 && usageData) {
+  if (totalTokens === 0 && Array.isArray(usageData)) {
     for (const u of usageData) {
       if (u.input_tokens != null && u.characters_count == null) {
         totalPromptTokens += u.input_tokens ?? 0;
@@ -344,7 +367,7 @@ export function buildSessionMetrics(
       }
     }
   }
-  if (totalTtsChars === 0 && usageData) {
+  if (totalTtsChars === 0 && Array.isArray(usageData)) {
     for (const u of usageData) {
       if (u.characters_count != null) {
         totalTtsChars += u.characters_count;

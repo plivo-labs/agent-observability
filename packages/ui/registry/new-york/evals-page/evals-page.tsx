@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Bot, FlaskConical, Trash2, type LucideIcon } from 'lucide-react'
@@ -76,12 +76,32 @@ function TestingFrameworkBadge({ name, version }: { name: string; version: strin
   return <FrameworkPill name={name} version={version} icon={FlaskConical} />
 }
 
-export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
+function formatTokens(tokens: number): string {
+  return tokens > 0 ? tokens.toLocaleString() : '—'
+}
+
+function formatCost(cost: number | null): string {
+  return cost == null ? '—' : `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`
+}
+
+export const EvalsPage = ({
+  onRunClick,
+  agentId: agentIdProp,
+}: {
+  onRunClick?: (runId: string) => void
+  /** When set, locks the list to this agent — overrides the URL-synced
+   * `agent_id` filter so the page can be embedded inside the agent
+   * detail dashboard. */
+  agentId?: string
+}) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
   // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
-  const [agentId] = useQueryState('agent_id', parseAsString.withDefault(''))
+  const [agentIdQuery] = useQueryState('agent_id', parseAsString.withDefault(''))
+  // Prop wins so the embedded-in-agent-dashboard case is forced; falls
+  // back to URL-synced filter on the standalone cross-agent route.
+  const agentId = agentIdProp ?? agentIdQuery
   const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [framework] = useQueryState(
     'framework',
@@ -124,6 +144,13 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     },
   )
 
+  const hasRunningRun = runs.some((run) => run.status === 'running')
+  useEffect(() => {
+    if (!hasRunningRun) return
+    const id = window.setInterval(() => refetch(), 1500)
+    return () => window.clearInterval(id)
+  }, [hasRunningRun, refetch])
+
   const columns = useMemo<ColumnDef<EvalRunRow>[]>(
     () => [
       {
@@ -158,23 +185,37 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         id: 'run_id',
         accessorKey: 'run_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Run" />,
-        cell: ({ row }) => <span className="mono">{row.original.run_id.slice(0, 8)}</span>,
+        cell: ({ row }) =>
+          row.original.name ? (
+            <span className="font-medium">{row.original.name}</span>
+          ) : (
+            <span className="font-mono">{row.original.run_id.slice(0, 8)}</span>
+          ),
         enableSorting: false,
         meta: { label: 'Run' },
       },
       {
+        // Agent identity. Primary line is the human name when present,
+        // falling back to the opaque id. The id appears as small
+        // secondary text whenever a name is shown so deep-links remain
+        // discoverable.
         id: 'agent_id',
         accessorKey: 'agent_id',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Agent" />,
-        cell: ({ row }) =>
-          row.original.agent_id ? (
-            <span style={{ font: 'var(--text-p-500)' }}>{row.original.agent_id}</span>
-          ) : (
-            <span className="muted">—</span>
-          ),
+        cell: ({ row }) => {
+          const id = row.original.agent_id
+          const name = row.original.agent_name
+          if (!id && !name) return <span className="muted">—</span>
+          return (
+            <div className="flex flex-col leading-tight">
+              <span style={{ font: 'var(--text-p-500)' }}>{name || id}</span>
+              {name && id && (
+                <span className="text-muted-foreground text-[11px] font-mono">{id}</span>
+              )}
+            </div>
+          )
+        },
         enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Agent', placeholder: 'Filter by agent', variant: 'text' },
       },
       {
         id: 'framework',
@@ -240,7 +281,10 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
             <div className="flex items-center gap-2">
               <PassRateBar passed={r.passed} total={r.total} />
               {failed > 0 && (
-                <Badge variant="outline" className="text-xxs-600 uppercase tracking-wider">
+                <Badge
+                  variant="outline"
+                  className="capitalize border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]"
+                >
                   {failed} fail
                 </Badge>
               )}
@@ -262,17 +306,34 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
         cell: ({ row }) => (
-          <span className="mono tnum">{formatDuration(row.original.duration_ms)}</span>
+          <span className="font-mono tabular-nums">{formatDuration(row.original.duration_ms)}</span>
         ),
         enableSorting: false,
         meta: { label: 'Duration' },
+      },
+      {
+        id: 'total_tokens',
+        accessorKey: 'total_tokens',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Tokens" />,
+        cell: ({ row }) => <span className="font-mono tabular-nums">{formatTokens(row.original.total_tokens)}</span>,
+        enableSorting: false,
+        meta: { label: 'Tokens' },
+      },
+      {
+        id: 'estimated_cost_usd',
+        accessorKey: 'estimated_cost_usd',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Est. cost" />,
+        cell: ({ row }) => <span className="font-mono tabular-nums">{formatCost(row.original.estimated_cost_usd)}</span>,
+        enableSorting: false,
+        meta: { label: 'Est. cost' },
       },
       {
         id: 'started_at',
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="inline-flex items-center gap-2 tnum" style={{ color: 'hsl(var(--secondary))' }}>
+            {row.original.status === 'running' && <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
             {formatDate(row.original.started_at)}
           </span>
         ),
@@ -324,8 +385,20 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           <h1 className="text-h2-600 font-semibold m-0">Evals</h1>
           <div className="text-s-400 text-muted-foreground">Test runs across your agents.</div>
         </div>
-        <div className="text-s-400 text-muted-foreground">
-          <b className="text-foreground">{totalCount}</b> total
+        <div className="flex items-center gap-2">
+          {selectedCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={() => setConfirmOpen(true)}
+            >
+              <Trash2 /> Delete
+            </Button>
+          )}
+          <div className="text-s-400 text-muted-foreground">
+            <b className="text-foreground">{totalCount}</b> total
+          </div>
         </div>
       </div>
 
@@ -335,31 +408,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           className="border border-border bg-muted text-foreground px-4 py-2.5 rounded-lg text-s-400"
         >
           Failed to load eval runs: {error}
-        </div>
-      )}
-
-      {selectedCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-card">
-          <span className="text-s-500">
-            <b>{selectedCount}</b> selected
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => table.resetRowSelection()}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
-              onClick={() => setConfirmOpen(true)}
-            >
-              <Trash2 /> Delete
-            </Button>
-          </div>
         </div>
       )}
 

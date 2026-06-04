@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, CheckCheck, List, Moon, RefreshCw, Sun } from 'lucide-react'
+import { Moon, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
-import { SessionsPage } from '@/components/sessions-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
-import { EvalsPage } from '@/components/evals-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { EvalRunComparePage } from '@/components/eval-run-compare-page'
+import { AgentsPage } from '@/components/agents-page'
+import { AgentDetailPage } from '@/components/agent-detail-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -37,29 +38,21 @@ const useDarkMode = () => {
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
-  const { pathname } = useLocation()
-
-  // NavLink's `end` prop scopes the active match to a single path, so the
-  // Sessions tab (at `/`) would lose its highlight on `/sessions/:id`. Compute
-  // active state ourselves: each tab claims its detail routes too.
-  const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
-  const isEvalsActive = pathname.startsWith('/evals')
 
   return (
     <div className="obs-app">
       <nav className="obs-nav">
         <Link to="/" className="obs-nav-brand">
-          <span className="dot"><Activity size={13} strokeWidth={2} /></span>
-          Agent Observability
+          <span className="dot" aria-hidden>Ω</span>
+          <span>Agent Observability</span>
         </Link>
-        <div className="obs-nav-tabs">
-          <Link to="/" className={`obs-tab${isSessionsActive ? ' active' : ''}`}>
-            <List size={14} /> Sessions
-          </Link>
-          <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
-            <CheckCheck size={14} /> Evals
-          </Link>
-        </div>
+        <span
+          aria-hidden
+          className="hidden md:inline-flex items-center text-[10px] uppercase ml-3 px-2 py-[3px] border border-border text-tertiary"
+          style={{ letterSpacing: '0.16em', fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace' }}
+        >
+          BUILD 04 · LIVE
+        </span>
         <div className="obs-nav-spacer" />
         <div className="obs-nav-right">
           <button
@@ -68,7 +61,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             title="Refresh"
             onClick={() => window.location.reload()}
           >
-            <RefreshCw size={16} />
+            <RefreshCw size={15} strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -76,7 +69,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             onClick={toggleDark}
             title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
           >
-            {dark ? <Sun size={16} /> : <Moon size={16} />}
+            {dark ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
           </button>
         </div>
       </nav>
@@ -87,48 +80,82 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
-function SessionsRoute() {
-  const navigate = useNavigate()
-  return <SessionsPage onSessionClick={(id) => navigate(`/sessions/${id}`)} />
-}
-
-function SessionDetailRoute() {
-  const { sessionId } = useParams<{ sessionId: string }>()
+function AgentsRoute() {
   const navigate = useNavigate()
   return (
-    <AgentObservabilityProvider baseUrl="/api" sessionId={sessionId}>
-      <SessionDetailPage onBack={() => navigate('/')} />
-    </AgentObservabilityProvider>
-  )
-}
-
-function EvalsRoute() {
-  const navigate = useNavigate()
-  return <EvalsPage onRunClick={(runId) => navigate(`/evals/${runId}`)} />
-}
-
-function EvalRunDetailRoute() {
-  const { runId } = useParams<{ runId: string }>()
-  const navigate = useNavigate()
-  if (!runId) return null
-  // No onCaseClick → EvalRunDetailPage opens a drawer (URL-synced via ?case=<id>).
-  return (
-    <EvalRunDetailPage
-      runId={runId}
-      onBack={() => navigate('/evals')}
+    <AgentsPage
+      onAgentClick={(id) => navigate(`/agents/${encodeURIComponent(id)}`)}
     />
   )
 }
 
-function EvalCaseDetailRoute() {
-  const { runId, caseId } = useParams<{ runId: string; caseId: string }>()
+function AgentDetailRoute() {
+  const { agentId } = useParams<{ agentId: string }>()
   const navigate = useNavigate()
-  if (!runId || !caseId) return null
+  if (!agentId) return null
+  // URL carries only the agent_id. When the same agent_id exists under
+  // multiple accounts (rare; only when agent_ids are slugs rather than
+  // UUIDs), the server returns the most-recently-active row.
+  const encoded = encodeURIComponent(decodeURIComponent(agentId))
+  return (
+    <AgentDetailPage
+      agentId={decodeURIComponent(agentId)}
+      onSessionClick={(id) => navigate(`/agents/${encoded}/sessions/${id}`)}
+      onRunClick={(runId) => navigate(`/agents/${encoded}/simulation-evals/${runId}`)}
+      onCompare={(runIdA, runIdB) =>
+        navigate(`/agents/${encoded}/simulation-evals/compare?runA=${runIdA}&runB=${runIdB}`)
+      }
+    />
+  )
+}
+
+function EvalRunCompareRoute() {
+  const { agentId } = useParams<{ agentId: string }>()
+  const navigate = useNavigate()
+  const params = new URLSearchParams(useLocation().search)
+  const runIdA = params.get('runA') ?? undefined
+  const runIdB = params.get('runB') ?? undefined
+  if (!agentId) return null
+  const decoded = decodeURIComponent(agentId)
+  const encoded = encodeURIComponent(decoded)
+  return (
+    <EvalRunComparePage
+      agentId={decoded}
+      runIdA={runIdA}
+      runIdB={runIdB}
+      onOpenRun={(runId) => navigate(`/agents/${encoded}/simulation-evals/${runId}`)}
+    />
+  )
+}
+
+function SessionDetailRoute() {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const decoded = sessionId ? decodeURIComponent(sessionId) : undefined
+  return (
+    <AgentObservabilityProvider baseUrl="/api" sessionId={decoded}>
+      <SessionDetailPage />
+    </AgentObservabilityProvider>
+  )
+}
+
+function EvalRunDetailRoute() {
+  const { runId } = useParams<{ runId: string }>()
+  if (!runId) return null
+  // No onCaseClick → EvalRunDetailPage opens a drawer (URL-synced via ?case=<id>).
+  return (
+    <EvalRunDetailPage runId={runId} />
+  )
+}
+
+function EvalCaseDetailRoute() {
+  const { agentId, runId, caseId } = useParams<{ agentId: string; runId: string; caseId: string }>()
+  const navigate = useNavigate()
+  if (!agentId || !runId || !caseId) return null
   return (
     <EvalCaseDetailPage
       runId={runId}
       caseId={caseId}
-      onBack={() => navigate(`/evals/${runId}`)}
+      onBack={() => navigate(`/agents/${encodeURIComponent(agentId)}/simulation-evals/${runId}`)}
     />
   )
 }
@@ -140,11 +167,13 @@ export default function App() {
         <Layout>
           <AgentObservabilityProvider baseUrl="/api">
             <Routes>
-              <Route path="/" element={<SessionsRoute />} />
-              <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
-              <Route path="/evals" element={<EvalsRoute />} />
-              <Route path="/evals/:runId" element={<EvalRunDetailRoute />} />
-              <Route path="/evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
+              <Route path="/" element={<AgentsRoute />} />
+              <Route path="/agents" element={<AgentsRoute />} />
+              <Route path="/agents/:agentId" element={<AgentDetailRoute />} />
+              <Route path="/agents/:agentId/sessions/:sessionId" element={<SessionDetailRoute />} />
+              <Route path="/agents/:agentId/simulation-evals/compare" element={<EvalRunCompareRoute />} />
+              <Route path="/agents/:agentId/simulation-evals/:runId" element={<EvalRunDetailRoute />} />
+              <Route path="/agents/:agentId/simulation-evals/:runId/cases/:caseId" element={<EvalCaseDetailRoute />} />
               <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AgentObservabilityProvider>

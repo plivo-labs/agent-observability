@@ -1,0 +1,53 @@
+{
+  "name": "agent-observability-sdk",
+  "version": "0.1.0",
+  "description": "Node SDK for agent-observability: LiveKit-native tag/url helpers and the Vitest reporter for shipping eval results to the dashboard",
+  "keywords": [
+    "livekit",
+    "agents",
+    "observability",
+    "evals",
+    "vitest",
+    "reporter"
+  ],
+  "license": "MIT",
+  "author": "Plivo Labs",
+  "type": "module",
+  "exports": {
+    "./livekit": {
+      "types": "./dist/livekit/index.d.ts",
+      "import": "./dist/livekit/index.js"
+    },
+    "./livekit/vitest": {
+      "types": "./dist/livekit/vitest/index.d.ts",
+      "import": "./dist/livekit/vitest/index.js"
+    },
+    "./livekit/vitest/setup": {
+      "types": "./dist/livekit/vitest/setup.d.ts",
+      "import": "./dist/livekit/vitest/setup.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "vitest": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

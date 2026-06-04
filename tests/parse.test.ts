@@ -27,33 +27,55 @@ describe("parseChatHistory", () => {
   });
 
   // ── Turn counting ───────────────────────────────────────────────────────
+  //
+  // A turn is a logical user→assistant pair — incremented when the
+  // assistant replies. metrics.ts agrees (it only bumps turnNumber on
+  // assistant messages); pinning the same semantics here keeps the
+  // sessions-list `turn_count` column and the session-detail KPI tile's
+  // `total_turns` from disagreeing on the same dialog.
 
-  test("counts message-type items as turns", () => {
+  test("counts assistant messages as turns", () => {
     const result = parseChatHistory({
       items: [
         { type: "message", role: "user" },
         { type: "message", role: "assistant" },
       ],
     });
-    expect(result.turnCount).toBe(2);
+    expect(result.turnCount).toBe(1);
   });
 
-  test("does not count non-message items as turns", () => {
+  test("does not count user-only or non-message items as turns", () => {
+    const result = parseChatHistory({
+      items: [
+        { type: "message", role: "user" },          // user-only, no turn yet
+        { type: "function_call", role: "assistant" }, // not a message
+        { type: "function_call_output" },             // not a message
+      ],
+    });
+    expect(result.turnCount).toBe(0);
+  });
+
+  test("counts one turn per assistant reply across a multi-turn dialog", () => {
     const result = parseChatHistory({
       items: [
         { type: "message", role: "user" },
-        { type: "function_call", role: "assistant" },
+        { type: "message", role: "assistant" },
+        { type: "message", role: "user" },
+        { type: "function_call", role: "assistant" },   // not a message — skipped
         { type: "function_call_output" },
+        { type: "message", role: "assistant" },
       ],
     });
-    expect(result.turnCount).toBe(1);
+    expect(result.turnCount).toBe(2);
   });
 
   // ── STT detection ───────────────────────────────────────────────────────
 
-  test("detects STT from user-role message", () => {
+  test("detects STT from a user message in a voice session (role fallback)", () => {
+    // A user message without its own STT metric still implies STT *when the
+    // session is voice* — marked here by a speaking timestamp on the item.
     const result = parseChatHistory({
-      items: [{ type: "message", role: "user" }],
+      items: [{ type: "message", role: "user", metrics: { started_speaking_at: 100 } }],
     });
     expect(result.hasStt).toBe(true);
   });
@@ -90,9 +112,9 @@ describe("parseChatHistory", () => {
 
   // ── TTS detection ──────────────────────────────────────────────────────
 
-  test("detects TTS from assistant-role message", () => {
+  test("detects TTS from an assistant message in a voice session (role fallback)", () => {
     const result = parseChatHistory({
-      items: [{ type: "message", role: "assistant" }],
+      items: [{ type: "message", role: "assistant", metrics: { started_speaking_at: 100 } }],
     });
     expect(result.hasTts).toBe(true);
   });
@@ -104,13 +126,39 @@ describe("parseChatHistory", () => {
     expect(result.hasTts).toBe(true);
   });
 
+  // ── Text-only sessions (no audio pipeline) ──────────────────────────────
+
+  test("text-only session reports no STT/TTS despite user+assistant messages", () => {
+    // No item carries an audio metric (transcription_delay / tts_node_ttfb /
+    // speaking timestamps), so the session is text-only and the role-based
+    // STT/TTS flags are cleared even though both roles are present. LLM and
+    // turn counting are unaffected.
+    const result = parseChatHistory({
+      items: [
+        { type: "message", role: "user", content: "hi", created_at: 1 },
+        { type: "message", role: "assistant", content: "hello", created_at: 2, metrics: { llm_node_ttft: 0.3 } },
+      ],
+    });
+    expect(result.hasStt).toBe(false);
+    expect(result.hasTts).toBe(false);
+    expect(result.hasLlm).toBe(true);
+    expect(result.turnCount).toBe(1);
+  });
+
   // ── Role fallback ──────────────────────────────────────────────────────
 
   test("falls back to message.role when top-level role is missing", () => {
+    // Two items prove the role fallback fires AND a turn is counted for the
+    // assistant reply. A speaking timestamp marks this as a voice session so
+    // the role-based STT/TTS fallback applies.
     const result = parseChatHistory({
-      items: [{ type: "message", message: { role: "user" } }],
+      items: [
+        { type: "message", message: { role: "user" }, metrics: { started_speaking_at: 100 } },
+        { type: "message", message: { role: "assistant" } },
+      ],
     });
     expect(result.hasStt).toBe(true);
+    expect(result.hasTts).toBe(true);
     expect(result.turnCount).toBe(1);
   });
 
@@ -192,7 +240,9 @@ describe("parseChatHistory", () => {
       ],
     });
 
-    expect(result.turnCount).toBe(4);
+    // 2 assistant messages → 2 turns (one per logical user→assistant
+    // pair); the function_call/output items in between don't count.
+    expect(result.turnCount).toBe(2);
     expect(result.hasStt).toBe(true);
     expect(result.hasLlm).toBe(true);
     expect(result.hasTts).toBe(true);
@@ -213,7 +263,7 @@ describe("parseChatHistory", () => {
       usage: [{ provider: "openai", model: "gpt-4", input_tokens: 100 }],
     });
     expect(result.chatItems).toHaveLength(2);
-    expect(result.turnCount).toBe(2);
+    expect(result.turnCount).toBe(1);
   });
 
   // ── camelCase normalization (Node SDK) ──────────────────────────────────

@@ -1,10 +1,37 @@
-import { useMemo, useState } from 'react'
-import type { ColumnDef } from '@tanstack/react-table'
+import { useEffect, useMemo, useState } from 'react'
 import { parseAsString, useQueryState } from 'nuqs'
-import { ArrowLeft, Bot, ExternalLink, FlaskConical, GitBranch, GitCommit } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  GitBranch,
+  Trash2,
+} from 'lucide-react'
+import { Link } from 'react-router'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Sheet,
   SheetContent,
@@ -12,158 +39,861 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
-import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
-import { ObsDataTable } from '@/components/data-table/obs-data-table'
-import { useDataTable } from '@/components/data-table/use-data-table'
 import { cn } from '@/lib/utils'
-import { formatDate, formatDuration, formatMs } from '@/lib/observability-format'
+import {
+  ASR_BAD,
+  ASR_WARN,
+  TTFB_BAD_MS,
+  TTFT_BAD_MS,
+  asrTone,
+  fmtMsParts,
+  formatCost,
+  formatDate,
+  formatDuration,
+  formatMs,
+  formatTokens,
+  latencyTone,
+  passRateTone,
+} from '@/lib/observability-format'
 import { useEvalRun } from '@/lib/observability-hooks'
-import type { CaseStatus, EvalCaseRow, RunEvent, RunEventMessage } from '@/lib/observability-types'
+import { useObservabilityContext } from '@/lib/observability-provider'
+import type {
+  CaseStatus,
+  EvalCaseRow,
+  EvalRunDetail,
+  RunEvent,
+} from '@/lib/observability-types'
+import { KpiTile } from '@/components/kpi'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { AgentScopeHeader } from '@/components/agent-scope-header'
 
-const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
-  { label: 'Passed', value: 'passed' },
-  { label: 'Failed', value: 'failed' },
-  { label: 'Errored', value: 'errored' },
-  { label: 'Skipped', value: 'skipped' },
-]
+// ── Constants ───────────────────────────────────────────────────────────────
+// Latency / ASR thresholds + tone helpers (latencyTone / asrTone /
+// passRateTone / fmtMsParts) live in observability-format so the same values
+// back both these KPIs and the per-session metric summary.
 
-/** Duration thresholds for eval cases: good ≤ 2s, okay 2–5s, bad > 5s.
- * Wider than voice latencies since eval cases often involve multi-turn
- * conversations or slow fixtures. */
-function durationToneClass(ms: number | null): string {
-  if (ms == null) return ''
-  if (ms <= 2000) return 'text-[hsl(var(--success-fg,var(--success)))]'
-  if (ms <= 5000) return 'text-[hsl(var(--warning-fg,var(--warning)))]'
-  return 'text-[hsl(var(--destructive))]'
+const COLOR_TTFT = 'hsl(var(--accent-purple))'
+const COLOR_TTFB = 'hsl(var(--success-fg,var(--success)))'
+
+// ── Metrics view model ──────────────────────────────────────────────────────
+
+// What kind of latency story this run tells.
+//   'voice' — has TTS, so TTFB is meaningful → show TTFB column, pipeline
+//             breakdown chart, p95 TTFB KPI, dual-line latency.
+//   'text'  — no TTS, so TTFB is always null → hide TTFB sites, show
+//             duration-per-case instead of pipeline breakdown.
+// Derived once from run + cases. Adding a third modality means changing
+// this derivation, not every render site.
+type MetricsView = 'voice' | 'text'
+
+function detectMetricsView(run: EvalRunDetail, cases: EvalCaseRow[]): MetricsView {
+  const hasTtfb =
+    run.ttfb_p95_ms != null ||
+    run.ttfb_avg_ms != null ||
+    cases.some((c) => c.ttfb_avg_ms != null)
+  return hasTtfb ? 'voice' : 'text'
 }
 
-const STATUS_TONE: Record<CaseStatus, string> = {
-  passed:
-    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
-  failed:
-    'bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))]',
-  errored:
-    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
-  skipped: 'bg-muted text-muted-foreground border-border',
-}
+// ── ASR confidence (derived per-case) ───────────────────────────────────────
 
-/** Mean of `metrics.llm_node_ttft` (seconds → ms) across all `message`
- * events with metrics. Returns null when no samples exist. */
-function caseAvgTtftMs(events: RunEvent[]): number | null {
-  const ttfts: number[] = []
+function caseAsrConfidence(events: RunEvent[]): number | null {
+  const vals: number[] = []
   for (const ev of events) {
     if (ev.type !== 'message') continue
-    const ttft = (ev as RunEventMessage).metrics?.llm_node_ttft
-    if (typeof ttft === 'number') ttfts.push(ttft * 1000)
+    const m = ev.metrics
+    if (!m) continue
+    for (const k of Object.keys(m)) {
+      if (
+        k === 'user_transcript_confidence' ||
+        k === 'stt_confidence' ||
+        k === 'asr_confidence'
+      ) {
+        const v = m[k]
+        if (typeof v === 'number' && Number.isFinite(v)) vals.push(v)
+      }
+    }
   }
-  return ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null
+  if (vals.length === 0) return null
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length
+  return avg > 1 ? avg / 100 : avg
 }
 
-function StatusChip({ status }: { status: CaseStatus }) {
+// ── Tiny primitives ─────────────────────────────────────────────────────────
+// The KPI tile is the shared `KpiTile` (`@/components/kpi`), extended with the
+// value-tone / hint props this strip needs.
+
+const STATUS_DOT: Record<CaseStatus, { dot: string; text: string }> = {
+  passed: {
+    dot: 'bg-[hsl(var(--success-fg,var(--success)))]',
+    text: 'text-[hsl(var(--success-fg,var(--success)))]',
+  },
+  failed: {
+    dot: 'bg-[hsl(var(--destructive))]',
+    text: 'text-[hsl(var(--destructive))]',
+  },
+  errored: {
+    dot: 'bg-[hsl(var(--warning-fg,var(--warning)))]',
+    text: 'text-[hsl(var(--warning-fg,var(--warning)))]',
+  },
+  skipped: { dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
+}
+
+function StatusDot({ status }: { status: CaseStatus }) {
+  const { dot, text } = STATUS_DOT[status]
   return (
-    <span
-      className={cn(
-        'inline-flex items-center h-[22px] px-2 rounded-full border text-xxs-600 capitalize',
-        STATUS_TONE[status],
-      )}
-    >
+    <span className={cn('inline-flex items-center gap-1.5 text-[12px]', text)}>
+      <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
       {status}
     </span>
   )
 }
 
-type StatTone = 'good' | 'warn' | 'bad' | 'zero' | 'default'
-
-/** Card tones mirror the session-detail metric tiles: good/warn/bad pick
- * up the semantic token family (success / warning / destructive). `zero`
- * mutes the value so 0 counts don't compete with real signals. */
-function StatCard({
-  label,
-  value,
-  suffix,
-  tone = 'default',
-  meterPct,
-}: {
-  label: string
-  value: string | number
-  suffix?: string
-  tone?: StatTone
-  meterPct?: number
-}) {
-  const valueClass =
-    tone === 'good'
-      ? 'text-[hsl(var(--success-fg,var(--success)))]'
-      : tone === 'warn'
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
-        : tone === 'bad'
-          ? 'text-[hsl(var(--destructive))]'
-          : tone === 'zero'
-            ? 'text-muted-foreground'
-            : ''
-  const borderClass =
-    tone === 'good'
-      ? 'border-[hsl(var(--success-border))]'
-      : tone === 'warn'
-        ? 'border-[hsl(var(--warning-border))]'
-        : tone === 'bad'
-          ? 'border-[hsl(var(--destructive-border))]'
-          : ''
-  const meterClass =
-    tone === 'good'
-      ? 'bg-[hsl(var(--success-fg,var(--success)))]'
-      : tone === 'warn'
-        ? 'bg-[hsl(var(--warning-fg,var(--warning)))]'
-        : tone === 'bad'
-          ? 'bg-[hsl(var(--destructive))]'
-          : 'bg-foreground'
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
   return (
-    <Card className={cn('relative overflow-hidden', borderClass)}>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs-600 uppercase tracking-wide text-muted-foreground">
-          {label}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className={cn('text-h1-600 font-semibold tabular-nums flex items-baseline gap-2', valueClass)}>
-          {value}
-          {suffix && <span className="text-p-500 text-muted-foreground">{suffix}</span>}
-        </div>
-        {meterPct != null && (
-          <div className="absolute left-0 right-0 bottom-0 h-[3px] bg-muted">
-            <div
-              className={cn('h-full', meterClass)}
-              style={{ width: `${Math.max(0, Math.min(100, meterPct))}%` }}
-            />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        navigator.clipboard?.writeText(text)
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1100)
+      }}
+      className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted transition"
+      aria-label="Copy run id"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+    </button>
   )
 }
 
-/** Pass-rate card tone matches the session-detail latency scale:
- * 100% good, ≥ 70% warn, below bad. */
-function passRateTone(pct: number): StatTone {
-  if (pct >= 100) return 'good'
-  if (pct >= 70) return 'warn'
-  return 'bad'
+function Panel({
+  title,
+  legend,
+  children,
+}: {
+  title: string
+  legend?: { color: string; label: string }[]
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <span data-slot="panel-title" className="text-[13px] font-medium">{title}</span>
+        {legend && (
+          <div className="flex items-center gap-3">
+            {legend.map((l) => (
+              <span
+                key={l.label}
+                className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              >
+                <span
+                  className="inline-block h-2 w-2 rounded-sm"
+                  style={{ background: l.color }}
+                />
+                {l.label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="h-[180px] -mx-1">{children}</div>
+    </div>
+  )
 }
+
+type StatusFilter = CaseStatus | 'all'
+function FilterPill({
+  active,
+  onChange,
+}: {
+  active: StatusFilter
+  onChange: (s: StatusFilter) => void
+}) {
+  const items: StatusFilter[] = ['all', 'passed', 'failed', 'errored']
+  return (
+    <div className="inline-flex h-8 items-center rounded-md border bg-card p-0.5 text-[12px]">
+      {items.map((it) => (
+        <button
+          key={it}
+          type="button"
+          onClick={() => onChange(it)}
+          className={cn(
+            'px-3 h-full rounded-none transition uppercase font-mono text-[11px] tracking-section',
+            active === it
+              ? 'bg-foreground text-background font-semibold'
+              : 'text-tertiary hover:text-foreground',
+          )}
+        >
+          {it}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── Enriched-case shape (shared by table + stats) ──────────────────────────
+
+type EnrichedCase = EvalCaseRow & {
+  asr: number | null
+  judgePass: number
+  judgeFail: number
+  ttftBad: boolean
+  ttfbBad: boolean
+  asrBad: boolean
+  asrWarn: boolean
+  hasInterrupt: boolean
+}
+
+interface RunStats {
+  passRate: number
+  totalToolCalls: number
+  totalInterrupts: number
+  avgToolCallsPerCase: number
+  avgTokensPerCase: number
+  avgCostPerCase: number | null
+  avgAsr: number | null
+}
+
+// ── Run meta strip ─────────────────────────────────────────────────────────
+
+function RunMetaStrip({ run }: { run: EvalRunDetail }) {
+  const branch = run.ci?.git_branch ? String(run.ci.git_branch) : null
+  const sha = run.ci?.git_sha ? String(run.ci.git_sha).slice(0, 7) : null
+  const runShort = `${run.run_id.slice(0, 8)}…${run.run_id.slice(-4)}`
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex items-center gap-2 min-w-0">
+        {run.framework && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 px-2 h-6 rounded-full border bg-card text-[11px] text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-full border border-current" />
+            {run.framework}
+            {run.framework_version && (
+              <span className="font-mono">{run.framework_version}</span>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-4 text-[12px] text-muted-foreground tabular-nums">
+        <span className="inline-flex items-center gap-1 font-mono">
+          {runShort}
+          <CopyButton text={run.run_id} />
+        </span>
+        {branch && (
+          <span className="inline-flex items-center gap-1 font-mono">
+            <GitBranch className="h-3 w-3" />
+            {branch}
+            {sha && <span className="text-muted-foreground/70">@{sha}</span>}
+          </span>
+        )}
+        <span>
+          <span className="text-muted-foreground/70">dur</span>{' '}
+          <span className="text-foreground">{formatDuration(run.duration_ms)}</span>
+        </span>
+        <span className="text-muted-foreground/70">·</span>
+        <span>{formatDate(run.started_at)}</span>
+        {run.ci?.run_url && (
+          <a
+            href={String(run.ci.run_url)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-link hover:underline"
+          >
+            CI <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── KPI strip ──────────────────────────────────────────────────────────────
+
+function KpiStrip({
+  run,
+  stats,
+  view,
+}: {
+  run: EvalRunDetail
+  stats: RunStats
+  view: MetricsView
+}) {
+  const ttftParts = fmtMsParts(run.ttft_p95_ms)
+  const ttfbParts = fmtMsParts(run.ttfb_p95_ms)
+
+  return (
+    <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+      <KpiTile
+        label="Pass rate"
+        value={stats.passRate.toFixed(0)}
+        unit="%"
+        valueTone={passRateTone(stats.passRate)}
+        hint={`${run.passed}✓ ${run.failed > 0 ? ` · ${run.failed}✗` : ''}`}
+      />
+      <KpiTile
+        label="Cases"
+        value={run.total}
+        hint={`${run.passed}✓${run.failed ? ` · ${run.failed}✗` : ''}${run.errored ? ` · ${run.errored}!` : ''}`}
+      />
+      <KpiTile
+        label="p95 TTFT"
+        value={ttftParts.value}
+        unit={ttftParts.unit ?? undefined}
+        valueTone={latencyTone(run.ttft_p95_ms, TTFT_BAD_MS)}
+        hint={run.ttft_avg_ms != null ? `avg ${formatMs(run.ttft_avg_ms)}` : undefined}
+      />
+      {view === 'voice' && (
+        <KpiTile
+          label="p95 TTFB"
+          value={ttfbParts.value}
+          unit={ttfbParts.unit ?? undefined}
+          valueTone={latencyTone(run.ttfb_p95_ms, TTFB_BAD_MS)}
+          hint={run.ttfb_avg_ms != null ? `avg ${formatMs(run.ttfb_avg_ms)}` : undefined}
+        />
+      )}
+      <KpiTile
+        label="Tokens"
+        value={formatTokens(run.total_tokens)}
+        hint={
+          run.total_tokens > 0
+            ? `${stats.avgTokensPerCase.toLocaleString()} avg/case`
+            : undefined
+        }
+        valueTone={run.total_tokens === 0 ? 'mute' : 'default'}
+      />
+      <KpiTile
+        label="LLM cost"
+        value={formatCost(run.estimated_cost_usd)}
+        hint={
+          stats.avgCostPerCase != null
+            ? `$${stats.avgCostPerCase.toFixed(4)}/case`
+            : undefined
+        }
+        valueTone={run.estimated_cost_usd == null ? 'mute' : 'default'}
+      />
+      <KpiTile
+        label="Tool calls"
+        value={stats.totalToolCalls > 0 ? stats.totalToolCalls : '—'}
+        hint={
+          stats.totalToolCalls > 0
+            ? `${stats.avgToolCallsPerCase.toFixed(1)} avg/case`
+            : undefined
+        }
+        valueTone={stats.totalToolCalls === 0 ? 'mute' : 'default'}
+      />
+      {run.prompt_tokens > 0 && (
+        <KpiTile
+          label="Cache %"
+          value={((run.cached_prompt_tokens / run.prompt_tokens) * 100).toFixed(1)}
+          unit="%"
+          hint={`${formatTokens(run.cached_prompt_tokens)} / ${formatTokens(run.prompt_tokens)}`}
+        />
+      )}
+      {stats.avgAsr != null && (
+        <KpiTile
+          label="ASR conf."
+          value={(stats.avgAsr * 100).toFixed(1)}
+          unit="%"
+          valueTone={asrTone(stats.avgAsr)}
+          hint={
+            stats.totalInterrupts > 0
+              ? `${stats.totalInterrupts} interrupt${stats.totalInterrupts === 1 ? '' : 's'}`
+              : undefined
+          }
+          hintTone={stats.totalInterrupts > 0 ? 'warn' : 'mute'}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Charts ─────────────────────────────────────────────────────────────────
+
+interface OverCasesDatum {
+  idx: number
+  ttft: number | null
+  ttfb: number | null
+  duration: number | null
+  status: CaseStatus
+}
+
+const CHART_TOOLTIP_STYLE = {
+  background: 'hsl(var(--popover))',
+  border: '1px solid hsl(var(--border))',
+  borderRadius: 6,
+  fontSize: 11,
+} as const
+
+const AXIS_TICK = { fill: 'hsl(var(--muted-foreground))', fontSize: 10 } as const
+
+function LatencyOverCasesChart({
+  data,
+  view,
+}: {
+  data: OverCasesDatum[]
+  view: MetricsView
+}) {
+  return (
+    <Panel
+      title="Latency over cases (ms)"
+      legend={[
+        { color: COLOR_TTFT, label: 'TTFT' },
+        ...(view === 'voice' ? [{ color: COLOR_TTFB, label: 'TTFB' }] : []),
+      ]}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
+          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="hsl(var(--border))" tickLine={false} />
+          <YAxis
+            tickFormatter={(v: number) => formatMs(v)}
+            tick={AXIS_TICK}
+            stroke="hsl(var(--border))"
+            tickLine={false}
+            width={42}
+          />
+          <Tooltip
+            formatter={(v: unknown) => formatMs(Number(v))}
+            contentStyle={CHART_TOOLTIP_STYLE}
+          />
+          <Line
+            type="monotone"
+            dataKey="ttft"
+            name="TTFT"
+            stroke={COLOR_TTFT}
+            strokeWidth={1.75}
+            dot={{ r: 2.5, strokeWidth: 0, fill: COLOR_TTFT }}
+            activeDot={{ r: 4 }}
+            connectNulls
+          />
+          {view === 'voice' && (
+            <Line
+              type="monotone"
+              dataKey="ttfb"
+              name="TTFB"
+              stroke={COLOR_TTFB}
+              strokeWidth={1.75}
+              dot={false}
+              connectNulls
+            />
+          )}
+        </LineChart>
+      </ResponsiveContainer>
+    </Panel>
+  )
+}
+
+// Pipeline breakdown for voice runs (stacked TTFT + TTFB), duration-per-
+// case for text runs. Same axes structure; the bars + Y-axis formatter
+// differ. Two charts share one panel because the only meaningful
+// difference is *which* timing series to bar, and voice/text already
+// answers that.
+function PipelineOrDurationChart({
+  data,
+  view,
+}: {
+  data: OverCasesDatum[]
+  view: MetricsView
+}) {
+  const isVoice = view === 'voice'
+  const yFormatter = isVoice ? formatMs : formatDuration
+  return (
+    <Panel
+      title={isVoice ? 'Pipeline breakdown (ms)' : 'Duration per case (ms)'}
+      legend={
+        isVoice
+          ? [
+              { color: COLOR_TTFT, label: 'TTFT' },
+              { color: COLOR_TTFB, label: 'TTFB' },
+            ]
+          : [{ color: COLOR_TTFT, label: 'duration' }]
+      }
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={data}
+          margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+          barCategoryGap={3}
+        >
+          <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
+          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="hsl(var(--border))" tickLine={false} />
+          <YAxis
+            tickFormatter={(v: number) => yFormatter(v)}
+            tick={AXIS_TICK}
+            stroke="hsl(var(--border))"
+            tickLine={false}
+            width={isVoice ? 42 : 48}
+          />
+          <Tooltip
+            formatter={(v: unknown) => yFormatter(Number(v))}
+            contentStyle={CHART_TOOLTIP_STYLE}
+          />
+          {isVoice ? (
+            <>
+              <Bar dataKey="ttft" stackId="lat" fill={COLOR_TTFT} radius={[0, 0, 0, 0]} />
+              <Bar dataKey="ttfb" stackId="lat" fill={COLOR_TTFB} radius={[2, 2, 0, 0]} />
+            </>
+          ) : (
+            <Bar dataKey="duration" fill={COLOR_TTFT} radius={[2, 2, 0, 0]} />
+          )}
+        </BarChart>
+      </ResponsiveContainer>
+    </Panel>
+  )
+}
+
+function TokenCostPanel({ run }: { run: EvalRunDetail }) {
+  return (
+    <div className="rounded-lg border bg-card p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[13px] font-medium">Token &amp; cost</span>
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ background: COLOR_TTFT }}
+            />
+            prompt
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
+            <span className="inline-block h-2 w-2 rounded-sm border border-current" />
+            compl.
+          </span>
+        </div>
+      </div>
+      <div className="flex-1 flex items-center gap-5 min-h-[180px]">
+        <div className="relative h-[140px] w-[140px] shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={[
+                  { name: 'prompt', value: run.prompt_tokens },
+                  { name: 'completion', value: run.completion_tokens },
+                ].filter((d) => d.value > 0)}
+                dataKey="value"
+                cx="50%"
+                cy="50%"
+                innerRadius={42}
+                outerRadius={62}
+                strokeWidth={0}
+                startAngle={90}
+                endAngle={-270}
+              >
+                <Cell fill={COLOR_TTFT} />
+                <Cell fill="hsl(var(--muted))" />
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <span className="text-[18px] font-semibold tabular-nums leading-none">
+              {formatTokens(run.total_tokens)}
+            </span>
+            <span className="text-[10px] text-muted-foreground mt-0.5">tokens</span>
+          </div>
+        </div>
+        <div className="flex-1 space-y-1.5 text-[12px]">
+          <div className="flex items-center justify-between gap-3">
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <span
+                className="inline-block h-2 w-2 rounded-sm"
+                style={{ background: COLOR_TTFT }}
+              />
+              prompt
+            </span>
+            <span className="font-medium tabular-nums">
+              {formatTokens(run.prompt_tokens)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <span className="inline-block h-2 w-2 rounded-sm border border-current" />
+              completion
+            </span>
+            <span className="tabular-nums">{formatTokens(run.completion_tokens)}</span>
+          </div>
+          {run.estimated_cost_usd != null && (
+            <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-border">
+              <span className="text-muted-foreground">est. cost</span>
+              <span className="tabular-nums font-medium">
+                {formatCost(run.estimated_cost_usd)}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Cases table ────────────────────────────────────────────────────────────
+
+// Columns drive the header AND the empty-state colspan, so adding a
+// column is a one-line change — not three sites that have to agree.
+function caseColumns(view: MetricsView): { k: string; label: string; cls?: string }[] {
+  return [
+    { k: 'sel', label: '' },
+    { k: 'name', label: 'Name', cls: 'text-left' },
+    { k: 'status', label: 'Status' },
+    { k: 'duration', label: 'Duration' },
+    { k: 'ttft', label: 'TTFT' },
+    ...(view === 'voice' ? [{ k: 'ttfb', label: 'TTFB' }] : []),
+    { k: 'tokens', label: 'Tokens' },
+    { k: 'cache', label: 'Cache %' },
+    { k: 'cost', label: 'Cost' },
+    { k: 'tools', label: 'Tools' },
+    { k: 'asr', label: 'ASR conf.' },
+    { k: 'events', label: 'Events' },
+    { k: 'chev', label: '' },
+  ]
+}
+
+function CasesTable({
+  cases,
+  view,
+  selectedSet,
+  allVisibleSelected,
+  onToggleAllVisible,
+  onToggleCase,
+  onRowClick,
+  emptyStateText,
+}: {
+  cases: EnrichedCase[]
+  view: MetricsView
+  selectedSet: Set<string>
+  allVisibleSelected: boolean
+  onToggleAllVisible: (checked: boolean) => void
+  onToggleCase: (caseId: string, checked: boolean) => void
+  onRowClick: (caseId: string) => void
+  emptyStateText: string
+}) {
+  const cols = caseColumns(view)
+  return (
+    <div className="rounded-lg border bg-card overflow-hidden">
+      <table className="w-full text-[12px] border-collapse">
+        <thead>
+          <tr className="text-muted-foreground">
+            {cols.map((h) => (
+              <th
+                key={h.k}
+                className={cn(
+                  'h-9 px-3.5 text-[10px] font-semibold tracking-[0.12em] uppercase border-b border-border bg-card whitespace-nowrap',
+                  h.cls ?? 'text-left',
+                )}
+              >
+                {h.k === 'sel' ? (
+                  <Checkbox
+                    checked={allVisibleSelected}
+                    onCheckedChange={(checked) => onToggleAllVisible(checked === true)}
+                    aria-label="Select all visible cases"
+                  />
+                ) : (
+                  h.label
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {cases.map((c) => (
+            <CaseRow
+              key={c.case_id}
+              c={c}
+              view={view}
+              selected={selectedSet.has(c.case_id)}
+              onToggle={(checked) => onToggleCase(c.case_id, checked)}
+              onClick={() => onRowClick(c.case_id)}
+            />
+          ))}
+          {cases.length === 0 && (
+            <tr>
+              <td colSpan={cols.length} className="px-4 py-10 text-center text-muted-foreground">
+                {emptyStateText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function CaseRow({
+  c,
+  view,
+  selected,
+  onToggle,
+  onClick,
+}: {
+  c: EnrichedCase
+  view: MetricsView
+  selected: boolean
+  onToggle: (checked: boolean) => void
+  onClick: () => void
+}) {
+  const { ttftBad, ttfbBad, asrBad, asrWarn, hasInterrupt } = c
+  return (
+    <tr onClick={onClick} className="cursor-pointer transition-colors hover:bg-muted/40">
+      <td className="h-10 px-3.5 border-b border-border" onClick={(e) => e.stopPropagation()}>
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(checked) => onToggle(checked === true)}
+          aria-label={`Select case ${c.name}`}
+        />
+      </td>
+      <td className="h-10 px-3.5 border-b border-border font-mono text-[12px] truncate max-w-[420px]">
+        {c.name}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border">
+        <StatusDot status={c.status} />
+      </td>
+      <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
+        {formatDuration(c.duration_ms)}
+      </td>
+      <td
+        className={cn(
+          'h-10 px-3.5 border-b border-border font-mono tabular-nums',
+          ttftBad ? 'text-[hsl(var(--destructive))]' : 'text-foreground/85',
+        )}
+      >
+        {c.ttft_avg_ms != null ? formatMs(c.ttft_avg_ms) : '—'}
+      </td>
+      {view === 'voice' && (
+        <td
+          className={cn(
+            'h-10 px-3.5 border-b border-border font-mono tabular-nums',
+            ttfbBad ? 'text-[hsl(var(--destructive))]' : 'text-foreground/85',
+          )}
+        >
+          {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
+        </td>
+      )}
+      <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
+        {formatTokens(c.total_tokens)}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
+        {c.prompt_tokens > 0
+          ? `${Math.round((c.cached_prompt_tokens / c.prompt_tokens) * 100)}%`
+          : '—'}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-foreground/85">
+        {formatCost(c.estimated_cost_usd)}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
+        {c.tool_call_count != null && c.tool_call_count > 0 ? c.tool_call_count : '—'}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border">
+        {c.asr == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={cn(
+                'font-mono tabular-nums',
+                asrBad
+                  ? 'text-[hsl(var(--destructive))]'
+                  : asrWarn
+                    ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
+                    : 'text-[hsl(var(--success-fg,var(--success)))]',
+              )}
+            >
+              {(c.asr * 100).toFixed(1)}%
+            </span>
+            {hasInterrupt && (
+              <span className="inline-flex items-center px-1.5 h-[18px] rounded bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border border-[hsl(var(--warning-border))] text-[10px] font-medium tracking-wide">
+                intr
+              </span>
+            )}
+          </span>
+        )}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border font-mono tabular-nums text-muted-foreground">
+        {c.events.length}
+      </td>
+      <td className="h-10 px-3.5 border-b border-border text-muted-foreground/60">›</td>
+    </tr>
+  )
+}
+
+// ── Delete confirmation dialog ─────────────────────────────────────────────
+
+function DeleteCasesDialog({
+  open,
+  onOpenChange,
+  count,
+  deleting,
+  error,
+  onConfirm,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  count: number
+  deleting: boolean
+  error: string | null
+  onConfirm: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !deleting && onOpenChange(o)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Delete {count} case{count === 1 ? '' : 's'}?
+          </DialogTitle>
+          <DialogDescription>
+            This permanently removes the selected case{count === 1 ? '' : 's'} and
+            every event and judgment captured under {count === 1 ? 'it' : 'them'}.
+            This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        {error && (
+          <div className="text-s-400 text-[hsl(var(--destructive))]">
+            Failed to delete: {error}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={deleting}>
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+            onClick={onConfirm}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting…' : `Delete ${count}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Main page component ────────────────────────────────────────────────────
 
 export const EvalRunDetailPage = ({
   runId,
-  onBack,
   onCaseClick,
 }: {
   runId: string
-  onBack?: () => void
   onCaseClick?: (caseId: string) => void
 }) => {
-  const { run, loading, error } = useEvalRun(runId)
+  const { run, loading, error, refetch } = useEvalRun(runId)
   const [openCaseId, setOpenCaseId] = useQueryState('case', parseAsString)
   const [localOpenCaseId, setLocalOpenCaseId] = useState<string | null>(null)
   const drawerCaseId = openCaseId ?? localOpenCaseId
+  const [caseSearch, setCaseSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const { api } = useObservabilityContext()
+  const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([])
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const hasRunningRun = run?.status === 'running'
+
+  useEffect(() => {
+    if (!hasRunningRun) return
+    const id = window.setInterval(() => refetch(), 1500)
+    return () => window.clearInterval(id)
+  }, [hasRunningRun, refetch])
 
   const handleRowClick = (caseId: string) => {
     if (onCaseClick) onCaseClick(caseId)
@@ -175,154 +905,142 @@ export const EvalRunDetailPage = ({
     setLocalOpenCaseId(null)
   }
 
-  const stats = useMemo(() => {
-    if (!run) return null
-    const passRate = run.total > 0 ? Math.round((run.passed / run.total) * 100) : 0
-    // Flat-average TTFT across every message-with-metrics event in every
-    // case, so the headline number reflects typical LLM latency rather
-    // than weighting each case equally regardless of turn count.
-    const allTtfts: number[] = []
-    for (const c of run.cases) {
-      for (const ev of c.events) {
-        if (ev.type !== 'message') continue
-        const ttft = (ev as RunEventMessage).metrics?.llm_node_ttft
-        if (typeof ttft === 'number') allTtfts.push(ttft * 1000)
+  const enriched: EnrichedCase[] = useMemo(() => {
+    if (!run) return []
+    return run.cases.map((c) => {
+      const asr = caseAsrConfidence(c.events)
+      let judgePass = 0
+      let judgeFail = 0
+      for (const j of c.judgments) {
+        if (j.verdict === 'pass') judgePass += 1
+        else if (j.verdict === 'fail') judgeFail += 1
       }
-    }
-    const avgTtftMs =
-      allTtfts.length ? allTtfts.reduce((a, b) => a + b, 0) / allTtfts.length : null
-    return {
-      passRate,
-      hasAnyFailure: run.failed > 0 || run.errored > 0,
-      passedPct: run.total > 0 ? (run.passed / run.total) * 100 : 0,
-      failedPct: run.total > 0 ? (run.failed / run.total) * 100 : 0,
-      avgTtftMs,
-    }
+      return {
+        ...c,
+        asr,
+        judgePass,
+        judgeFail,
+        ttftBad: c.ttft_avg_ms != null && c.ttft_avg_ms > TTFT_BAD_MS,
+        ttfbBad: c.ttfb_avg_ms != null && c.ttfb_avg_ms > TTFB_BAD_MS,
+        asrBad: asr != null && asr < ASR_BAD,
+        asrWarn: asr != null && asr >= ASR_BAD && asr < ASR_WARN,
+        hasInterrupt: (c.interruption_count ?? 0) > 0,
+      }
+    })
   }, [run])
 
-  const columns = useMemo<ColumnDef<EvalCaseRow>[]>(
-    () => [
-      {
-        id: 'name',
-        accessorKey: 'name',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Name" />,
-        cell: ({ row }) => (
-          <span className="font-mono text-s-400">{row.original.name}</span>
-        ),
-        enableColumnFilter: true,
-        enableSorting: false,
-        meta: { label: 'Name', placeholder: 'Search name', variant: 'text' },
-      },
-      {
-        id: 'status',
-        accessorKey: 'status',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
-        cell: ({ row }) => <StatusChip status={row.original.status} />,
-        enableColumnFilter: true,
-        enableSorting: false,
-        meta: {
-          label: 'Status',
-          variant: 'multiSelect',
-          options: STATUS_OPTIONS,
-        },
-        filterFn: (row, id, value) => {
-          if (!Array.isArray(value) || value.length === 0) return true
-          return value.includes(row.getValue(id))
-        },
-      },
-      {
-        id: 'duration_ms',
-        accessorKey: 'duration_ms',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Duration" />,
-        cell: ({ row }) => (
-          <span
-            className={cn(
-              'font-mono text-s-400 tabular-nums',
-              durationToneClass(row.original.duration_ms),
-            )}
-          >
-            {formatDuration(row.original.duration_ms)}
-          </span>
-        ),
-        enableSorting: false,
-        meta: { label: 'Duration' },
-      },
-      {
-        id: 'avg_ttft_ms',
-        accessorFn: (row) => caseAvgTtftMs(row.events),
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Avg TTFT" />,
-        cell: ({ getValue }) => {
-          const ms = getValue<number | null>()
-          return (
-            <span className="font-mono text-s-400 tabular-nums text-muted-foreground">
-              {ms != null ? formatMs(ms) : '—'}
-            </span>
-          )
-        },
-        enableSorting: false,
-        meta: { label: 'Avg TTFT' },
-      },
-      {
-        id: 'judgments',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Judgments" />,
-        cell: ({ row }) => {
-          const c = row.original
-          const judgePass = c.judgments.filter((j) => j.verdict === 'pass').length
-          const judgeFail = c.judgments.filter((j) => j.verdict === 'fail').length
-          if (c.judgments.length === 0) return <span className="text-muted-foreground">—</span>
-          return (
-            <span className="inline-flex items-center gap-2 text-s-400">
-              {judgePass > 0 && (
-                <span className="text-[hsl(var(--success-fg,var(--success)))] text-xs-600">
-                  ✓ {judgePass} pass
-                </span>
-              )}
-              {judgePass > 0 && judgeFail > 0 && (
-                <span className="text-muted-foreground">·</span>
-              )}
-              {judgeFail > 0 && (
-                <Badge
-                  variant="outline"
-                  className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] uppercase tracking-wider"
-                >
-                  {judgeFail} fail
-                </Badge>
-              )}
-            </span>
-          )
-        },
-      },
-      {
-        id: 'events',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Events" />,
-        cell: ({ row }) => (
-          <span className="text-s-400 tabular-nums text-muted-foreground">
-            {row.original.events.length}
-          </span>
-        ),
-      },
-    ],
-    [],
+  const view: MetricsView = useMemo(
+    () => (run ? detectMetricsView(run, enriched) : 'text'),
+    [run, enriched],
   )
 
-  const { table } = useDataTable({
-    data: run?.cases ?? [],
-    columns,
-    pageCount: 1,
-    initialState: { pagination: { pageIndex: 0, pageSize: 20 } },
-    getRowId: (row) => row.case_id,
-  })
+  const stats: RunStats | null = useMemo(() => {
+    if (!run) return null
+    const passRate = run.total > 0 ? (run.passed / run.total) * 100 : 0
+    let totalToolCalls = 0
+    let totalInterrupts = 0
+    let asrSum = 0
+    let asrCount = 0
+    for (const c of enriched) {
+      totalToolCalls += c.tool_call_count ?? 0
+      totalInterrupts += c.interruption_count ?? 0
+      if (c.asr != null) {
+        asrSum += c.asr
+        asrCount += 1
+      }
+    }
+    const avgAsr = asrCount > 0 ? asrSum / asrCount : null
+    return {
+      passRate,
+      totalToolCalls,
+      totalInterrupts,
+      avgToolCallsPerCase: run.total > 0 ? totalToolCalls / run.total : 0,
+      avgTokensPerCase: run.total > 0 ? Math.round(run.total_tokens / run.total) : 0,
+      avgCostPerCase:
+        run.total > 0 && run.estimated_cost_usd != null
+          ? run.estimated_cost_usd / run.total
+          : null,
+      avgAsr,
+    }
+  }, [run, enriched])
+
+  const overCasesData: OverCasesDatum[] = useMemo(
+    () =>
+      enriched.map((c, i) => ({
+        idx: i + 1,
+        ttft: c.ttft_avg_ms,
+        ttfb: c.ttfb_avg_ms,
+        duration: c.duration_ms,
+        status: c.status,
+      })),
+    [enriched],
+  )
+
+  const filteredCases = useMemo(() => {
+    let cases = enriched
+    if (statusFilter !== 'all') cases = cases.filter((c) => c.status === statusFilter)
+    const q = caseSearch.trim().toLowerCase()
+    if (q) cases = cases.filter((c) => c.name.toLowerCase().includes(q))
+    return cases
+  }, [enriched, caseSearch, statusFilter])
+
+  const selectedSet = useMemo(() => new Set(selectedCaseIds), [selectedCaseIds])
+  const selectedCount = selectedCaseIds.length
+  const selectedInViewCount = filteredCases.reduce(
+    (count, c) => count + (selectedSet.has(c.case_id) ? 1 : 0),
+    0,
+  )
+  const allVisibleSelected =
+    filteredCases.length > 0 && selectedInViewCount === filteredCases.length
+
+  const toggleCaseSelected = (caseId: string, checked: boolean) => {
+    setSelectedCaseIds((prev) => {
+      if (checked) return prev.includes(caseId) ? prev : [...prev, caseId]
+      return prev.filter((id) => id !== caseId)
+    })
+  }
+  const toggleAllVisibleSelected = (checked: boolean) => {
+    setSelectedCaseIds((prev) => {
+      if (checked) {
+        const next = new Set(prev)
+        for (const c of filteredCases) next.add(c.case_id)
+        return Array.from(next)
+      }
+      const visibleIds = new Set(filteredCases.map((c) => c.case_id))
+      return prev.filter((id) => !visibleIds.has(id))
+    })
+  }
+
+  const handleDeleteCases = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deleteEvalCases(runId, selectedCaseIds)
+      setSelectedCaseIds([])
+      setConfirmOpen(false)
+      closeDrawer()
+      await refetch()
+    } catch (e) {
+      setDeleteError((e as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (loading) {
     return (
       <div className="flex flex-col gap-5 p-6" aria-busy="true">
         <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-[110px] rounded-xl" />
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-[88px] rounded-lg" />
           ))}
         </div>
-        <Skeleton className="h-[300px] w-full rounded-xl" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <Skeleton className="h-[230px] rounded-lg" />
+          <Skeleton className="h-[230px] rounded-lg" />
+          <Skeleton className="h-[230px] rounded-lg" />
+        </div>
       </div>
     )
   }
@@ -331,152 +1049,101 @@ export const EvalRunDetailPage = ({
     return (
       <div className="p-12 text-center text-foreground">
         <p>Failed to load eval run: {error ?? 'not found'}</p>
-        {onBack && (
-          <Button variant="ghost" size="sm" onClick={onBack} className="mt-4">
-            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
-          </Button>
-        )}
+        <div className="mt-4">
+          <Link to="/" className="text-link underline">
+            Agents
+          </Link>
+        </div>
       </div>
     )
   }
 
+  const displayName = run.name ?? run.agent_id ?? run.run_id.slice(0, 8)
+  // Mono when displayName is an id (uuid agent_id or hash); sans when
+  // it's a human-readable run name set via --agent-observability-run-name.
+  const displayNameIsId = run.name == null
+
   return (
-    <div className="p-6 flex flex-col gap-5 relative">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-s-500 text-muted-foreground hover:text-foreground transition-colors bg-transparent border-none p-0 w-fit cursor-pointer"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to evals
-        </button>
+    <div className="p-6 flex flex-col gap-4 relative">
+      {run.agent_id && (
+        <AgentScopeHeader
+          agentId={run.agent_id}
+          trail={[
+            {
+              label: 'Simulation Evals',
+              to: `/agents/${encodeURIComponent(run.agent_id)}?tab=simulation-evals`,
+            },
+            { label: displayName, mono: displayNameIsId },
+          ]}
+        />
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-3">
-            <h1 className="text-h2-600 font-semibold m-0">
-              {run.agent_id ?? <span className="text-muted-foreground">—</span>}
-            </h1>
-            {run.framework && (
-              <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
-                <Bot className="h-3 w-3 shrink-0 text-muted-foreground" />
-                {run.framework}
-                {run.framework_version && (
-                  <span className="text-muted-foreground font-mono text-[11px]">
-                    {run.framework_version}
-                  </span>
-                )}
-              </span>
-            )}
-            <span className="inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap">
-              <FlaskConical className="h-3 w-3 shrink-0 text-muted-foreground" />
-              {run.testing_framework}
-              {run.testing_framework_version && (
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  {run.testing_framework_version}
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="font-mono text-xs-400 text-muted-foreground">{run.run_id}</div>
-        </div>
-        <div className="text-right text-s-400 text-muted-foreground">
-          <b className="block text-foreground text-s-600">
-            Started {formatDate(run.started_at)}
-          </b>
-          <span>Duration {formatDuration(run.duration_ms)}</span>
-        </div>
-      </div>
+      <RunMetaStrip run={run} />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard
-          label="Pass rate"
-          value={stats.passRate}
-          suffix="%"
-          tone={passRateTone(stats.passRate)}
-          meterPct={stats.passRate}
-        />
-        <StatCard
-          label="Passed"
-          value={run.passed}
-          tone={run.passed > 0 ? 'good' : 'zero'}
-          meterPct={stats.passedPct}
-        />
-        <StatCard
-          label="Failed"
-          value={run.failed}
-          tone={run.failed > 0 ? 'bad' : 'zero'}
-          meterPct={stats.failedPct}
-        />
-        <StatCard
-          label="Errored"
-          value={run.errored}
-          tone={run.errored > 0 ? 'bad' : 'zero'}
-        />
-        <StatCard
-          label="Skipped"
-          value={run.skipped}
-          tone={run.skipped > 0 ? 'warn' : 'zero'}
-        />
-        <StatCard
-          label="Avg TTFT"
-          value={stats.avgTtftMs != null ? formatMs(stats.avgTtftMs) : '—'}
-          tone={stats.avgTtftMs == null ? 'zero' : 'default'}
-        />
-      </div>
+      <KpiStrip run={run} stats={stats} view={view} />
 
-      {run.ci && (
-        <Card>
-          <CardContent className="flex flex-wrap items-center gap-4 py-3">
-            <span className="text-xs-600 text-muted-foreground uppercase tracking-wider">CI</span>
-            {run.ci.provider && (
-              <span className="text-s-400 capitalize">{String(run.ci.provider)}</span>
-            )}
-            {run.ci.git_branch && (
-              <span className="inline-flex items-center gap-1 text-s-400">
-                <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-                {String(run.ci.git_branch)}
-              </span>
-            )}
-            {run.ci.git_sha && (
-              <span className="inline-flex items-center gap-1 text-s-400 font-mono">
-                <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
-                {String(run.ci.git_sha).slice(0, 7)}
-              </span>
-            )}
-            {run.ci.run_url && (
-              <a
-                href={String(run.ci.run_url)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-s-400 text-primary hover:underline"
-              >
-                View run <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-            {run.ci.commit_message && (
-              <span className="text-s-400 text-muted-foreground italic truncate max-w-[40ch]">
-                "{String(run.ci.commit_message)}"
-              </span>
-            )}
-          </CardContent>
-        </Card>
+      {overCasesData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <LatencyOverCasesChart data={overCasesData} view={view} />
+          <PipelineOrDurationChart data={overCasesData} view={view} />
+          <TokenCostPanel run={run} />
+        </div>
       )}
 
       <div>
-        <h2 className="text-h4-600 font-semibold mb-3">
-          Cases{' '}
-          <span className="text-muted-foreground text-s-400">
-            ({table.getFilteredRowModel().rows.length} of {run.cases.length})
-          </span>
-        </h2>
-        <ObsDataTable
-          table={table}
-          toolbar={<DataTableToolbar table={table} />}
-          onRowClick={(row) => handleRowClick(row.original.case_id)}
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 className="text-[14px] font-semibold tracking-tight">
+            Cases{' '}
+            <span className="text-muted-foreground font-normal text-[12px]">
+              ({filteredCases.length} of {run.cases.length})
+            </span>
+          </h2>
+          <div className="flex items-center gap-2">
+            {selectedCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-[hsl(var(--destructive))] [&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+                onClick={() => setConfirmOpen(true)}
+              >
+                <Trash2 /> Delete {selectedCount}
+              </Button>
+            )}
+            <input
+              type="text"
+              placeholder="Search name…"
+              value={caseSearch}
+              onChange={(e) => setCaseSearch(e.target.value)}
+              className="h-8 w-56 rounded-md border border-border bg-card px-3 text-[12px] outline-none focus:ring-1 focus:ring-ring"
+            />
+            <FilterPill active={statusFilter} onChange={setStatusFilter} />
+          </div>
+        </div>
+
+        <CasesTable
+          cases={filteredCases}
+          view={view}
+          selectedSet={selectedSet}
+          allVisibleSelected={allVisibleSelected}
+          onToggleAllVisible={toggleAllVisibleSelected}
+          onToggleCase={toggleCaseSelected}
+          onRowClick={handleRowClick}
+          emptyStateText={
+            statusFilter !== 'all' || caseSearch.trim()
+              ? 'No cases match the current filter.'
+              : 'No cases in this run.'
+          }
         />
       </div>
+
+      <DeleteCasesDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        count={selectedCount}
+        deleting={deleting}
+        error={deleteError}
+        onConfirm={handleDeleteCases}
+      />
 
       {!onCaseClick && (
         <Sheet

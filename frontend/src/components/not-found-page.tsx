@@ -14,7 +14,7 @@ export const NotFoundPage = () => {
           </p>
         </div>
         <Button asChild variant="outline">
-          <Link to="/">Back to sessions</Link>
+          <Link to="/">Back to agents</Link>
         </Button>
       </div>
     </div>

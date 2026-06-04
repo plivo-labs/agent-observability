@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     errored           INTEGER NOT NULL DEFAULT 0,
     skipped           INTEGER NOT NULL DEFAULT 0,
     ci                JSONB,
-    raw_payload       JSONB NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

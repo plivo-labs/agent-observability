@@ -4,12 +4,30 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ===========================================================================
+ * Instrument Panel theme — mapped onto Plivo CX Neo / shadcn token names.
+ *
+ * Aesthetic: scientific instrument / editorial. Paper bg, ink scale,
+ * hairlines, near-zero radius, near-zero shadow, brand red rationed as a
+ * verb. Letter-spacing carries hierarchy. Tabular numerals everywhere
+ * numeric.
+ *
+ * Fonts retained from the prior system: Inter (body) + Sora (display
+ * headings) + ui-monospace (labels, numbers, codes). The mono voice is
+ * provided by `ui-monospace` and a tight letter-spacing ladder rather
+ * than IBM Plex Mono.
+ * ======================================================================== */
+
 @theme inline {
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
+  /* Radius — `0` is the rule. Pills/badges opt in to `0.125rem` (2px) via
+   * the `.pill` / `[data-radius=xs]` modifier. */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-xs: 0.125rem;
+  --radius-pill: 9999px;
 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -38,13 +56,19 @@
   --color-st1: hsl(var(--st1));
   --color-st2: hsl(var(--st2));
 
-  --color-chart-1: hsl(225 100% 45%);
-  --color-chart-2: hsl(270 82% 51%);
-  --color-chart-3: hsl(149 89% 42%);
-  --color-chart-4: hsl(38 96% 50%);
-  --color-chart-5: hsl(0 100% 64%);
+  /* Letter-spacing ladder — the editorial signature. */
+  --tracking-tight: 0.04em;
+  --tracking-normal: 0.06em;
+  --tracking-wide: 0.08em;
+  --tracking-wider: 0.10em;
+  --tracking-widest: 0.12em;
+  --tracking-section: 0.14em;
+  --tracking-display: 0.16em;
+  --tracking-eyebrow: 0.18em;
+  --tracking-heading: 0.20em;
 
-  /* Typography scale — matches Neo design system */
+  /* Typography scale — sizes preserved from prior system so existing
+   * `text-h2-600` / `text-xs-500` / `text-xxs-600` classes keep resolving. */
   --font-size-h1-600: 26px; --line-height-h1-600: 32px;
   --font-size-h1-400: 26px; --line-height-h1-400: 32px;
   --font-size-h2-600: 22px; --line-height-h2-600: 32px;
@@ -65,7 +89,27 @@
   --font-size-xxs-400: 10px; --line-height-xxs-400: 13px;
   --font-size-xxs-600: 10px; --line-height-xxs-600: 13px;
 
-  /* Additional color tokens — Neo parity */
+  --text-h1-600: 26px;   --text-h1-600--line-height: 32px;
+  --text-h1-400: 26px;   --text-h1-400--line-height: 32px;
+  --text-h2-600: 22px;   --text-h2-600--line-height: 32px;
+  --text-h2-400: 22px;   --text-h2-400--line-height: 32px;
+  --text-h3-600: 18px;   --text-h3-600--line-height: 26px;
+  --text-h3-400: 18px;   --text-h3-400--line-height: 26px;
+  --text-h4-600: 16px;   --text-h4-600--line-height: 24px;
+  --text-h4-400: 16px;   --text-h4-400--line-height: 24px;
+  --text-p-600:  14px;   --text-p-600--line-height:  20px;
+  --text-p-500:  14px;   --text-p-500--line-height:  20px;
+  --text-p-400:  14px;   --text-p-400--line-height:  20px;
+  --text-s-600:  13px;   --text-s-600--line-height:  18px;
+  --text-s-500:  13px;   --text-s-500--line-height:  18px;
+  --text-s-400:  13px;   --text-s-400--line-height:  18px;
+  --text-xs-600: 12px;   --text-xs-600--line-height: 18px;
+  --text-xs-500: 12px;   --text-xs-500--line-height: 18px;
+  --text-xs-400: 12px;   --text-xs-400--line-height: 13px;
+  --text-xxs-400: 10px;  --text-xxs-400--line-height: 13px;
+  --text-xxs-600: 10px;  --text-xxs-600--line-height: 13px;
+
+  /* Aliases used in legacy class names — kept resolving. */
   --color-bg1: hsl(var(--bg1));
   --color-bg2: hsl(var(--bg2));
   --color-bg3: hsl(var(--bg3));
@@ -74,51 +118,92 @@
   --color-hv3: hsl(var(--hv3));
 }
 
-/* Light theme */
+/* ===========================================================================
+ * Light theme — paper / ink
+ * ======================================================================== */
 :root {
-  --background: 0 0% 100%;
-  --foreground: 230 75% 9%;
-  --card: 0 0% 100%;
-  --card-foreground: 230 75% 9%;
+  /* Surface tier */
+  --background: 47 21% 96%;          /* #F7F6F2 — warm paper */
+  --foreground: 60 7% 5%;            /* #0E0E0C — primary ink */
+  --card: 0 0% 100%;                 /* pure white — panels lift off paper */
+  --card-foreground: 60 7% 5%;
   --popover: 0 0% 100%;
-  --popover-foreground: 230 75% 9%;
-  /* Primary = dark ink (slate-900-ish) per Plivo CX Neo — used for primary
-     buttons, active nav, focus rings. Brand red (#E02020) lives on destructive
-     refs and the Plivo logo only (see --plivo-red). */
-  --primary: 222 47% 11%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 215 19% 35%;
-  --secondary-foreground: 0 0% 98%;
-  --tertiary: 215 20% 65%;
-  --tertiary-foreground: 0 0% 98%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --success: 149 89% 42%;
+  --popover-foreground: 60 7% 5%;
+
+  /* Ink ladder */
+  --primary: 60 7% 5%;               /* ink — primary buttons stay dark */
+  --primary-foreground: 47 21% 96%;  /* paper, on filled-primary */
+  --secondary: 47 11% 20%;           /* #38362F — body labels */
+  --secondary-foreground: 47 21% 96%;
+  --tertiary: 42 6% 40%;             /* #6E6A60 — captions */
+  --tertiary-foreground: 47 21% 96%;
+
+  --muted: 45 25% 91%;               /* #EDE9DF — rule-soft, bg dividers */
+  --muted-foreground: 42 6% 40%;     /* #6E6A60 — tertiary */
+  --accent: 9 78% 45%;               /* #C8341C — brand red ("verb") */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 9 78% 45%;          /* same as accent — brand red */
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 141 42% 29%;            /* #2B6A3F — good */
   --success-foreground: 0 0% 100%;
-  --warning: 38 96% 50%;
+  --warning: 34 85% 36%;              /* #A8650E — warn */
   --warning-foreground: 0 0% 100%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 240 10% 3.9%;
-  --st1: 213 27% 84%;
-  --st2: 214 32% 91%;
-  --bg1: 210 8% 95%;
-  --bg2: 210 13% 97%;
-  --bg3: 240 5% 96%;
-  --hv1: 210 40% 96%;
-  --hv2: 210 5% 92%;
-  --hv3: 210 4% 90%;
-  --link: 211 100% 60%;
-  --bubble-customer: var(--bg2);
-  --bubble-agent: 220 100% 96%;
-  --radius: 0.5rem;
+
+  /* Hairlines */
+  --border: 45 21% 83%;              /* #DDD8CB — rule */
+  --input: 45 21% 83%;
+  --ring: 60 7% 5%;                  /* ink — focus border */
+
+  /* st-tiers preserved for any legacy lookups */
+  --st1: 45 21% 83%;
+  --st2: 45 25% 91%;
+
+  /* Surface tiers — slightly differentiated paper tones */
+  --bg1: 45 22% 94%;
+  --bg2: 47 21% 96%;
+  --bg3: 45 25% 91%;
+  --hv1: 45 22% 92%;
+  --hv2: 45 20% 88%;
+  --hv3: 45 18% 84%;
+
+  --link: 217 64% 34%;               /* info-blue */
+
+  /* Semantic duos — `bg`/`border`/`fg` per status.
+   * Used widely in observability.css (cap-stt, status-chip, etc.) */
+  --success-bg: 132 24% 91%;
+  --success-border: 132 24% 80%;
+  --success-fg: 141 42% 29%;
+  --info: 217 64% 34%;
+  --info-foreground: 0 0% 100%;
+  --info-bg: 213 31% 91%;
+  --info-border: 213 31% 80%;
+  --accent-purple: 267 53% 42%;
+  --accent-purple-foreground: 0 0% 100%;
+  --accent-purple-bg: 277 41% 92%;
+  --accent-purple-border: 277 41% 82%;
+  --warning-bg: 42 64% 91%;
+  --warning-border: 42 64% 82%;
+  --warning-fg: 34 85% 36%;
+  --destructive-bg: 12 71% 94%;
+  --destructive-border: 12 71% 86%;
+
+  /* Bubble surfaces — paper for user, faint info-soft for agent */
+  --bubble-user: 47 21% 96%;
+  --bubble-agent: 213 31% 95%;
+  --bubble-customer: var(--bubble-user);
+
+  /* JSON syntax — monochrome with subtle differentiation */
+  --code-key: 60 7% 5%;
+  --code-string: 42 6% 40%;
+  --code-number: 42 6% 40%;
+  --code-bool: 42 6% 40%;
+
+  /* Radius — flat by default. Pills opt in to 2px. */
+  --radius: 0;
 }
 
-/* Brand color variables */
+/* Brand color variables — retained for the Plivo logo / brand glyph. */
 :root {
   --primary-color: #0040E4;
   --primary-color-1: #2461FF;
@@ -129,61 +214,154 @@
   --success-color: #0CC857;
   --warning-color: #FAA005;
   --danger-color: #FF4747;
-  /* Brand red — logo/mark only; do not use for primary actions */
   --plivo-red: #E02020;
+
+  /* The instrument-panel brand red, exposed for places that hand-paint it. */
+  --instrument-accent: #C8341C;
 }
 
-/* Dark theme — matching console dark mode */
+/* ===========================================================================
+ * Dark theme — warm-black inversion per design system's dark draft
+ * ======================================================================== */
 .dark {
-  --background: 240 10% 4%;
-  --foreground: 0 0% 100%;
-  /* Card / popover sit on top of the body bg (`--bg1: 240 11% 7%`), so they
-   * need to be a touch lighter than the body bg to read as elevated.
-   * Previously they were 3.9% — darker than --bg1 — which made dropdowns,
-   * the multiselect popover and the rows-per-page select look surfaceless. */
-  --card: 240 7% 11%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 7% 11%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 222 47% 11%;
-  --secondary: 234 6% 65%;
-  --secondary-foreground: 0 0% 100%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 100% 60%;
+  --background: 48 10% 7%;           /* #14130F */
+  --foreground: 45 35% 93%;          /* #F4F1E8 */
+  --card: 45 9% 10%;                 /* #1C1B17 — surface, slightly above bg */
+  --card-foreground: 45 35% 93%;
+  --popover: 45 9% 10%;
+  --popover-foreground: 45 35% 93%;
+
+  --primary: 45 35% 93%;             /* inverted: paper on dark = primary fg */
+  --primary-foreground: 48 10% 7%;
+  --secondary: 42 14% 78%;           /* #CFCBBE */
+  --secondary-foreground: 48 10% 7%;
+  --tertiary: 42 8% 53%;             /* #8E8A7E */
+  --tertiary-foreground: 48 10% 7%;
+
+  --muted: 45 9% 13%;
+  --muted-foreground: 42 8% 53%;
+  --accent: 9 65% 55%;               /* desat brand red for dark */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 9 65% 55%;
   --destructive-foreground: 0 0% 98%;
-  --success: 173 81% 26%;
-  --success-foreground: 174 58% 91%;
-  --warning: 26 89% 37%;
-  --warning-foreground: 44 95% 92%;
-  /* Bumped from 15.9% → 22% so chrome (popover edges, pagination outline
-   * buttons, select triggers) is visible against the dark surfaces. */
-  --border: 240 5% 22%;
-  --input: 240 5% 22%;
-  --ring: 240 4.9% 83.9%;
-  --tertiary: 234 5% 37%;
-  --tertiary-foreground: 0 0% 98%;
-  --st1: 210 5% 16%;
-  --st2: 220 4% 15%;
-  --bg1: 240 11% 7%;
-  --bg2: 240 10% 6%;
-  --bg3: 240 10% 40%;
-  --hv1: 240 12% 13%;
-  --hv2: 240 14% 11%;
-  --hv3: 240 12% 13%;
-  --bubble-customer: var(--hv1);
-  --bubble-agent: 233 37% 22%;
+
+  --success: 141 35% 48%;
+  --success-foreground: 45 35% 93%;
+  --warning: 34 85% 56%;
+  --warning-foreground: 48 10% 7%;
+
+  --border: 40 9% 16%;               /* #2E2C26 */
+  --input: 40 9% 16%;
+  --ring: 45 35% 93%;
+
+  --st1: 40 9% 16%;
+  --st2: 45 9% 13%;
+
+  --bg1: 48 10% 7%;
+  --bg2: 45 9% 9%;
+  --bg3: 45 9% 13%;
+  --hv1: 45 9% 12%;
+  --hv2: 45 8% 15%;
+  --hv3: 40 8% 18%;
+
+  --link: 217 70% 65%;
+
+  --success-bg: 141 35% 12%;
+  --success-border: 141 25% 22%;
+  --success-fg: 141 55% 70%;
+  --info: 217 75% 65%;
+  --info-bg: 217 50% 14%;
+  --info-border: 217 35% 26%;
+  --accent-purple: 267 65% 75%;
+  --accent-purple-bg: 267 40% 16%;
+  --accent-purple-border: 267 30% 30%;
+  --warning-bg: 38 50% 12%;
+  --warning-border: 38 35% 24%;
+  --warning-fg: 38 80% 72%;
+  --destructive-bg: 9 50% 14%;
+  --destructive-border: 9 40% 26%;
+
+  --bubble-user: 45 9% 11%;
+  --bubble-agent: 217 40% 16%;
+  --bubble-customer: var(--bubble-user);
+
+  --code-key: 45 35% 93%;
+  --code-string: 42 8% 60%;
+  --code-number: 42 8% 60%;
+  --code-bool: 42 8% 60%;
 }
 
+/* ===========================================================================
+ * Base layer — body type, focus styles, paper grid
+ * ======================================================================== */
 @layer base {
   * {
     @apply border-border;
+    /* Tabular-nums by default for numeric utility classes. Body remains
+     * proportional because `tnum` only applies to digits. */
+  }
+  html {
+    /* Removes the default text-size adjust so the design's px scale is
+     * honored on mobile Safari. */
+    -webkit-text-size-adjust: 100%;
   }
   body {
     @apply bg-background text-foreground;
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-feature-settings: "cv11", "ss01", "ss03";  /* Inter's friendlier alts */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+
+    /* Paper grid — the signature texture. 32px pitch, hairline soft rule.
+     * Switched off via `data-no-grid` for embedded artboards / drawers. */
+    background-image:
+      linear-gradient(to right,  hsl(var(--bg3)) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--bg3)) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: -1px -1px;
+    background-attachment: fixed;
   }
+
+  body[data-no-grid="true"] {
+    background-image: none;
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  [data-slot="card-title"],
+  [data-slot="dialog-title"],
+  [data-slot="sheet-title"],
+  [data-slot="panel-title"] {
+    font-family: "Sora", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    /* Sora has slightly looser metrics than Inter — pull tracking in
+     * for headings so they sit tight; eyebrow labels stay loose. */
+    letter-spacing: -0.005em;
+  }
+
+  /* Section / eyebrow / panel-title — uppercase mono labels carry the
+   * instrument-panel signature even when the font is sans. */
+  .eyebrow,
+  [data-eyebrow] {
+    font: 600 10px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: hsl(var(--tertiary));
+  }
+
+  /* Numeric utility — apply `.tabular` / `data-numeric` for column-aligned
+   * digits. Pages use `tabular-nums` directly, this is the catch-all. */
+  .tabular,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  button { font: inherit; cursor: pointer; color: inherit; background: transparent; border: none; padding: 0; }
+  a { color: inherit; text-decoration: none; }
+}
+
+/* ===========================================================================
+ * Selection — instrument-panel-themed, not browser default.
+ * ======================================================================== */
+::selection {
+  background: hsl(var(--accent) / 0.18);
+  color: hsl(var(--foreground));
 }

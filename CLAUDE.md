@@ -91,24 +91,32 @@ See `.env.example` for all variables. Only `DATABASE_URL` is required. Basic aut
 
 Three independently versioned packages publish from this repo, each via a
 PR-label trigger — no manual tags or releases needed. The three publish
-workflows (`publish-ui.yml`, `publish-pytest-plugin.yml`,
-`publish-vitest-plugin.yml`) all hang off the `Tests` workflow's
-`workflow_run` and fire only when a specific `release-*` label is
-present on the merged PR.
+workflows (`publish-ui.yml`, `publish-observability-sdk.yml`,
+`publish-observability-sdk-node.yml`) all hang off the `Tests` workflow's
+`workflow_run` and fire only when a specific `release-*` label is present
+on the merged PR.
+
+The standalone `pytest-agent-observability` and
+`vitest-agent-observability` packages were absorbed into the
+language-keyed `agent-observability-sdk` packages in May 2026 and are no
+longer published from this repo. The last 0.2.x releases stay frozen on
+PyPI / npm for users not yet migrated; new feature work happens
+exclusively in the SDK packages.
 
 ### Packages at a glance
 
 | Package | Source | Registry | Tag prefix | Trigger label | Notes filter label |
 |---|---|---|---|---|---|
 | `agent-observability-ui` | `packages/ui/` | npm | `ui-v*` | `release-ui-pkg` | `agent-observability-ui` |
-| `pytest-agent-observability` | `plugins/pytest-agent-observability/` | PyPI | `pytest-plugin-v*` | `release-pytest-plugin` | `pytest-agent-observability` |
-| `vitest-agent-observability` | `plugins/vitest-agent-observability/` | npm | `vitest-plugin-v*` | `release-vitest-plugin` | `vitest-agent-observability` |
+| `agent-observability-sdk` (Python) | `plugins/agent-observability-sdk/` | PyPI | `obs-sdk-v*` | `release-observability-sdk` | `agent-observability-sdk` |
+| `agent-observability-sdk` (Node) | `plugins/agent-observability-sdk-node/` | npm | `obs-sdk-node-v*` | `release-observability-sdk-node` | `agent-observability-sdk-node` |
 
 ### Release flow (same for all three)
 
 1. Bump `version` in the package's manifest
-   (`packages/ui/package.json` / `plugins/pytest-agent-observability/pyproject.toml` /
-   `plugins/vitest-agent-observability/package.json`).
+   (`packages/ui/package.json` /
+   `plugins/agent-observability-sdk/pyproject.toml` /
+   `plugins/agent-observability-sdk-node/package.json`).
 2. **Version bumps must be in a dedicated PR** — do not mix with
    feature changes.
 3. Labels:
@@ -135,11 +143,11 @@ If you add or change a registry item in `registry.json`, run
 ### Prerequisites (one-time setup)
 
 - **npm:** `NPM_TOKEN` must be set as a repository Actions secret (an npm
-  automation token with publish rights for both `agent-observability-ui`
-  and `vitest-agent-observability`).
+  automation token with publish rights for `agent-observability-ui` and
+  `agent-observability-sdk`).
 - **PyPI:** configure a trusted publisher at pypi.org for
-  `pytest-agent-observability` pointing at the
-  `publish-pytest-plugin.yml` workflow in this repo. No secret needed.
+  `agent-observability-sdk` pointing at `publish-observability-sdk.yml`.
+  No secret needed.
 - **GitHub labels:** create each label in the table above in the repo.
 
 ### Labeling PRs (agents creating PRs in this repo)
@@ -156,12 +164,12 @@ modifies:
 | Paths touched | Apply label |
 |---|---|
 | `packages/ui/**` | `agent-observability-ui` |
-| `plugins/pytest-agent-observability/**` | `pytest-agent-observability` |
-| `plugins/vitest-agent-observability/**` | `vitest-agent-observability` |
-| `src/**`, `migrations/**`, `frontend/**`, or any other path outside `packages/ui/**` and `plugins/**` | no notes-filter label needed — those paths aren't published as a package |
+| `plugins/agent-observability-sdk/**` | `agent-observability-sdk` |
+| `plugins/agent-observability-sdk-node/**` | `agent-observability-sdk-node` |
+| `src/**`, `migrations/**`, `frontend/**`, `docs/**`, or any other path outside `packages/ui/**` and `plugins/**` | no notes-filter label needed — those paths aren't published as a package |
 | Version bump only, in `packages/ui/package.json` | `release-ui-pkg` (no notes-filter label — bumps are not in release notes) |
-| Version bump only, in `plugins/pytest-agent-observability/pyproject.toml` | `release-pytest-plugin` |
-| Version bump only, in `plugins/vitest-agent-observability/package.json` | `release-vitest-plugin` |
+| Version bump only, in `plugins/agent-observability-sdk/pyproject.toml` | `release-observability-sdk` |
+| Version bump only, in `plugins/agent-observability-sdk-node/package.json` | `release-observability-sdk-node` |
 
 Rules:
 - The three publishable packages share no source code; a PR almost

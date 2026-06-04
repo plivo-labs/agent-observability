@@ -96,14 +96,29 @@ describe("buildSessionMetrics", () => {
     expect(result.turns[0].user_perceived_ms).toBe(600);
   });
 
-  test("computes user_perceived_ms as llm + tts when e2e not available", () => {
+  test("falls back to llm_node_ttft for user_perceived_ms when e2e absent (no +tts)", () => {
+    // Canonical perceived latency = e2e_latency ?? llm_node_ttft.
+    // The old behavior summed llm + tts (would have been 530); the
+    // current contract drops that branch and uses llm_node_ttft alone.
     const chat = [
       { id: "u1", type: "message", role: "user", content: "hi" },
       { id: "a1", type: "message", role: "assistant", content: "hey",
         metrics: { llm_node_ttft: 0.45, tts_node_ttfb: 0.08 } },
     ];
     const result = buildSessionMetrics(chat, null, 1)!;
-    expect(result.turns[0].user_perceived_ms).toBe(530);
+    expect(result.turns[0].user_perceived_ms).toBe(450);
+  });
+
+  test("user_perceived_ms is undefined when neither e2e nor llm_node_ttft present", () => {
+    // Only TTS timing on the turn — with the +tts branch removed there's
+    // no e2e and no llm_node_ttft, so perceived latency is unknown.
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hi" },
+      { id: "a1", type: "message", role: "assistant", content: "hey",
+        metrics: { tts_node_ttfb: 0.08 } },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].user_perceived_ms).toBeUndefined();
   });
 
   // ── Metrics lookup from sessionMetrics by item_id ────────────────────────
@@ -151,14 +166,36 @@ describe("buildSessionMetrics", () => {
 
   // ── TTS character tracking ───────────────────────────────────────────────
 
-  test("counts TTS characters from agent text length", () => {
+  test("counts TTS characters from agent text length when audio pipeline ran", () => {
+    // tts_characters is the count of chars actually synthesized to
+    // speech, so it only fires when the audio pipeline ran for this
+    // turn. Signal: tts_node_ttfb on per-turn metrics, or tts_metadata
+    // on the assistant item. (Without that gate, text-only sessions
+    // would surface a meaningless agent_text length as "TTS chars".)
     const chat = [
       { id: "u1", type: "message", role: "user", content: "hi" },
-      { id: "a1", type: "message", role: "assistant", content: "hello there" },
+      {
+        id: "a1",
+        type: "message",
+        role: "assistant",
+        content: "hello there",
+        metrics: { tts_node_ttfb: 0.08 },
+      },
     ];
     const result = buildSessionMetrics(chat, null, 1)!;
     expect(result.turns[0].tts_characters).toBe(11);
     expect(result.summary.total_tts_characters).toBe(11);
+  });
+
+  test("does not emit tts_characters on a text-only session (no TTS pipeline)", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hi" },
+      // No tts_node_ttfb / tts_metadata → audio pipeline didn't run.
+      { id: "a1", type: "message", role: "assistant", content: "hello there" },
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].tts_characters).toBeUndefined();
+    expect(result.summary.total_tts_characters).toBe(0);
   });
 
   // ── Tool calls ───────────────────────────────────────────────────────────
@@ -370,7 +407,15 @@ describe("buildSessionMetrics", () => {
   test("extracts tokens from session-level usage when per-turn tokens missing", () => {
     const chat = [
       { id: "u1", type: "message", role: "user", content: "hi" },
-      { id: "a1", type: "message", role: "assistant", content: "hey" },
+      // tts_metadata present → audio pipeline ran for this turn, so
+      // tts_characters reads agent_text.length (3 = "hey".length).
+      {
+        id: "a1",
+        type: "message",
+        role: "assistant",
+        content: "hey",
+        metrics: { tts_metadata: { model_name: "tts-1", model_provider: "openai" } },
+      },
     ];
     const sessionMetrics = {
       per_turn: [],
@@ -383,8 +428,8 @@ describe("buildSessionMetrics", () => {
     expect(result.summary.total_llm_tokens).toBe(810);
     expect(result.summary.total_llm_prompt_tokens).toBe(787);
     expect(result.summary.total_llm_completion_tokens).toBe(23);
-    // TTS characters come from text length (3 = "hey".length), not usage
-    // Usage fallback only applies when per-turn total is 0
+    // TTS characters come from agent text length (3 = "hey".length),
+    // gated on the audio pipeline running.
     expect(result.summary.total_tts_characters).toBe(3);
   });
 

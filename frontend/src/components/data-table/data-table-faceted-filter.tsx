@@ -78,6 +78,7 @@ export function DataTableFacetedFilter<TData, TValue>({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
+          size="sm"
           className={
             selectedValues?.size > 0
               ? "font-normal"
