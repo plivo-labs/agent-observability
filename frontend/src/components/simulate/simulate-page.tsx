@@ -88,12 +88,24 @@ function Seg({ options, value, onChange }: { options: { id: string; label: React
   )
 }
 
+const STEPPER_STEPS = [
+  { id: 'setup', label: 'Define', hint: 'Prompt · personas · rubric' },
+  { id: 'running', label: 'Run', hint: 'Drive conversations' },
+  { id: 'report', label: 'Report', hint: 'Leveled judge verdicts' },
+]
+
+// Real calls live in the Live tab — voice / escalation hand off there, prefilled.
+const voicePayload = (c: RunConfig, personas: Persona[]) => ({
+  prompt: c.prompt ?? '',
+  personas,
+  criteria: (c.rubric?.criteria ?? []).map((cr) => ({ name: cr.name, question: cr.question })),
+  phoneNumber: c.phoneNumber,
+  rubricId: c.rubric?.id,
+  rubricName: c.rubric?.name,
+})
+
 function Stepper({ phase }: { phase: 'setup' | 'running' | 'report' }) {
-  const steps = [
-    { id: 'setup', label: 'Define', hint: 'Prompt · personas · rubric' },
-    { id: 'running', label: 'Run', hint: 'Drive conversations' },
-    { id: 'report', label: 'Report', hint: 'Leveled judge verdicts' },
-  ]
+  const steps = STEPPER_STEPS
   const idx = steps.findIndex((s) => s.id === phase)
   return (
     <div className="mb-6 flex flex-wrap items-stretch gap-2.5">
@@ -206,7 +218,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
   const [mode, setMode] = useState('text')
   const [typeFilter, setTypeFilter] = useState('all')
   const [lib, setLib] = useState<Persona[]>(PERSONAS)
-  const [selected, setSelected] = useState(PERSONAS.map((p) => p.id))
+  const [selected, setSelected] = useState(() => PERSONAS.map((p) => p.id))
   const [genList, setGenList] = useState<Persona[]>([])
   const [selGen, setSelGen] = useState<string[]>([])
   const [savedGen, setSavedGen] = useState<string[]>([])
@@ -806,16 +818,6 @@ export function SimulatePage() {
     // Returned cleanup stops THIS loop (used by Cancel / new run).
     return () => { stopped = true }
   }
-
-  // Real calls live in the Live tab — voice / escalation hand off there, prefilled.
-  const voicePayload = (c: RunConfig, personas: Persona[]) => ({
-    prompt: c.prompt ?? '',
-    personas,
-    criteria: (c.rubric?.criteria ?? []).map((cr) => ({ name: cr.name, question: cr.question })),
-    phoneNumber: c.phoneNumber,
-    rubricId: c.rubric?.id,
-    rubricName: c.rubric?.name,
-  })
 
   const run = (c: RunConfig) => {
     jobIdRef.current = null; pollingRef.current = null // drop any in-flight run before starting a new one

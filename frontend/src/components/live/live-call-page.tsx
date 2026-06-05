@@ -20,6 +20,8 @@ import { readLiveRun, writeLiveRun, clearLiveRun } from '../simulate/run-persist
 
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
 const fmtClock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+// real-mode progress is derived from the Truman lifecycle, not the fake clock.
+const REAL_PROG: Record<string, number> = { queued: 5, dialing: 20, live: 55, recording: 80, evaluating: 92, done: 100, failed: 100 }
 
 function Waveform({ active, color }: { active: boolean; color: string }) {
   return (
@@ -51,7 +53,7 @@ export function LiveCallPage() {
   const [agentId, setAgentId] = useState<string>('')
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
   const [personas, setPersonas] = useState<Persona[]>(PERSONAS)
-  const [selectedIds, setSelectedIds] = useState<string[]>(PERSONAS.map((p) => p.id))
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => PERSONAS.map((p) => p.id))
   const [typeFilter, setTypeFilter] = useState('all')
   const [rubrics, setRubrics] = useState<Rubric[]>([])
   const [rubricId, setRubricId] = useState('')
@@ -139,8 +141,6 @@ export function LiveCallPage() {
 
   const calls = batch?.calls ?? []
   const isTruman = batch?.mode === 'truman'
-  // real-mode progress is derived from the Truman lifecycle, not the fake clock.
-  const REAL_PROG: Record<string, number> = { queued: 5, dialing: 20, live: 55, recording: 80, evaluating: 92, done: 100, failed: 100 }
   const finish = (i: number) => 1600 + i * 700 + (calls[i]?.transcript.length ?? 4) * 120
   const progOf = (i: number) => isTruman ? (REAL_PROG[calls[i]?.status ?? 'queued'] ?? 5) : Math.min(100, Math.round((clock / finish(i)) * 100))
   const stageOf = (i: number): 'dialing' | 'live' | 'done' => {
