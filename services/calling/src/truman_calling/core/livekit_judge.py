@@ -120,34 +120,50 @@ def _is_message(item: ChatItem) -> bool:
 def _agent_slices(items: list[ChatItem]) -> list[dict[str, Any]]:
     """Split the conversation at `agent_handoff` items into per-agent partitions.
 
-    Zero handoffs → exactly ONE slice spanning the whole conversation, labelled
-    "Agent under test" (never fabricate phantom agents)."""
+    Each slice carries a `turn_range` (inclusive indices into the message-only
+    turn sequence) so consumers can attach the tasks that fall within each
+    agent's window — NOT all tasks to the first agent. Zero handoffs → exactly
+    ONE slice spanning the whole conversation, labelled "Agent under test"
+    (never fabricate phantom agents)."""
+    turn_index_of: dict[int, int] = {}
+    turn_counter = 0
+    for pos, item in enumerate(items):
+        if _is_message(item):
+            turn_index_of[pos] = turn_counter
+            turn_counter += 1
+
     slices: list[dict[str, Any]] = []
     current: list[ChatItem] = []
+    current_turns: list[int] = []
     current_agent_id: str | None = None
     handoff_seen = False
 
     def flush(agent_id: str | None) -> None:
-        slices.append({"agent_id": agent_id, "items": current[:]})
+        turn_range = [current_turns[0], current_turns[-1]] if current_turns else [0, 0]
+        slices.append({"agent_id": agent_id, "items": current[:], "turn_range": turn_range})
 
-    for item in items:
+    for pos, item in enumerate(items):
         if getattr(item, "type", None) == "agent_handoff":
             handoff_seen = True
             flush(current_agent_id)
             current = []
+            current_turns = []
             current_agent_id = getattr(item, "new_agent_id", None)
             continue
         current.append(item)
+        if pos in turn_index_of:
+            current_turns.append(turn_index_of[pos])
     flush(current_agent_id)
 
     if not handoff_seen:
         # single agent → exactly one entry labelled "Agent under test"
-        return [{"agent_id": "agent_under_test", "label": "Agent under test", "items": items[:]}]
+        turn_range = slices[0]["turn_range"] if slices else [0, 0]
+        return [{"agent_id": "agent_under_test", "label": "Agent under test", "items": items[:], "turn_range": turn_range}]
 
     out: list[dict[str, Any]] = []
     for idx, sl in enumerate(slices):
         aid = sl["agent_id"] or f"agent_{idx}"
-        out.append({"agent_id": aid, "label": aid, "items": sl["items"]})
+        out.append({"agent_id": aid, "label": aid, "items": sl["items"], "turn_range": sl["turn_range"]})
     return out
 
 
@@ -268,16 +284,23 @@ async def judge_chat_ctx(
 
     # Each "unit" is a slice that gets the full criterion battery. We build one
     # ChatContext per unit and run (unit x criterion) judges in ONE gather.
-    flow_unit = {"scope": "flow", "ctx": chat_ctx, "meta": {}}
+    flow_unit = {"scope": "flow", "ctx": chat_ctx, "meta": {}, "uidx": 0}
     units: list[dict[str, Any]] = [flow_unit]
+
+    # Stable position of each unit. Do NOT use units.index(u) later: list.index
+    # compares dicts by VALUE, so two value-equal units would resolve to the
+    # wrong (first) index. Tag each unit with its real position on append.
+    def register(u: dict[str, Any]) -> dict[str, Any]:
+        u["uidx"] = len(units)
+        units.append(u)
+        return u
 
     agent_units: list[dict[str, Any]] = []
     if "agent" in leveled:
         for sl in _agent_slices(items):
             ctx = ChatContext(items=sl["items"]) if sl["items"] else None
-            u = {"scope": "agent", "ctx": ctx, "meta": {"agent_id": sl["agent_id"], "label": sl["label"]}}
-            agent_units.append(u)
-            units.append(u)
+            u = {"scope": "agent", "ctx": ctx, "meta": {"agent_id": sl["agent_id"], "label": sl["label"], "turn_range": sl["turn_range"]}}
+            agent_units.append(register(u))
 
     task_units: list[dict[str, Any]] = []
     if "task" in leveled:
@@ -297,8 +320,7 @@ async def judge_chat_ctx(
                         "single_criterion": cname,
                     },
                 }
-                task_units.append(u)
-                units.append(u)
+                task_units.append(register(u))
         else:
             for seg in segs:
                 ctx = ChatContext(items=seg["items"]) if seg["items"] else None
@@ -307,8 +329,7 @@ async def judge_chat_ctx(
                     "ctx": ctx,
                     "meta": {"task_id": seg["task_id"], "label": seg["label"], "turn_range": seg["turn_range"]},
                 }
-                task_units.append(u)
-                units.append(u)
+                task_units.append(register(u))
 
     node_units: list[dict[str, Any]] = []
     if "node" in leveled:
@@ -324,8 +345,7 @@ async def judge_chat_ctx(
                     "text": sl["text"],
                 },
             }
-            node_units.append(u)
-            units.append(u)
+            node_units.append(register(u))
 
     # ---- One asyncio.gather over the (unit x criterion) product. ----
     # task single-segment units pin to a single criterion; everything else runs
@@ -365,7 +385,7 @@ async def judge_chat_ctx(
         return out
 
     # ---- Assemble today's flow result (byte-identical to before). ----
-    flow_crit = crit_for(units.index(flow_unit))
+    flow_crit = crit_for(flow_unit["uidx"])
     passed = sum(1 for x in flow_crit if x["pass"])
     overall = "pass" if flow_crit and passed == len(flow_crit) else "fail"
     result: dict[str, Any] = {
@@ -388,13 +408,13 @@ async def judge_chat_ctx(
     if "agent" in scopes:
         agent_out: list[dict[str, Any]] = []
         for u in agent_units:
-            ui = units.index(u)
-            crit = crit_for(ui)
+            crit = crit_for(u["uidx"])
             ov, sc = _overall_and_score(crit)
             agent_out.append(
                 {
                     "agent_id": u["meta"]["agent_id"],
                     "label": u["meta"]["label"],
+                    "turn_range": u["meta"]["turn_range"],
                     "criteria": crit,
                     "overall": ov,
                     "score": sc,
@@ -408,7 +428,7 @@ async def judge_chat_ctx(
         # Both shapes assemble identically from `task_units`.
         task_out: list[dict[str, Any]] = []
         for u in task_units:
-            crit = crit_for(units.index(u))
+            crit = crit_for(u["uidx"])
             ov, sc = _overall_and_score(crit)
             task_out.append(
                 {
@@ -425,8 +445,7 @@ async def judge_chat_ctx(
     if "node" in scopes:
         node_out: list[dict[str, Any]] = []
         for u in node_units:
-            ui = units.index(u)
-            crit = crit_for(ui)
+            crit = crit_for(u["uidx"])
             ov, _sc = _overall_and_score(crit)
             node_out.append(
                 {

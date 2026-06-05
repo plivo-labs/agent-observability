@@ -52,7 +52,7 @@ export type CaseStatus = "pass" | "fail";
  * for 0-100 DISPLAY only (node omits score). */
 export interface ScopeCriterion { name: string; pass: boolean; justification: string }
 export interface ScopeFlow { criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
-export interface ScopeAgent { agent_id: string; label: string; criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
+export interface ScopeAgent { agent_id: string; label: string; turn_range?: [number, number]; criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
 export interface ScopeTask { task_id: string; label: string; turn_range: [number, number]; criteria: ScopeCriterion[]; overall: "pass" | "fail"; score: number }
 export interface ScopeNode { turn_index: number; turn_id: string; role: string; text: string; criteria: ScopeCriterion[]; overall: "pass" | "fail" }
 export interface JudgeScopes {
@@ -402,18 +402,26 @@ export function buildJudgeTreeFromScopes(
   });
 
   // agent[] — partition at agent_handoff. Single-agent => exactly one entry.
-  // Tasks belong to the agent-under-test (the first/only agent).
+  // Attach each task to the agent whose turn_range contains it (a task's `turn`
+  // is its segment start). Falls back to pinning all tasks to the first agent
+  // only when the judge didn't emit agent turn_range (older output).
   const agentScopes = scopes.agent ?? [];
+  const anyRange = agentScopes.some((a) => a.turn_range);
   const agents: JudgeAgent[] = agentScopes.length
-    ? agentScopes.map((a, i) => ({
-        id: a.agent_id || `agent-${i}`,
-        name: a.label || "Agent under test",
-        score: a.score,
-        status: st(a.overall),
-        verdict: verdictOf(a.criteria, "Handled its segment of the conversation.", "Failed one or more criteria in its segment."),
-        // Attach tasks to the first agent (single-agent / agent-under-test case).
-        tasks: i === 0 ? tasks : [],
-      }))
+    ? agentScopes.map((a, i) => {
+        const r = a.turn_range;
+        const agentTasks = anyRange
+          ? (r ? tasks.filter((t) => t.turn != null && t.turn >= r[0] && t.turn <= r[1]) : [])
+          : (i === 0 ? tasks : []);
+        return {
+          id: a.agent_id || `agent-${i}`,
+          name: a.label || "Agent under test",
+          score: a.score,
+          status: st(a.overall),
+          verdict: verdictOf(a.criteria, "Handled its segment of the conversation.", "Failed one or more criteria in its segment."),
+          tasks: agentTasks,
+        };
+      })
     : [
         // No agent scope requested/returned — synthesize the single
         // agent-under-test from flow so the tree still nests its tasks.
