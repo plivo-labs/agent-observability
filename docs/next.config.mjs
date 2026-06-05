@@ -17,7 +17,7 @@ const config = {
   trailingSlash: true,
   images: { unoptimized: true },
   outputFileTracingRoot: repoRoot,
-  // Silence the multi-lockfile root inference warning (docs-new + repo root
+  // Silence the multi-lockfile root inference warning (docs + repo root
   // both carry lockfiles). Harmless, but tidy — pin the inferred root.
   turbopack: { root: repoRoot },
   // Spike: webpack COMPILES the registry fine (that's the cross-package proof);
@@ -33,12 +33,12 @@ const config = {
       // Next's server build, which swaps in the `react-server` condition for
       // RSC — a hard react->node_modules/react alias defeats that and yields
       // "Cannot read properties of null (reading 'useMemo')" during prerender.
-      // bun's hoisting already gives docs-new + packages/ui a single React 19.
+      // bun's hoisting already gives docs + packages/ui a single React 19.
 
-      // DEDUPE context-bearing packages onto the docs-new copy. The registry
+      // DEDUPE context-bearing packages onto the docs copy. The registry
       // source resolves its own deps upward into packages/ui/node_modules, so
       // without these a SECOND nuqs / react-table instance loads — and the
-      // NuqsAdapter context set by docs-new's nuqs is then invisible to the
+      // NuqsAdapter context set by docs's nuqs is then invisible to the
       // registry's useQueryState ("nuqs requires an adapter" crash). This is the
       // Next equivalent of docs/vite.config.ts `resolve.dedupe`.
       //
@@ -64,7 +64,7 @@ const config = {
         'node_modules/@tanstack/table-core/build/lib/index.mjs',
       ),
 
-      // shadcn UI + utils — local to docs-new (registry imports these)
+      // shadcn UI + utils — local to docs (registry imports these)
       '@/components/ui': path.join(__dirname, 'components/ui'),
       '@/lib/utils': path.join(__dirname, 'lib/utils.ts'),
 

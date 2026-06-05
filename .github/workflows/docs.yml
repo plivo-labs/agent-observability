@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs-new/**'
+      - 'docs/**'
       - 'packages/ui/registry/**'
       - 'packages/ui/package.json'
       - 'packages/ui/bun.lock'
@@ -33,16 +33,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install docs dependencies
-        working-directory: docs-new
+        working-directory: docs
         run: bun install --frozen-lockfile
 
       - name: Build docs
-        working-directory: docs-new
+        working-directory: docs
         run: bun run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs-new/out
+          path: docs/out
 
   deploy:
     needs: build
