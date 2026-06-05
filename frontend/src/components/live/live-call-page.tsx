@@ -283,7 +283,7 @@ export function LiveCallPage() {
               </div>
               <div className="ao-panel-body">
                 <div className="mb-3 flex flex-wrap gap-1.5">
-                  {['all', ...PERSONA_TYPES].map((t) => <span key={t} onClick={() => setTypeFilter(t)} className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors', typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>)}
+                  {['all', ...PERSONA_TYPES].map((t) => <button key={t} type="button" aria-pressed={typeFilter === t} onClick={() => setTypeFilter(t)} className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors', typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</button>)}
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {filtered.map((p) => (

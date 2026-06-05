@@ -40,8 +40,57 @@
       },
       {
         "files": ["src/components/simulate/simulate-page.tsx"],
-        "rules": ["react-doctor/no-mutable-in-deps"],
-        "//": "Dependency is react-router's useLocation() result (reactive); the mutable-object heuristic is a false positive here."
+        "rules": [
+          "react-doctor/no-mutable-in-deps",
+          "react-doctor/no-static-element-interactions"
+        ],
+        "//": "no-mutable-in-deps: react-router useLocation() reactive value. no-static-element-interactions (PersonaCard): role/tabIndex/onKeyDown are applied in lockstep with onClick, so the element IS keyboard-accessible at runtime; the analyzer can't prove the conditional role is set."
+      },
+      {
+        "files": ["src/components/run-detail/report-sections.tsx"],
+        "rules": ["react-doctor/no-static-element-interactions"],
+        "//": "JudgeRow: role/tabIndex/onKeyDown and onClick are all gated on the same `interactive` flag, so it is keyboard-accessible whenever clickable; the analyzer can't see the conditional role is always paired with onClick."
+      },
+      {
+        "files": [
+          "src/components/data-table/data-table-faceted-filter.tsx",
+          "src/components/data-table/data-table-slider-filter.tsx",
+          "src/components/data-table/data-table-date-filter.tsx"
+        ],
+        "rules": ["react-doctor/prefer-tag-over-role"],
+        "//": "The `role=\"button\"` clear-filter affordance is rendered INSIDE the Popover trigger <Button>; a native nested <button> is invalid HTML, so role=button on a div is the correct pattern (keyboard handler added)."
+      },
+      {
+        "files": [
+          "src/components/evals-page.tsx",
+          "src/components/sessions-page.tsx"
+        ],
+        "rules": ["react-doctor/prefer-tag-over-role"],
+        "//": "The clickable row is a `role=\"button\"` wrapper that CONTAINS interactive children (Checkbox, action buttons, menu items); a native <button> cannot nest interactive descendants, so role=button is correct here."
+      },
+      {
+        "files": ["src/components/run-detail/audio-player.tsx"],
+        "rules": ["react-doctor/prefer-tag-over-role"],
+        "//": "Custom draggable seek bar uses role=\"slider\" (with aria-valuemin/max/now + arrow-key handling); there is no native HTML tag for a styled scrub bar."
+      },
+      {
+        "files": ["src/components/session-events.tsx"],
+        "rules": ["react-doctor/prefer-tag-over-role"],
+        "//": "role=group on the timestamp-mode segmented control (suggested <address> is semantically wrong) and the ev-row toggle (role=button, fully keyboard-accessible) which is a CSS-grid row that breaks when turned into a native <button>."
+      },
+      {
+        "files": ["src/components/library/library-page.tsx"],
+        "rules": ["react-doctor/prefer-tag-over-role"],
+        "//": "role=group on the colour-swatch fieldset wrapper (the swatches themselves are real <button>s); suggested native tag does not fit a labelled radio-like group of colour buttons."
+      },
+      {
+        "files": ["src/components/session-timeline/session-trace.tsx"],
+        "rules": [
+          "react-doctor/prefer-tag-over-role",
+          "react-doctor/click-events-have-key-events",
+          "react-doctor/no-static-element-interactions"
+        ],
+        "//": "Timeline span blocks + drag-to-seek track are pointer-position visualizations (click maps to an x-coordinate on the trace); there is no meaningful keyboard equivalent and no native tag for a draggable trace surface."
       }
     ]
   }

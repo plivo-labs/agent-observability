@@ -130,6 +130,10 @@ function PersonaCard({ p, selected, onClick, state }: {
 }) {
   return (
     <div onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-pressed={onClick ? !!selected : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } } : undefined}
       className={cn('flex flex-col gap-2.5 rounded-lg border bg-card p-3 transition-all',
         onClick ? 'cursor-pointer' : '', selected ? 'border-primary ring-1 ring-primary' : 'border-border', onClick && !selected ? 'opacity-70 hover:opacity-100' : '')}>
       <div className="flex items-center gap-2.5">
@@ -298,14 +302,12 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
             <div className="ao-panel-body">
               <div className="mb-3.5 flex flex-wrap gap-1.5">
                 {['all', ...PERSONA_TYPES].map((t) => (
-                  <span key={t}
-                    role="button"
-                    tabIndex={0}
+                  <button key={t}
+                    type="button"
                     aria-pressed={typeFilter === t}
                     onClick={() => setTypeFilter(t)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setTypeFilter(t) } }}
                     className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                      typeFilter === t ? 'bg-[hsl(var(--link))] text-white' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>
+                      typeFilter === t ? 'bg-[hsl(var(--link))] text-white' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</button>
                 ))}
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
