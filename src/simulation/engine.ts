@@ -131,11 +131,12 @@ const RUBRIC_AXES = [
 
 const llmEnabled = () => !!config.SIM_LLM_API_KEY || azureLlmEnabled;
 
-/* Max personas whose conversation+judging run concurrently. The LLM path makes
- * one Azure/OpenAI call per turn (and one per judge), so we cap fan-out to keep
- * a large persona set from triggering 429s. For the typical 1-8 personas this
- * still parallelizes the whole batch (or most of it). */
-const PERSONA_CONCURRENCY = 5;
+/* Max personas whose conversation+judging run concurrently. We want the whole
+ * batch to run in parallel (a typical run is a handful of personas); this is
+ * only a safety ceiling so a pathologically large set can't fire hundreds of
+ * concurrent Azure/OpenAI calls at once (429s). Realistic batches (≤30) all run
+ * simultaneously. */
+const PERSONA_CONCURRENCY = 30;
 
 /* Run `task(i)` for i in [0, n) with at most `limit` in flight at once.
  * Tasks run for their side effects (each writes into a pre-sized result array

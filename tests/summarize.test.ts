@@ -33,6 +33,32 @@ describe("summarize()", () => {
     expect(r).toEqual({ total: 0, passed: 0, failed: 0, errored: 0, skipped: 0 });
   });
 
+  test("a non-scope (per-criterion) fail judgment demotes a passed case", () => {
+    const cases = [
+      mkCase({ status: "passed", judgments: [{ intent: "x", verdict: "fail" }] }),
+    ] as any;
+    const r = summarize(cases);
+    expect(r.passed).toBe(0);
+    expect(r.failed).toBe(1);
+  });
+
+  test("leveled-scope fail rows are diagnostic and do NOT demote a passed case", () => {
+    // sim runs persist flow/agent/task/node scope rows; a failing node must not
+    // zero out a case the producer scored as passed.
+    const cases = [
+      mkCase({
+        status: "passed",
+        judgments: [
+          { scope: "flow", verdict: "pass" },
+          { scope: "node:2", verdict: "fail" },
+        ],
+      }),
+    ] as any;
+    const r = summarize(cases);
+    expect(r.passed).toBe(1);
+    expect(r.failed).toBe(0);
+  });
+
   test("only errored/skipped cases are counted as such", () => {
     const cases = [
       mkCase({ status: "errored" }),
