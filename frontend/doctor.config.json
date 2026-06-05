@@ -1,0 +1,48 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["src/lib/observability-hooks.ts"],
+        "rules": ["react-doctor/no-adjust-state-on-prop-change"],
+        "//": "Async data-fetch hooks: state is reset/seeded when the fetched resource id changes, not a render-time prop->state mirror. Deliberate reset-on-resource-change effect."
+      },
+      {
+        "files": ["src/lib/observability-provider.tsx"],
+        "rules": ["react-doctor/no-adjust-state-on-prop-change"],
+        "//": "Provider syncs its internal state to incoming config props on resource change (deliberate reset), not a derivable render-time value."
+      },
+      {
+        "files": ["src/components/live/use-live-call.ts"],
+        "rules": ["react-doctor/no-adjust-state-on-prop-change"],
+        "//": "Live-call hook resets streaming/transcript state when the active runId changes (reset-on-resource-change). Not a prop mirror."
+      },
+      {
+        "files": ["src/components/session-timeline/recording-player.tsx"],
+        "rules": [
+          "react-doctor/no-adjust-state-on-prop-change",
+          "react-doctor/no-fetch-in-effect"
+        ],
+        "//": "Audio recording is fetched in an effect and player state is reset when the recording source changes (legitimate fetch + reset-on-resource-change)."
+      },
+      {
+        "files": ["src/components/simulate/voice-picker.tsx"],
+        "rules": [
+          "react-doctor/no-adjust-state-on-prop-change",
+          "react-doctor/no-fetch-in-effect"
+        ],
+        "//": "Voice list is fetched in an effect; selection is reset when the fetched options change (legitimate async fetch + reset)."
+      },
+      {
+        "files": ["src/components/live/live-call-page.tsx"],
+        "rules": ["react-doctor/no-mutable-in-deps"],
+        "//": "Dependency is react-router's useLocation() result, which is a reactive value intended to be a dependency; the rule's mutable-object heuristic is a false positive here."
+      },
+      {
+        "files": ["src/components/simulate/simulate-page.tsx"],
+        "rules": ["react-doctor/no-mutable-in-deps"],
+        "//": "Dependency is react-router's useLocation() result (reactive); the mutable-object heuristic is a false positive here."
+      }
+    ]
+  }
+}
