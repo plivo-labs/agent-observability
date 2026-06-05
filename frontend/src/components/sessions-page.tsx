@@ -319,7 +319,7 @@ export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: 
           ),
         enableSorting: false,
         enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
+        meta: { label: 'Account / Session', placeholder: 'Filter by account or session ID', variant: 'text' },
       },
       {
         id: 'transport',
