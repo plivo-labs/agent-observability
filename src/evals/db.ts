@@ -19,6 +19,11 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const finishedAt = new Date(run.finished_at * 1000);
   const durationMs = Math.max(0, Math.round((run.finished_at - run.started_at) * 1000));
 
+  // jsonb columns (ci, sim_report, events, judgments, failure) are bound as the
+  // raw JS value into `${value}::jsonb` — NOT JSON.stringify'd first. Stringifying
+  // double-encodes into a jsonb *string scalar* ("[…]") that breaks raw jsonb
+  // operators downstream. Keep every jsonb write in this form. (Readers tolerate
+  // legacy string scalars; see decodeCaseJsonb / getEvalRun.)
   await sql.begin(async (tx: any) => {
     await tx`
       INSERT INTO eval_runs (
@@ -44,7 +49,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.failed},
         ${summary.errored},
         ${summary.skipped},
-        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
+        ${(run.ci ?? null) as any}::jsonb,
         ${(run.sim_report ?? null) as any}::jsonb
       )
     `;
@@ -67,9 +72,9 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${c.status},
           ${caseDurationMs},
           ${c.user_input ?? null},
-          ${JSON.stringify(c.events ?? [])}::jsonb,
+          ${(c.events ?? []) as any}::jsonb,
           ${(c.judgments ?? []) as any}::jsonb,
-          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb,
+          ${(c.failure ?? null) as any}::jsonb,
           ${c.recording_url ?? null}
         )
       `;
