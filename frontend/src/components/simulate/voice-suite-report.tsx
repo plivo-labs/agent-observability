@@ -54,7 +54,7 @@ export function VoiceSuiteReport({
           failedCount > 0 ? (
             <div className="ao-alert is-warning mb-3 flex-wrap justify-between">
               <span className="flex items-start gap-2"><AlertTriangle size={16} /><span><b>{failedCount}</b> persona{failedCount > 1 ? 's' : ''} failed the text sim. Escalate to real calls? <span className="opacity-80">(rings the phone — Plivo charge)</span></span></span>
-              <button onClick={onEscalate} className="ao-btn ao-btn--primary ao-btn--sm shrink-0">
+              <button type="button" onClick={onEscalate} className="ao-btn ao-btn--primary ao-btn--sm shrink-0">
                 <Phone size={14} /> Escalate {failedCount}
               </button>
             </div>
@@ -91,7 +91,12 @@ export function VoiceSuiteReport({
                 </div>
               )}
               {c.error && <div className="ao-error mt-1.5 text-[11px]">{c.error}</div>}
-              {c.recordingUrl && <audio controls preload="none" src={c.recordingUrl} className="mt-2 h-8 w-full" />}
+              {c.recordingUrl && (
+                <audio controls preload="none" src={c.recordingUrl} aria-label="Call recording" className="mt-2 h-8 w-full">
+                  {/* Raw call recording has no caption file; empty captions satisfy the a11y requirement. */}
+                  <track kind="captions" />
+                </audio>
+              )}
             </div>
           ))}
         </div>

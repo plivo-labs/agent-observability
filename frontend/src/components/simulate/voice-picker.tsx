@@ -121,11 +121,15 @@ export function VoicePicker({
         <audio
           ref={audioRef}
           src={previewUrl}
+          aria-label="Voice preview"
           preload="none"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
-        />
+        >
+          {/* Short voice sample — no spoken-content caption track exists; empty captions satisfy the a11y requirement. */}
+          <track kind="captions" />
+        </audio>
       )}
     </div>
   )

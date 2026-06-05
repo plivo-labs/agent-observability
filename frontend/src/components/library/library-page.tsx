@@ -199,8 +199,8 @@ function PersonasTab() {
             </div>
             <div className="ao-field"><label className="ao-label" htmlFor="persona-opener">Opener</label><Input id="persona-opener" value={form.opener} onChange={(e) => setForm({ ...form, opener: e.target.value })} placeholder="Their first line" /></div>
             <div className="ao-field"><label className="ao-label" htmlFor="persona-goal">System prompt</label><textarea id="persona-goal" value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} rows={4} className="ao-textarea" placeholder="What this caller tries to do — their motivation, constraints, and behaviour" /></div>
-            <label className="flex items-center gap-2 text-sm text-foreground">
-              <Checkbox checked={form.enabled} onCheckedChange={(c) => setForm({ ...form, enabled: c === true })} />
+            <label className="flex items-center gap-2 text-sm text-foreground" htmlFor="persona-enabled">
+              <Checkbox id="persona-enabled" checked={form.enabled} onCheckedChange={(c) => setForm({ ...form, enabled: c === true })} />
               Available for scenarios
             </label>
             {err && <div className="ao-error">{err}</div>}
@@ -269,7 +269,7 @@ function RubricsTab() {
       ) : (
         <div className="ao-panel ao-panel--flush">
           <table className="ao-table">
-            <thead><tr><th>Name</th><th>Criteria</th><th>Pass threshold</th><th /></tr></thead>
+            <thead><tr><th>Name</th><th>Criteria</th><th>Pass threshold</th><th aria-label="Actions" /></tr></thead>
             <tbody>
               {items.map((r) => (
                 <tr key={r.id} style={{ cursor: 'default' }}>

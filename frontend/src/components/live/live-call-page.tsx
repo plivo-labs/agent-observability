@@ -36,7 +36,7 @@ function AudioLeg({ label, color, speaking, muted, onMute }: { label: string; co
       <span className="size-2.5 rounded-full" style={{ background: color, opacity: muted ? 0.3 : 1 }} />
       <span className="w-16 shrink-0 text-xs font-medium text-foreground">{label}</span>
       <div className="flex-1"><Waveform active={speaking && !muted} color={color} /></div>
-      <button onClick={onMute} className="rounded p-1 text-muted-foreground hover:text-foreground">{muted ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
+      <button type="button" onClick={onMute} className="rounded p-1 text-muted-foreground hover:text-foreground">{muted ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
     </div>
   )
 }
@@ -241,10 +241,10 @@ export function LiveCallPage() {
               </div>
               <div className="ao-panel-body flex flex-col gap-4">
                 <div className="ao-field">
-                  <label className="ao-label">Agent</label>
+                  <label className="ao-label" htmlFor="live-agent">Agent</label>
                   {/* "__custom" sentinel: Radix Select rejects an empty-string value. */}
                   <Select value={agentId || '__custom'} onValueChange={(v) => onAgentChange(v === '__custom' ? '' : v)}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger id="live-agent" aria-label="Agent" className="w-full">
                       <span className="flex min-w-0 items-center gap-2">
                         <Bot size={15} className="shrink-0 text-muted-foreground" />
                         <SelectValue placeholder="Custom prompt" />
@@ -257,17 +257,17 @@ export function LiveCallPage() {
                   </Select>
                 </div>
                 <div className="ao-field">
-                  <label className="ao-label">System prompt</label>
-                  <textarea value={prompt} onChange={(e) => { setPrompt(e.target.value); setAgentId('') }} rows={6} className="ao-textarea mono w-full" />
+                  <label className="ao-label" htmlFor="live-prompt">System prompt</label>
+                  <textarea id="live-prompt" value={prompt} onChange={(e) => { setPrompt(e.target.value); setAgentId('') }} rows={6} className="ao-textarea mono w-full" />
                 </div>
                 <div className="ao-field-row">
                   <div className="ao-field">
-                    <label className="ao-label">Phone number {liveMode === 'truman' && <span className="req">*</span>}</label>
-                    <input value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 415 555 0142" className="ao-input mono w-full" />
+                    <label className="ao-label" htmlFor="live-phone">Phone number {liveMode === 'truman' && <span className="req">*</span>}</label>
+                    <input id="live-phone" value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 415 555 0142" className="ao-input mono w-full" />
                   </div>
                   <div className="ao-field">
-                    <label className="ao-label">Opener override</label>
-                    <input value={opener} onChange={(e) => setOpener(e.target.value)} placeholder="auto per persona" className="ao-input w-full" title="The first line each caller speaks when the call connects. Leave blank to use each persona's own opener." />
+                    <label className="ao-label" htmlFor="live-opener">Opener override</label>
+                    <input id="live-opener" value={opener} onChange={(e) => setOpener(e.target.value)} placeholder="auto per persona" className="ao-input w-full" title="The first line each caller speaks when the call connects. Leave blank to use each persona's own opener." />
                     <span className="mt-1 block text-xs text-muted-foreground">First line each caller says when the call connects — blank uses each persona's own opener.</span>
                   </div>
                 </div>
@@ -287,7 +287,7 @@ export function LiveCallPage() {
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {filtered.map((p) => (
-                    <button key={p.id} onClick={() => toggle(p.id)} className={cn('flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-all', selectedIds.includes(p.id) ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border opacity-70 hover:opacity-100')}>
+                    <button type="button" key={p.id} onClick={() => toggle(p.id)} className={cn('flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-all', selectedIds.includes(p.id) ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border opacity-70 hover:opacity-100')}>
                       <div className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold text-white" style={{ background: p.avatar }}>{initials(p.name)}</div>
                       <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-foreground">{p.name}</div><div className="truncate text-xs text-muted-foreground">{p.type.replace('_', ' ')}</div></div>
                       {selectedIds.includes(p.id) && <Check size={16} className="text-primary" />}
@@ -313,7 +313,7 @@ export function LiveCallPage() {
               </div>
             </section>
 
-            <button className="ao-btn ao-btn--primary h-12 text-[15px]" onClick={place} disabled={placing || chosenN === 0}>{placing ? <><Loader size={16} className="animate-spin" /> Placing {chosenN} calls…</> : <><Phone size={17} /> Place {chosenN} calls</>}</button>
+            <button type="button" className="ao-btn ao-btn--primary h-12 text-[15px]" onClick={place} disabled={placing || chosenN === 0}>{placing ? <><Loader size={16} className="animate-spin" /> Placing {chosenN} calls…</> : <><Phone size={17} /> Place {chosenN} calls</>}</button>
             {err && <div className="ao-alert is-danger"><AlertTriangle />{err}</div>}
           </div>
         </div>
@@ -365,7 +365,7 @@ export function LiveCallPage() {
           {calls.map((cc, i) => {
             const st = stageOf(i)
             return (
-              <button key={i} onClick={() => { setSel(i); setTakeover(false) }} className={cn('flex items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all', sel === i ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border hover:bg-accent')}>
+              <button type="button" key={i} onClick={() => { setSel(i); setTakeover(false) }} className={cn('flex items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all', sel === i ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border hover:bg-accent')}>
                 <div className="flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold text-white" style={{ background: cc.avatar }}>{initials(cc.personaName)}</div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-foreground">{cc.personaName}</div>
@@ -380,9 +380,9 @@ export function LiveCallPage() {
           })}
           {suiteDone && (
             <div className="mt-3 flex flex-col gap-2">
-              <button className="ao-btn ao-btn--outline" disabled={!batch?.evalRunId} onClick={() => batch?.evalRunId && navigate(`/evals/${batch.evalRunId}`)}><GitPullRequest size={15} /> Open suite as eval</button>
-              {c?.sessionId && <button className="ao-btn ao-btn--outline" onClick={() => navigate(`/sessions/${c.sessionId}`)}><Activity size={15} /> Open Monitor session (metrics)</button>}
-              <button className="ao-btn ao-btn--primary" onClick={() => { clearLiveRun(); setBatch(null); setPhase('setup') }}><RotateCw size={15} /> New suite</button>
+              <button type="button" className="ao-btn ao-btn--outline" disabled={!batch?.evalRunId} onClick={() => batch?.evalRunId && navigate(`/evals/${batch.evalRunId}`)}><GitPullRequest size={15} /> Open suite as eval</button>
+              {c?.sessionId && <button type="button" className="ao-btn ao-btn--outline" onClick={() => navigate(`/sessions/${c.sessionId}`)}><Activity size={15} /> Open Monitor session (metrics)</button>}
+              <button type="button" className="ao-btn ao-btn--primary" onClick={() => { clearLiveRun(); setBatch(null); setPhase('setup') }}><RotateCw size={15} /> New suite</button>
             </div>
           )}
         </div>
@@ -445,16 +445,16 @@ export function LiveCallPage() {
                   <div className="ao-panel-body flex flex-col gap-2">
                     <AudioLeg label="Persona" color="#6366f1" speaking={personaSpeaking} muted={live.legs.persona.muted || live.takeoverActive} onMute={() => live.toggleMute('persona')} />
                     <AudioLeg label="Agent" color="hsl(var(--primary))" speaking={agentSpeaking} muted={live.legs.callee.muted} onMute={() => live.toggleMute('callee')} />
-                    {live.audioBlocked && <button className="ao-btn ao-btn--outline mt-1" onClick={live.resumeAudio}><Volume2 size={15} /> Tap to enable audio</button>}
+                    {live.audioBlocked && <button type="button" className="ao-btn ao-btn--outline mt-1" onClick={live.resumeAudio}><Volume2 size={15} /> Tap to enable audio</button>}
                     {live.micActive ? (
                       <div className="flex flex-col gap-2 pt-1">
                         <div className="flex items-center gap-1.5 text-xs font-medium text-destructive"><Mic size={13} /> You're on the line — persona muted. Speak into your mic.</div>
-                        <button className="ao-btn ao-btn--outline" onClick={() => void live.stopMic()}>Hand back to persona</button>
+                        <button type="button" className="ao-btn ao-btn--outline" onClick={() => void live.stopMic()}>Hand back to persona</button>
                       </div>
                     ) : (
-                      <button className="ao-btn ao-btn--outline mt-1" onClick={() => void live.startMic()} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
+                      <button type="button" className="ao-btn ao-btn--outline mt-1" onClick={() => void live.startMic()} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
                     )}
-                    <button className="ao-btn ao-btn--danger" onClick={() => void live.endCallNow()} disabled={live.ending}><Phone size={15} /> {live.ending ? 'Ending call…' : 'End call'}</button>
+                    <button type="button" className="ao-btn ao-btn--danger" onClick={() => void live.endCallNow()} disabled={live.ending}><Phone size={15} /> {live.ending ? 'Ending call…' : 'End call'}</button>
                     {live.error && <div className="text-[11px] text-destructive">{live.error}</div>}
                   </div>
                 </section>
@@ -469,11 +469,11 @@ export function LiveCallPage() {
                     {takeover ? (
                       <div className="flex flex-col gap-2 pt-1">
                         <div className="flex items-center gap-1.5 text-xs font-medium text-destructive"><Mic size={13} /> You're on the line — persona muted.</div>
-                        <div className="flex gap-2"><input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendTakeover()} placeholder="Speak as the caller…" className="ao-input flex-1" /><button className="ao-btn ao-btn--primary" onClick={sendTakeover}><Send size={15} /></button></div>
-                        <button className="ao-btn ao-btn--outline" onClick={() => setTakeover(false)}>Hand back to persona</button>
+                        <div className="flex gap-2"><input aria-label="Speak as the caller" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendTakeover()} placeholder="Speak as the caller…" className="ao-input flex-1" /><button type="button" aria-label="Send" className="ao-btn ao-btn--primary" onClick={sendTakeover}><Send size={15} /></button></div>
+                        <button type="button" className="ao-btn ao-btn--outline" onClick={() => setTakeover(false)}>Hand back to persona</button>
                       </div>
                     ) : (
-                      <button className="ao-btn ao-btn--outline mt-1" onClick={() => setTakeover(true)} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
+                      <button type="button" className="ao-btn ao-btn--outline mt-1" onClick={() => setTakeover(true)} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
                     )}
                   </div>
                 </section>

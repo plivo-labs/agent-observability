@@ -75,7 +75,7 @@ function Seg({ options, value, onChange }: { options: { id: string; label: React
   return (
     <div className="ao-seg">
       {options.map((o) => (
-        <button
+        <button type="button"
           key={o.id}
           onClick={() => !o.disabled && onChange(o.id)}
           disabled={o.disabled}
@@ -271,8 +271,8 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               {tab === 'prompt' ? (
                 <div className="flex flex-col gap-3">
                   <div className="ao-field">
-                    <label className="ao-label">System prompt</label>
-                    <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={6} className="ao-textarea mono" />
+                    <label className="ao-label" htmlFor="sim-prompt">System prompt</label>
+                    <textarea id="sim-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={6} className="ao-textarea mono" />
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="ao-hint">Or reference a registered <span className="font-mono">agent_id</span> / phone number.</span>
@@ -314,7 +314,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border" />AI-generated personas<div className="h-px flex-1 bg-border" /></div>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5"><Sparkles size={16} className="text-[hsl(var(--link))]" /><div className="flex flex-col"><span className="text-sm font-semibold text-foreground">Generate personas from the prompt</span><span className="text-xs text-muted-foreground">tailored to this agent · preview-then-approve</span></div></div>
-                <button className={btnOutSm} onClick={() => setGenOpen(true)} disabled={genLoading}>
+                <button type="button" className={btnOutSm} onClick={() => setGenOpen(true)} disabled={genLoading}>
                   {genLoading ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />} {genList.length ? 'Regenerate' : 'Generate AI personas'}
                 </button>
               </div>
@@ -330,34 +330,34 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                   <div className="flex flex-col gap-4">
                     <div className="grid gap-4 sm:grid-cols-[110px_1fr_90px]">
                       <div className="ao-field">
-                        <label className="ao-label">How many</label>
-                        <input type="number" min={1} max={8} value={genCount}
+                        <label className="ao-label" htmlFor="gen-count">How many</label>
+                        <input id="gen-count" type="number" min={1} max={8} value={genCount}
                           onChange={(e) => setGenCount(Math.max(1, Math.min(8, Number(e.target.value) || 1)))}
                           className="ao-input mono" />
                       </div>
                       <div className="ao-field">
-                        <label className="ao-label">Coverage</label>
+                        <label className="ao-label" htmlFor="gen-coverage">Coverage</label>
                         <Select value={coverage} onValueChange={setCoverage}>
-                          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                          <SelectTrigger id="gen-coverage" aria-label="Coverage" className="w-full"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {COVERAGE_OPTIONS.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="ao-field">
-                        <label className="ao-label">Language</label>
-                        <input value={genLang} onChange={(e) => setGenLang(e.target.value)} placeholder="en" className="ao-input" />
+                        <label className="ao-label" htmlFor="gen-language">Language</label>
+                        <input id="gen-language" value={genLang} onChange={(e) => setGenLang(e.target.value)} placeholder="en" className="ao-input" />
                       </div>
                     </div>
                     <div className="ao-field">
-                      <label className="ao-label">Extra direction</label>
-                      <textarea value={genDir} onChange={(e) => setGenDir(e.target.value)} rows={4}
+                      <label className="ao-label" htmlFor="gen-direction">Extra direction</label>
+                      <textarea id="gen-direction" value={genDir} onChange={(e) => setGenDir(e.target.value)} rows={4}
                         placeholder="Optional: focus on refunds, booking changes, compliance objections, tool failures…"
                         className="ao-textarea" />
                     </div>
                     {genErr && <div className="ao-error">{genErr}</div>}
                     <div>
-                      <button className="ao-btn ao-btn--sm font-mono uppercase tracking-[0.12em]"
+                      <button type="button" className="ao-btn ao-btn--sm font-mono uppercase tracking-[0.12em]"
                         style={{ background: 'hsl(var(--warning) / 0.12)', borderColor: 'hsl(var(--warning) / 0.4)', color: 'hsl(var(--warning))' }}
                         onClick={doGenerate} disabled={genLoading}>
                         {genLoading ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />} Generate {genCount} {genCount === 1 ? 'persona' : 'personas'}
@@ -365,7 +365,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                     </div>
                   </div>
                   <DialogFooter>
-                    <button className={btnOutSm} onClick={() => setGenOpen(false)} disabled={genLoading}>Close</button>
+                    <button type="button" className={btnOutSm} onClick={() => setGenOpen(false)} disabled={genLoading}>Close</button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -374,7 +374,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                   {genList.map((p) => (
                     <div key={p.id} className="relative">
                       <span className="absolute right-2 top-2 z-10 rounded-full bg-[hsl(var(--link)/0.15)] px-1.5 py-0.5 text-[10px] font-semibold text-[hsl(var(--link))]">AI</span>
-                      <button
+                      <button type="button"
                         onClick={(e) => { e.stopPropagation(); if (!savedGen.includes(p.id)) saveGen(p) }}
                         className={cn('absolute bottom-2 right-2 z-10 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
                           savedGen.includes(p.id) ? 'border-success/40 bg-success/10 text-success' : 'border-border bg-card text-muted-foreground hover:text-foreground')}>
@@ -393,15 +393,15 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
             <CardHead><div className="flex min-w-0 items-center gap-2.5"><Scale size={16} className="shrink-0 text-muted-foreground" /><CardTitle>Rubric &amp; judge</CardTitle></div></CardHead>
             <div className="ao-panel-body">
               <div className="ao-field mb-3">
-                <label className="ao-label">Rubric</label>
+                <label className="ao-label" htmlFor="sim-rubric">Rubric</label>
                 {rubrics.length === 0 ? (
                   <Select value="__builtin" disabled>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="builtin · 7-axis" /></SelectTrigger>
+                    <SelectTrigger id="sim-rubric" aria-label="Rubric" className="w-full"><SelectValue placeholder="builtin · 7-axis" /></SelectTrigger>
                     <SelectContent><SelectItem value="__builtin">builtin · 7-axis</SelectItem></SelectContent>
                   </Select>
                 ) : (
                   <Select value={rubricId} onValueChange={onRubricChange}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Select a rubric" /></SelectTrigger>
+                    <SelectTrigger id="sim-rubric" aria-label="Rubric" className="w-full"><SelectValue placeholder="Select a rubric" /></SelectTrigger>
                     <SelectContent>
                       {rubrics.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}{r.builtin ? ' · builtin' : ''}</SelectItem>)}
                     </SelectContent>
@@ -423,8 +423,8 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                   <div key={k} className="flex items-center justify-between"><span className="text-muted-foreground">{k}</span><span className="ao-mono text-xs text-foreground">{v}</span></div>
                 ))}
               </div>
-              <label className="ao-label mb-1.5 flex items-center justify-between">Pass threshold <span className="ao-mono text-foreground">{threshold}</span></label>
-              <input type="range" min={40} max={95} value={threshold} onChange={(e) => setThreshold(+e.target.value)} className="w-full accent-[hsl(var(--link))]" />
+              <label className="ao-label mb-1.5 flex items-center justify-between" htmlFor="sim-threshold">Pass threshold <span className="ao-mono text-foreground">{threshold}</span></label>
+              <input id="sim-threshold" type="range" min={40} max={95} value={threshold} onChange={(e) => setThreshold(+e.target.value)} className="w-full accent-[hsl(var(--link))]" />
               <div className="ao-hint mt-2">Verdicts are produced by the LiveKit-native leveled judge — the same one used in CI evals and production monitoring.</div>
             </div>
           </Card>
@@ -433,8 +433,8 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               <CardHead><div className="flex min-w-0 items-center gap-2.5"><Phone size={16} className="shrink-0 text-muted-foreground" /><CardTitle>Voice target</CardTitle></div></CardHead>
               <div className="ao-panel-body">
                 <div className="ao-field">
-                  <label className="ao-label">Phone number to dial <span className="req">*</span></label>
-                  <input value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 555 000 0000" className="ao-input mono" />
+                  <label className="ao-label" htmlFor="sim-phone">Phone number to dial <span className="req">*</span></label>
+                  <input id="sim-phone" value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 555 000 0000" className="ao-input mono" />
                   <span className="ao-hint">
                     {mode === 'voice'
                       ? 'Each persona places a real call to this number (Plivo charge).'
@@ -444,7 +444,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               </div>
             </Card>
           )}
-          <button className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run} disabled={needsPhone}><Play size={17} /> {mode === 'voice' ? 'Place calls' : 'Run simulation'}</button>
+          <button type="button" className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run} disabled={needsPhone}><Play size={17} /> {mode === 'voice' ? 'Place calls' : 'Run simulation'}</button>
           {needsPhone && <div className="ao-error text-center text-warning">Enter a phone number for {mode} mode.</div>}
           <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">{mode}</span></div>
         </div>
@@ -508,7 +508,7 @@ function RunningPhase({ config, live, startedAt, result, error, onDone, onBack, 
   if (error) {
     return (
       <div className="animate-in fade-in duration-300">
-        <PageHeader eyebrow={<><TriangleAlert /> Run failed</>} title="Simulation failed" sub="The run could not complete." actions={<button className={btnOut} onClick={onBack}><RotateCw size={15} /> Back to setup</button>} />
+        <PageHeader eyebrow={<><TriangleAlert /> Run failed</>} title="Simulation failed" sub="The run could not complete." actions={<button type="button" className={btnOut} onClick={onBack}><RotateCw size={15} /> Back to setup</button>} />
         <Card><div className="ao-alert is-danger m-4"><TriangleAlert size={16} /><div className="text-sm">{error}</div></div></Card>
       </div>
     )
@@ -524,7 +524,7 @@ function RunningPhase({ config, live, startedAt, result, error, onDone, onBack, 
       <PageHeader eyebrow={<><Loader className="animate-spin" /> Running</>}
         title={<span className="flex items-center gap-2.5">Running simulation <StatusBadge status="live" /></span>}
         sub={`Driving ${cases.length} persona conversations · mode ${config.mode}`}
-        actions={!result && <button className={btnOut} onClick={onCancel}><X size={15} /> Cancel simulation</button>} />
+        actions={!result && <button type="button" className={btnOut} onClick={onCancel}><X size={15} /> Cancel simulation</button>} />
       <Stepper phase="running" />
       <div className="ao-stat-row ao-stagger mb-5">
         <div className="ao-stat ao-stat--feature is-accent">
@@ -552,7 +552,7 @@ function RunningPhase({ config, live, startedAt, result, error, onDone, onBack, 
             {cases.map((c) => {
               const tone = c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'live'
               return (
-                <button key={c.index} onClick={() => setSel(c.index)}
+                <button type="button" key={c.index} onClick={() => setSel(c.index)}
                   className={cn('flex items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all',
                     sel === c.index ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border hover:bg-accent')}>
                   <div className="min-w-0 flex-1">
@@ -629,9 +629,9 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
           {result.engine === 'demo'
             ? <span className="ao-badge is-warning" title={result.note}><TriangleAlert size={13} /> Demo data</span>
             : <span className="ao-badge is-success ao-badge--dot">Live judge</span>}
-          <button className={btnOut}><Download size={15} /> Export</button>
-          <button className={btnOut} disabled={!result.evalRunId} onClick={() => result.evalRunId && navigate(`/evals/${result.evalRunId}`)}><GitPullRequest size={15} /> Open as eval</button>
-          <button className={btnPrimary} onClick={onRerun}><RotateCw size={15} /> Re-run</button>
+          <button type="button" className={btnOut}><Download size={15} /> Export</button>
+          <button type="button" className={btnOut} disabled={!result.evalRunId} onClick={() => result.evalRunId && navigate(`/evals/${result.evalRunId}`)}><GitPullRequest size={15} /> Open as eval</button>
+          <button type="button" className={btnPrimary} onClick={onRerun}><RotateCw size={15} /> Re-run</button>
         </>} />
 
       {result.note && (
@@ -922,7 +922,7 @@ export function SimulatePage() {
                 <Phone size={16} className="shrink-0 text-[hsl(var(--link))]" />
                 <span><b>{failed.length}</b> persona{failed.length > 1 ? 's' : ''} failed the text sim — escalate {failed.length > 1 ? 'them' : 'it'} to real phone calls in the Live tab.</span>
               </div>
-              <button onClick={escalate} className={btnPrimary}><Phone size={15} /> Escalate to Live calls</button>
+              <button type="button" onClick={escalate} className={btnPrimary}><Phone size={15} /> Escalate to Live calls</button>
             </div>
           </Card>
         )}
@@ -935,8 +935,8 @@ export function SimulatePage() {
         <div className="ao-alert is-warning flex-wrap justify-between animate-in fade-in duration-300">
           <span className="flex items-center gap-2"><TriangleAlert size={16} /> Your last simulation is no longer on the server (it expired or the backend restarted) and couldn't be resumed.</span>
           <span className="flex items-center gap-2">
-            <button onClick={() => { const c = resumable; setResumable(null); run(c) }} className={btnOutSm}><RotateCw size={13} /> Re-run</button>
-            <button onClick={() => { setResumable(null); clearSimRun() }} className={btnOutSm}>Dismiss</button>
+            <button type="button" onClick={() => { const c = resumable; setResumable(null); run(c) }} className={btnOutSm}><RotateCw size={13} /> Re-run</button>
+            <button type="button" onClick={() => { setResumable(null); clearSimRun() }} className={btnOutSm}>Dismiss</button>
           </span>
         </div>
       )}

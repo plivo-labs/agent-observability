@@ -131,7 +131,7 @@ export function SchedulesPage() {
                 <div className="ao-empty-text">Create a schedule to run a saved scenario on a cadence and watch its pass-rate over time.</div>
                 {scenarios.length > 0 && (
                   <div className="ao-empty-actions">
-                    <button className="ao-btn ao-btn--primary" onClick={() => { setErr(null); setOpen(true) }}><Plus size={14} /> New schedule</button>
+                    <button type="button" className="ao-btn ao-btn--primary" onClick={() => { setErr(null); setOpen(true) }}><Plus size={14} /> New schedule</button>
                   </div>
                 )}
               </div>
@@ -142,7 +142,7 @@ export function SchedulesPage() {
               <table className="ao-table">
                 <thead>
                   <tr>
-                    <th>Name</th><th>Scenario</th><th>Every</th><th>Last run</th><th>Pass rate</th><th>Next</th><th>Status</th><th />
+                    <th>Name</th><th>Scenario</th><th>Every</th><th>Last run</th><th>Pass rate</th><th>Next</th><th>Status</th><th aria-label="Actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -160,10 +160,10 @@ export function SchedulesPage() {
                       <td>{s.enabled ? <span className="ao-badge is-success ao-badge--dot is-pulse">active</span> : <span className="ao-badge is-neutral ao-badge--dot">paused</span>}</td>
                       <td>
                         <div className="flex justify-end gap-1">
-                          {s.last_eval_run_id && <button title="Open last run" onClick={() => navigate(`/evals/${s.last_eval_run_id}`)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><CalendarClock size={15} /></button>}
-                          <button title="Run now" onClick={() => runNow(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><Play size={15} /></button>
-                          <button title={s.enabled ? 'Pause' : 'Resume'} onClick={() => toggle(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">{s.enabled ? <Pause size={15} /> : <Play size={15} />}</button>
-                          <button title="Delete" onClick={() => del(s)} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={15} /></button>
+                          {s.last_eval_run_id && <button type="button" title="Open last run" onClick={() => navigate(`/evals/${s.last_eval_run_id}`)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><CalendarClock size={15} /></button>}
+                          <button type="button" title="Run now" onClick={() => runNow(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><Play size={15} /></button>
+                          <button type="button" title={s.enabled ? 'Pause' : 'Resume'} onClick={() => toggle(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">{s.enabled ? <Pause size={15} /> : <Play size={15} />}</button>
+                          <button type="button" title="Delete" onClick={() => del(s)} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={15} /></button>
                         </div>
                       </td>
                     </tr>
@@ -191,7 +191,7 @@ export function SchedulesPage() {
                   <div className="flex items-center gap-2.5 text-sm"><AlertTriangle size={15} className="shrink-0 text-warning" /><span className="text-foreground">{a.message}</span></div>
                   <div className="flex shrink-0 items-center gap-3 text-xs">
                     <span className="ao-mono">{rel(a.created_at)}</span>
-                    {a.eval_run_id && <button onClick={() => navigate(`/evals/${a.eval_run_id}`)} className="font-medium text-primary hover:underline">view run</button>}
+                    {a.eval_run_id && <button type="button" onClick={() => navigate(`/evals/${a.eval_run_id}`)} className="font-medium text-primary hover:underline">view run</button>}
                   </div>
                 </div>
               ))}
