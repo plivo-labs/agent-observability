@@ -2,8 +2,8 @@
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/plivo-labs/agent-observability/test.yml?branch=main&label=tests)](https://github.com/plivo-labs/agent-observability/actions/workflows/test.yml)
 [![agent-observability-ui](https://img.shields.io/npm/v/agent-observability-ui.svg?label=agent-observability-ui)](https://www.npmjs.com/package/agent-observability-ui)
-[![vitest-agent-observability](https://img.shields.io/npm/v/vitest-agent-observability.svg?label=vitest-agent-observability)](https://www.npmjs.com/package/vitest-agent-observability)
-[![pytest-agent-observability](https://img.shields.io/pypi/v/pytest-agent-observability.svg?label=pytest-agent-observability)](https://pypi.org/project/pytest-agent-observability/)
+[![agent-observability-sdk (npm)](https://img.shields.io/npm/v/agent-observability-sdk.svg?label=agent-observability-sdk%20%28npm%29)](https://www.npmjs.com/package/agent-observability-sdk)
+[![agent-observability-sdk (PyPI)](https://img.shields.io/pypi/v/agent-observability-sdk.svg?label=agent-observability-sdk%20%28PyPI%29)](https://pypi.org/project/agent-observability-sdk/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Session report callback server for [agent-transport](https://github.com/plivo-labs/agent-transport) with a built-in dashboard UI and a [shadcn component registry](packages/ui/README.md) for embedding observability views in your own app.
@@ -123,10 +123,10 @@ with every test surfacing as an `eval_case` — function-call assertions,
 LLM-judge verdicts, agent handoffs, and failure detail are captured
 automatically.
 
-| Plugin | Framework | Docs |
+| Package | Framework | Docs |
 |---|---|---|
-| [`pytest-agent-observability`](plugins/pytest-agent-observability/README.md) | pytest (Python) | Install, configure, env vars, and how to invoke pytest from a FastAPI server |
-| [`vitest-agent-observability`](plugins/vitest-agent-observability/README.md) | Vitest (Node/TS) | Install, configure, env vars, and how to invoke Vitest from a Bun/Node HTTP server via `startVitest` |
+| [`agent-observability-sdk`](plugins/agent-observability-sdk/README.md) | pytest (Python) | Judges + pytest plugin: install, configure, env vars, and how to invoke pytest from a FastAPI server |
+| [`agent-observability-sdk`](plugins/agent-observability-sdk-node/README.md) | Vitest (Node/TS) | Vitest reporter: install, configure, env vars, and how to invoke Vitest from a Bun/Node HTTP server via `startVitest` |
 
 Runnable reference suites for both frameworks — including simple agents,
 a multi-agent banking example, LLM-generated scenarios, and the HTTP
@@ -270,11 +270,10 @@ agent-observability/
 │   ├── registry/                     # Component source
 │   └── tests/                        # Unit tests
 ├── docs/                             # Docs site (preview app, deployed to GH Pages)
-├── plugins/                          # Eval ingestion plugins
-│   ├── pytest-agent-observability/   # pytest plugin
-│   ├── vitest-agent-observability/   # Vitest reporter
-│   ├── agent-observability-sdk/      # Python SDK: judges + EvaluationCase
-│   └── examples/                     # Runnable eval suites (pytest/ + vitest/)
+├── plugins/                          # Language SDKs + runnable examples
+│   ├── agent-observability-sdk/      # Python SDK: judges + pytest plugin
+│   ├── agent-observability-sdk-node/ # Node SDK: Vitest reporter + helpers
+│   └── examples/                     # Runnable eval suites (python/ + node/)
 ├── migrations/                       # SQL migrations
 └── tests/                            # Server tests
 ```
