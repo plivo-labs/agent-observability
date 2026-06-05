@@ -15,7 +15,7 @@ function fmt(s: number): string {
   return `${m}:${String(x).padStart(2, '0')}`
 }
 
-export function AudioPlayer({ src, className }: { src: string; className?: string }) {
+export function AudioPlayer({ src, className, durationHint }: { src: string; className?: string; durationHint?: number }) {
   const ref = useRef<HTMLAudioElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const [playing, setPlaying] = useState(false)
@@ -23,6 +23,32 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
   const [dur, setDur] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(0)
   const [error, setError] = useState(false)
+  const fixingDur = useRef(false) // true while we force-seek to discover an unknown duration
+  // Effective duration for the scrubber/total: the real decoded duration if we
+  // have it, else the caller-supplied hint (e.g. the call's recorded seconds).
+  const span = dur || durationHint || 0
+
+  // Streamed OGG/Opus recordings report duration = Infinity/NaN, so the scrubber
+  // can't fill and the total reads 0:00. Adopt a finite duration when we get one;
+  // if it's unknown, force the element to read to the end (needs Range support,
+  // which the recording endpoint now provides) so `durationchange` fires the real
+  // value, then snap back to the start.
+  const applyDuration = (a: HTMLAudioElement): boolean => {
+    const d = a.duration
+    if (Number.isFinite(d) && d > 0) {
+      setDur(d)
+      if (fixingDur.current) { fixingDur.current = false; a.currentTime = 0; setCur(0) }
+      return true
+    }
+    return false
+  }
+
+  const onMeta = (a: HTMLAudioElement) => {
+    setError(false)
+    if (applyDuration(a)) return
+    fixingDur.current = true
+    try { a.currentTime = 1e101 } catch { /* ignore */ }
+  }
 
   const toggle = () => {
     const a = ref.current
@@ -34,12 +60,12 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
   const seekTo = useCallback((clientX: number) => {
     const a = ref.current
     const bar = barRef.current
-    if (!a || !bar || !dur) return
+    if (!a || !bar || !span) return
     const r = bar.getBoundingClientRect()
     const pct = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-    a.currentTime = pct * dur
+    a.currentTime = pct * span
     setCur(a.currentTime)
-  }, [dur])
+  }, [span])
 
   const onBarDown = (e: React.MouseEvent) => {
     seekTo(e.clientX)
@@ -55,7 +81,7 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
     if (ref.current) ref.current.playbackRate = SPEEDS[next]
   }
 
-  const pct = dur ? (cur / dur) * 100 : 0
+  const pct = span ? (cur / span) * 100 : 0
 
   return (
     <div className={cn('flex items-center gap-3 rounded-[var(--radius)] border bg-card px-3 py-2.5', className)}>
@@ -85,7 +111,7 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
         role="slider"
         aria-label="Seek"
         aria-valuemin={0}
-        aria-valuemax={Math.round(dur)}
+        aria-valuemax={Math.round(span)}
         aria-valuenow={Math.round(cur)}
       >
         <div className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${pct}%` }} />
@@ -95,7 +121,7 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
         />
       </div>
 
-      <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{fmt(dur)}</span>
+      <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{fmt(span)}</span>
 
       <button
         type="button"
@@ -112,9 +138,9 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
         ref={ref}
         src={src}
         preload="metadata"
-        onLoadedMetadata={(e) => { setDur(e.currentTarget.duration || 0); setError(false) }}
-        onDurationChange={(e) => setDur(e.currentTarget.duration || 0)}
-        onTimeUpdate={(e) => setCur(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => onMeta(e.currentTarget)}
+        onDurationChange={(e) => applyDuration(e.currentTarget)}
+        onTimeUpdate={(e) => { if (!fixingDur.current) setCur(e.currentTarget.currentTime) }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}

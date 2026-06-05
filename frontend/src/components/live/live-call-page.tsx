@@ -494,7 +494,7 @@ export function LiveCallPage() {
                     <div className="ao-panel-head">
                       <div className="ao-panel-title"><FileCode /> Recording</div>
                     </div>
-                    <div className="ao-panel-body"><AudioPlayer src={c.recordingUrl} /></div>
+                    <div className="ao-panel-body"><AudioPlayer src={c.recordingUrl} durationHint={c.cost?.call_seconds} /></div>
                   </section>
                 )}
                 {c.error && (

@@ -481,7 +481,7 @@ export const EvalRunDetailPage = ({
           {selectedCase?.recording_url && (
             <div className="flex items-center gap-2.5 border-t border-border px-4 py-3">
               <AudioLines size={16} className="shrink-0 text-muted-foreground" />
-              <AudioPlayer src={selectedCase.recording_url} className="flex-1" />
+              <AudioPlayer src={selectedCase.recording_url} className="flex-1" durationHint={selectedCase.cost?.call_seconds} />
             </div>
           )}
         </div>
