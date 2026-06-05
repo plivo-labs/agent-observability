@@ -440,7 +440,7 @@ export function LiveCallPage() {
                     ) : (
                       <button className="ao-btn ao-btn--outline mt-1" onClick={() => void live.startMic()} disabled={selStage !== 'live'}><Hand size={15} /> Take mic on this call</button>
                     )}
-                    <button className="ao-btn ao-btn--danger" onClick={() => void live.endCallNow()}><Phone size={15} /> End call</button>
+                    <button className="ao-btn ao-btn--danger" onClick={() => void live.endCallNow()} disabled={live.ending}><Phone size={15} /> {live.ending ? 'Ending call…' : 'End call'}</button>
                     {live.error && <div className="text-[11px] text-destructive">{live.error}</div>}
                   </div>
                 </section>

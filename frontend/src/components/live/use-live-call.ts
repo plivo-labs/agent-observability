@@ -47,6 +47,7 @@ export interface LiveCall {
   startMic: () => Promise<void>
   stopMic: () => Promise<void>
   endCallNow: () => Promise<void>
+  ending: boolean
   error: string | null
 }
 
@@ -63,6 +64,7 @@ export function useLiveCall(runId: string | null | undefined, enabled: boolean):
   const [takeoverActive, setTakeoverActive] = useState(false)
   const [micActive, setMicActive] = useState(false)
   const [audioBlocked, setAudioBlocked] = useState(false)
+  const [ending, setEnding] = useState(false) // immediate UI feedback while the PSTN hangup propagates
   const [error, setError] = useState<string | null>(null)
 
   const streamWsRef = useRef<WebSocket | null>(null)
@@ -252,7 +254,8 @@ export function useLiveCall(runId: string | null | undefined, enabled: boolean):
 
   const endCallNow = useCallback(async () => {
     if (!runId) return
-    try { await endCallApi(runId) } catch (e) { setError(`end: ${(e as Error).message}`) }
+    setEnding(true) // show "Ending…" right away — the actual hangup takes a beat
+    try { await endCallApi(runId) } catch (e) { setEnding(false); setError(`end: ${(e as Error).message}`) }
   }, [runId])
 
   // Stop the mic if the live view tears down.
@@ -270,6 +273,6 @@ export function useLiveCall(runId: string | null | undefined, enabled: boolean):
     // is visible while it streams; it's replaced by the committed turn on final.
     turns: partial ? [...turns, partial] : turns,
     legs, toggleMute, takeoverActive, micActive,
-    audioBlocked, resumeAudio, startMic, stopMic, endCallNow, error,
+    audioBlocked, resumeAudio, startMic, stopMic, endCallNow, ending, error,
   }
 }
