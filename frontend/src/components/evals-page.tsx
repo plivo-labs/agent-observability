@@ -274,11 +274,10 @@ function RunCardSkeleton() {
 
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
-  // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
+  // Column ids below (`agent_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
   const [agentId] = useQueryState('agent_id', parseAsString.withDefault(''))
-  const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [framework] = useQueryState(
     'framework',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -319,7 +318,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     (page - 1) * perPage,
     {
       agentId: agentId || undefined,
-      accountId: accountId || undefined,
       framework: framework.length ? framework : undefined,
       testingFramework: testingFramework.length ? testingFramework : undefined,
       startedFrom: startedFromIso,
@@ -416,22 +414,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           variant: 'multiSelect',
           options: TESTING_FRAMEWORK_OPTIONS,
         },
-      },
-      {
-        id: 'account_id',
-        accessorKey: 'account_id',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
-        cell: ({ row }) =>
-          row.original.account_id ? (
-            <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
-              {row.original.account_id}
-            </span>
-          ) : (
-            <span className="muted">—</span>
-          ),
-        enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
       },
       {
         id: 'pass_rate',

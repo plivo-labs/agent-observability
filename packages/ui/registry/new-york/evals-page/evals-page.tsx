@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
-import type { ColumnDef, Row } from '@tanstack/react-table'
+import type { ColumnDef, Row, Table } from '@tanstack/react-table'
 import {
   AlertTriangle,
   Bot,
@@ -78,15 +78,18 @@ function FrameworkPill({
   name,
   version,
   icon: Icon,
+  compact,
 }: {
   name: string | null
   version: string | null
   icon: LucideIcon
+  compact?: boolean
 }) {
   if (!name) return <span className="text-muted-foreground">—</span>
   return (
     <span className={cn(
-      'inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted border text-xs-500 whitespace-nowrap',
+      'inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-muted whitespace-nowrap',
+      compact ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-0.5 text-xs-500',
     )}>
       <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
       {name}
@@ -95,12 +98,12 @@ function FrameworkPill({
   )
 }
 
-function FrameworkBadge({ name, version }: { name: string | null; version: string | null }) {
-  return <FrameworkPill name={name} version={version} icon={Bot} />
+function FrameworkBadge({ name, version, compact }: { name: string | null; version: string | null; compact?: boolean }) {
+  return <FrameworkPill name={name} version={version} icon={Bot} compact={compact} />
 }
 
-function TestingFrameworkBadge({ name, version }: { name: string; version: string | null }) {
-  return <FrameworkPill name={name} version={version} icon={FlaskConical} />
+function TestingFrameworkBadge({ name, version, compact }: { name: string; version: string | null; compact?: boolean }) {
+  return <FrameworkPill name={name} version={version} icon={FlaskConical} compact={compact} />
 }
 
 // Derive a Truman-style verdict from the run's case tallies:
@@ -128,9 +131,54 @@ function deriveVerdict(run: EvalRunRow): { label: string; tone: string } {
   }
 }
 
-// One eval run rendered as a Truman "Recent runs" card: sharp-radius panel,
-// title + mono meta line + verdict pill, a pass summary body, and a
-// localized timestamp footer. Clickable → run detail (via onOpen).
+// One eval run as a dense single-line row (matches the compacted Sessions
+// list): checkbox · agent/title + mono run-id · framework badges · verdict
+// pill · pass-rate · cases · duration · timestamp. Clickable → run detail.
+// Shared per-column width/flex classes so the header row and the data rows
+// (+ skeleton) physically can't drift. Mirrors the Sessions list `COL`.
+const COL = {
+  select: 'flex w-4 shrink-0 items-center',
+  run: 'min-w-0 flex-1',
+  framework: 'hidden w-[176px] shrink-0 xl:block',
+  verdict: 'w-[72px] shrink-0',
+  passRate: 'hidden w-[120px] shrink-0 md:block',
+  cases: 'hidden w-[64px] shrink-0 whitespace-nowrap text-right sm:block',
+  duration: 'w-[64px] shrink-0 whitespace-nowrap text-right',
+  started: 'hidden w-[168px] shrink-0 truncate whitespace-nowrap lg:block',
+} as const
+
+// Subtle, on-theme column header — small uppercase mono labels with a bottom
+// border. Carries the select-all checkbox in the first slot. Matches the
+// Monitor → Sessions list header so both tables read identically.
+function EvalListHeader({ table }: { table: Table<EvalRunRow> }) {
+  const labelCls = 'text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80'
+  return (
+    <div className="flex items-center gap-3 border-b border-border px-3 pb-1.5" style={{ fontFamily: 'var(--mono)' }}>
+      <div className={COL.select}>
+        <Checkbox
+          aria-label="Select all rows on this page"
+          checked={
+            table.getIsAllPageRowsSelected()
+              ? true
+              : table.getIsSomePageRowsSelected()
+                ? 'indeterminate'
+                : false
+          }
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+      <span className={cn(COL.run, labelCls)}>Run</span>
+      <span className={cn(COL.framework, labelCls)}>Framework</span>
+      <span className={cn(COL.verdict, labelCls)}>Verdict</span>
+      <span className={cn(COL.passRate, labelCls)}>Pass rate</span>
+      <span className={cn(COL.cases, labelCls)}>Cases</span>
+      <span className={cn(COL.duration, labelCls)}>Duration</span>
+      <span className={cn(COL.started, labelCls)}>Started</span>
+    </div>
+  )
+}
+
 function RunCard({
   row,
   onOpen,
@@ -141,11 +189,6 @@ function RunCard({
   const run = row.original
   const verdict = deriveVerdict(run)
   const title = run.agent_id || `Run ${run.run_id.slice(0, 8)}`
-  const failed = run.failed + run.errored
-  const summary =
-    run.total > 0
-      ? `${run.passed}/${run.total} cases passed${failed > 0 ? ` · ${failed} failed` : ''}`
-      : 'No cases recorded yet.'
 
   return (
     <div
@@ -164,70 +207,49 @@ function RunCard({
       }}
       data-state={row.getIsSelected() ? 'selected' : undefined}
       className={cn(
-        'group block cursor-pointer border bg-card px-5 py-4 shadow-sm transition-colors',
+        'group flex cursor-pointer items-center gap-3 border bg-card px-3 py-2 transition-colors',
         'rounded-[var(--radius)] hover:border-[hsl(var(--muted-foreground)/0.4)] hover:bg-muted/30',
         row.getIsSelected() && 'border-[hsl(var(--primary))] bg-muted/30',
       )}
       style={{ borderRadius: 'var(--radius)' }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <Checkbox
-            aria-label={`Select run ${run.run_id}`}
-            checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
-            onClick={(e) => e.stopPropagation()}
-            className="mt-1 shrink-0"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-base text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
-              {title}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground" style={{ fontFamily: 'var(--mono)' }}>
-              {run.account_id && (
-                <>
-                  <span className="truncate">{run.account_id}</span>
-                  <span aria-hidden>·</span>
-                </>
-              )}
-              <span>run {run.run_id.slice(0, 8)}</span>
-              <span aria-hidden>·</span>
-              <span>{formatDuration(run.duration_ms)}</span>
-              {run.testing_framework && (
-                <>
-                  <span aria-hidden>·</span>
-                  <span className="truncate">{run.testing_framework}</span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-        <span
-          className={cn(
-            'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-            verdict.tone,
-          )}
-        >
-          {verdict.label}
-        </span>
-      </div>
-
-      <div className="mt-3 line-clamp-2 text-sm text-muted-foreground">
-        <span className="text-foreground">{summary}</span>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <PassRateBar passed={run.passed} total={run.total} />
-        <FrameworkBadge name={run.framework} version={run.framework_version} />
-        <TestingFrameworkBadge
-          name={run.testing_framework}
-          version={run.testing_framework_version}
+      <div className={COL.select}>
+        <Checkbox
+          aria-label={`Select run ${run.run_id}`}
+          checked={row.getIsSelected()}
+          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          onClick={(e) => e.stopPropagation()}
         />
       </div>
-
-      <div className="mt-3 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80" style={{ fontFamily: 'var(--mono)' }}>
-        {formatDate(run.started_at)}
+      <div className={cn(COL.run, 'flex items-center gap-2')}>
+        <span className="truncate text-sm text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+          {title}
+        </span>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70" style={{ fontFamily: 'var(--mono)' }}>
+          {run.run_id.slice(0, 8)}
+        </span>
       </div>
+      <div className={COL.framework}>
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <FrameworkBadge name={run.framework} version={run.framework_version} compact />
+          <TestingFrameworkBadge name={run.testing_framework} version={run.testing_framework_version} compact />
+        </div>
+      </div>
+      <span className={cn(COL.verdict, 'truncate rounded-full border px-2 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide', verdict.tone)}>
+        {verdict.label}
+      </span>
+      <div className={COL.passRate}>
+        <PassRateBar passed={run.passed} total={run.total} />
+      </div>
+      <span className={cn(COL.cases, 'text-[10px] uppercase tracking-[0.16em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+        {run.total} {run.total === 1 ? 'case' : 'cases'}
+      </span>
+      <span className={cn(COL.duration, 'text-[10px] tabular-nums text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+        {formatDuration(run.duration_ms)}
+      </span>
+      <span className={cn(COL.started, 'truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }} title={formatDate(run.started_at)}>
+        {formatDate(run.started_at)}
+      </span>
     </div>
   )
 }
@@ -235,29 +257,27 @@ function RunCard({
 function RunCardSkeleton() {
   return (
     <div
-      className="border bg-card px-5 py-4 shadow-sm"
+      className="flex items-center gap-3 border bg-card px-3 py-2"
       style={{ borderRadius: 'var(--radius)' }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-2">
-          <Skeleton className="h-5 w-48" />
-          <Skeleton className="h-3 w-64" />
-        </div>
-        <Skeleton className="h-5 w-14 rounded-full" />
-      </div>
-      <Skeleton className="mt-3 h-4 w-40" />
-      <Skeleton className="mt-3 h-4 w-56" />
+      <div className={COL.select}><Skeleton className="h-4 w-4" /></div>
+      <Skeleton className={cn(COL.run, 'h-4')} />
+      <div className={COL.framework}><Skeleton className="h-5 w-full rounded-full" /></div>
+      <Skeleton className={cn(COL.verdict, 'h-5 rounded-full')} />
+      <div className={COL.passRate}><Skeleton className="h-3 w-full" /></div>
+      <Skeleton className={cn(COL.cases, 'h-3')} />
+      <Skeleton className={cn(COL.duration, 'h-3')} />
+      <div className={COL.started}><Skeleton className="h-3 w-full" /></div>
     </div>
   )
 }
 
 export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
-  // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
+  // Column ids below (`agent_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
   const [perPage] = useQueryState('perPage', parseAsInteger.withDefault(10))
   const [agentId] = useQueryState('agent_id', parseAsString.withDefault(''))
-  const [accountId] = useQueryState('account_id', parseAsString.withDefault(''))
   const [framework] = useQueryState(
     'framework',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -268,14 +288,21 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   )
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
   // string. Expanded server-side into a 00:00 → next-midnight window.
+  //
+  // The `started_at` URL key is owned by `useDataTable` (the toolbar's date
+  // picker writes it). That column has no `meta.options`, so `useDataTable`
+  // registers it with a *single-string* parser and serializes the picked epoch
+  // ms as a plain string. Read it back with the SAME `parseAsString` shape —
+  // a second hook with a different parser (e.g. `parseAsArrayOf`) makes the two
+  // nuqs hooks disagree on the key's serialization and the picked value never
+  // lands in the URL.
   const [startedAt] = useQueryState(
     'started_at',
-    parseAsArrayOf(parseAsString, ',').withDefault([]),
+    parseAsString.withDefault(''),
   )
   const startedDay = useMemo(() => {
-    const v = startedAt[0]
-    if (!v) return undefined
-    const d = new Date(Number(v))
+    if (!startedAt) return undefined
+    const d = new Date(Number(startedAt))
     return Number.isNaN(d.getTime()) ? undefined : d
   }, [startedAt])
   const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
@@ -291,7 +318,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     (page - 1) * perPage,
     {
       agentId: agentId || undefined,
-      accountId: accountId || undefined,
       framework: framework.length ? framework : undefined,
       testingFramework: testingFramework.length ? testingFramework : undefined,
       startedFrom: startedFromIso,
@@ -388,22 +414,6 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
           variant: 'multiSelect',
           options: TESTING_FRAMEWORK_OPTIONS,
         },
-      },
-      {
-        id: 'account_id',
-        accessorKey: 'account_id',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Account" />,
-        cell: ({ row }) =>
-          row.original.account_id ? (
-            <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
-              {row.original.account_id}
-            </span>
-          ) : (
-            <span className="muted">—</span>
-          ),
-        enableSorting: false,
-        enableColumnFilter: true,
-        meta: { label: 'Account', placeholder: 'Filter by account', variant: 'text' },
       },
       {
         id: 'pass_rate',
@@ -599,7 +609,8 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
       <div className="ao-reveal ao-reveal-3 flex flex-col gap-2.5">
         <DataTableToolbar table={table} />
         {loading && rows.length === 0 ? (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <EvalListHeader table={table} />
             {Array.from({ length: 5 }).map((_, i) => (
               <RunCardSkeleton key={`sk-${i}`} />
             ))}
@@ -612,7 +623,8 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
             No results.
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <EvalListHeader table={table} />
             {rows.map((row) => (
               <RunCard
                 key={row.id}
