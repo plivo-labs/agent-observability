@@ -1165,6 +1165,47 @@
       ]
     },
     {
+      "name": "judgments-panel",
+      "type": "registry:component",
+      "title": "Judgments Panel",
+      "description": "Shared per-criterion judgments panel (pass/fail rows with verdict icon + reasoning), used by the Evals run-detail and case-detail pages",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/report-sections.json"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/run-detail/judgments-panel.tsx",
+          "type": "registry:component",
+          "target": "components/run-detail/judgments-panel.tsx"
+        }
+      ]
+    },
+    {
+      "name": "voice-picker",
+      "type": "registry:component",
+      "title": "Voice Picker",
+      "description": "ElevenLabs voice <select> with a play/pause preview button; falls back to a plain text input when GET /api/voices is empty or errors",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "select",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/voice-picker/voice-picker.tsx",
+          "type": "registry:component",
+          "target": "components/voice-picker.tsx"
+        }
+      ]
+    },
+    {
       "name": "eval-transcript",
       "type": "registry:component",
       "title": "Eval Transcript",
@@ -1643,17 +1684,18 @@
       "name": "eval-case-detail-page",
       "type": "registry:block",
       "title": "Eval Case Detail",
-      "description": "Single eval case detail — intended to render inside a Sheet drawer. Shows transcript, judgments, and failure block.",
+      "description": "Single eval case detail (full-width page, no drawer): header + KPI strip, wide transcript with inline recording, then judgments / failure / user-input sections.",
       "dependencies": [
         "lucide-react"
       ],
       "registryDependencies": [
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
-        "badge",
-        "button",
-        "card",
-        "collapsible",
-        "skeleton"
+        "skeleton",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/transcript.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/eval-transcript.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/audio-player.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/report-sections.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/judgments-panel.json"
       ],
       "files": [
         {
@@ -1696,22 +1738,20 @@
       "name": "eval-run-detail-page",
       "type": "registry:block",
       "title": "Eval Run Detail Page",
-      "description": "Single eval run detail: pass-rate stats, CI metadata, tablecn cases table with status filter, and a case-detail drawer.",
+      "description": "Single eval run detail (full-width, no drawer): pass-rate stats + CI metadata, the persisted simulation report (scorer / rubric / worst moments / fixes / leveled judge), a persona/case selector, and the selected case's judgments + wide transcript with inline recording.",
       "dependencies": [
         "lucide-react",
-        "@tanstack/react-table",
         "nuqs"
       ],
       "registryDependencies": [
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
-        "badge",
-        "button",
-        "card",
-        "collapsible",
-        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
-        "sheet",
         "skeleton",
-        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/eval-case-detail-page.json"
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/transcript.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/eval-transcript.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/audio-player.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/persona-selector.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/report-sections.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/judgments-panel.json"
       ],
       "files": [
         {

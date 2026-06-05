@@ -21,9 +21,10 @@ import {
 import { cn } from '@/lib/utils'
 import { formatDuration, formatMs } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
-import type { CaseStatus, JudgmentVerdict, RunEvent, RunEventMessage } from '@/lib/observability-types'
+import type { CaseStatus, RunEvent, RunEventMessage } from '@/lib/observability-types'
 import { EvalTranscript } from '@/components/run-detail/eval-transcript'
 import { SectionTitle } from '@/components/run-detail/report-sections'
+import { JudgmentsPanel } from '@/components/run-detail/judgments-panel'
 import { AudioPlayer } from '@/components/run-detail/audio-player'
 
 interface MetricsSummary {
@@ -71,10 +72,6 @@ const STATUS_LABEL: Record<CaseStatus, string> = {
 
 function StatusBadge({ status }: { status: CaseStatus }) {
   return <span className={cn('ao-badge ao-badge--dot', STATUS_TONE[status])}>{STATUS_LABEL[status]}</span>
-}
-
-function verdictTone(v: JudgmentVerdict): 'pass' | 'fail' | 'other' {
-  return v === 'pass' ? 'pass' : v === 'fail' ? 'fail' : 'other'
 }
 
 export const EvalCaseDetailPage = ({
@@ -217,43 +214,7 @@ export const EvalCaseDetailPage = ({
 
       {/* Summary sections — full-width rows below the transcript */}
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
-          {judgments.length > 0 && (
-            <div className="ao-panel">
-              <div className="ao-panel-head">
-                <SectionTitle icon={<CheckCircle2 size={16} className="text-success" />} title="Judgments" hint="per-criterion pass / fail" />
-                <span className="ao-panel-sub">{passCount}/{judgments.length} passed</span>
-              </div>
-              <div className="flex flex-col gap-2.5 p-4">
-                {judgments.map((j, i) => {
-                  const tone = verdictTone(j.verdict)
-                  return (
-                    <div
-                      key={`${j.intent}-${i}`}
-                      className={cn(
-                        'rounded-lg border px-3.5 py-3',
-                        tone === 'pass' && 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]',
-                        tone === 'fail' && 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',
-                        tone === 'other' && 'border-border bg-muted/40',
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-2">
-                          {tone === 'pass' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                            : tone === 'fail' ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                              : <CircleHelp className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
-                          <p className="m-0 text-sm text-foreground">{j.intent}</p>
-                        </div>
-                        <span className={cn('ao-badge shrink-0', tone === 'pass' ? 'is-success' : tone === 'fail' ? 'is-danger' : 'is-neutral')}>
-                          {tone === 'pass' ? 'pass' : tone === 'fail' ? 'fail' : 'maybe'}
-                        </span>
-                      </div>
-                      {j.reasoning && <p className="ml-6 mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{j.reasoning}</p>}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <JudgmentsPanel judgments={judgments} icon={<CheckCircle2 size={16} className="text-success" />} />
 
           {evalCase.failure && (
             <div className="ao-panel">

@@ -7,7 +7,7 @@
  * `sim_report` block; kept local so this file is reusable without coupling to
  * the Simulate module (which another agent owns). */
 import { useState } from 'react'
-import { AlertOctagon, Check, ChevronRight, CopyIcon, Scale, Wrench } from 'lucide-react'
+import { AlertOctagon, Check, ChevronRight, CopyIcon, CornerDownRight, Scale, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /* ---------- types (mirror backend sim_report) ---------- */
@@ -97,7 +97,7 @@ export function ScoreRing({ score, max = 100, size = 88, stroke = 8, showMax }: 
   )
 }
 
-function ScopeTag({ scope }: { scope: string }) {
+export function ScopeTag({ scope }: { scope: string }) {
   const level = scope.split(':')[0]
   const colors: Record<string, string> = {
     flow: 'bg-chart-2/12 text-[hsl(270_82%_51%)]',
@@ -174,14 +174,38 @@ export function RubricBox({ report, rubricName }: { report: SimReport; rubricNam
 
 /* ---------- (c) Leveled judge ---------- */
 function JudgeRow({ children, indent = 0, onClick }: { children: React.ReactNode; indent?: number; onClick?: () => void }) {
+  // When the row is interactive, expose it as a keyboard-operable button so the
+  // expand toggle isn't mouse-only (a11y).
+  const interactive = !!onClick
+  const onKeyDown = interactive
+    ? (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick!() }
+      }
+    : undefined
   return (
-    <div onClick={onClick} className={cn('flex items-center gap-2.5 border-b border-border/60 px-4 py-2.5 text-sm', onClick ? 'cursor-pointer hover:bg-muted/40' : '')} style={{ paddingLeft: 16 + indent }}>
+    <div
+      onClick={onClick}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={onKeyDown}
+      className={cn('flex items-center gap-2.5 border-b border-border/60 px-4 py-2.5 text-sm', interactive ? 'cursor-pointer hover:bg-muted/40' : '')}
+      style={{ paddingLeft: 16 + indent }}
+    >
       {children}
     </div>
   )
 }
 
-export function LeveledJudgeBox({ tree }: { tree: SimReportJudgeTree }) {
+/** Shared leveled-judge panel. Optional props let the Simulate report reuse it:
+ *  - `caseLabel` overrides the per-persona heading (Simulate passes the selected
+ *    persona's display name; Evals run-detail uses `tree.caseLabel`).
+ *  - `onJump(turn)` adds a "Jump to turn N" link under each turn-anchored node
+ *    row (Simulate scrolls its live transcript; Evals omits it). */
+export function LeveledJudgeBox({ tree, caseLabel, onJump }: {
+  tree: SimReportJudgeTree
+  caseLabel?: React.ReactNode
+  onJump?: (turn: number) => void
+}) {
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     const o: Record<string, boolean> = {}
     tree.agents.forEach((a) => { if (a.status === 'fail') { o[a.id] = true; a.tasks.forEach((t) => { if (t.status === 'fail') o[t.id] = true }) } })
@@ -191,7 +215,7 @@ export function LeveledJudgeBox({ tree }: { tree: SimReportJudgeTree }) {
   return (
     <div className="ao-panel">
       <div className="ao-panel-head">
-        <SectionTitle icon={<Scale size={16} className="shrink-0 text-[hsl(var(--link))]" />} title={<>Leveled judge · {tree.caseLabel}</>} hint="where the agent passed or failed — whole conversation down to a single turn" />
+        <SectionTitle icon={<Scale size={16} className="shrink-0 text-[hsl(var(--link))]" />} title={<>Leveled judge · {caseLabel ?? tree.caseLabel}</>} hint="where the agent passed or failed — whole conversation down to a single turn" />
         <span className="ao-badge is-accent">LiveKit-native</span>
       </div>
       <div className="border-b border-border px-4 py-2.5 text-xs leading-relaxed text-muted-foreground">
@@ -224,7 +248,14 @@ export function LeveledJudgeBox({ tree }: { tree: SimReportJudgeTree }) {
                 {tk.nodes && open[tk.id] && tk.nodes.map((nd, i) => (
                   <div key={i} className="flex items-start gap-2.5 border-b border-border/60 bg-muted/30 px-4 py-2.5 text-sm" style={{ paddingLeft: 64 }}>
                     <ScopeTag scope={nd.scope} />
-                    <div className="min-w-0 flex-1 text-muted-foreground">{nd.verdict}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-muted-foreground">{nd.verdict}</div>
+                      {onJump && nd.turn != null && (
+                        <button onClick={() => onJump(nd.turn!)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                          <CornerDownRight size={12} /> Jump to turn {nd.turn + 1}
+                        </button>
+                      )}
+                    </div>
                     <StatusPill status={nd.status} />
                   </div>
                 ))}

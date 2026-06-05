@@ -34,14 +34,15 @@ import { useEvalRun } from '@/lib/observability-hooks'
 import type {
   CaseStatus,
   EvalCaseRow,
-  EvalRunDetail,
-  JudgmentVerdict,
+  SimReport,
+  SimReportJudgeTree,
   RunEvent,
   RunEventMessage,
 } from '@/lib/observability-types'
 import { EvalTranscript } from '@/components/run-detail/eval-transcript'
 import { AudioPlayer } from '@/components/run-detail/audio-player'
 import { PersonaSelector } from '@/components/run-detail/persona-selector'
+import { JudgmentsPanel } from '@/components/run-detail/judgments-panel'
 import {
   FixesBox,
   LeveledJudgeBox,
@@ -49,13 +50,7 @@ import {
   ScorerBox,
   SectionTitle,
   WorstMomentsBox,
-  type SimReport,
 } from '@/components/run-detail/report-sections'
-
-/** `GET /api/evals/:id` now also returns `sim_report` (null for live-call /
- *  pytest). It isn't on the shared `EvalRunDetail` type yet, so read it off a
- *  local widening. */
-type RunWithReport = EvalRunDetail & { sim_report?: SimReport | null }
 
 /** Maps a case status to its `ao-badge` tone modifier. */
 const STATUS_BADGE_TONE: Record<CaseStatus, string> = {
@@ -71,9 +66,13 @@ const STATUS_LABEL: Record<CaseStatus, string> = {
   skipped: 'Skipped',
 }
 
-/** Per-criterion verdict tone for the judgments pass/fail list. */
-function verdictTone(v: JudgmentVerdict): 'pass' | 'fail' | 'other' {
-  return v === 'pass' ? 'pass' : v === 'fail' ? 'fail' : 'other'
+/** Look up a case's leveled-judge tree from `sim_report.caseTrees`, preferring
+ *  the stable `case_id` key (current producer) and falling back to the persona
+ *  `name` key (older persisted runs). Keying by `case_id` avoids the collision
+ *  that duplicate persona names caused with the old name-keyed lookup. */
+function caseTreeFor(report: SimReport | null, c: EvalCaseRow): SimReportJudgeTree | undefined {
+  if (!report?.caseTrees) return undefined
+  return report.caseTrees[c.case_id] ?? report.caseTrees[c.name]
 }
 
 /** Mean of `metrics.llm_node_ttft` (seconds → ms) across message events. */
@@ -160,43 +159,7 @@ function CaseSummary({ c }: { c: EvalCaseRow }) {
         </div>
       </div>
 
-      {judgments.length > 0 && (
-        <div className="ao-panel">
-          <div className="ao-panel-head">
-            <SectionTitle title="Judgments" hint="per-criterion pass / fail" />
-            <span className="ao-panel-sub">{passCount}/{judgments.length} passed</span>
-          </div>
-          <div className="flex flex-col gap-2.5 p-4">
-            {judgments.map((j, i) => {
-              const tone = verdictTone(j.verdict)
-              return (
-                <div
-                  key={`${j.intent}-${i}`}
-                  className={cn(
-                    'rounded-lg border px-3.5 py-3',
-                    tone === 'pass' && 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]',
-                    tone === 'fail' && 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',
-                    tone === 'other' && 'border-border bg-muted/40',
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-2">
-                      {tone === 'pass' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                        : tone === 'fail' ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                          : <CircleHelp className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
-                      <p className="m-0 text-sm text-foreground">{j.intent}</p>
-                    </div>
-                    <span className={cn('ao-badge shrink-0', tone === 'pass' ? 'is-success' : tone === 'fail' ? 'is-danger' : 'is-neutral')}>
-                      {tone === 'pass' ? 'pass' : tone === 'fail' ? 'fail' : 'maybe'}
-                    </span>
-                  </div>
-                  {j.reasoning && <p className="ml-6 mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{j.reasoning}</p>}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
+      <JudgmentsPanel judgments={judgments} />
 
       {/* Cost — live-call cases only (joined from sim_live_calls.cost).
           Mirrors the Live suite report's Cost section layout/labels. */}
@@ -244,7 +207,7 @@ export const EvalRunDetailPage = ({
   onBack?: () => void
 }) => {
   const { run, loading, error } = useEvalRun(runId)
-  const report = (run as RunWithReport | null)?.sim_report ?? null
+  const report = run?.sim_report ?? null
   const [selectedCaseId, setSelectedCaseId] = useQueryState('case', parseAsString)
 
   const stats = useMemo(() => {
@@ -435,7 +398,7 @@ export const EvalRunDetailPage = ({
             id: c.case_id,
             name: c.name,
             status: c.status === 'passed' ? 'pass' : c.status === 'failed' || c.status === 'errored' ? 'fail' : 'other',
-            score: report?.caseTrees?.[c.name]?.flow?.score,
+            score: caseTreeFor(report, c)?.flow?.score,
           }))}
           selectedId={selectedCase.case_id}
           onSelect={(id) => void setSelectedCaseId(id)}
@@ -443,12 +406,12 @@ export const EvalRunDetailPage = ({
       )}
 
       {/* Leveled judge — full-width row (sim_report only). Renders the SELECTED
-          persona's per-case tree (keyed by case name), falling back to the
+          persona's per-case tree (keyed by case_id), falling back to the
           run-level worst-case tree for older runs that lack `caseTrees`. */}
       {report?.judgeTree && (
         <LeveledJudgeBox
           key={selectedCase?.case_id}
-          tree={(selectedCase && report.caseTrees?.[selectedCase.name]) || report.judgeTree}
+          tree={(selectedCase && caseTreeFor(report, selectedCase)) || report.judgeTree}
         />
       )}
 

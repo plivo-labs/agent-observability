@@ -4,27 +4,26 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import {
-  AlertOctagon, Check, CheckCircle2, ChevronRight, CopyIcon,
-  CornerDownRight, Download, FileCode, GitPullRequest, Loader, Phone,
-  Play, Plus, RotateCw, Scale, Sparkles, TextCursorInput,
-  Timer, TriangleAlert, UploadCloud, Wrench, X,
+  Check, CheckCircle2, Download, FileCode, GitPullRequest, Loader, Phone,
+  Play, RotateCw, Scale, Sparkles, TextCursorInput,
+  Timer, TriangleAlert, UploadCloud, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   DEFAULT_PROMPT, PERSONA_TYPES, PERSONAS, SIM_YAML, generatePersonas, listLibraryPersonas,
   listRubrics, savePersonaToLibrary, startSimulationJob, getSimulationJob, cancelSimulationJob,
-  type CaseStatus, type JobState, type JudgeTreeT, type Persona, type PersonaType, type Rubric, type Severity, type SimResult, type Turn,
+  type CaseStatus, type JobState, type Persona, type PersonaType, type Rubric, type SimResult, type Turn,
 } from './sim-data'
 import { readSimRun, writeSimRun, clearSimRun } from './run-persistence'
 import { Transcript } from '@/components/run-detail/transcript'
 import { PersonaSelector } from '@/components/run-detail/persona-selector'
+import {
+  FixesBox, LeveledJudgeBox, RubricBox, ScoreRing, WorstMomentsBox, type SimReport,
+} from '@/components/run-detail/report-sections'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 /* ---------- helpers ---------- */
-const scoreText = (s: number) => (s >= 80 ? 'text-success' : s >= 65 ? 'text-warning' : 'text-destructive')
-const scoreStroke = (s: number) => (s >= 80 ? 'hsl(var(--success))' : s >= 65 ? 'hsl(var(--warning))' : 'hsl(var(--destructive))')
-const scoreBar = (s: number) => (s >= 80 ? 'bg-success' : s >= 65 ? 'bg-warning' : 'bg-destructive')
 const scoreTone = (s: number) => (s >= 80 ? 'is-good' : s >= 65 ? 'is-warn' : 'is-bad')
 const initials = (name: string) => name.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
@@ -55,26 +54,6 @@ function SectionHead({ icon, title, hint }: { icon?: React.ReactNode; title: Rea
   )
 }
 
-function ScoreRing({ score, max = 100, size = 64, stroke = 6, showMax }: { score: number; max?: number; size?: number; stroke?: number; showMax?: boolean }) {
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  const pct = Math.max(0, Math.min(1, score / max))
-  const fs = size >= 88 ? 26 : size >= 64 ? 19 : 15
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="hsl(var(--muted))" strokeWidth={stroke} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={scoreStroke(score)} strokeWidth={stroke}
-          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)}
-          style={{ transition: 'stroke-dashoffset .6s ease-out' }} />
-      </svg>
-      <div className={cn('absolute inset-0 flex items-center justify-center font-semibold tabular-nums', scoreText(score))} style={{ fontSize: fs }}>
-        {score}{showMax && <span className="text-muted-foreground" style={{ fontSize: fs * 0.55 }}>/{max}</span>}
-      </div>
-    </div>
-  )
-}
-
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { tone: string; label: string; dot?: boolean }> = {
     pass: { tone: 'is-success', label: 'Pass' },
@@ -90,17 +69,6 @@ function StatusBadge({ status }: { status: string }) {
       {m.label}
     </span>
   )
-}
-
-function ScopeTag({ scope }: { scope: string }) {
-  const level = scope.split(':')[0]
-  const colors: Record<string, string> = {
-    flow: 'bg-chart-2/12 text-[hsl(270_82%_51%)]',
-    agent: 'bg-chart-1/12 text-[hsl(225_100%_45%)]',
-    task: 'bg-chart-4/12 text-[hsl(38_96%_40%)]',
-    node: 'bg-chart-3/12 text-[hsl(149_89%_32%)]',
-  }
-  return <span className={cn('rounded-md px-1.5 py-0.5 font-mono text-[11px] font-medium', colors[level] ?? 'bg-muted text-muted-foreground')}>{scope}</span>
 }
 
 function Seg({ options, value, onChange }: { options: { id: string; label: React.ReactNode; disabled?: boolean }[]; value: string; onChange: (v: string) => void }) {
@@ -153,88 +121,6 @@ function Stepper({ phase }: { phase: 'setup' | 'running' | 'report' }) {
         )
       })}
     </div>
-  )
-}
-
-function JudgeRow({ children, indent = 0, onClick }: { children: React.ReactNode; indent?: number; onClick?: () => void }) {
-  return (
-    <div onClick={onClick} className={cn('flex items-center gap-2.5 border-b border-border/60 px-4 py-2.5 text-sm', onClick ? 'cursor-pointer hover:bg-muted/40' : '')} style={{ paddingLeft: 16 + indent }}>
-      {children}
-    </div>
-  )
-}
-
-function JudgeTree({ tree, onJump }: { tree: JudgeTreeT; onJump: (turn: number) => void }) {
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    const o: Record<string, boolean> = {}
-    tree.agents.forEach((a) => { if (a.status === 'fail') { o[a.id] = true; a.tasks.forEach((t) => { if (t.status === 'fail') o[t.id] = true }) } })
-    return o
-  })
-  const tog = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }))
-  return (
-    <div>
-      <JudgeRow>
-        <ScopeTag scope="flow" />
-        <span className="min-w-0 flex-1 font-medium text-foreground">{tree.flow.verdict}</span>
-        <span className={cn('font-semibold tabular-nums', scoreText(tree.flow.score))}>{tree.flow.score}/{tree.flow.max}</span>
-      </JudgeRow>
-      {tree.agents.map((ag) => (
-        <div key={ag.id}>
-          <JudgeRow indent={12} onClick={() => tog(ag.id)}>
-            <ChevronRight size={15} className={cn('shrink-0 text-muted-foreground transition-transform', open[ag.id] ? 'rotate-90' : '')} />
-            <ScopeTag scope={`agent:${ag.id.replace('-agent', '')}`} />
-            <span className="min-w-0 flex-1 truncate"><b className="text-foreground">{ag.name}</b> <span className="text-muted-foreground">— {ag.verdict}</span></span>
-            <StatusBadge status={ag.status} />
-            <span className={cn('font-semibold tabular-nums', scoreText(ag.score))}>{ag.score}</span>
-          </JudgeRow>
-          {open[ag.id] && ag.tasks.map((tk) => (
-            <div key={tk.id}>
-              <JudgeRow indent={36} onClick={tk.nodes ? () => tog(tk.id) : undefined}>
-                {tk.nodes ? <ChevronRight size={14} className={cn('shrink-0 text-muted-foreground transition-transform', open[tk.id] ? 'rotate-90' : '')} /> : <span className="w-3.5 shrink-0" />}
-                <ScopeTag scope={`task:${tk.id}`} />
-                <span className="min-w-0 flex-1 text-muted-foreground">{tk.verdict}</span>
-                <StatusBadge status={tk.status} />
-                <span className={cn('font-semibold tabular-nums', scoreText(tk.score))}>{tk.score}</span>
-              </JudgeRow>
-              {tk.nodes && open[tk.id] && tk.nodes.map((nd, i) => (
-                <div key={i} className="flex items-start gap-2.5 border-b border-border/60 bg-muted/30 px-4 py-2.5 text-sm" style={{ paddingLeft: 64 }}>
-                  <ScopeTag scope={nd.scope} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-muted-foreground">{nd.verdict}</div>
-                    {nd.turn != null && (
-                      <button onClick={() => onJump(nd.turn!)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                        <CornerDownRight size={12} /> Jump to turn {nd.turn + 1}
-                      </button>
-                    )}
-                  </div>
-                  <StatusBadge status={nd.status} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function JudgeCard({ tree, onJump, selName }: {
-  tree: JudgeTreeT; onJump: (turn: number) => void; selName: string
-}) {
-  return (
-    <Card>
-      <CardHead>
-        <SectionHead
-          icon={<Scale size={16} className="shrink-0 text-[hsl(var(--link))]" />}
-          title={<>Leveled judge · {selName}</>}
-          hint="where the agent passed or failed — whole conversation down to a single turn" />
-        <span className="ao-badge is-accent shrink-0">LiveKit-native</span>
-      </CardHead>
-      <div className="border-b border-border px-4 py-2.5 text-xs leading-relaxed text-muted-foreground">
-        The judge grades the <b className="font-medium text-foreground">whole conversation</b> first, then breaks it down by <b className="font-medium text-foreground">agent</b>, by <b className="font-medium text-foreground">task</b>, and by each individual <b className="font-medium text-foreground">turn</b> (when available) — so you can see exactly where things went wrong. Click any row to expand it.
-      </div>
-      <JudgeTree tree={tree} onJump={onJump} />
-    </Card>
   )
 }
 
@@ -408,12 +294,16 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
           <Card>
             <CardHead>
               <div className="flex min-w-0 items-center gap-2.5"><CardTitle>Personas</CardTitle><CardSub>{selected.length + chosenGen.length} selected</CardSub></div>
-              <button className={btnOutSm}><Plus size={13} /> New persona</button>
             </CardHead>
             <div className="ao-panel-body">
               <div className="mb-3.5 flex flex-wrap gap-1.5">
                 {['all', ...PERSONA_TYPES].map((t) => (
-                  <span key={t} onClick={() => setTypeFilter(t)}
+                  <span key={t}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={typeFilter === t}
+                    onClick={() => setTypeFilter(t)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setTypeFilter(t) } }}
                     className={cn('cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
                       typeFilter === t ? 'bg-[hsl(var(--link))] text-white' : 'bg-muted text-muted-foreground hover:text-foreground')}>{t === 'all' ? 'All' : t.replace('_', ' ')}</span>
                 ))}
@@ -697,10 +587,6 @@ function RunningPhase({ config, live, startedAt, result, error, onDone, onBack, 
   )
 }
 
-function severityBadge(sev: Severity) {
-  return <StatusBadge status={({ critical: 'fail', high: 'warn', medium: 'info' } as const)[sev]} />
-}
-
 /* ---------- Report ---------- */
 function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => void }) {
   const navigate = useNavigate()
@@ -708,13 +594,20 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
   const worstIdx = cases.reduce((best, c, i) => (c.score < cases[best].score ? i : best), 0)
   const [sel, setSel] = useState(worstIdx)
   const [hl, setHl] = useState<number | null>(null)
-  const [copied, setCopied] = useState(false)
   const tref = useRef<Record<number, HTMLDivElement | null>>({})
-  const copyFixes = () => {
-    const text = result.fixes.map((f, i) => `${i + 1}. ${f.title}\n${f.body}`).join('\n\n')
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true); setTimeout(() => setCopied(false), 1500)
-    }).catch(() => {})
+  // Adapter onto the shared run-detail `SimReport` shape, so the Rubric / Worst
+  // moments / Fixes sections reuse the SAME widgets the Evals run-detail renders
+  // (single source of truth — no forked report markup here).
+  const reportView: SimReport = {
+    overallScore: result.overall,
+    passRate: cases.length ? result.passN / cases.length : 0,
+    threshold: result.threshold,
+    rubricAxes: result.rubricAxes,
+    worstMoments: result.worstMoments,
+    fixes: result.fixes,
+    judgeTree: result.judgeTree,
+    engine: result.engine,
+    personaCount: cases.length,
   }
   const jump = (turn: number) => {
     setSel(worstIdx); setHl(turn)
@@ -786,54 +679,14 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
             </div>
           </div>
         </Card>
-        {/* Rubric */}
-        <Card className="flex flex-col">
-          <CardHead>
-            <SectionHead title={<>Rubric · {result.rubricName ?? '7-axis'}</>} hint="per-axis quality breakdown" />
-            <span className="ao-panel-sub shrink-0">{result.rubricAxes.length} axes</span>
-          </CardHead>
-          <div className="ao-panel-body flex flex-1 flex-col justify-center gap-1.5">
-            {result.rubricAxes.map((a) => (
-              <div key={a.name} className="flex items-center gap-3">
-                <span className="w-36 shrink-0 truncate text-sm text-foreground" title={a.name}>{a.name}</span>
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"><div className={cn('h-full rounded-full', scoreBar(a.score))} style={{ width: `${a.score}%` }} /></div>
-                <span className={cn('w-7 text-right text-sm font-semibold tabular-nums', scoreText(a.score))}>{a.score}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
+        {/* Rubric — shared run-detail widget (same per-axis bars used by Evals). */}
+        <RubricBox report={reportView} rubricName={result.rubricName} />
       </div>
 
-      {/* Worst moments — full card only when there are real failures; otherwise render nothing */}
-      {result.worstMoments.some((w) => w.sev === 'critical' || w.sev === 'high') && (
-        <div className="mb-5">
-          <Card>
-            <CardHead>
-              <SectionHead icon={<AlertOctagon size={16} className="shrink-0 text-destructive" />} title="Worst moments" hint="lowest-scoring turns" />
-            </CardHead>
-            <div className="flex flex-col divide-y divide-border/60">
-              {result.worstMoments.map((w, i) => (
-                <div key={i} className="flex flex-col gap-1.5 px-4 py-3.5"><div className="flex flex-wrap items-center gap-2.5"><ScopeTag scope={w.scope} />{severityBadge(w.sev)}<span className="text-xs text-muted-foreground">{w.case}</span></div><div className="text-sm text-foreground">{w.text}</div></div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Recommended fixes — full-width row */}
-      <div className="mb-5">
-        <Card>
-          <CardHead>
-            <SectionHead icon={<Wrench size={16} className="shrink-0 text-[hsl(var(--link))]" />} title="Recommended fixes" hint="suggested prompt / config changes" />
-            <button className={btnOutSm} onClick={copyFixes}>{copied ? <Check size={13} /> : <CopyIcon size={13} />} {copied ? 'Copied ✓' : 'Copy'}</button>
-          </CardHead>
-          <div className="flex flex-col divide-y divide-border/60">
-            {result.fixes.map((f, i) => (
-              <div key={i} className="flex gap-3 px-4 py-3.5"><span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">{i + 1}</span><div className="flex flex-col gap-0.5"><div className="text-sm font-semibold text-foreground">{f.title}</div><div className="text-sm text-muted-foreground">{f.body}</div></div></div>
-            ))}
-          </div>
-        </Card>
-      </div>
+      {/* Worst moments + Recommended fixes — shared run-detail widgets.
+          WorstMomentsBox self-hides when there are no critical/high moments. */}
+      <div className="mb-5"><WorstMomentsBox report={reportView} /></div>
+      <div className="mb-5"><FixesBox report={reportView} /></div>
 
       {/* Persona selector — sits right above the per-persona views it drives (leveled judge + transcript) */}
       <PersonaSelector
@@ -843,9 +696,11 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
         onSelect={(id) => { setSel(Number(id)); setHl(null) }}
       />
 
-      {/* Leveled judge — full-width row, driven by the selected persona */}
+      {/* Leveled judge — full-width row, driven by the selected persona.
+          Shared widget; `caseLabel` shows the persona name, `onJump` wires the
+          "Jump to turn" link into this page's live transcript scroll. */}
       <div className="mb-5">
-        <JudgeCard key={sel} tree={kase.judgeTree ?? result.judgeTree} onJump={jump} selName={kase.personaName} />
+        <LeveledJudgeBox key={sel} tree={kase.judgeTree ?? result.judgeTree} caseLabel={kase.personaName} onJump={jump} />
       </div>
 
       {/* Transcript — at the bottom (raw detail): full-width transcript for the selected persona */}

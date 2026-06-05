@@ -59,15 +59,19 @@ function buildJudgments(input: {
 /* Compact full-report blob persisted onto eval_runs.sim_report, so the Evals
  * run-detail page can render a simulation's complete report later. Pulled
  * straight off SimResult. Passed DIRECTLY into `${value}::jsonb` downstream
- * (never JSON.stringify'd before ::jsonb) per the CLAUDE.md gotcha. */
-function buildSimReport(result: SimResult): Record<string, unknown> {
-  // Per-case leveled-judge trees keyed by persona/case name, so the Evals
-  // run-detail can render the SELECTED persona's tree (not just the worst-case
-  // `judgeTree`). The EvalCaseRow.name === SimCaseResult.personaName, so the
-  // run-detail page looks the tree up by the selected case's name. Older runs
-  // won't have this key → the page falls back to `judgeTree`.
+ * (never JSON.stringify'd before ::jsonb) per the CLAUDE.md gotcha.
+ *
+ * `caseIds` maps each case's index → its persisted `case_id`, so `caseTrees`
+ * is keyed by the SAME stable `case_id` the eval_cases rows use (the consumer
+ * looks the tree up by `EvalCaseRow.case_id`). Keying by persona NAME used to
+ * collide when two personas shared a name. */
+function buildSimReport(result: SimResult, caseIds: string[]): Record<string, unknown> {
+  // Per-case leveled-judge trees keyed by `case_id` (== EvalCaseRow.case_id),
+  // so the Evals run-detail can render the SELECTED persona's tree (not just the
+  // worst-case `judgeTree`). Older runs won't have this key → the page falls
+  // back to `judgeTree`.
   const caseTrees: Record<string, unknown> = {};
-  for (const c of result.cases) if (c.judgeTree) caseTrees[c.personaName] = c.judgeTree;
+  result.cases.forEach((c, i) => { if (c.judgeTree) caseTrees[caseIds[i]] = c.judgeTree; });
   return {
     overallScore: result.overall,
     passRate: result.total ? result.passN / result.total : 0,
@@ -85,6 +89,9 @@ function buildSimReport(result: SimResult): Record<string, unknown> {
 export function simResultToEvalPayload(result: SimResult): EvalPayloadV0 {
   const finished = Math.floor(Date.now() / 1000);
   const totalDur = result.cases.reduce((a, c) => a + (c.durationS || 0), 0);
+  // Mint each case's id up-front so `sim_report.caseTrees` can be keyed by the
+  // same `case_id` the eval_cases rows carry (producer ↔ consumer key match).
+  const caseIds = result.cases.map(() => randomUUID());
   return {
     version: "v0",
     run: {
@@ -98,10 +105,10 @@ export function simResultToEvalPayload(result: SimResult): EvalPayloadV0 {
       started_at: finished - totalDur,
       finished_at: finished,
       ci: null,
-      sim_report: buildSimReport(result),
+      sim_report: buildSimReport(result, caseIds),
     },
-    cases: result.cases.map((c) => ({
-      case_id: randomUUID(),
+    cases: result.cases.map((c, i) => ({
+      case_id: caseIds[i],
       name: c.personaName,
       file: c.personaType,
       status: (c.status === "pass" ? "passed" : "failed") as "passed" | "failed",

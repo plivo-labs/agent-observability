@@ -46,7 +46,6 @@ export function createObservabilityApi(baseUrl: string) {
       if (filters?.testingFramework && filters.testingFramework.length) {
         params.set('testing_framework', filters.testingFramework.join(','))
       }
-      if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.startedFrom) params.set('started_from', filters.startedFrom)
       if (filters?.startedTo) params.set('started_to', filters.startedTo)
       return fetchJson<PlivoListResponse<EvalRunRow>>(`/evals?${params}`)
