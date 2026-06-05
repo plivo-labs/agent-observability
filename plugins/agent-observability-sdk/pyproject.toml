@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-observability-sdk"
-version = "0.2.0"
+version = "0.2.1"
 description = "Evaluation judges for AI voice agents (hallucination, response accuracy, intent, tool correctness, etc.)"
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
