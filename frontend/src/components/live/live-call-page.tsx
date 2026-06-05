@@ -15,6 +15,7 @@ import {
 } from '../simulate/sim-data'
 import { useLiveCall } from './use-live-call'
 import { AudioPlayer } from '@/components/run-detail/audio-player'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { readLiveRun, writeLiveRun, clearLiveRun } from '../simulate/run-persistence'
 
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
@@ -241,13 +242,19 @@ export function LiveCallPage() {
               <div className="ao-panel-body flex flex-col gap-4">
                 <div className="ao-field">
                   <label className="ao-label">Agent</label>
-                  <div className="relative">
-                    <Bot size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <select value={agentId} onChange={(e) => onAgentChange(e.target.value)} className="ao-input w-full" style={{ paddingLeft: '2.25rem' }}>
-                      <option value="">Custom prompt</option>
-                      {agents.map((a) => <option key={a.id} value={a.id}>{a.name}{a.builtin ? ' · builtin' : ''}</option>)}
-                    </select>
-                  </div>
+                  {/* "__custom" sentinel: Radix Select rejects an empty-string value. */}
+                  <Select value={agentId || '__custom'} onValueChange={(v) => onAgentChange(v === '__custom' ? '' : v)}>
+                    <SelectTrigger className="w-full">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Bot size={15} className="shrink-0 text-muted-foreground" />
+                        <SelectValue placeholder="Custom prompt" />
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__custom">Custom prompt</SelectItem>
+                      {agents.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}{a.builtin ? ' · builtin' : ''}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="ao-field">
                   <label className="ao-label">System prompt</label>
@@ -297,7 +304,10 @@ export function LiveCallPage() {
                 <div className="ao-panel-title"><ListChecks /> Rubric</div>
               </div>
               <div className="ao-panel-body">
-                <select value={rubricId} onChange={(e) => setRubricId(e.target.value)} className="ao-input w-full">{rubrics.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+                <Select value={rubricId || undefined} onValueChange={setRubricId}>
+                  <SelectTrigger className="w-full"><SelectValue placeholder="Select a rubric" /></SelectTrigger>
+                  <SelectContent>{rubrics.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent>
+                </Select>
                 {rubric && <div className="mt-3 flex flex-wrap gap-1">{rubric.criteria.map((c) => <span key={c.name} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground" title={c.question}>{c.name}</span>)}</div>}
                 <div className="ao-hint mt-3">Each is a pass/fail criterion — a call passes only if all pass.</div>
               </div>

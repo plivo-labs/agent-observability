@@ -447,9 +447,12 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                       </div>
                       <div className="ao-field">
                         <label className="ao-label">Coverage</label>
-                        <select value={coverage} onChange={(e) => setCoverage(e.target.value)} className="ao-input">
-                          {COVERAGE_OPTIONS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </select>
+                        <Select value={coverage} onValueChange={setCoverage}>
+                          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {COVERAGE_OPTIONS.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="ao-field">
                         <label className="ao-label">Language</label>
