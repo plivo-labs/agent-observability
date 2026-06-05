@@ -1,0 +1,32 @@
+---
+title: Token Usage
+description: Per-turn input/output token counts with running totals. Designed to answer "is this conversation blowing the budget?" without a calculator.
+---
+
+## Preview
+
+<ComponentPreview slug="token-usage" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="token-usage-section" />
+
+## Usage
+
+```tsx
+import { TokenUsageSection } from '@/components/token-usage-section'
+
+;<TokenUsageSection />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description: 'Override the metrics resolved from provider context.',
+    },
+  ]}
+/>

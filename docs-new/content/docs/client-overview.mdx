@@ -1,0 +1,58 @@
+---
+title: Client setup
+description: Instrument your agent to ship session reports and eval results to the observability server. Covers the two integration modes — agent-transport (auto-emits) and raw LiveKit (you wire it) — and the env-var contract both share.
+---
+
+The server can only show you what your agent sends it. The client side is the
+SDK that lives next to your agent and uploads session reports — recordings,
+per-turn metrics, chat history, tool calls, and judge verdicts — to the
+observability server. One package per language: `agent-observability-sdk`
+([Python](/python-quickstart) and [Node](/node-quickstart)).
+
+## Two integration modes
+
+How much wiring you do depends on how your agent is built.
+
+### agent-transport
+
+If your agent runs on agent-transport's `AudioStreamServer` / `AgentServer`,
+**observability is automatic**. The transport layer already emits the tag
+bundle and runs the configured judges through its own `EvaluationConfig`. You
+only set the [environment variables](#environment) so reports know where to go,
+and — in Python — optionally pull judges from the SDK's catalogue into your
+`EvaluationConfig`.
+
+### Raw LiveKit
+
+If you drive LiveKit Agents directly (`@server.rtc_session(...)` in Python,
+`server.rtcSession(...)` in Node), nothing is wired for you. The SDK's LiveKit
+helpers replace the hand-rolled boilerplate: one `init_observability` /
+`initObservability` call emits the tags the server expects, and (Python only)
+`run_judges_on_report` runs judges at end-of-call. See the raw-LiveKit guides
+for [Python](/python-raw-livekit) and [Node](/node-raw-livekit).
+
+## Environment
+
+Both modes and both languages read the same environment variables. Only the URL
+and an agent id matter for most setups.
+
+| Env var | Purpose |
+|---|---|
+| `LIVEKIT_OBSERVABILITY_URL` | Dashboard base URL (LiveKit-canonical name). Required by `init_observability` / `initObservability` (raises if unset). |
+| `AGENT_OBSERVABILITY_URL` | Same purpose; accepted as a fallback and mirrored into `LIVEKIT_OBSERVABILITY_URL` so LiveKit's upload code picks it up. |
+| `AGENT_OBSERVABILITY_AGENT_ID` | Stable opaque agent identifier. Strongly recommended — without it sessions land unparented on the dashboard. UUIDs preferred over slugs. |
+| `AGENT_OBSERVABILITY_ACCOUNT_ID` | Multi-tenant account id. Optional. |
+| `AGENT_OBSERVABILITY_USER` / `_PASS` | Basic-auth credentials, when the server enables auth. Optional. |
+| `AGENT_OBSERVABILITY_TIMEOUT` | Upload request timeout in seconds (default `10`). |
+| `AGENT_OBSERVABILITY_MAX_RETRIES` | Max upload attempts before falling back (default `3`). |
+| `AGENT_OBSERVABILITY_FALLBACK_DIR` | Directory for failed-upload JSON when the server is unreachable after all retries. |
+
+## Matching the server's auth mode
+
+The server accepts either Basic credentials **or** a LiveKit Bearer JWT on its
+ingest routes (see [server Environment](/server-env)). The SDK speaks Basic auth
+via `AGENT_OBSERVABILITY_USER` / `_PASS`. When the server is gated with the
+LiveKit key pair instead, the LiveKit upload path mints the Bearer token itself
+from your `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` — no extra SDK config. Use
+whichever mode your server is configured for; both can be enabled at once during
+a migration.

@@ -1,0 +1,85 @@
+---
+title: Pytest plugin
+description: pytest plugin that streams LiveKit-agents eval results into Agent Observability. Each pytest invocation lands as one eval_run; every test surfaces as an eval_case with events, judge verdicts, and failure detail.
+---
+
+## Install
+
+```bash
+pip install agent-observability-sdk
+```
+
+Requires Python 3.10+ and pytest 7+. The plugin auto-registers via the
+`agent_observability` pytest11 entry-point — no `conftest.py` wiring needed.
+`livekit-agents` is optional — the plugin works for plain pytest suites too, and
+pulls eval data from the LiveKit assertion API when it's present.
+
+## Configure
+
+The plugin reads from CLI flags first, then environment variables. Only the URL
+is required; everything else is optional but recommended so the run identifies
+itself in the dashboard.
+
+| CLI flag | Env var | Description |
+| --- | --- | --- |
+| `--agent-observability-url` **required** | `AGENT_OBSERVABILITY_URL` | Base URL of the obs server (e.g. `http://localhost:9090`). |
+| `--agent-observability-agent-id` | `AGENT_OBSERVABILITY_AGENT_ID` | Stable identifier for the agent under test. Matches the `agent_id` the live SDK uses so production sessions + simulation runs aggregate under one agent row. |
+| `--agent-observability-agent-name` | `AGENT_OBSERVABILITY_AGENT_NAME` | Human-readable label for the agent. Surfaced in the dashboard alongside the ID. |
+| `--agent-observability-account-id` | `AGENT_OBSERVABILITY_ACCOUNT_ID` | Account scope for multi-tenant deployments. Optional. |
+| `--agent-observability-run-name` | `AGENT_OBSERVABILITY_RUN_NAME` | Human-readable label for this run (e.g. `Nightly smoke`, `PR #482`). Shown in the run list. |
+| `--agent-observability-live-streaming` | `AGENT_OBSERVABILITY_LIVE_STREAMING` | When set, the plugin emits per-case events as they finish (instead of batching at the end). Useful for long suites where you want to see partial progress on the dashboard. |
+| `--agent-observability-timeout` | `AGENT_OBSERVABILITY_TIMEOUT` | HTTP timeout in seconds for the upload calls. Default `10`. |
+| `--agent-observability-max-retries` | `AGENT_OBSERVABILITY_MAX_RETRIES` | Retries on transient failure before falling back to local cache. Default `3`. |
+| `--agent-observability-fallback-dir` | `AGENT_OBSERVABILITY_FALLBACK_DIR` | Where to dump payloads when the server is unreachable after all retries. Default `.agent-observability-cache/`. |
+
+## Use inside a test
+
+The plugin auto-captures LiveKit's `RunResult` objects. In most tests you just
+write the eval the way you normally would — the plugin records the chat history,
+judge verdicts, and tool calls under the hood.
+
+```python
+# conftest.py — nothing needed; the plugin auto-registers.
+
+# my_test.py
+import pytest
+from livekit.agents import Agent, AgentSession, inference
+from livekit.agents.evals import accuracy_judge, safety_judge
+
+class Assistant(Agent):
+    def __init__(self):
+        super().__init__(instructions="Be helpful.")
+
+@pytest.mark.asyncio
+async def test_greets_politely():
+    llm = inference.LLM(model="openai/gpt-4.1-mini")
+    session = AgentSession(llm=llm)
+    await session.start(agent=Assistant())
+
+    result = await session.run(user_input="Hello")
+    result.expect.next_event().is_message(role="assistant")
+    await result.expect.next_event(type="message").judge(
+        llm,
+        intent="greets politely",
+    )
+```
+
+## Run
+
+```bash
+# Inline config — best for CI
+pytest tests/ \
+  --agent-observability-url=http://obs.example.com \
+  --agent-observability-agent-id=support-bot \
+  --agent-observability-agent-name="Support Bot" \
+  --agent-observability-run-name="PR #482"
+
+# Or via env vars (one-time export, useful for local dev)
+export AGENT_OBSERVABILITY_URL=http://localhost:9090
+export AGENT_OBSERVABILITY_AGENT_ID=support-bot
+pytest tests/
+```
+
+On success, the dashboard shows the run under
+`Agents → support-bot → Simulation Evals` with per-case pass/fail rows, judge
+verdicts, and the full event trace.

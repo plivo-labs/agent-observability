@@ -1,0 +1,31 @@
+---
+title: useTranscript
+description: Returns the structured turns, the raw chat history, and the highlighted-turn state — the data the built-in TurnTranscriptSection consumes.
+---
+
+## Signature
+
+```ts
+useTranscript(): { turns, chatHistory, metrics, highlightedTurn, setHighlightedTurn }
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { useTranscript } from '@/lib/observability-hooks'
+
+function TurnCount() {
+  const { turns } = useTranscript()
+  return <span>{turns.length} turns</span>
+}
+```
+
+## Returns
+
+```ts
+{ turns: TurnRecord[], chatHistory: ChatItem[] | null, metrics: SessionMetrics | null, highlightedTurn: number | null, setHighlightedTurn: (n: number | null) => void }
+```

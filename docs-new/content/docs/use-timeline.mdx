@@ -1,0 +1,39 @@
+---
+title: useTimeline
+description: 'Derives timeline-specific data from the current session: per-turn metrics, the recording URL, and the highlighted-turn state shared with the transcript.'
+---
+
+## Signature
+
+```ts
+useTimeline(): { metrics, recordUrl, sessionCreatedAt, highlightedTurn, setHighlightedTurn }
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { useTimeline } from '@/lib/observability-hooks'
+
+function CustomTimeline() {
+  const { metrics, setHighlightedTurn } = useTimeline()
+  // Click a turn → both timeline AND transcript scroll into view
+  return metrics?.turns.map((t) => (
+    <button
+      key={t.turn_number}
+      onClick={() => setHighlightedTurn(t.turn_number)}
+    >
+      Turn {t.turn_number}
+    </button>
+  ))
+}
+```
+
+## Returns
+
+```ts
+{ metrics: SessionMetrics | null, recordUrl: string | null, sessionCreatedAt: string | undefined, highlightedTurn: number | null, setHighlightedTurn: (n: number | null) => void }
+```

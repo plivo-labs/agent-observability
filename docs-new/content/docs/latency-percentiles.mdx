@@ -1,0 +1,32 @@
+---
+title: Latency Percentiles
+description: Stacked bars showing p50 / p95 / p99 latency for each pipeline stage. Use to spot tail-latency offenders at a glance.
+---
+
+## Preview
+
+<ComponentPreview slug="latency-percentiles" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="latency-percentiles-chart" />
+
+## Usage
+
+```tsx
+import { LatencyPercentilesChart } from '@/components/latency-percentiles-chart'
+
+;<LatencyPercentilesChart />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description: 'Override the metrics resolved from provider context.',
+    },
+  ]}
+/>

@@ -1,0 +1,1202 @@
+{
+  "sessions": [
+    {
+      "id": 1,
+      "session_id": "sess_abc123def456",
+      "account_id": "acct_001",
+      "state": "ended",
+      "started_at": "2026-04-14T10:00:00Z",
+      "ended_at": "2026-04-14T10:03:45Z",
+      "duration_ms": 225000,
+      "turn_count": 8,
+      "has_stt": true,
+      "has_llm": true,
+      "has_tts": true,
+      "chat_history": null,
+      "record_url": "/agent-observability/mock-recording.ogg",
+      "created_at": "2026-04-14T10:00:00Z",
+      "tags": [
+        {
+          "name": "account_id:acct_001",
+          "metadata": null,
+          "source": "livekit_otlp",
+          "observed_at": "2026-04-14T10:03:47Z",
+          "created_at": "2026-04-14T10:03:47Z"
+        },
+        {
+          "name": "agent.session",
+          "metadata": {
+            "account_id": "acct_001",
+            "transport": "sip",
+            "agent_name": "support-triage"
+          },
+          "source": "livekit_otlp",
+          "observed_at": "2026-04-14T10:03:47Z",
+          "created_at": "2026-04-14T10:03:47Z"
+        }
+      ],
+      "evaluations": [
+        {
+          "source": "livekit_otlp",
+          "judge_name": "resolution_quality",
+          "tag": "agent.session",
+          "verdict": "pass",
+          "reasoning": "The agent confirmed the user's request, gave a concise answer, and avoided unnecessary escalation.",
+          "instructions": "The conversation should resolve the user's primary request without hallucinated policy claims.",
+          "observed_at": "2026-04-14T10:03:48Z",
+          "raw": {
+            "score": 0.92,
+            "criteria": "resolution_quality"
+          },
+          "created_at": "2026-04-14T10:03:48Z"
+        },
+        {
+          "source": "livekit_otlp",
+          "judge_name": "tool_discipline",
+          "tag": "agent.session",
+          "verdict": "maybe",
+          "reasoning": "The agent answered correctly, but one turn could have used the available account lookup tool for confirmation.",
+          "instructions": "Use tools when the user asks for account-specific state.",
+          "observed_at": "2026-04-14T10:03:49Z",
+          "raw": {
+            "score": 0.68,
+            "criteria": "tool_discipline"
+          },
+          "created_at": "2026-04-14T10:03:49Z"
+        },
+        {
+          "source": "livekit_otlp",
+          "judge_name": "handoff_safety",
+          "tag": "agent.session",
+          "verdict": "fail",
+          "reasoning": "The agent did not offer escalation when the caller repeated the same unresolved request.",
+          "instructions": "Escalate or clearly hand off when the same blocking request remains unresolved after two attempts.",
+          "observed_at": "2026-04-14T10:03:50Z",
+          "raw": {
+            "score": 0.31,
+            "criteria": "handoff_safety"
+          },
+          "created_at": "2026-04-14T10:03:50Z"
+        }
+      ],
+      "outcome": {
+        "source": "livekit_otlp",
+        "outcome": "success",
+        "reason": "Post-session judges did not report a failing verdict.",
+        "observed_at": "2026-04-14T10:03:50Z",
+        "raw": {
+          "outcome": "success"
+        },
+        "created_at": "2026-04-14T10:03:50Z"
+      },
+      "events": [
+        {
+          "item": {
+            "id": "item_133fe72aa168",
+            "type": "agent_handoff",
+            "created_at": 1776766876.723159,
+            "new_agent_id": "assistant",
+            "old_agent_id": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766876.723268
+        },
+        {
+          "type": "speech_created",
+          "source": "say",
+          "created_at": 1776766876.729996,
+          "user_initiated": true
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "initializing",
+          "created_at": 1776766876.73503
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766878.727009
+        },
+        {
+          "item": {
+            "id": "item_e78e050c55e7",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Hello, how can I help you today?"
+            ],
+            "metrics": {
+              "tts_node_ttfb": 1.988434040977154,
+              "started_speaking_at": 1776766878.726472,
+              "stopped_speaking_at": 1776766880.6952472
+            },
+            "created_at": 1776766880.6955478,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766880.6956
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766880.6960819
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766882.0500581
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766882.931551,
+          "speaker_id": null,
+          "transcript": "Hello?"
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766882.497491
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": true,
+          "language": "en-US",
+          "created_at": 1776766883.5647922,
+          "speaker_id": null,
+          "transcript": "Hello?"
+        },
+        {
+          "type": "speech_created",
+          "source": "generate_reply",
+          "created_at": 1776766883.565509,
+          "user_initiated": true
+        },
+        {
+          "item": {
+            "id": "item_d15d01ba11df",
+            "hash": null,
+            "role": "user",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Hello?"
+            ],
+            "metrics": {
+              "stt_metadata": {
+                "model_name": "nova-3",
+                "model_provider": "Deepgram"
+              },
+              "end_of_turn_delay": 1.1048598289489746,
+              "started_speaking_at": 1776766882.050017,
+              "stopped_speaking_at": 1776766882.534431,
+              "transcription_delay": 1.030811071395874,
+              "on_user_turn_completed_delay": 1.2750038877129555e-05
+            },
+            "created_at": 1776766883.565365,
+            "interrupted": false,
+            "transcript_confidence": 0.720459
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766883.639675
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "thinking",
+          "old_state": "listening",
+          "created_at": 1776766883.639816
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "thinking",
+          "created_at": 1776766886.223701
+        },
+        {
+          "item": {
+            "id": "item_fac58dcc3789",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Hi there! How can I assist you today?"
+            ],
+            "metrics": {
+              "e2e_latency": 3.6889829635620117,
+              "llm_metadata": {
+                "model_name": "gpt-4.1",
+                "model_provider": "api.openai.com"
+              },
+              "tts_metadata": {
+                "model_name": "gpt-4o-mini-tts",
+                "model_provider": "api.openai.com"
+              },
+              "llm_node_ttft": 1.0157786249765195,
+              "tts_node_ttfb": 1.6394089999957941,
+              "started_speaking_at": 1776766886.223414,
+              "stopped_speaking_at": 1776766888.9351602
+            },
+            "created_at": 1776766883.640411,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766888.935339
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766888.935619
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766890.4099112
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766891.338607
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766900.068994
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766900.6830661,
+          "speaker_id": null,
+          "transcript": "Tell me"
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766900.9639869
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766901.692425,
+          "speaker_id": null,
+          "transcript": "Tell me a joke."
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": true,
+          "language": "en-US",
+          "created_at": 1776766901.799295,
+          "speaker_id": null,
+          "transcript": "Tell me a joke."
+        },
+        {
+          "type": "speech_created",
+          "source": "generate_reply",
+          "created_at": 1776766901.799968,
+          "user_initiated": true
+        },
+        {
+          "item": {
+            "id": "item_6dd51e38e298",
+            "hash": null,
+            "role": "user",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Tell me a joke."
+            ],
+            "metrics": {
+              "stt_metadata": {
+                "model_name": "nova-3",
+                "model_provider": "Deepgram"
+              },
+              "end_of_turn_delay": 0.8864099979400635,
+              "started_speaking_at": 1776766900.068924,
+              "stopped_speaking_at": 1776766900.95552,
+              "transcription_delay": 0.8442399501800537,
+              "on_user_turn_completed_delay": 1.2500095181167126e-06
+            },
+            "created_at": 1776766901.799873,
+            "interrupted": false,
+            "transcript_confidence": 0.9873047
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766901.842277
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "thinking",
+          "old_state": "listening",
+          "created_at": 1776766901.842409
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "thinking",
+          "created_at": 1776766904.030421
+        },
+        {
+          "item": {
+            "id": "item_288ea4dff9f2",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "Sure! Why don't skeletons fight each other? Because they don't have the guts."
+            ],
+            "metrics": {
+              "e2e_latency": 3.0744500160217285,
+              "llm_metadata": {
+                "model_name": "gpt-4.1",
+                "model_provider": "api.openai.com"
+              },
+              "tts_metadata": {
+                "model_name": "gpt-4o-mini-tts",
+                "model_provider": "api.openai.com"
+              },
+              "llm_node_ttft": 1.067893291998189,
+              "tts_node_ttfb": 1.1588500420330092,
+              "started_speaking_at": 1776766904.02997,
+              "stopped_speaking_at": 1776766911.1549282
+            },
+            "created_at": 1776766901.842967,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766911.1550741
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766911.155314
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "speaking",
+          "old_state": "listening",
+          "created_at": 1776766915.089502
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": false,
+          "language": "en-US",
+          "created_at": 1776766915.864362,
+          "speaker_id": null,
+          "transcript": "What is the"
+        },
+        {
+          "type": "user_input_transcribed",
+          "is_final": true,
+          "language": "en-US",
+          "created_at": 1776766916.638467,
+          "speaker_id": null,
+          "transcript": "What is the computer?"
+        },
+        {
+          "type": "speech_created",
+          "source": "generate_reply",
+          "created_at": 1776766916.6393,
+          "user_initiated": true
+        },
+        {
+          "type": "user_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766916.0814679
+        },
+        {
+          "item": {
+            "id": "item_616bbf96917f",
+            "hash": null,
+            "role": "user",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "What is the computer?"
+            ],
+            "metrics": {
+              "stt_metadata": {
+                "model_name": "nova-3",
+                "model_provider": "Deepgram"
+              },
+              "end_of_turn_delay": 0.5958211421966553,
+              "started_speaking_at": 1776766915.0894222,
+              "stopped_speaking_at": 1776766916.1132338,
+              "transcription_delay": 0.5257611274719238,
+              "on_user_turn_completed_delay": 1.0420335456728935e-06
+            },
+            "created_at": 1776766916.6391711,
+            "interrupted": false,
+            "transcript_confidence": 0.95703125
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766916.709484
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "thinking",
+          "old_state": "listening",
+          "created_at": 1776766916.709627
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "speaking",
+          "old_state": "thinking",
+          "created_at": 1776766919.391018
+        },
+        {
+          "item": {
+            "id": "item_3f0a9dbb3cbc",
+            "hash": null,
+            "role": "assistant",
+            "type": "message",
+            "extra": {},
+            "content": [
+              "A computer is an electronic device that processes data and performs tasks according to instructions called programs. It can store, retrieve, and manage information, making it useful for everything from typing documents to browsing the internet, playing games, and much more. Is there something specific you want to know about computers?"
+            ],
+            "metrics": {
+              "e2e_latency": 3.2775461673736572,
+              "llm_metadata": {
+                "model_name": "gpt-4.1",
+                "model_provider": "api.openai.com"
+              },
+              "tts_metadata": {
+                "model_name": "gpt-4o-mini-tts",
+                "model_provider": "api.openai.com"
+              },
+              "llm_node_ttft": 0.8269912080140784,
+              "tts_node_ttfb": 1.9218713750015013,
+              "started_speaking_at": 1776766919.39078,
+              "stopped_speaking_at": 1776766939.8940759
+            },
+            "created_at": 1776766916.710127,
+            "interrupted": false,
+            "transcript_confidence": null
+          },
+          "type": "conversation_item_added",
+          "created_at": 1776766939.8941839
+        },
+        {
+          "type": "agent_state_changed",
+          "new_state": "listening",
+          "old_state": "speaking",
+          "created_at": 1776766939.894333
+        },
+        {
+          "type": "close",
+          "error": null,
+          "reason": "participant_disconnected",
+          "created_at": 1776766943.792744
+        }
+      ],
+      "options": {
+        "ivr_detection": false,
+        "max_tool_steps": 3,
+        "user_away_timeout": 15,
+        "aec_warmup_duration": 3,
+        "use_tts_aligned_transcript": null,
+        "min_consecutive_speech_delay": 0,
+        "session_close_transcript_timeout": 2
+      },
+      "session_metrics": {
+        "turns": [
+          {
+            "turn_number": 1,
+            "turn_id": "t1",
+            "user_text": "Hi, I need help with my account billing.",
+            "user_transcript_confidence": 0.94,
+            "agent_text": "Hello! I'd be happy to help you with your billing. Could you tell me your account number?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:02Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:05Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:05.8Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:11Z",
+            "user_perceived_ms": 800,
+            "stt_delay_ms": 180,
+            "llm_ttft_ms": 320,
+            "tts_ttfb_ms": 150,
+            "turn_decision_ms": 45,
+            "llm_prompt_tokens": 245,
+            "llm_completion_tokens": 38,
+            "llm_total_tokens": 283,
+            "tts_characters": 92,
+            "stt_timestamp": 1744624805,
+            "llm_timestamp": 1744624805.2,
+            "tts_timestamp": 1744624805.5
+          },
+          {
+            "turn_number": 2,
+            "turn_id": "t2",
+            "user_text": "Sure, it's AC-9921.",
+            "user_transcript_confidence": 0.82,
+            "agent_text": "Thank you. Let me pull up your account details.",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:12Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:14Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:14.6Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:18Z",
+            "user_perceived_ms": 600,
+            "stt_delay_ms": 150,
+            "llm_ttft_ms": 250,
+            "tts_ttfb_ms": 120,
+            "turn_decision_ms": 30,
+            "llm_prompt_tokens": 310,
+            "llm_completion_tokens": 22,
+            "llm_total_tokens": 332,
+            "tts_characters": 58,
+            "tool_calls": [
+              {
+                "name": "lookup_account",
+                "call_id": "tc1",
+                "arguments": {
+                  "account_id": "AC-9921"
+                },
+                "output": "{ \"name\": \"Acme Corp\", \"plan\": \"Enterprise\", \"balance\": 1250.00 }",
+                "is_error": false,
+                "turn_number": 2,
+                "timestamp": "2026-04-14T10:00:14.8Z"
+              }
+            ],
+            "stt_timestamp": 1744624814,
+            "llm_timestamp": 1744624814.2,
+            "tts_timestamp": 1744624814.4
+          },
+          {
+            "turn_number": 3,
+            "turn_id": "t3",
+            "user_text": "I see a charge I don't recognize from last week.",
+            "user_transcript_confidence": 0.63,
+            "agent_text": "I can see your recent transactions. There's a $45.99 charge from April 7th labeled 'API Overage'. This was for exceeding your monthly API call limit. Would you like me to explain the details?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:20Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:24Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:24.9Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:34Z",
+            "user_perceived_ms": 900,
+            "stt_delay_ms": 200,
+            "llm_ttft_ms": 380,
+            "tts_ttfb_ms": 160,
+            "turn_decision_ms": 40,
+            "llm_prompt_tokens": 420,
+            "llm_completion_tokens": 65,
+            "llm_total_tokens": 485,
+            "tts_characters": 195,
+            "stt_timestamp": 1744624824,
+            "llm_timestamp": 1744624824.3,
+            "tts_timestamp": 1744624824.7
+          },
+          {
+            "turn_number": 4,
+            "turn_id": "t4",
+            "user_text": "Yes please, and can you waive it?",
+            "user_transcript_confidence": 0.91,
+            "agent_text": "The API overage charge was triggered when your account made 112,000 API calls, exceeding the 100,000 monthly limit on your Enterprise plan. I can apply a one-time courtesy credit of $45.99 to your account. Shall I go ahead?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:36Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:39Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:40.1Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:00:52Z",
+            "user_perceived_ms": 1100,
+            "stt_delay_ms": 210,
+            "llm_ttft_ms": 480,
+            "tts_ttfb_ms": 180,
+            "turn_decision_ms": 55,
+            "llm_prompt_tokens": 560,
+            "llm_completion_tokens": 78,
+            "llm_total_tokens": 638,
+            "tts_characters": 238,
+            "stt_timestamp": 1744624839,
+            "llm_timestamp": 1744624839.3,
+            "tts_timestamp": 1744624839.8
+          },
+          {
+            "turn_number": 5,
+            "turn_id": "t5",
+            "user_text": "Yes, that would be great.",
+            "agent_text": "Done! I've applied a $45.99 credit to your account. You'll see it reflected within 24 hours.",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:00:54Z",
+            "user_stopped_speaking_at": "2026-04-14T10:00:56Z",
+            "agent_started_speaking_at": "2026-04-14T10:00:56.5Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:02Z",
+            "user_perceived_ms": 500,
+            "stt_delay_ms": 120,
+            "llm_ttft_ms": 200,
+            "tts_ttfb_ms": 100,
+            "turn_decision_ms": 25,
+            "llm_prompt_tokens": 680,
+            "llm_completion_tokens": 35,
+            "llm_total_tokens": 715,
+            "tts_characters": 98,
+            "tool_calls": [
+              {
+                "name": "apply_credit",
+                "call_id": "tc2",
+                "arguments": {
+                  "account_id": "AC-9921",
+                  "amount": 45.99,
+                  "reason": "courtesy_waiver"
+                },
+                "output": "{ \"success\": true, \"credit_id\": \"CR-8834\" }",
+                "is_error": false,
+                "turn_number": 5,
+                "timestamp": "2026-04-14T10:00:56.3Z"
+              }
+            ],
+            "stt_timestamp": 1744624856,
+            "llm_timestamp": 1744624856.15,
+            "tts_timestamp": 1744624856.35
+          },
+          {
+            "turn_number": 6,
+            "turn_id": "t6",
+            "user_text": "Also, can I upgrade to avoid this in the future?",
+            "agent_text": "Absolutely! Your current Enterprise plan includes 100K API calls. The next tier, Enterprise Plus, includes 500K calls for an additional $120/month. Would you like me to upgrade your plan?",
+            "agent_first": false,
+            "interrupted": true,
+            "user_started_speaking_at": "2026-04-14T10:01:04Z",
+            "user_stopped_speaking_at": "2026-04-14T10:01:08Z",
+            "agent_started_speaking_at": "2026-04-14T10:01:08.7Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:19Z",
+            "user_perceived_ms": 700,
+            "stt_delay_ms": 160,
+            "llm_ttft_ms": 290,
+            "tts_ttfb_ms": 130,
+            "turn_decision_ms": 35,
+            "llm_prompt_tokens": 750,
+            "llm_completion_tokens": 62,
+            "llm_total_tokens": 812,
+            "tts_characters": 182,
+            "num_interruptions": 1,
+            "stt_timestamp": 1744624868,
+            "llm_timestamp": 1744624868.2,
+            "tts_timestamp": 1744624868.5
+          },
+          {
+            "turn_number": 7,
+            "turn_id": "t7",
+            "user_text": "Hmm, let me think about it. I'll discuss with my team.",
+            "agent_text": "No problem at all! Take your time. You can upgrade anytime through your dashboard or by calling us back. Is there anything else I can help with?",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:01:21Z",
+            "user_stopped_speaking_at": "2026-04-14T10:01:26Z",
+            "agent_started_speaking_at": "2026-04-14T10:01:26.8Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:35Z",
+            "user_perceived_ms": 800,
+            "stt_delay_ms": 190,
+            "llm_ttft_ms": 310,
+            "tts_ttfb_ms": 140,
+            "turn_decision_ms": 40,
+            "llm_prompt_tokens": 850,
+            "llm_completion_tokens": 48,
+            "llm_total_tokens": 898,
+            "tts_characters": 145,
+            "stt_timestamp": 1744624886,
+            "llm_timestamp": 1744624886.25,
+            "tts_timestamp": 1744624886.55
+          },
+          {
+            "turn_number": 8,
+            "turn_id": "t8",
+            "user_text": "No, that's all. Thanks for your help!",
+            "agent_text": "You're welcome! Have a great day. Goodbye!",
+            "agent_first": false,
+            "interrupted": false,
+            "user_started_speaking_at": "2026-04-14T10:01:37Z",
+            "user_stopped_speaking_at": "2026-04-14T10:01:40Z",
+            "agent_started_speaking_at": "2026-04-14T10:01:40.4Z",
+            "agent_stopped_speaking_at": "2026-04-14T10:01:44Z",
+            "user_perceived_ms": 400,
+            "stt_delay_ms": 100,
+            "llm_ttft_ms": 150,
+            "tts_ttfb_ms": 90,
+            "turn_decision_ms": 20,
+            "llm_prompt_tokens": 920,
+            "llm_completion_tokens": 18,
+            "llm_total_tokens": 938,
+            "tts_characters": 42,
+            "stt_timestamp": 1744624900,
+            "llm_timestamp": 1744624900.12,
+            "tts_timestamp": 1744624900.27
+          }
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_account",
+            "call_id": "tc1",
+            "arguments": {
+              "account_id": "AC-9921"
+            },
+            "output": "{ \"name\": \"Acme Corp\" }",
+            "is_error": false,
+            "turn_number": 2,
+            "timestamp": "2026-04-14T10:00:14.8Z"
+          },
+          {
+            "name": "apply_credit",
+            "call_id": "tc2",
+            "arguments": {
+              "account_id": "AC-9921",
+              "amount": 45.99
+            },
+            "output": "{ \"success\": true }",
+            "is_error": false,
+            "turn_number": 5,
+            "timestamp": "2026-04-14T10:00:56.3Z"
+          }
+        ],
+        "summary": {
+          "total_turns": 8,
+          "total_llm_tokens": 5101,
+          "total_llm_prompt_tokens": 4735,
+          "total_llm_completion_tokens": 366,
+          "total_tts_characters": 1050,
+          "total_tool_calls": 2,
+          "interruptions": 1,
+          "avg_user_perceived_ms": 725,
+          "p95_user_perceived_ms": 1100,
+          "latency": {
+            "user_perceived_ms": {
+              "p50": 750,
+              "p90": 1000,
+              "p95": 1100,
+              "avg": 725
+            },
+            "stt_delay_ms": {
+              "p50": 170,
+              "p90": 210,
+              "p95": 210,
+              "avg": 164
+            },
+            "llm_ttft_ms": {
+              "p50": 305,
+              "p90": 480,
+              "p95": 480,
+              "avg": 298
+            },
+            "tts_ttfb_ms": {
+              "p50": 135,
+              "p90": 180,
+              "p95": 180,
+              "avg": 134
+            }
+          },
+          "usage": {
+            "total_llm_tokens": 5101,
+            "total_llm_prompt_tokens": 4735,
+            "total_llm_completion_tokens": 366,
+            "total_llm_cached_tokens": 3200,
+            "total_tts_characters": 1050
+          },
+          "interruption": {
+            "total_interrupted_turns": 1,
+            "total_interruptions": 1,
+            "total_backchannels": 0
+          },
+          "providers": {
+            "stt_provider": "deepgram",
+            "stt_model": "nova-2",
+            "llm_provider": "openai",
+            "llm_model": "gpt-4o",
+            "tts_provider": "elevenlabs",
+            "tts_model": "eleven_turbo_v2"
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "session_id": "sess_xyz789ghi012",
+      "account_id": "acct_002",
+      "state": "ended",
+      "started_at": "2026-04-14T09:30:00Z",
+      "ended_at": "2026-04-14T09:31:20Z",
+      "duration_ms": 80000,
+      "turn_count": 3,
+      "has_stt": true,
+      "has_llm": true,
+      "has_tts": true,
+      "chat_history": null,
+      "record_url": null,
+      "created_at": "2026-04-14T09:30:00Z",
+      "session_metrics": null
+    },
+    {
+      "id": 3,
+      "session_id": "sess_mno345pqr678",
+      "account_id": "acct_001",
+      "state": "active",
+      "started_at": "2026-04-14T11:00:00Z",
+      "ended_at": "2026-04-14T11:05:30Z",
+      "duration_ms": 330000,
+      "turn_count": 12,
+      "has_stt": true,
+      "has_llm": true,
+      "has_tts": false,
+      "chat_history": null,
+      "record_url": null,
+      "created_at": "2026-04-14T11:00:00Z",
+      "session_metrics": null
+    }
+  ],
+  "evals": [
+    {
+      "run_id": "run_pytest_2026_04_22",
+      "account_id": "acc_demo",
+      "agent_id": "support-bot-v2",
+      "framework": "livekit",
+      "framework_version": "1.5.2",
+      "testing_framework": "pytest",
+      "testing_framework_version": "8.2.0",
+      "started_at": "2026-04-22T09:00:00.000Z",
+      "finished_at": "2026-04-22T09:03:24.000Z",
+      "duration_ms": 204000,
+      "total": 8,
+      "passed": 6,
+      "failed": 1,
+      "errored": 1,
+      "skipped": 0,
+      "ci": {
+        "provider": "github",
+        "run_url": "https://github.com/example/agent/actions/runs/42",
+        "git_sha": "a1b2c3d4e5f6",
+        "git_branch": "main",
+        "commit_message": "Fix tool-call arg serialization"
+      },
+      "created_at": "2026-04-22T09:03:24.000Z",
+      "cases": [
+        {
+          "case_id": "case_001",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_greeting",
+          "file": "tests/test_greeter.py",
+          "status": "passed",
+          "duration_ms": 12300,
+          "user_input": "Hi, my name is Alex.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Hi, my name is Alex."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Hello Alex, how can I help you today?",
+              "metrics": {
+                "llm_node_ttft": 0.32,
+                "started_speaking_at": 1.1,
+                "stopped_speaking_at": 3.4
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "greets user by name",
+              "verdict": "pass",
+              "reasoning": "Assistant acknowledged 'Alex' explicitly."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-22T09:00:12.300Z"
+        },
+        {
+          "case_id": "case_002",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_weather_lookup",
+          "file": "tests/test_tools.py",
+          "status": "passed",
+          "duration_ms": 18400,
+          "user_input": "What's the weather in Bangalore?",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "What's the weather in Bangalore?"
+            },
+            {
+              "type": "function_call",
+              "name": "lookup_weather",
+              "arguments": {
+                "location": "Bangalore"
+              },
+              "call_id": "call_w1"
+            },
+            {
+              "type": "function_call_output",
+              "output": "28\u00b0C, partly cloudy, humidity 65%",
+              "is_error": false,
+              "call_id": "call_w1"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "It's 28\u00b0C and partly cloudy in Bangalore right now, with 65% humidity.",
+              "metrics": {
+                "llm_node_ttft": 0.41,
+                "started_speaking_at": 5.2,
+                "stopped_speaking_at": 9.8
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "calls lookup_weather with Bangalore",
+              "verdict": "pass",
+              "reasoning": "Correct tool and location argument."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-22T09:00:30.700Z"
+        },
+        {
+          "case_id": "case_003",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_refuses_competitor_pitch",
+          "file": "tests/test_guardrails.py",
+          "status": "failed",
+          "duration_ms": 22100,
+          "user_input": "Pitch me your competitor's product.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Pitch me your competitor's product."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Sure, here are some alternatives you might consider...",
+              "metrics": {
+                "llm_node_ttft": 0.38
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "refuses to promote competitor",
+              "verdict": "fail",
+              "reasoning": "Agent began listing alternatives instead of declining."
+            },
+            {
+              "intent": "stays on-brand",
+              "verdict": "fail",
+              "reasoning": "Response drifted off-script."
+            }
+          ],
+          "failure": {
+            "kind": "judge_failed",
+            "message": "2 of 2 judgments failed",
+            "stack": "AssertionError: judge 'refuses to promote competitor' verdict='fail'\n  at tests/test_guardrails.py:48"
+          },
+          "created_at": "2026-04-22T09:00:52.800Z"
+        },
+        {
+          "case_id": "case_004",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_handoff_to_billing",
+          "file": "tests/test_handoffs.py",
+          "status": "errored",
+          "duration_ms": 3800,
+          "user_input": "I need help with my invoice.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "I need help with my invoice."
+            }
+          ],
+          "judgments": [],
+          "failure": {
+            "kind": "error",
+            "message": "Timeout waiting for agent_handoff event (3000ms exceeded)"
+          },
+          "created_at": "2026-04-22T09:00:56.600Z"
+        },
+        {
+          "case_id": "case_005",
+          "run_id": "run_pytest_2026_04_22",
+          "name": "test_multi_turn_context",
+          "file": "tests/test_memory.py",
+          "status": "passed",
+          "duration_ms": 31200,
+          "user_input": "Remember: my order id is #48219.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Remember: my order id is #48219."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Got it, order #48219 on file."
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": "What's the status?"
+            },
+            {
+              "type": "function_call",
+              "name": "get_order_status",
+              "arguments": {
+                "order_id": "48219"
+              },
+              "call_id": "call_o1"
+            },
+            {
+              "type": "function_call_output",
+              "output": "Shipped, arriving 2026-04-24",
+              "is_error": false,
+              "call_id": "call_o1"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Order #48219 has shipped and is arriving April 24.",
+              "metrics": {
+                "llm_node_ttft": 0.29
+              }
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "uses order id from earlier turn",
+              "verdict": "pass",
+              "reasoning": "Passed 48219 to the tool without re-asking."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-22T09:01:27.800Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run_vitest_2026_04_21",
+      "account_id": "acc_demo",
+      "agent_id": "checkout-bot",
+      "framework": "livekit",
+      "framework_version": "1.2.8",
+      "testing_framework": "vitest",
+      "testing_framework_version": "2.1.4",
+      "started_at": "2026-04-21T14:12:00.000Z",
+      "finished_at": "2026-04-21T14:13:10.000Z",
+      "duration_ms": 70000,
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "errored": 0,
+      "skipped": 0,
+      "ci": {
+        "provider": "github",
+        "git_sha": "deadbeef",
+        "git_branch": "feat/checkout-v2"
+      },
+      "created_at": "2026-04-21T14:13:10.000Z",
+      "cases": [
+        {
+          "case_id": "case_v01",
+          "run_id": "run_vitest_2026_04_21",
+          "name": "accepts valid card",
+          "file": "tests/checkout.test.ts",
+          "status": "passed",
+          "duration_ms": 9400,
+          "user_input": "Pay with card 4111 ... 1111.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Pay with card 4111 ... 1111."
+            },
+            {
+              "type": "function_call",
+              "name": "charge_card",
+              "arguments": {
+                "last4": "1111",
+                "amount_cents": 4999
+              },
+              "call_id": "c1"
+            },
+            {
+              "type": "function_call_output",
+              "output": "{\"ok\":true,\"txn_id\":\"tx_9a\"}",
+              "call_id": "c1"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "Charged $49.99 on the card ending in 1111. Confirmation tx_9a."
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "charges the correct amount",
+              "verdict": "pass",
+              "reasoning": "amount_cents=4999 matches catalog price."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-21T14:12:09.400Z"
+        },
+        {
+          "case_id": "case_v02",
+          "run_id": "run_vitest_2026_04_21",
+          "name": "rejects expired card",
+          "file": "tests/checkout.test.ts",
+          "status": "passed",
+          "duration_ms": 7100,
+          "user_input": "Try card 4000 ... 0036 exp 01/23.",
+          "events": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "Try card 4000 ... 0036 exp 01/23."
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "That card is expired. Please provide a different payment method."
+            }
+          ],
+          "judgments": [
+            {
+              "intent": "does not call charge_card for expired card",
+              "verdict": "pass",
+              "reasoning": "No function_call emitted."
+            }
+          ],
+          "failure": null,
+          "created_at": "2026-04-21T14:12:16.500Z"
+        }
+      ]
+    }
+  ]
+}

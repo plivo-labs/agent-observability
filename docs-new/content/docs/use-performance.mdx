@@ -1,0 +1,32 @@
+---
+title: usePerformance
+description: Extracts metrics + the MetricsSummary roll-up from the current session. Used by all the chart components to build their data series.
+---
+
+## Signature
+
+```ts
+usePerformance(): { metrics, summary }
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { usePerformance } from '@/lib/observability-hooks'
+
+function ToolCallCount() {
+  const { summary } = usePerformance()
+  if (!summary) return null
+  return <span>{summary.total_tool_calls} tool calls</span>
+}
+```
+
+## Returns
+
+```ts
+{ metrics: SessionMetrics | null, summary: MetricsSummary | null }
+```

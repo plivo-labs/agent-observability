@@ -1,0 +1,63 @@
+---
+title: Python — Judges
+description: The nine LiveKit-compatible judges shipped by agent-observability-sdk, plus the default_judges() composition helper. Drop them into a JudgeGroup or an agent-transport EvaluationConfig.
+---
+
+The SDK ships nine judges ported from cx-sqs-worker that plug straight into
+LiveKit's `JudgeGroup` alongside LiveKit's own built-ins. Seven are LLM-based
+factories; two are programmatic (no LLM call).
+
+## LLM-based (7 factories)
+
+Each returns a LiveKit `_LLMJudge` you pass straight to a `JudgeGroup`.
+
+| Judge | Required at construction | Purpose |
+|---|---|---|
+| `hallucination_judge(llm=…)` | — | Fabricated info in the response? |
+| `rigid_response_accuracy_judge(*, expected_response, llm=…)` | `expected_response` | Semantic match against an expected text. |
+| `freeflow_response_accuracy_judge(llm=…)` | — | Contextually appropriate in an open-ended conversation? |
+| `hold_requested_intent_accuracy_judge(llm=…)` | — | Was a "hold" / "wait" reply justified? |
+| `variable_extraction_judge(*, expected_variables, actual_variables, llm=…)` | `expected_variables`, `actual_variables` | Right values extracted, grounded in the transcript? |
+| `loop_detection_judge(llm=…)` | — | Agent repeating itself? |
+| `knowledge_base_correctness_judge(*, kb_context, llm=…)` | `kb_context` | KB lookup faithfully reflected? |
+
+## Programmatic (2 classes, no LLM call)
+
+| Judge | Required at construction | Purpose |
+|---|---|---|
+| `IntentAccuracyJudge(*, expected_intent, actual_intent)` | `expected_intent`, `actual_intent` | Case-insensitive string match. |
+| `ToolCorrectnessJudge(*, expected_tools, threshold=1.0)` | `expected_tools` | Auto-extracts `function_call` events from `chat_ctx`; set-membership scoring. |
+
+## Composition helper
+
+`default_judges(llm=None) -> list[Judge]` returns the four ground-truth-free
+judges — Hallucination, Freeflow Response Accuracy, Hold-Requested Intent
+Accuracy, Loop Detection — that work on any session in isolation. Spread it next
+to your own ground-truth-bound judges:
+
+```python
+from agent_observability.livekit.judges import (
+    default_judges,
+    IntentAccuracyJudge,
+    rigid_response_accuracy_judge,
+)
+from livekit.agents.evals import accuracy_judge
+
+judges = [
+    accuracy_judge(),                                            # LiveKit built-in
+    rigid_response_accuracy_judge(expected_response="…", llm=judge_llm),
+    IntentAccuracyJudge(expected_intent="book_flight", actual_intent=…),
+    *default_judges(llm=judge_llm),
+]
+```
+
+Use them in a raw-LiveKit worker via [`run_judges_on_report`](/python-raw-livekit),
+or pass them to an agent-transport [`EvaluationConfig`](/python-quickstart).
+
+## Not ported from cx-sqs-worker
+
+Two judges are intentionally absent — their prompts are tightly coupled to the
+cx-sqs-worker flow-graph runtime: `semi_rigid_response_accuracy` and
+`intent_detection`. Use `rigid_response_accuracy_judge` or
+`freeflow_response_accuracy_judge` for response evaluation, and
+`IntentAccuracyJudge` for closed-set intent checks.

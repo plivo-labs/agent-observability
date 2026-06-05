@@ -1,0 +1,37 @@
+---
+title: Metric Summary Cards
+description: A row of compact metric tiles for the headline observability numbers — turn count, avg latency, token totals. Small, dense, and meant to sit above the fold on the session detail page.
+---
+
+## Preview
+
+<ComponentPreview slug="metric-summary-cards" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="metric-summary-cards" />
+
+## Usage
+
+```tsx
+import { MetricSummaryCards } from '@/components/metric-summary-cards'
+
+// Inside a provider tree — reads the current session via context
+<MetricSummaryCards />
+
+// Or pass your own metrics
+<MetricSummaryCards metrics={customMetrics} />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description:
+        'Override the metrics resolved from provider context. Useful when rendering ad-hoc aggregates or in stories. Defaults to the current session’s metrics.',
+    },
+  ]}
+/>

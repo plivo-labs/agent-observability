@@ -1,0 +1,17 @@
+---
+title: Quickstart
+description: Run the Agent Observability server. It receives session reports from the agent-transport SDKs, stores them in Postgres, and serves the dashboard UI.
+---
+
+Clone the repo and bring up Postgres + the app together. Migrations apply
+automatically on startup; the dashboard is on `:9090`.
+
+```bash
+git clone https://github.com/plivo-labs/agent-observability
+cd agent-observability
+docker compose up --build
+```
+
+That's it for most users. If you want to hack on the code instead, see
+[the repo README](https://github.com/plivo-labs/agent-observability#development)
+for the Bun-based dev flow.

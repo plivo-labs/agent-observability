@@ -1,0 +1,32 @@
+---
+title: useEvents
+description: Raw session events (function calls, agent_state_changed, speech_created, etc.) as captured by the SDK. Returns null if the provider has not loaded a session yet.
+---
+
+## Signature
+
+```ts
+useEvents(): SessionEvent[] | null
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { useEvents } from '@/lib/observability-hooks'
+
+function FunctionCallCount() {
+  const events = useEvents()
+  const n = events?.filter((e) => e.type === 'function_call').length ?? 0
+  return <span>{n} tool invocations</span>
+}
+```
+
+## Returns
+
+```ts
+SessionEvent[] | null
+```

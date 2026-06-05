@@ -1,0 +1,53 @@
+---
+title: Eval Run Detail Page
+description: 'Single-run breakdown: pass-rate hero tile, passed/failed/errored/skipped counters, CI metadata, and a cases table with a drawer for per-case transcript and judgments.'
+---
+
+## Preview
+
+<ComponentPreview slug="eval-run-detail-page" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="eval-run-detail-page" />
+
+## Usage
+
+```tsx
+import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
+import { useParams } from 'react-router'
+
+export function EvalRunDetailRoute() {
+  const { runId } = useParams<{ runId: string }>()
+  if (!runId) return null
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <EvalRunDetailPage
+        runId={runId}
+        // Omit onCaseClick to use the built-in drawer; provide it to
+        // route to a standalone case page instead.
+      />
+    </AgentObservabilityProvider>
+  )
+}
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'runId',
+      type: 'string',
+      required: true,
+      description: 'The run to load and display. Typically read from the route.',
+    },
+    {
+      name: 'onCaseClick',
+      type: '(caseId: string) => void',
+      description:
+        'Called when a row in the cases table is clicked. When omitted, the page opens a Sheet drawer with EvalCaseDetailPage inline; when provided, the drawer is suppressed so you can route to a full page instead.',
+    },
+  ]}
+/>

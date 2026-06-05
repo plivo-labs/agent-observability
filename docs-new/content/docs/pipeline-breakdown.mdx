@@ -1,0 +1,32 @@
+---
+title: Pipeline Breakdown
+description: Per-turn pipeline breakdown — STT vs LLM vs TTS vs network. Makes it obvious which stage dominates end-to-end latency.
+---
+
+## Preview
+
+<ComponentPreview slug="pipeline-breakdown" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="pipeline-breakdown-chart" />
+
+## Usage
+
+```tsx
+import { PipelineBreakdownChart } from '@/components/pipeline-breakdown-chart'
+
+;<PipelineBreakdownChart />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description: 'Override the metrics resolved from provider context.',
+    },
+  ]}
+/>

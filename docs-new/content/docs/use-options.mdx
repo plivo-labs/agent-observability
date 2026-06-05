@@ -1,0 +1,32 @@
+---
+title: useOptions
+description: Snapshot of the agent configuration captured with the session — model IDs, voice settings, tool list, runtime options. Returns null before load.
+---
+
+## Signature
+
+```ts
+useOptions(): Record<string, unknown> | null
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { useOptions } from '@/lib/observability-hooks'
+
+function ModelBadge() {
+  const options = useOptions()
+  const model = (options as { llm?: { model?: string } } | null)?.llm?.model
+  return model ? <Badge>{String(model)}</Badge> : null
+}
+```
+
+## Returns
+
+```ts
+Record<string, unknown> | null
+```

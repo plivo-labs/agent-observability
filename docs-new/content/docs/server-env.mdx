@@ -1,0 +1,72 @@
+---
+title: Environment
+description: Configuration comes from environment variables. Only DATABASE_URL is required; basic auth, LiveKit Bearer auth, and S3 are opt-in and enable themselves when both vars in their pair are set.
+---
+
+<PropsTable
+  rows={[
+    {
+      name: 'DATABASE_URL',
+      required: true,
+      description:
+        'Postgres connection string. Example: postgres://user:password@localhost:5432/agent_observability',
+    },
+    {
+      name: 'PORT',
+      default: '9090',
+      description: 'HTTP port the server listens on.',
+    },
+    {
+      name: 'AUTO_MIGRATE',
+      default: 'true',
+      description:
+        'Run SQL migrations in migrations/ on startup. Set to false if you manage migrations externally (e.g. goose).',
+    },
+    {
+      name: 'AGENT_OBSERVABILITY_USER',
+      description: 'Basic-auth username. Paired with _PASS.',
+    },
+    {
+      name: 'AGENT_OBSERVABILITY_PASS',
+      description:
+        'Basic-auth password. When both user + pass are set, the dashboard API (/api/*) and the eval ingest route are gated; native ingest routes accept Basic credentials too (or a LiveKit Bearer JWT — see below).',
+    },
+    {
+      name: 'LIVEKIT_API_KEY',
+      description: 'LiveKit JWT issuer claim. Paired with _SECRET.',
+    },
+    {
+      name: 'LIVEKIT_API_SECRET',
+      description:
+        'LiveKit JWT HS256 signing secret. When both LIVEKIT_API_KEY and _SECRET are set, native ingest routes (recordings, OTLP) accept Bearer JWTs minted with this pair (payload must carry observability.write === true). Use the same pair the LiveKit SDK signs with on the agent side.',
+    },
+    {
+      name: 'S3_BUCKET',
+      description:
+        'Target bucket for uploaded audio recordings. S3 upload is enabled only when the bucket and credentials are all set.',
+    },
+    {
+      name: 'S3_REGION',
+      default: 'us-east-1',
+      description: 'AWS region for S3_BUCKET.',
+    },
+    {
+      name: 'S3_ACCESS_KEY_ID',
+      description: 'AWS access key ID.',
+    },
+    {
+      name: 'S3_SECRET_ACCESS_KEY',
+      description: 'AWS secret access key.',
+    },
+    {
+      name: 'S3_ENDPOINT',
+      description:
+        'Custom S3-compatible endpoint (e.g. MinIO). Leave blank for AWS S3.',
+    },
+    {
+      name: 'S3_PREFIX',
+      default: 'recordings',
+      description: 'Object-key prefix for uploaded recordings.',
+    },
+  ]}
+/>

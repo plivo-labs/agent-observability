@@ -4,11 +4,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
+      - 'docs-new/**'
       - 'packages/ui/registry/**'
       - 'packages/ui/package.json'
       - 'packages/ui/bun.lock'
-      - '.env.example'
       - '.github/workflows/docs.yml'
   workflow_dispatch: {}
 
@@ -34,16 +33,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install docs dependencies
-        working-directory: docs
+        working-directory: docs-new
         run: bun install --frozen-lockfile
 
       - name: Build docs
-        working-directory: docs
+        working-directory: docs-new
         run: bun run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/dist
+          path: docs-new/out
 
   deploy:
     needs: build

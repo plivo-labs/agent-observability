@@ -1,0 +1,54 @@
+'use client';
+import {
+  SearchDialog,
+  SearchDialogClose,
+  SearchDialogContent,
+  SearchDialogHeader,
+  SearchDialogIcon,
+  SearchDialogInput,
+  SearchDialogList,
+  SearchDialogOverlay,
+  type SharedProps,
+} from 'fumadocs-ui/components/dialog/search';
+import { useDocsSearch } from 'fumadocs-core/search/client';
+import { create } from '@orama/orama';
+import { useI18n } from 'fumadocs-ui/contexts/i18n';
+
+// Must match basePath/assetPrefix in next.config.mjs.
+const BASE = '/agent-observability';
+
+function initOrama() {
+  return create({
+    schema: { _: 'string' },
+    // https://docs.orama.com/docs/orama-js/supported-languages
+    language: 'english',
+  });
+}
+
+export default function DefaultSearchDialog(props: SharedProps) {
+  const { locale } = useI18n(); // (optional) for i18n
+  const { search, setSearch, query } = useDocsSearch({
+    type: 'static',
+    initOrama,
+    locale,
+    // Static export lives under the Pages subpath; the index is emitted at
+    // {basePath}/api/search. The static client's `from` option defaults to a
+    // root-relative '/api/search', which under GitHub Pages would resolve to
+    // example.github.io/api/search (404). Prefix it with the basePath.
+    from: `${BASE}/api/search`,
+  });
+
+  return (
+    <SearchDialog search={search} onSearchChange={setSearch} isLoading={query.isLoading} {...props}>
+      <SearchDialogOverlay />
+      <SearchDialogContent>
+        <SearchDialogHeader>
+          <SearchDialogIcon />
+          <SearchDialogInput />
+          <SearchDialogClose />
+        </SearchDialogHeader>
+        <SearchDialogList items={query.data !== 'empty' ? query.data : null} />
+      </SearchDialogContent>
+    </SearchDialog>
+  );
+}

@@ -1,0 +1,53 @@
+---
+title: Session Timeline
+description: Scrollable per-turn timeline synchronized with the recording. Each turn is a band with STT, LLM, and TTS segments; hover to scrub, click to jump.
+---
+
+## Preview
+
+<ComponentPreview slug="session-timeline" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="session-timeline" />
+
+## Usage
+
+```tsx
+import { SessionTimeline } from '@/components/session-timeline/session-timeline'
+
+<SessionTimeline />
+
+// Custom turn-click handling (e.g. scroll a sibling panel)
+<SessionTimeline onTurnClick={(n) => focusTurn(n)} />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description: 'Override per-turn metrics resolved from provider context.',
+    },
+    {
+      name: 'recordUrl',
+      type: 'string | null',
+      description:
+        'Recording URL. Override only when your audio URL does not ship with the session detail response.',
+    },
+    {
+      name: 'onTurnClick',
+      type: '(turnNumber: number) => void',
+      description:
+        'Handler for clicks on individual turn chips. Defaults to the provider’s setHighlightedTurn (which scrolls the transcript).',
+    },
+    {
+      name: 'sessionCreatedAt',
+      type: 'string',
+      description:
+        'ISO timestamp used to align the recording playback cursor with turn timestamps. Defaults to the session’s created_at.',
+    },
+  ]}
+/>

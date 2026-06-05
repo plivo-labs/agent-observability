@@ -1,0 +1,20 @@
+---
+title: Node — Configuration
+description: Environment variables read by the Node SDK across the LiveKit helpers and the Vitest reporter.
+---
+
+Configuration comes from environment variables. Only the URL is required.
+
+| Env var | Purpose |
+|---|---|
+| `LIVEKIT_OBSERVABILITY_URL` | Dashboard base URL (LiveKit-canonical name). Required by `initObservability` (throws if unset). |
+| `AGENT_OBSERVABILITY_URL` | Same purpose; `initObservability` accepts this as a fallback and mirrors it into `LIVEKIT_OBSERVABILITY_URL` so LiveKit's upload code picks it up. |
+| `AGENT_OBSERVABILITY_AGENT_ID` | Stable opaque agent identifier. Required on every upload. UUIDs strongly recommended over slugs. |
+| `AGENT_OBSERVABILITY_ACCOUNT_ID` | Multi-tenant account id. Optional. |
+| `AGENT_OBSERVABILITY_USER` / `_PASS` | Basic-auth credentials when the server enables auth. |
+| `AGENT_OBSERVABILITY_TIMEOUT` | Upload request timeout in seconds (default `10`). |
+| `AGENT_OBSERVABILITY_MAX_RETRIES` | Max upload attempts before falling back (default `3`). |
+| `AGENT_OBSERVABILITY_FALLBACK_DIR` | Directory for failed-upload JSON (defaults to `.vitest-cache/agent-observability`). |
+
+CI metadata (GitHub / GitLab / CircleCI / Buildkite) is auto-detected by the
+Vitest reporter from standard env vars.

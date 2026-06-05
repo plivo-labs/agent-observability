@@ -1,0 +1,21 @@
+---
+title: Python — Configuration
+description: Environment variables and CLI flags read by the Python SDK across the LiveKit helpers and the pytest plugin.
+---
+
+Configuration comes from environment variables; the pytest plugin also accepts
+matching CLI flags (flags win over env vars). Only the URL is required.
+
+| Env var | CLI flag | Purpose |
+|---|---|---|
+| `LIVEKIT_OBSERVABILITY_URL` | — | Dashboard base URL (LiveKit-canonical name). Required by `init_observability` (raises if unset). |
+| `AGENT_OBSERVABILITY_URL` | `--agent-observability-url` | Same purpose; `init_observability` accepts this as a fallback and mirrors it into `LIVEKIT_OBSERVABILITY_URL` so LiveKit's upload code picks it up. |
+| `AGENT_OBSERVABILITY_AGENT_ID` | `--agent-observability-agent-id` | Stable opaque agent identifier. Strongly recommended — without it the session lands unparented on the dashboard. UUIDs preferred over slugs. |
+| `AGENT_OBSERVABILITY_ACCOUNT_ID` | `--agent-observability-account-id` | Multi-tenant account id. Optional. |
+| `AGENT_OBSERVABILITY_USER` / `_PASS` | — | Basic-auth credentials when the server enables auth. Optional. |
+| `AGENT_OBSERVABILITY_TIMEOUT` | `--agent-observability-timeout` | Upload request timeout in seconds (default `10`). |
+| `AGENT_OBSERVABILITY_MAX_RETRIES` | `--agent-observability-max-retries` | Max upload attempts before falling back (default `3`). |
+| `AGENT_OBSERVABILITY_FALLBACK_DIR` | `--agent-observability-fallback-dir` | Directory for failed-upload JSON (defaults to `.pytest_cache/agent-observability`). |
+
+CI metadata (GitHub / GitLab / CircleCI / Buildkite) is auto-detected by the
+pytest plugin from standard env vars — no configuration needed.

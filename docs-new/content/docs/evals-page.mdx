@@ -1,0 +1,42 @@
+---
+title: Evals Page
+description: Tabular index of eval runs across your pytest / vitest suites. Pass-rate meters, framework badges, CI commit trail, and drill-in navigation.
+---
+
+## Preview
+
+<ComponentPreview slug="evals-page" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="evals-page" />
+
+## Usage
+
+```tsx
+import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { EvalsPage } from '@/components/evals-page'
+import { useNavigate } from 'react-router'
+
+export function EvalsRoute() {
+  const navigate = useNavigate()
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <EvalsPage onRunClick={(id) => navigate(`/evals/${id}`)} />
+    </AgentObservabilityProvider>
+  )
+}
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'onRunClick',
+      type: '(runId: string) => void',
+      description:
+        'Fires when a row is clicked. Wire it up to your router for navigation to the eval-run detail page. Omit to render a non-interactive list.',
+    },
+  ]}
+/>

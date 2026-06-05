@@ -1,0 +1,34 @@
+---
+title: Session Detail Page
+description: Full drill-in view for a single session. Combines the session header, a tabbed timeline / transcript / events / config / performance layout, and the recording player.
+---
+
+## Preview
+
+<ComponentPreview slug="session-detail-page" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="session-detail-page" />
+
+## Usage
+
+```tsx
+import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { SessionDetailPage } from '@/components/session-detail-page'
+import { useParams } from 'react-router'
+
+export function SessionDetailRoute() {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  return (
+    <AgentObservabilityProvider
+      baseUrl="https://observability.example.com/api"
+      sessionId={sessionId}
+    >
+      {/* SessionDetailPage uses the breadcrumb in AgentScopeHeader at
+          the top — no back-prop wiring needed. */}
+      <SessionDetailPage />
+    </AgentObservabilityProvider>
+  )
+}
+```

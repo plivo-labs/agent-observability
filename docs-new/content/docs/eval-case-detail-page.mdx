@@ -1,0 +1,60 @@
+---
+title: Eval Case Detail
+description: Single-case drill-in — header with status chip, metric tiles (avg TTFT / speaking time / turn count), user input, full transcript, judgments list, and a collapsible failure block. Ships rendered inside the EvalRunDetailPage drawer by default; reuse it directly when you want a standalone route.
+---
+
+## Preview
+
+<ComponentPreview slug="eval-case-detail-page" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="eval-case-detail-page" />
+
+## Usage
+
+```tsx
+import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
+import { useNavigate, useParams } from 'react-router'
+
+export function EvalCaseRoute() {
+  const { runId, caseId } = useParams<{ runId: string; caseId: string }>()
+  const navigate = useNavigate()
+  if (!runId || !caseId) return null
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <EvalCaseDetailPage
+        runId={runId}
+        caseId={caseId}
+        onBack={() => navigate(`/evals/${runId}`)}
+      />
+    </AgentObservabilityProvider>
+  )
+}
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'runId',
+      type: 'string',
+      required: true,
+      description: 'Run that owns the case.',
+    },
+    {
+      name: 'caseId',
+      type: 'string',
+      required: true,
+      description: 'The case to load.',
+    },
+    {
+      name: 'onBack',
+      type: '() => void',
+      description:
+        'Handler for the drawer close / back-to-run action. Omit to render without a back control.',
+    },
+  ]}
+/>
