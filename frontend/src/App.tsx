@@ -39,6 +39,12 @@ const useDarkMode = () => {
   return [dark, () => setDark((d) => !d)] as const
 }
 
+const NavLink = ({ to, active, icon, label }: { to: string; active: boolean; icon: React.ReactNode; label: string }) => (
+  <Link to={to} className={`obs-side-link${active ? ' active' : ''}`}>
+    {icon}<span className="obs-side-linktext">{label}</span>
+  </Link>
+)
+
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
   const { pathname } = useLocation()
@@ -52,12 +58,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   const isEvalsActive = pathname.startsWith('/evals')
   const isLibraryActive = pathname.startsWith('/library')
   const isSchedulesActive = pathname.startsWith('/schedules')
-
-  const NavLink = ({ to, active, icon, label }: { to: string; active: boolean; icon: React.ReactNode; label: string }) => (
-    <Link to={to} className={`obs-side-link${active ? ' active' : ''}`}>
-      {icon}<span className="obs-side-linktext">{label}</span>
-    </Link>
-  )
 
   return (
     <div className="obs-app">
