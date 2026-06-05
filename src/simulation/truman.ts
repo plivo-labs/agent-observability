@@ -198,9 +198,13 @@ export async function fetchVoices(): Promise<any[]> {
   }
 }
 
-/** Stream a finished run's recording through AO (so the Truman token isn't exposed). */
-export async function trumanAudioUpstream(runId: string): Promise<Response> {
+/** Stream a finished run's recording through AO (so the Truman token isn't exposed).
+ *  Forwards the client's `Range` header so a terminal recording (served by
+ *  Truman as a complete FileResponse) can be range-seeked — the upstream then
+ *  replies 206 Partial Content with Content-Range/Accept-Ranges. */
+export async function trumanAudioUpstream(runId: string, range?: string): Promise<Response> {
   return fetch(`${base()}/v1/runs/${runId}/audio.ogg?token=${encodeURIComponent(config.TRUMAN_API_TOKEN ?? "")}`, {
+    headers: range ? { range } : undefined,
     signal: AbortSignal.timeout(30_000),
   });
 }

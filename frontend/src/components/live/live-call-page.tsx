@@ -14,6 +14,7 @@ import {
   type Agent, type CallBatchResult, type LiveMode, type Persona, type Rubric, type Turn,
 } from '../simulate/sim-data'
 import { useLiveCall } from './use-live-call'
+import { AudioPlayer } from '@/components/run-detail/audio-player'
 import { readLiveRun, writeLiveRun, clearLiveRun } from '../simulate/run-persistence'
 
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
@@ -493,7 +494,7 @@ export function LiveCallPage() {
                     <div className="ao-panel-head">
                       <div className="ao-panel-title"><FileCode /> Recording</div>
                     </div>
-                    <div className="ao-panel-body"><audio controls preload="none" src={c.recordingUrl} className="w-full" /></div>
+                    <div className="ao-panel-body"><AudioPlayer src={c.recordingUrl} /></div>
                   </section>
                 )}
                 {c.error && (

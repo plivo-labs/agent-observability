@@ -147,12 +147,23 @@ export function registerSimulationRoutes(app: Hono) {
   });
 
   // Proxy a finished call's recording from Truman (keeps the Truman token server-side).
+  // Forwards the client's Range request and mirrors back the upstream status
+  // (e.g. 206 Partial Content) + range headers (Accept-Ranges / Content-Range /
+  // Content-Length / Content-Type) so terminal recordings are seekable and the
+  // browser learns the duration up front (no more scrubber-starts-at-the-end).
   app.get("/api/calls/audio/:runId", async (c) => {
     if (!trumanEnabled) return c.json(buildErrorResponse("not_available", "Real calling is not enabled"), 404);
     try {
-      const upstream = await trumanAudioUpstream(c.req.param("runId"));
+      const range = c.req.header("range");
+      const upstream = await trumanAudioUpstream(c.req.param("runId"), range);
+      // Accept any 2xx including 206; only bail on a real error / empty body.
       if (!upstream.ok || !upstream.body) return c.json(buildErrorResponse("no_recording", "Recording unavailable"), 404);
-      return new Response(upstream.body, { headers: { "content-type": "audio/ogg" } });
+      const headers = new Headers({ "content-type": upstream.headers.get("content-type") ?? "audio/ogg" });
+      for (const h of ["accept-ranges", "content-range", "content-length", "cache-control"]) {
+        const v = upstream.headers.get(h);
+        if (v) headers.set(h, v);
+      }
+      return new Response(upstream.body, { status: upstream.status, headers });
     } catch (e) {
       return c.json(buildErrorResponse("audio_failed", (e as Error).message), 502);
     }

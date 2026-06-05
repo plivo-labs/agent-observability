@@ -17,8 +17,8 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,9 +44,10 @@ def _auth(token: str) -> None:
 @router.get("/{run_id}/audio.ogg")
 async def run_audio_ogg(
     run_id: uuid.UUID,
+    request: Request,
     token: str = Query(..., description="TRUMAN_API_TOKEN"),
     session: AsyncSession = Depends(get_session),
-) -> StreamingResponse:
+):
     _auth(token)
 
     run = (
@@ -69,6 +70,20 @@ async def run_audio_ogg(
 
     terminal = run.status in {"done", "failed"}
 
+    # Terminal run + a finished file on disk: serve the COMPLETE file so the
+    # browser gets Content-Length + Accept-Ranges and can range-seek. The OGG
+    # is no longer growing, so its byte length is the true duration the player
+    # needs up front — this is what fixes the scrubber-starts-at-the-end bug.
+    # FileResponse handles Range / Content-Range / 206 automatically.
+    if terminal:
+        return FileResponse(
+            path,
+            media_type="audio/ogg",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+
+    # In-progress run: the file is still being written and has no known final
+    # length, so keep tail-streaming it as a chunked body (no range support).
     async def stream():
         last_size = 0
         idle = 0.0
