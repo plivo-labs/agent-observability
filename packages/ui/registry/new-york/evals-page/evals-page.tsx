@@ -152,6 +152,10 @@ const COL = {
 // Monitor → Sessions list header so both tables read identically.
 function EvalListHeader({ table }: { table: Table<EvalRunRow> }) {
   const labelCls = 'text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80'
+  // Gate header labels on the same column visibility the rows use, so toggling a
+  // column in the View menu hides the label AND the cell, keeping them aligned.
+  const visible = new Set(table.getVisibleLeafColumns().map((c) => c.id))
+  const showFramework = visible.has('framework') || visible.has('testing_framework')
   return (
     <div className="flex items-center gap-3 border-b border-border px-3 pb-1.5" style={{ fontFamily: 'var(--mono)' }}>
       <div className={COL.select}>
@@ -169,12 +173,12 @@ function EvalListHeader({ table }: { table: Table<EvalRunRow> }) {
         />
       </div>
       <span className={cn(COL.run, labelCls)}>Run</span>
-      <span className={cn(COL.framework, labelCls)}>Framework</span>
+      {showFramework && <span className={cn(COL.framework, labelCls)}>Framework</span>}
       <span className={cn(COL.verdict, labelCls)}>Verdict</span>
-      <span className={cn(COL.passRate, labelCls)}>Pass rate</span>
-      <span className={cn(COL.cases, labelCls)}>Cases</span>
-      <span className={cn(COL.duration, labelCls)}>Duration</span>
-      <span className={cn(COL.started, labelCls)}>Started</span>
+      {visible.has('pass_rate') && <span className={cn(COL.passRate, labelCls)}>Pass rate</span>}
+      {visible.has('total') && <span className={cn(COL.cases, labelCls)}>Cases</span>}
+      {visible.has('duration_ms') && <span className={cn(COL.duration, labelCls)}>Duration</span>}
+      {visible.has('started_at') && <span className={cn(COL.started, labelCls)}>Started</span>}
     </div>
   )
 }
@@ -189,6 +193,13 @@ function RunCard({
   const run = row.original
   const verdict = deriveVerdict(run)
   const title = run.agent_id || `Run ${run.run_id.slice(0, 8)}`
+  // Reflect the View menu (column-visibility) state: getVisibleCells() drops
+  // hidden columns, so gating each card field on its column id makes the
+  // toggles actually hide/show. Column ids come from the `columns` useMemo.
+  const visible = new Set(row.getVisibleCells().map((cell) => cell.column.id))
+  // Render the framework slot only when at least one of its two badges is on,
+  // so the xl: column doesn't reserve empty width when both are hidden.
+  const showFramework = visible.has('framework') || visible.has('testing_framework')
 
   return (
     <div
@@ -225,31 +236,47 @@ function RunCard({
         <span className="truncate text-sm text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
           {title}
         </span>
-        <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70" style={{ fontFamily: 'var(--mono)' }}>
-          {run.run_id.slice(0, 8)}
-        </span>
+        {visible.has('run_id') && (
+          <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70" style={{ fontFamily: 'var(--mono)' }}>
+            {run.run_id.slice(0, 8)}
+          </span>
+        )}
       </div>
-      <div className={COL.framework}>
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          <FrameworkBadge name={run.framework} version={run.framework_version} compact />
-          <TestingFrameworkBadge name={run.testing_framework} version={run.testing_framework_version} compact />
+      {showFramework && (
+        <div className={COL.framework}>
+          <div className="flex items-center gap-1.5 overflow-hidden">
+            {visible.has('framework') && (
+              <FrameworkBadge name={run.framework} version={run.framework_version} compact />
+            )}
+            {visible.has('testing_framework') && (
+              <TestingFrameworkBadge name={run.testing_framework} version={run.testing_framework_version} compact />
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <span className={cn(COL.verdict, 'truncate rounded-full border px-2 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide', verdict.tone)}>
         {verdict.label}
       </span>
-      <div className={COL.passRate}>
-        <PassRateBar passed={run.passed} total={run.total} />
-      </div>
-      <span className={cn(COL.cases, 'text-[10px] uppercase tracking-[0.16em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
-        {run.total} {run.total === 1 ? 'case' : 'cases'}
-      </span>
-      <span className={cn(COL.duration, 'text-[10px] tabular-nums text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
-        {formatDuration(run.duration_ms)}
-      </span>
-      <span className={cn(COL.started, 'truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }} title={formatDate(run.started_at)}>
-        {formatDate(run.started_at)}
-      </span>
+      {visible.has('pass_rate') && (
+        <div className={COL.passRate}>
+          <PassRateBar passed={run.passed} total={run.total} />
+        </div>
+      )}
+      {visible.has('total') && (
+        <span className={cn(COL.cases, 'text-[10px] uppercase tracking-[0.16em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+          {run.total} {run.total === 1 ? 'case' : 'cases'}
+        </span>
+      )}
+      {visible.has('duration_ms') && (
+        <span className={cn(COL.duration, 'text-[10px] tabular-nums text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+          {formatDuration(run.duration_ms)}
+        </span>
+      )}
+      {visible.has('started_at') && (
+        <span className={cn(COL.started, 'truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }} title={formatDate(run.started_at)}>
+          {formatDate(run.started_at)}
+        </span>
+      )}
     </div>
   )
 }

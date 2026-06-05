@@ -82,6 +82,11 @@ function SessionListHeader({
 }) {
   const labelCls =
     'text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80'
+  // Mirror the per-card visibility gate so header labels never drift out of
+  // sync with the cells beneath them when columns are toggled off in the View
+  // menu. `table.getVisibleLeafColumns()` reflects the same `columnVisibility`
+  // state `row.getVisibleCells()` reads in `SessionCard`.
+  const visible = new Set(table.getVisibleLeafColumns().map((c) => c.id))
   return (
     <div
       className="flex items-center gap-3 border-b border-border px-3 pb-1.5"
@@ -104,10 +109,10 @@ function SessionListHeader({
       <span className={cn(COL.session, labelCls)}>Session</span>
       <span className={COL.spacer} aria-hidden />
       <span className={cn(COL.pipeline, labelCls)}>Pipeline</span>
-      <span className={cn(COL.started, labelCls)}>Started</span>
-      <span className={cn(COL.turns, labelCls)}>Turns</span>
-      <span className={cn(COL.duration, labelCls)}>Duration</span>
-      <span className={cn(COL.transport, labelCls)}>Transport</span>
+      {visible.has('started_at') && <span className={cn(COL.started, labelCls)}>Started</span>}
+      {visible.has('turn_count') && <span className={cn(COL.turns, labelCls)}>Turns</span>}
+      {visible.has('duration_ms') && <span className={cn(COL.duration, labelCls)}>Duration</span>}
+      {visible.has('transport') && <span className={cn(COL.transport, labelCls)}>Transport</span>}
     </div>
   )
 }
@@ -130,6 +135,14 @@ function SessionCard({
     ? TRANSPORT_LABELS[session.transport] ?? session.transport
     : session.state
   const textOnly = session.transport === 'text' || session.transport === 'terminal_text'
+  // Column-visibility gate. `row.getVisibleCells()` already reflects the
+  // TanStack `columnVisibility` state the View menu toggles, so deriving the
+  // set of visible column ids here lets each card field honor the menu. Fields
+  // whose column id isn't in this set are dropped from the row. The session
+  // title is the card's anchor identity (not a hideable menu entry) and the
+  // pipeline/CapsChips maps to the `capabilities` display column, which has no
+  // accessor and so never appears in the View menu — both stay always-rendered.
+  const visible = new Set(row.getVisibleCells().map((cell) => cell.column.id))
 
   return (
     <div
@@ -178,18 +191,26 @@ function SessionCard({
           tts={!textOnly && session.has_tts}
         />
       </div>
-      <span className={cn(COL.started, 'truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }} title={formatDate(session.started_at)}>
-        {formatDate(session.started_at)}
-      </span>
-      <span className={cn(COL.turns, 'text-[10px] uppercase tracking-[0.16em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
-        {session.turn_count} {session.turn_count === 1 ? 'turn' : 'turns'}
-      </span>
-      <span className={cn(COL.duration, 'text-[10px] tabular-nums text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
-        {formatDuration(session.duration_ms)}
-      </span>
-      <span className={cn(COL.transport, 'truncate rounded-full border px-2 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border-border')}>
-        {pill}
-      </span>
+      {visible.has('started_at') && (
+        <span className={cn(COL.started, 'truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }} title={formatDate(session.started_at)}>
+          {formatDate(session.started_at)}
+        </span>
+      )}
+      {visible.has('turn_count') && (
+        <span className={cn(COL.turns, 'text-[10px] uppercase tracking-[0.16em] text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+          {session.turn_count} {session.turn_count === 1 ? 'turn' : 'turns'}
+        </span>
+      )}
+      {visible.has('duration_ms') && (
+        <span className={cn(COL.duration, 'text-[10px] tabular-nums text-muted-foreground')} style={{ fontFamily: 'var(--mono)' }}>
+          {formatDuration(session.duration_ms)}
+        </span>
+      )}
+      {visible.has('transport') && (
+        <span className={cn(COL.transport, 'truncate rounded-full border px-2 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border-border')}>
+          {pill}
+        </span>
+      )}
     </div>
   )
 }
