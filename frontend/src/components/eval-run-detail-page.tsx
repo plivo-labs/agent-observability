@@ -13,6 +13,7 @@
 import { useMemo } from 'react'
 import { parseAsString, useQueryState } from 'nuqs'
 import {
+  Activity,
   AlertTriangle,
   ArrowLeft,
   AudioLines,
@@ -192,6 +193,22 @@ function CaseSummary({ c }: { c: EvalCaseRow }) {
                 </div>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Cost — live-call cases only (joined from sim_live_calls.cost).
+          Mirrors the Live suite report's Cost section layout/labels. */}
+      {c.cost && (
+        <div className="ao-panel">
+          <div className="ao-panel-head">
+            <SectionTitle icon={<Activity size={16} className="text-muted-foreground" />} title="Cost" hint="per-call usage breakdown" />
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 p-4 text-sm">
+            {[['LLM tokens', c.cost.llm_tokens.toLocaleString()], ['TTS chars', c.cost.tts_chars.toLocaleString()], ['STT secs', `${c.cost.stt_seconds}`], ['Call secs', `${c.cost.call_seconds}`]].map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between"><span className="text-muted-foreground">{k}</span><span className="font-mono text-xs">{v}</span></div>
+            ))}
+            <div className="col-span-2 mt-1 flex items-center justify-between border-t border-border pt-2"><span className="text-muted-foreground">Total</span><span className="font-semibold">{c.cost.cents}¢</span></div>
           </div>
         </div>
       )}

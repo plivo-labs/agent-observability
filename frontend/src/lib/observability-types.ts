@@ -317,6 +317,8 @@ export interface EvalCaseRow {
   failure: Failure | null
   /** Audio recording proxy URL (live-call cases only); null/absent otherwise. */
   recording_url?: string | null
+  /** Per-call cost breakdown (live-call cases only); null/absent otherwise. */
+  cost?: { llm_tokens: number; tts_chars: number; stt_seconds: number; call_seconds: number; cents: number } | null
   created_at: string
 }
 

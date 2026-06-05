@@ -148,23 +148,33 @@ export async function getEvalRun(runId: string): Promise<any | null> {
   return row;
 }
 
+// live-call cost lives on `sim_live_calls.cost` (JSONB), not on `eval_cases`.
+// The run was persisted from a live suite, so join back through
+// `sim_live_suites.eval_run_id = eval_cases.run_id` and match the call by
+// `persona_name = eval_cases.name`. Non-live runs have no match → cost is null.
 export async function listEvalCases(runId: string): Promise<any[]> {
   const rows = await sql`
-    SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, recording_url, created_at
-    FROM eval_cases
-    WHERE run_id = ${runId}
-    ORDER BY created_at ASC
+    SELECT ec.case_id, ec.run_id, ec.name, ec.file, ec.status, ec.duration_ms,
+           ec.user_input, ec.events, ec.judgments, ec.failure, ec.recording_url,
+           ec.created_at, lc.cost
+    FROM eval_cases ec
+    LEFT JOIN sim_live_suites ls ON ls.eval_run_id = ec.run_id
+    LEFT JOIN sim_live_calls lc ON lc.suite_id = ls.id AND lc.persona_name = ec.name
+    WHERE ec.run_id = ${runId}
+    ORDER BY ec.created_at ASC
   `;
   return rows.map(decodeCaseJsonb);
 }
 
 export async function getEvalCase(runId: string, caseId: string): Promise<any | null> {
   const rows = await sql`
-    SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, recording_url, created_at
-    FROM eval_cases
-    WHERE run_id = ${runId} AND case_id = ${caseId}
+    SELECT ec.case_id, ec.run_id, ec.name, ec.file, ec.status, ec.duration_ms,
+           ec.user_input, ec.events, ec.judgments, ec.failure, ec.recording_url,
+           ec.created_at, lc.cost
+    FROM eval_cases ec
+    LEFT JOIN sim_live_suites ls ON ls.eval_run_id = ec.run_id
+    LEFT JOIN sim_live_calls lc ON lc.suite_id = ls.id AND lc.persona_name = ec.name
+    WHERE ec.run_id = ${runId} AND ec.case_id = ${caseId}
     LIMIT 1
   `;
   return rows[0] ? decodeCaseJsonb(rows[0]) : null;
@@ -235,6 +245,8 @@ function decodeCaseJsonb(row: any): any {
     events: typeof row.events === "string" ? JSON.parse(row.events) : row.events,
     judgments: typeof row.judgments === "string" ? JSON.parse(row.judgments) : row.judgments,
     failure: typeof row.failure === "string" ? JSON.parse(row.failure) : row.failure,
+    // live-call cost (JSONB via the join); null for non-live runs.
+    cost: row.cost == null ? null : typeof row.cost === "string" ? JSON.parse(row.cost) : row.cost,
   };
 }
 
