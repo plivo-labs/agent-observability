@@ -2,7 +2,7 @@
  * Play/pause + a progress bar that fills as it plays, click/drag to seek,
  * current/total time, and a speed toggle. Used wherever a call recording is
  * played (Evals run/case detail, Live). On-theme (Neo tokens). */
-import { Pause, Play } from 'lucide-react'
+import { AudioLines, Pause, Play } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +22,7 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
   const [cur, setCur] = useState(0)
   const [dur, setDur] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(0)
+  const [error, setError] = useState(false)
 
   const toggle = () => {
     const a = ref.current
@@ -58,6 +59,13 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
 
   return (
     <div className={cn('flex items-center gap-3 rounded-[var(--radius)] border bg-card px-3 py-2.5', className)}>
+      {error ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <AudioLines size={14} className="shrink-0 opacity-60" />
+          <span>Recording unavailable — it may have expired or the call didn’t record.</span>
+        </div>
+      ) : (
+        <>
       <button
         type="button"
         onClick={toggle}
@@ -97,17 +105,20 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
       >
         {SPEEDS[speedIdx]}x
       </button>
+        </>
+      )}
 
       <audio
         ref={ref}
         src={src}
         preload="metadata"
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
+        onLoadedMetadata={(e) => { setDur(e.currentTarget.duration || 0); setError(false) }}
         onDurationChange={(e) => setDur(e.currentTarget.duration || 0)}
         onTimeUpdate={(e) => setCur(e.currentTarget.currentTime)}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
+        onError={() => setError(true)}
       />
     </div>
   )
