@@ -31,49 +31,14 @@ _VALID_LEVELS = ("flow", "agent", "task", "node")
 
 
 def _resolve_levels(loaded: Any) -> tuple[str, ...]:
-    """Derive the leveled-judge scopes from the run's judge.levels config.
+    """Leveled-judge scopes for a live-call run.
 
-    There is no dedicated column for this, so we read it (best-effort) from the
-    places a run's judge config can ride: the rubric's `criteria` container (if a
-    dict with a `levels`/`judge` key), or the scenario `tags` (a `levels:flow,task`
-    marker, or a bare `level:<name>` tag). Default → ("flow",), which is
-    byte-identical to today (no `scopes` block)."""
-
-    def _coerce(raw: Any) -> tuple[str, ...] | None:
-        seq: list[str] = []
-        if isinstance(raw, str):
-            seq = [p.strip() for p in raw.replace(",", " ").split()]
-        elif isinstance(raw, (list, tuple)):
-            seq = [str(p).strip() for p in raw]
-        else:
-            return None
-        seq = [s for s in seq if s in _VALID_LEVELS]
-        return tuple(dict.fromkeys(seq)) or None  # dedupe, preserve order
-
-    try:
-        rb = getattr(loaded, "rubric", None)
-        crit = getattr(rb, "criteria", None) if rb is not None else None
-        if isinstance(crit, dict):
-            judge_cfg = crit.get("judge") if isinstance(crit.get("judge"), dict) else None
-            raw = (judge_cfg or {}).get("levels") if judge_cfg else crit.get("levels")
-            coerced = _coerce(raw)
-            if coerced:
-                return coerced
-    except Exception:
-        log.exception("failed to read judge.levels from rubric")
-
-    try:
-        tags = getattr(getattr(loaded, "scenario", None), "tags", None) or []
-        for t in tags:
-            ts = str(t)
-            # `levels:flow,task` or a bare `level:<name>` — same handling.
-            if ts.startswith(("levels:", "level:")):
-                coerced = _coerce(ts.split(":", 1)[1])
-                if coerced:
-                    return coerced
-    except Exception:
-        log.exception("failed to read judge levels from scenario tags")
-
+    No producer emits per-run level config today — the Simulate path requests
+    scopes directly via POST /v1/judge — so this returns the flow-only default
+    (byte-identical to no `scopes` block). When a producer starts emitting levels
+    (e.g. a rubric/scenario field), parse `loaded` here and return the requested
+    subset of `_VALID_LEVELS`. The previous tag/rubric-dict parsing was removed
+    as dead code: nothing wrote those markers."""
     return ("flow",)
 
 logging.basicConfig(

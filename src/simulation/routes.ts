@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { simRequestSchema, generateRequestSchema, criterionSchema } from "./schema.js";
@@ -9,6 +9,19 @@ import { buildErrorResponse, newApiId } from "../response.js";
 import { config, trumanEnabled } from "../config.js";
 import { trumanHealthy, trumanAudioUpstream, takeoverStart, takeoverStop, endCall, fetchVoices } from "./truman.js";
 import { createLiveSuite, reconcileSuite } from "./live.js";
+
+/** Parse + zod-validate a JSON request body. Returns the typed data, or a ready
+ *  400 Response (invalid_json / invalid_payload) for the handler to return. */
+async function parseJsonBody<T>(c: Context, schema: z.ZodType<T>): Promise<{ data: T } | { error: Response }> {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return { error: c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400) }; }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; ");
+    return { error: c.json(buildErrorResponse("invalid_payload", msg), 400) };
+  }
+  return { data: parsed.data };
+}
 
 const callRequestSchema = z.object({
   prompt: z.string().min(1, "prompt (agent under test) is required"),
@@ -39,14 +52,10 @@ export function registerSimulationRoutes(app: Hono) {
   // Generate personas from a prompt — AI-tailored to the agent's weak spots
   // (LLM when configured, else prompt-derived demo). Preview-then-approve.
   app.post("/api/personas/generate", async (c) => {
-    let body: unknown;
-    try { body = await c.req.json(); } catch { return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400); }
-    const parsed = generateRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json(buildErrorResponse("invalid_payload", parsed.error.issues.map((i) => i.message).join("; ")), 400);
-    }
+    const r = await parseJsonBody(c, generateRequestSchema);
+    if ("error" in r) return r.error;
     try {
-      const { engine, personas } = await generatePersonas(parsed.data.prompt, parsed.data.count, parsed.data.types as PersonaType[]);
+      const { engine, personas } = await generatePersonas(r.data.prompt, r.data.count, r.data.types as PersonaType[]);
       return c.json({ api_id: newApiId(), engine, personas });
     } catch (e) {
       console.error(`[sim] generate failed: ${(e as Error).message}`);
@@ -161,19 +170,10 @@ export function registerSimulationRoutes(app: Hono) {
 
   // Run a simulation from a pasted prompt (or YAML) + selected personas.
   app.post("/api/simulations", async (c) => {
-    let body: unknown;
+    const r = await parseJsonBody(c, simRequestSchema);
+    if ("error" in r) return r.error;
     try {
-      body = await c.req.json();
-    } catch {
-      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
-    }
-    const parsed = simRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; ");
-      return c.json(buildErrorResponse("invalid_payload", msg), 400);
-    }
-    try {
-      const result = await runSimulation(parsed.data);
+      const result = await runSimulation(r.data);
       console.log(`[sim] run ${result.runId} engine=${result.engine} agent="${result.agentName}" cases=${result.cases.length} overall=${result.overall}`);
       // Persist into the Evals tab (best-effort — never fail the sim on this).
       const evalRunId = await persistSimRun(result);
@@ -191,17 +191,8 @@ export function registerSimulationRoutes(app: Hono) {
   // engine's events into the in-memory job registry. The client polls
   // GET /api/simulations/jobs/:id to drive its live UI and to resume on mount.
   app.post("/api/simulations/jobs", async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
-    }
-    const parsed = simRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; ");
-      return c.json(buildErrorResponse("invalid_payload", msg), 400);
-    }
+    const r = await parseJsonBody(c, simRequestSchema);
+    if ("error" in r) return r.error;
 
     const jobId = randomUUID();
     createJob(jobId);
@@ -228,7 +219,7 @@ export function registerSimulationRoutes(app: Hono) {
     // Kick off in the BACKGROUND — do NOT await before responding.
     void (async () => {
       try {
-        const result = await runSimulation(parsed.data, controller.signal, onEvent);
+        const result = await runSimulation(r.data, controller.signal, onEvent);
         console.log(`[sim] job ${jobId} run ${result.runId} engine=${result.engine} agent="${result.agentName}" cases=${result.cases.length} overall=${result.overall}`);
         const runId = await persistSimRun(result); // best-effort — never fail the job on this
         if (runId) console.log(`[sim] job ${jobId} persisted as eval run ${runId}`);
