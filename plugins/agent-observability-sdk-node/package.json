@@ -1,6 +1,6 @@
 {
   "name": "agent-observability-sdk",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Node SDK for agent-observability: LiveKit-native tag/url helpers and the Vitest reporter for shipping eval results to the dashboard",
   "keywords": [
     "livekit",
