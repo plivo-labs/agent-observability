@@ -1,4 +1,4 @@
-import { ClipboardCheck, Download, Hash, Radio } from 'lucide-react'
+import { ClipboardCheck, Download, Hash } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import type { AgentSessionRow } from '@/lib/observability-types'
@@ -38,7 +38,6 @@ export const SessionHeader = ({
   const session = sessionProp ?? hookSession
   if (!session) return null
 
-  const isLive = session.state !== 'ended'
   const stateLabel = session.state
     ? session.state.charAt(0).toUpperCase() + session.state.slice(1)
     : 'Unknown'
@@ -54,17 +53,12 @@ export const SessionHeader = ({
   return (
     <header className="ao-hero ao-reveal">
       <div className="min-w-0">
-        <div className="ao-hero-eyebrow">
-          <Radio /> Session
-        </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="ao-hero-title flex items-center gap-2 break-all font-mono !text-[22px] tracking-tight">
             <Hash size={18} className="shrink-0 text-[hsl(var(--tertiary))]" />
             {session.session_id}
           </h1>
-          <span className={`ao-badge ao-badge--dot ${isLive ? 'is-success is-pulse' : 'is-neutral'}`}>
-            {stateLabel}
-          </span>
+          <span className="ao-badge ao-badge--dot is-neutral">{stateLabel}</span>
         </div>
 
         <div className="mt-5 flex flex-wrap items-start gap-x-10 gap-y-4">

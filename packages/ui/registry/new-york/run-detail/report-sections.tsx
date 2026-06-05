@@ -184,7 +184,7 @@ function JudgeRow({ children, indent = 0, onClick }: { children: React.ReactNode
     : undefined
   return (
     <div
-      onClick={onClick}
+      onClick={interactive ? onClick : undefined}
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={onKeyDown}
@@ -251,7 +251,7 @@ export function LeveledJudgeBox({ tree, caseLabel, onJump }: {
                     <div className="min-w-0 flex-1">
                       <div className="text-muted-foreground">{nd.verdict}</div>
                       {onJump && nd.turn != null && (
-                        <button onClick={() => onJump(nd.turn!)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                        <button type="button" onClick={() => onJump(nd.turn!)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
                           <CornerDownRight size={12} /> Jump to turn {nd.turn + 1}
                         </button>
                       )}
@@ -303,7 +303,7 @@ export function FixesBox({ report }: { report: SimReport }) {
     <div className="ao-panel">
       <div className="ao-panel-head">
         <SectionTitle icon={<Wrench size={16} className="shrink-0 text-[hsl(var(--link))]" />} title="Recommended fixes" hint="suggested prompt / config changes" />
-        <button className="ao-btn ao-btn--outline ao-btn--sm" onClick={copyFixes} disabled={report.fixes.length === 0}>
+        <button type="button" className="ao-btn ao-btn--outline ao-btn--sm" onClick={copyFixes} disabled={report.fixes.length === 0}>
           {copied ? <Check size={13} /> : <CopyIcon size={13} />} {copied ? 'Copied ✓' : 'Copy'}
         </button>
       </div>

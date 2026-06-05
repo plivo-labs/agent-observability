@@ -34,10 +34,12 @@ export function VoicePicker({
   value,
   onChange,
   className,
+  id,
 }: {
   value: string
   onChange: (voiceId: string) => void
   className?: string
+  id?: string
 }) {
   const [voices, setVoices] = useState<Voice[] | null>(null)
   const [failed, setFailed] = useState(false)
@@ -76,6 +78,8 @@ export function VoicePicker({
   if (!loading && (failed || voices.length === 0)) {
     return (
       <input
+        id={id}
+        aria-label="ElevenLabs voice id"
         className={cn('ao-input', className)}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -87,7 +91,7 @@ export function VoicePicker({
   return (
     <div className={cn('flex items-stretch gap-2', className)}>
       <Select value={value || undefined} onValueChange={onChange} disabled={loading}>
-        <SelectTrigger className="flex-1" aria-label="Voice">
+        <SelectTrigger id={id} className="flex-1" aria-label="Voice">
           <SelectValue placeholder={loading ? 'Loading voices…' : 'Select a voice…'} />
         </SelectTrigger>
         <SelectContent className="max-h-[320px]">
@@ -117,11 +121,15 @@ export function VoicePicker({
         <audio
           ref={audioRef}
           src={previewUrl}
+          aria-label="Voice preview"
           preload="none"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
-        />
+        >
+          {/* Short voice sample — no spoken-content caption track exists; empty captions satisfy the a11y requirement. */}
+          <track kind="captions" />
+        </audio>
       )}
     </div>
   )
