@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { simRequestSchema, generateRequestSchema, criterionSchema } from "./schema.js";
 import { runSimulation, runCall, generatePersonas, PERSONA_CATALOG, type PersonaType, type SimEvent } from "./engine.js";
-import { createJob, getJob, updateJob } from "./jobs.js";
+import { createJob, getJob, updateJob, setJobController, cancelJob } from "./jobs.js";
 import { persistSimRun, persistCallRun, persistCallBatch } from "./persist.js";
 import { buildErrorResponse, newApiId } from "../response.js";
 import { config, trumanEnabled } from "../config.js";
@@ -251,6 +251,10 @@ export function registerSimulationRoutes(app: Hono) {
 
     const jobId = randomUUID();
     createJob(jobId);
+    // Abort handle so POST /jobs/:id/cancel actually stops the background run
+    // (not just the client's polling).
+    const controller = new AbortController();
+    setJobController(jobId, controller);
 
     // onEvent (sync per the engine contract) folds each event into the job state.
     const onEvent = (evt: SimEvent) => {
@@ -270,12 +274,18 @@ export function registerSimulationRoutes(app: Hono) {
     // Kick off in the BACKGROUND — do NOT await before responding.
     void (async () => {
       try {
-        const result = await runSimulation(parsed.data, undefined, onEvent);
+        const result = await runSimulation(parsed.data, controller.signal, onEvent);
         console.log(`[sim] job ${jobId} run ${result.runId} engine=${result.engine} agent="${result.agentName}" cases=${result.cases.length} overall=${result.overall}`);
         const runId = await persistSimRun(result); // best-effort — never fail the job on this
         if (runId) console.log(`[sim] job ${jobId} persisted as eval run ${runId}`);
         updateJob(jobId, (j) => { j.status = "done"; j.result = { ...result, evalRunId: runId } as any; j.runId = runId; });
       } catch (e) {
+        // A cancel() aborts the run → AbortError. cancelJob already flipped the
+        // status to "cancelled"; don't clobber it with an error.
+        if (controller.signal.aborted || (e as Error)?.name === "AbortError") {
+          console.log(`[sim] job ${jobId} cancelled`);
+          return;
+        }
         console.error(`[sim] job ${jobId} failed: ${(e as Error).message}`);
         updateJob(jobId, (j) => { j.status = "error"; j.error = "Simulation failed to run"; });
       }
@@ -292,5 +302,13 @@ export function registerSimulationRoutes(app: Hono) {
     const job = getJob(c.req.param("id"));
     if (!job) return c.json(buildErrorResponse("not_found", "Simulation job not found"), 404);
     return c.json(job);
+  });
+
+  // Cancel a running simulation job — aborts the background run (not just the
+  // client's polling). 404 when unknown / already terminal (nothing to cancel).
+  app.post("/api/simulations/jobs/:id/cancel", (c) => {
+    const ok = cancelJob(c.req.param("id"));
+    if (!ok) return c.json(buildErrorResponse("not_found", "No cancellable job"), 404);
+    return c.json({ api_id: newApiId(), cancelled: true });
   });
 }

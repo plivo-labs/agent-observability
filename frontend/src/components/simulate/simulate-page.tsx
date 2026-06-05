@@ -12,7 +12,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   DEFAULT_PROMPT, PERSONA_TYPES, PERSONAS, SIM_YAML, generatePersonas, listLibraryPersonas,
-  listRubrics, savePersonaToLibrary, startSimulationJob, getSimulationJob,
+  listRubrics, savePersonaToLibrary, startSimulationJob, getSimulationJob, cancelSimulationJob,
   type CaseStatus, type JobState, type JudgeTreeT, type Persona, type PersonaType, type Rubric, type Severity, type SimResult, type Turn,
 } from './sim-data'
 import { readSimRun, writeSimRun, clearSimRun } from './run-persistence'
@@ -918,6 +918,15 @@ export function SimulatePage() {
           pollingRef.current = null
           return
         }
+        if (job.status === 'cancelled') {
+          // Cancelled elsewhere (or a resumed run we'd already cancelled) — drop
+          // the handle and return to setup, no error banner.
+          clearSimRun()
+          jobIdRef.current = null
+          pollingRef.current = null
+          setPhase('setup')
+          return
+        }
       } catch (e) {
         // 404 → the server truly has no record of this job (expired / restart).
         // THEN, and only then, fall back to the Re-run offer.
@@ -967,10 +976,11 @@ export function SimulatePage() {
       .catch((e) => setError(e?.message ?? 'Simulation failed to start'))
   }
 
-  // Cancel an in-progress text simulation mid-run and return to setup. The
-  // server job keeps running (no cancel endpoint), but we drop our handle so it
-  // won't resume and clear the persisted blob.
+  // Cancel an in-progress text simulation mid-run and return to setup. Tell the
+  // server to abort the background run (best-effort), then drop our handle so it
+  // won't resume, and clear the persisted blob.
   const cancel = () => {
+    if (jobIdRef.current) void cancelSimulationJob(jobIdRef.current)
     jobIdRef.current = null; pollingRef.current = null
     clearSimRun()
     setResult(null); setError(null); setResumable(null); setLive([]); setStartedAt(null); setPhase('setup')

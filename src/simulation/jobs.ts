@@ -28,7 +28,7 @@ export interface JobCase {
 }
 export interface JobState {
   id: string;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "cancelled";
   startedAt: number;
   updatedAt: number;
   cases: JobCase[];
@@ -43,16 +43,19 @@ const MAX_JOBS = 50;
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 const jobs = new Map<string, JobState>();
+// Abort handles, kept OUT of JobState so the GET /jobs/:id JSON response stays
+// clean (an AbortController serializes to junk). One per running job.
+const controllers = new Map<string, AbortController>();
 
 /** Drop expired jobs, then (if still over the cap) the oldest by `updatedAt`. */
 function prune(): void {
   const now = Date.now();
   for (const [id, j] of jobs) {
-    if (now - j.updatedAt > TTL_MS) jobs.delete(id);
+    if (now - j.updatedAt > TTL_MS) { jobs.delete(id); controllers.delete(id); }
   }
   if (jobs.size <= MAX_JOBS) return;
   const ordered = [...jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-  for (const j of ordered.slice(0, jobs.size - MAX_JOBS)) jobs.delete(j.id);
+  for (const j of ordered.slice(0, jobs.size - MAX_JOBS)) { jobs.delete(j.id); controllers.delete(j.id); }
 }
 
 export function createJob(id: string): JobState {
@@ -65,6 +68,23 @@ export function createJob(id: string): JobState {
 
 export function getJob(id: string): JobState | undefined {
   return jobs.get(id);
+}
+
+/** Register the AbortController driving a running job so it can be cancelled. */
+export function setJobController(id: string, ctrl: AbortController): void {
+  controllers.set(id, ctrl);
+}
+
+/** Cancel a running job: abort its work and mark it `cancelled`. Returns false
+ *  if the job is unknown or already terminal (nothing to cancel). */
+export function cancelJob(id: string): boolean {
+  const j = jobs.get(id);
+  if (!j || j.status !== "running") return false;
+  controllers.get(id)?.abort();
+  controllers.delete(id);
+  j.status = "cancelled";
+  j.updatedAt = Date.now();
+  return true;
 }
 
 /** Mutate a job in place and bump `updatedAt`. No-op if the job is gone. */

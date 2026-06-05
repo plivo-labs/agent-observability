@@ -362,7 +362,7 @@ export interface JobCase {
 }
 export interface JobState {
   id: string
-  status: 'running' | 'done' | 'error'
+  status: 'running' | 'done' | 'error' | 'cancelled'
   startedAt: number
   updatedAt: number
   cases: JobCase[]
@@ -383,6 +383,14 @@ export async function startSimulationJob(req: SimRequest): Promise<{ jobId: stri
     throw new Error(msg)
   }
   return res.json()
+}
+
+/** Cancel a running simulation job server-side (aborts the background run).
+ *  Best-effort: a 404 (already finished / unknown) is fine to ignore. */
+export async function cancelSimulationJob(jobId: string): Promise<void> {
+  try {
+    await fetch(`/api/simulations/jobs/${jobId}/cancel`, { method: 'POST' })
+  } catch { /* ignore — we drop the local handle regardless */ }
 }
 
 /** Fetch a job's current state. Throws with `.notFound = true` on a 404 so the
