@@ -633,6 +633,20 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
   const failN = cases.length - result.passN
   const passRate = cases.length ? Math.round((result.passN / cases.length) * 100) : 0
 
+  // Download the full simulation report as JSON (score, pass rate, rubric axes,
+  // worst moments, fixes, leveled-judge tree, and every persona's transcript).
+  const exportReport = () => {
+    const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sim-report-${result.runId ?? 'run'}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="animate-in fade-in duration-300">
       <PageHeader
@@ -643,7 +657,7 @@ function ReportPhase({ result, onRerun }: { result: SimResult; onRerun: () => vo
           {result.engine === 'demo'
             ? <span className="ao-badge is-warning" title={result.note}><TriangleAlert size={13} /> Demo data</span>
             : <span className="ao-badge is-success ao-badge--dot">Live judge</span>}
-          <button type="button" className={btnOut}><Download size={15} /> Export</button>
+          <button type="button" className={btnOut} onClick={exportReport}><Download size={15} /> Export</button>
           <button type="button" className={btnOut} disabled={!result.evalRunId} onClick={() => result.evalRunId && navigate(`/evals/${result.evalRunId}`)}><GitPullRequest size={15} /> Open as eval</button>
           <button type="button" className={btnPrimary} onClick={onRerun}><RotateCw size={15} /> Re-run</button>
         </>} />
