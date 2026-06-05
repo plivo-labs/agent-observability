@@ -329,6 +329,16 @@ function buildJudgeTree(agentName: string, worst: SimCaseResult): JudgeTree {
   };
 }
 
+/** Build a verdict line from per-criterion results: surface the failing
+ *  justifications first (those are why it failed), else the passing summary.
+ *  Shared by the judge-tree producer here and persist.ts (scope reasons). */
+export function verdictOf(crits: ScopeCriterion[], passFallback: string, failFallback = passFallback): string {
+  if (!crits.length) return passFallback;
+  const failing = crits.filter((c) => !c.pass);
+  if (failing.length) return failing.map((c) => c.justification).filter(Boolean).join(" ") || failFallback;
+  return crits.map((c) => c.justification).filter(Boolean).join(" ") || passFallback;
+}
+
 /** Map the Python leveled-judge 'scopes' block into the EXISTING JudgeTree
  *  shape the frontend renders. PURE function — no IO. Used as the judge-tree
  *  PRODUCER whenever a real `scopes` block is present; `buildJudgeTree` above
@@ -351,14 +361,6 @@ export function buildJudgeTreeFromScopes(
   worst?: SimCaseResult,
 ): JudgeTree {
   const st = (overall: "pass" | "fail"): CaseStatus => (overall === "pass" ? "pass" : "fail");
-  // Build a verdict line from per-criterion results: surface the failing
-  // justifications first (those are why it failed), else the passing summary.
-  const verdictOf = (crits: ScopeCriterion[], passFallback: string, failFallback: string): string => {
-    if (!crits.length) return passFallback;
-    const failing = crits.filter((c) => !c.pass);
-    if (failing.length) return failing.map((c) => c.justification).filter(Boolean).join(" ") || failFallback;
-    return crits.map((c) => c.justification).filter(Boolean).join(" ") || passFallback;
-  };
 
   const caseLabel = worst?.personaName ?? agentName;
 

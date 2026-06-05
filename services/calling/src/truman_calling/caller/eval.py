@@ -66,11 +66,8 @@ def _resolve_levels(loaded: Any) -> tuple[str, ...]:
         tags = getattr(getattr(loaded, "scenario", None), "tags", None) or []
         for t in tags:
             ts = str(t)
-            if ts.startswith("levels:"):
-                coerced = _coerce(ts.split(":", 1)[1])
-                if coerced:
-                    return coerced
-            if ts.startswith("level:"):
+            # `levels:flow,task` or a bare `level:<name>` — same handling.
+            if ts.startswith(("levels:", "level:")):
                 coerced = _coerce(ts.split(":", 1)[1])
                 if coerced:
                     return coerced

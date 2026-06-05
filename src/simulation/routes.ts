@@ -1,5 +1,4 @@
 import type { Hono } from "hono";
-import { stream } from "hono/streaming";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { simRequestSchema, generateRequestSchema, criterionSchema } from "./schema.js";
@@ -184,51 +183,6 @@ export function registerSimulationRoutes(app: Hono) {
       console.error(`[sim] failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("sim_failed", "Simulation failed to run"), 500);
     }
-  });
-
-  // Streaming variant of /api/simulations — same body + validation, but streams
-  // the transcript as NDJSON (application/x-ndjson) so the UI can render turns as
-  // they're produced. One JSON object per line:
-  //   {"type":"start","cases":[{"index,personaName,personaType}, ...]}
-  //   {"type":"turn","caseIndex":N,"turn":{"role","t","ms"|null,"flag"|null}}
-  //   {"type":"case_done","caseIndex":N,"status":"pass"|"fail","score":N}
-  //   {"type":"done","runId":"<uuid|null>","result":{...full SimResult...}}
-  //   {"type":"error","message":"..."}
-  app.post("/api/simulations/stream", async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
-    }
-    const parsed = simRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; ");
-      return c.json(buildErrorResponse("invalid_payload", msg), 400);
-    }
-
-    c.header("content-type", "application/x-ndjson");
-    c.header("cache-control", "no-cache");
-    return stream(c, async (s) => {
-      const write = (evt: unknown) => s.write(JSON.stringify(evt) + "\n");
-      // onEvent is sync (per the engine contract); buffer the line writes via the
-      // streaming helper. Pending writes are awaited together at the boundaries.
-      const pending: Promise<unknown>[] = [];
-      const onEvent = (evt: SimEvent) => { pending.push(write(evt)); };
-      try {
-        const result = await runSimulation(parsed.data, undefined, onEvent);
-        await Promise.all(pending.splice(0));
-        console.log(`[sim] stream run ${result.runId} engine=${result.engine} agent="${result.agentName}" cases=${result.cases.length} overall=${result.overall}`);
-        // Persist into the Evals tab (best-effort — never fail the stream on this).
-        const runId = await persistSimRun(result);
-        if (runId) console.log(`[sim] persisted as eval run ${runId}`);
-        await write({ type: "done", runId, result });
-      } catch (e) {
-        await Promise.all(pending.splice(0)).catch(() => {});
-        console.error(`[sim] stream failed: ${(e as Error).message}`);
-        await write({ type: "error", message: "Simulation failed to run" });
-      }
-    });
   });
 
   // Server-side simulation JOB — makes a text sim RESUMABLE across refresh / nav.

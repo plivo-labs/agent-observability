@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { insertEvalRun } from "../evals/db.js";
 import type { EvalPayloadV0 } from "../evals/schema.js";
 import type { CallResult, JudgeScopes, SimResult } from "./engine.js";
+import { verdictOf } from "./engine.js";
 
 /* Build eval_case judgments[] for a judged case. These are loose JSON (the
  * Evals schema stores them as-is), so we just include a `scope` tag on each row.
@@ -35,15 +36,17 @@ function buildJudgments(input: {
     }
     // agent — one row per agent partition.
     for (const a of scopes.agent ?? []) {
-      rows.push({ name: a.label, scope: `agent:${a.agent_id}`, verdict: a.overall, score: a.score, reasoning: scopeReason(a.criteria, a.label) });
+      rows.push({ name: a.label, scope: `agent:${a.agent_id}`, verdict: a.overall, score: a.score, reasoning: verdictOf(a.criteria, a.label) });
     }
     // task — one row per task segment (carry the segment start as `turn`).
     for (const t of scopes.task ?? []) {
-      rows.push({ name: t.label, scope: `task:${t.task_id}`, verdict: t.overall, score: t.score, turn: t.turn_range?.[0], reasoning: scopeReason(t.criteria, t.label) });
+      rows.push({ name: t.label, scope: `task:${t.task_id}`, verdict: t.overall, score: t.score, turn: t.turn_range?.[0], reasoning: verdictOf(t.criteria, t.label) });
     }
     // node — one row per assistant turn (turn-anchored).
     for (const n of scopes.node ?? []) {
-      rows.push({ name: `turn ${n.turn_index}`, scope: `node:${n.turn_index}`, verdict: n.overall, turn: n.turn_index, reasoning: scopeReason(n.criteria, n.text?.slice(0, 80) ?? "") });
+      // Display the turn 1-based to match the judge-tree UI (`turn_index + 1`);
+      // the numeric `turn` + `scope` id stay 0-based for range matching.
+      rows.push({ name: `turn ${n.turn_index + 1}`, scope: `node:${n.turn_index}`, verdict: n.overall, turn: n.turn_index, reasoning: verdictOf(n.criteria, n.text?.slice(0, 80) ?? "") });
     }
     return rows;
   }
@@ -51,13 +54,6 @@ function buildJudgments(input: {
     return criteria.map((cr) => ({ name: cr.name, verdict: cr.pass ? "pass" : "fail", reasoning: cr.justification }));
   }
   return [{ name: "leveled_judge", scope: "flow", verdict: status, score, reasoning: summary }];
-}
-
-function scopeReason(crits: { name: string; pass: boolean; justification: string }[], fallback: string): string {
-  if (!crits?.length) return fallback;
-  const failing = crits.filter((c) => !c.pass);
-  const src = failing.length ? failing : crits;
-  return src.map((c) => c.justification).filter(Boolean).join(" ") || fallback;
 }
 
 /* Compact full-report blob persisted onto eval_runs.sim_report, so the Evals

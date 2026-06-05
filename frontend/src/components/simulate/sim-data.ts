@@ -150,6 +150,9 @@ export interface SimRequest {
   rubric?: { id?: string; name?: string; criteria?: RubricCriterion[]; pass_threshold?: number }
   autoGen: boolean
   threshold: number
+  /** Leveled-judge scopes to request. Omitted → backend defaults to ["flow"]
+   *  (no leveled block). Send all four to populate the Leveled judge tree. */
+  scopes?: ('flow' | 'agent' | 'task' | 'node')[]
 }
 
 /* ---------- live call (Truman model) ---------- */
@@ -404,75 +407,4 @@ export async function getSimulationJob(jobId: string): Promise<JobState> {
     throw err
   }
   return res.json()
-}
-
-/* ---------- streaming simulation (live transcript via NDJSON) ----------
- * POST /api/simulations/stream returns a newline-delimited JSON stream. Each
- * non-empty line is one event of the shape:
- *   {"type":"start","cases":[{"index":0,"personaName":"...","personaType":"..."}]}
- *   {"type":"turn","caseIndex":0,"turn":{"role":"user","t":"...","ms":null,"flag":null}}
- *   {"type":"case_done","caseIndex":0,"status":"pass","score":86}
- *   {"type":"done","runId":"<uuid|null>","result":{...full SimResult...}}
- *   {"type":"error","message":"..."}
- * Handlers are dispatched as events arrive; the AbortSignal cancels the fetch. */
-export interface StreamCaseMeta { index: number; personaName: string; personaType: string }
-export interface StreamHandlers {
-  onStart: (cases: StreamCaseMeta[]) => void
-  onTurn: (caseIndex: number, turn: Turn) => void
-  onCaseDone: (caseIndex: number, status: string, score: number) => void
-  onDone: (result: SimResult, runId: string | null) => void
-  onError: (msg: string) => void
-}
-
-export async function runSimulationStream(req: SimRequest, handlers: StreamHandlers, signal?: AbortSignal): Promise<void> {
-  const res = await fetch('/api/simulations/stream', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-    signal,
-  })
-  if (!res.ok || !res.body) {
-    let msg = `Simulation stream failed (${res.status})`
-    try { const e = await res.json(); msg = e?.error?.message ?? msg } catch { /* ignore */ }
-    throw new Error(msg)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  const dispatch = (line: string) => {
-    const trimmed = line.trim()
-    if (!trimmed) return
-    let evt: { type: string; [k: string]: unknown }
-    try { evt = JSON.parse(trimmed) } catch { return } // skip malformed lines
-    switch (evt.type) {
-      case 'start':
-        handlers.onStart((evt.cases as StreamCaseMeta[]) ?? [])
-        break
-      case 'turn':
-        handlers.onTurn(evt.caseIndex as number, evt.turn as Turn)
-        break
-      case 'case_done':
-        handlers.onCaseDone(evt.caseIndex as number, evt.status as string, evt.score as number)
-        break
-      case 'done':
-        handlers.onDone(evt.result as SimResult, (evt.runId as string | null) ?? null)
-        break
-      case 'error':
-        handlers.onError((evt.message as string) ?? 'Simulation failed')
-        break
-    }
-  }
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let nl: number
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl)
-      buf = buf.slice(nl + 1)
-      dispatch(line)
-    }
-  }
-  buf += decoder.decode()
-  if (buf) dispatch(buf) // flush any trailing line without a newline
 }

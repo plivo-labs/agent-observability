@@ -306,7 +306,11 @@ async def judge_chat_ctx(
     if "task" in leveled:
         segs = _task_slices(items)
         if len(segs) <= 1:
-            # single segment → expose each CRITERION as a task objective.
+            # single segment → expose each CRITERION as a task objective. NOTE:
+            # each such task unit is pinned to ONE criterion, so its overall/score
+            # is binary — _overall_and_score returns 0 or 100, never a graded
+            # percentage. The UI shows it alongside graded flow/agent scores; treat
+            # a single-segment task "score" as pass(100)/fail(0), not a gradient.
             seg = segs[0] if segs else {"turn_range": [0, 0], "items": items}
             seg_ctx = ChatContext(items=seg["items"]) if seg.get("items") else None
             for ci, (cname, cj) in enumerate(judges):

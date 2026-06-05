@@ -968,7 +968,9 @@ export function SimulatePage() {
     clearSimRun()
     setPhase('running')         // text + text_then_voice run the text sim first
     // Start the run on the SERVER so it survives refresh / in-app nav, then poll.
-    startSimulationJob(c)
+    // Request the full leveled-judge battery — without scopes the backend
+    // defaults to ["flow"] and the Leveled judge tree never gets populated.
+    startSimulationJob({ ...c, scopes: ['flow', 'agent', 'task', 'node'] })
       .then(({ jobId }) => {
         writeSimRun({ config: c, jobId }) // persist the RESUME handle
         pollJob(jobId, c)
