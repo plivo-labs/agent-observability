@@ -409,6 +409,9 @@ export function LiveCallPage() {
                   <div className="ao-metric-cell"><span className="k">Cost</span><span className="v">{c.cost.cents}¢</span></div>
                   <div className="ao-metric-cell"><span className="k">Tokens</span><span className="v">{(c.cost.llm_tokens || 0).toLocaleString()}</span></div>
                   <div className="ao-metric-cell"><span className="k">Verdict</span><span className={cn('v', c.verdict === 'pass' ? 'is-pass' : 'is-fail')}>{c.verdict}</span></div>
+                  {phoneNo.trim() && (
+                    <div className="ao-metric-cell"><span className="k"><Phone size={11} /> Dialed</span><span className="v mono">{phoneNo.trim()}</span></div>
+                  )}
                 </div>
               )}
               <div ref={scrollRef} className="flex max-h-[46vh] flex-col gap-3 overflow-auto p-4">

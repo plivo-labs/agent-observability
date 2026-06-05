@@ -24,6 +24,7 @@ import {
   FlaskConical,
   GitBranch,
   GitCommit,
+  Phone,
   ScrollText,
   XCircle,
 } from 'lucide-react'
@@ -358,6 +359,11 @@ export const EvalRunDetailPage = ({
               <FlaskConical className="h-3 w-3 shrink-0" />{run.testing_framework}
               {run.testing_framework_version && <span className="ao-mono ml-0.5">{run.testing_framework_version}</span>}
             </span>
+            {run.dialed_number && (
+              <span className="ao-badge is-neutral">
+                <Phone className="h-3 w-3 shrink-0" />Dialed <span className="ao-mono ml-0.5">{run.dialed_number}</span>
+              </span>
+            )}
             <span className="ao-mono">{run.run_id}</span>
           </div>
         </div>

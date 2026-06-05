@@ -324,6 +324,8 @@ export interface EvalCaseRow {
 
 export interface EvalRunDetail extends EvalRunRow {
   api_id?: string
+  /** Dialed phone number for live-call runs (from `sim_live_suites.phone_number`); null for sim/pytest runs. */
+  dialed_number?: string | null
   cases: EvalCaseRow[]
 }
 

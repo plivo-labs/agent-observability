@@ -134,7 +134,8 @@ export async function getEvalRun(runId: string): Promise<any | null> {
   // runs only; null for live-call / pytest / vitest). Parse the jsonb so the
   // route returns a structured object, not a string.
   const rows = await sql.unsafe(
-    `SELECT ${RUN_SELECT_COLS}, sim_report
+    `SELECT ${RUN_SELECT_COLS}, sim_report,
+            (SELECT phone_number FROM sim_live_suites WHERE eval_run_id = eval_runs.run_id LIMIT 1) AS dialed_number
      FROM eval_runs
      WHERE run_id = $1
      LIMIT 1`,
