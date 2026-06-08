@@ -135,22 +135,6 @@ export function EvaluationDetail({
   )
 }
 
-/** Color-coded left-border class per verdict tone — same palette as
- *  ResultBadge so the visual language of "this judge passed / failed /
- *  uncertain" carries across the list. */
-function verdictBorderClass(verdict: string | null | undefined): string {
-  switch (resultTone(verdict)) {
-    case 'success':
-      return 'border-l-[hsl(var(--success-fg,var(--success)))]'
-    case 'fail':
-      return 'border-l-[hsl(var(--destructive))]'
-    case 'maybe':
-      return 'border-l-[hsl(var(--warning-fg,var(--warning)))]'
-    default:
-      return 'border-l-border'
-  }
-}
-
 /**
  * Accordion list of judge results. Used by both the session-level
  * evaluations drawer and the per-session conversation-eval drawer — the
@@ -181,8 +165,7 @@ export function EvaluationsAccordion({
               // `last:border-b` cancels shadcn AccordionItem's default
               // `last:border-b-0` so the bottom edge of the last card
               // stays visible. twMerge deduplicates and keeps this.
-              'rounded-lg border border-l-4 last:border-b bg-card px-4',
-              verdictBorderClass(ev.verdict),
+              'rounded-lg border last:border-b bg-card px-4',
             )}
           >
             <AccordionTrigger className="py-2 hover:no-underline">
