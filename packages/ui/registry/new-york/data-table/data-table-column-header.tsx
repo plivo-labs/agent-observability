@@ -17,7 +17,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { TABLE_HEADER_LABEL_CLASS } from "@/components/data-table/data-table-config";
 
 interface DataTableColumnHeaderProps<TData, TValue>
   extends React.ComponentProps<typeof DropdownMenuTrigger> {
@@ -33,7 +32,8 @@ export function DataTableColumnHeader<TData, TValue>({
 }: DataTableColumnHeaderProps<TData, TValue>) {
   // Truman header treatment — uppercase tracked mono muted, matching the
   // <TableHead> / .ao-table thead styling so every table header looks identical.
-  const headLabel = TABLE_HEADER_LABEL_CLASS;
+  const headLabel =
+    "font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground";
 
   if (!column.getCanSort() && !column.getCanHide()) {
     return <div className={cn(headLabel, className)}>{label}</div>;

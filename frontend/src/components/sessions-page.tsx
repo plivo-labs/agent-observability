@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef, Row } from '@tanstack/react-table'
 import {
@@ -9,19 +9,24 @@ import {
   Database,
   Layers,
   Phone,
+  Trash2,
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { SelectableCard } from '@/components/selectable-card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { DataTablePagination } from '@/components/data-table/data-table-pagination'
 import { useDataTable } from '@/components/data-table/use-data-table'
-import { useDayFilter } from '@/components/data-table/use-day-filter'
-import { useBulkDelete } from '@/components/data-table/use-bulk-delete'
-import {
-  DeleteConfirmDialog,
-  SelectionToolbar,
-} from '@/components/data-table/delete-confirm-dialog'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useSessions } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
@@ -56,42 +61,67 @@ function SessionCard({
   const session = row.original
   const idShort = session.session_id.slice(0, 8)
   const title = session.account_id || `Session ${idShort}`
-  // The meta line below already prints the transport, so the pill shows the
-  // session STATE (otherwise transport rendered twice and state never showed).
-  const pill = session.state
+  const pill = session.transport
+    ? TRANSPORT_LABELS[session.transport] ?? session.transport
+    : session.state
   const textOnly = session.transport === 'text' || session.transport === 'terminal_text'
 
   return (
-    <SelectableCard
-      selected={row.getIsSelected()}
-      onToggle={(value) => row.toggleSelected(value)}
-      onOpen={() => onOpen(session.session_id)}
-      selectAriaLabel={`Select session ${session.session_id}`}
-      title={title}
-      meta={
-        <>
-          {session.transport && (
-            <>
-              <span className="truncate">{TRANSPORT_LABELS[session.transport] ?? session.transport}</span>
-              <span aria-hidden>·</span>
-            </>
-          )}
-          <span>{idShort}</span>
-          <span aria-hidden>·</span>
-          <span>{session.turn_count} turns</span>
-          <span aria-hidden>·</span>
-          <span>{formatDuration(session.duration_ms)}</span>
-        </>
-      }
-      pill={
-        pill && (
-          <span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border-border">
-            {pill}
-          </span>
-        )
-      }
-      footer={formatDate(session.started_at)}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        const t = e.target as HTMLElement
+        if (t.closest('button, a, input, select, [role="menuitem"]')) return
+        onOpen(session.session_id)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(session.session_id)
+        }
+      }}
+      data-state={row.getIsSelected() ? 'selected' : undefined}
+      className={cn(
+        'group block cursor-pointer border bg-card px-5 py-4 shadow-sm transition-colors',
+        'rounded-[var(--radius)] hover:border-[hsl(var(--muted-foreground)/0.4)] hover:bg-muted/30',
+        row.getIsSelected() && 'border-[hsl(var(--primary))] bg-muted/30',
+      )}
+      style={{ borderRadius: 'var(--radius)' }}
     >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <Checkbox
+            aria-label={`Select session ${session.session_id}`}
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-base text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+              {title}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground" style={{ fontFamily: 'var(--mono)' }}>
+              {session.transport && (
+                <>
+                  <span className="truncate">{TRANSPORT_LABELS[session.transport] ?? session.transport}</span>
+                  <span aria-hidden>·</span>
+                </>
+              )}
+              <span>{idShort}</span>
+              <span aria-hidden>·</span>
+              <span>{session.turn_count} turns</span>
+              <span aria-hidden>·</span>
+              <span>{formatDuration(session.duration_ms)}</span>
+            </div>
+          </div>
+        </div>
+        <span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border-border">
+          {pill}
+        </span>
+      </div>
+
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <CapsChips
           stt={!textOnly && session.has_stt}
@@ -102,11 +132,34 @@ function SessionCard({
           {session.turn_count} {session.turn_count === 1 ? 'turn' : 'turns'}
         </span>
       </div>
-    </SelectableCard>
+
+      <div className="mt-3 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80" style={{ fontFamily: 'var(--mono)' }}>
+        {formatDate(session.started_at)}
+      </div>
+    </div>
   )
 }
 
-export const SessionsPage =({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
+function SessionCardSkeleton() {
+  return (
+    <div
+      className="border bg-card px-5 py-4 shadow-sm"
+      style={{ borderRadius: 'var(--radius)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-3 w-64" />
+        </div>
+        <Skeleton className="h-5 w-16 rounded-full" />
+      </div>
+      <Skeleton className="mt-3 h-4 w-40" />
+      <Skeleton className="mt-3 h-3 w-32" />
+    </div>
+  )
+}
+
+export const SessionsPage = ({ onSessionClick }: { onSessionClick?: (sessionId: string) => void }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
   // Column ids below (`account_id`, `transport`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
@@ -117,13 +170,25 @@ export const SessionsPage =({ onSessionClick }: { onSessionClick?: (sessionId: s
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
-  // string. `useDayFilter` expands it into a 00:00 → next-midnight window so
+  // string. We expand it server-side into a 00:00 → next-midnight window so
   // the query returns every session that started during that calendar day.
   const [startedAt] = useQueryState(
     'started_at',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
-  const { fromIso: startedFromIso, toIso: startedToIso } = useDayFilter(startedAt)
+  const startedDay = useMemo(() => {
+    const v = startedAt[0]
+    if (!v) return undefined
+    const d = new Date(Number(v))
+    return Number.isNaN(d.getTime()) ? undefined : d
+  }, [startedAt])
+  const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
+  const startedToIso = useMemo(() => {
+    if (!startedDay) return undefined
+    const end = new Date(startedDay)
+    end.setHours(23, 59, 59, 999)
+    return end.toISOString()
+  }, [startedDay])
 
   const { sessions, meta, loading, error, refetch } = useSessions(
     perPage,
@@ -301,19 +366,26 @@ export const SessionsPage =({ onSessionClick }: { onSessionClick?: (sessionId: s
   const rows = table.getRowModel().rows
 
   const { api } = useObservabilityContext()
-  const {
-    confirmOpen,
-    setConfirmOpen,
-    deleting,
-    deleteError,
-    selectedCount,
-    handleDelete,
-    cancelSelection,
-  } = useBulkDelete({
-    table,
-    deleteFn: (ids) => api.deleteSessions(ids),
-    refetch,
-  })
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const selectedIds = Object.keys(table.getState().rowSelection)
+  const selectedCount = selectedIds.length
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deleteSessions(selectedIds)
+      table.resetRowSelection()
+      refetch()
+      setConfirmOpen(false)
+    } catch (e) {
+      setDeleteError((e as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -385,19 +457,36 @@ export const SessionsPage =({ onSessionClick }: { onSessionClick?: (sessionId: s
         </div>
       )}
 
-      <SelectionToolbar
-        count={selectedCount}
-        onCancel={cancelSelection}
-        onDelete={() => setConfirmOpen(true)}
-        className="ao-reveal ao-reveal-3"
-      />
+      {selectedCount > 0 && (
+        <div className="ao-toolbar ao-reveal ao-reveal-3">
+          <span className="ao-badge is-accent">
+            <b>{selectedCount}</b>&nbsp;selected
+          </span>
+          <span className="ao-toolbar-spacer" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => table.resetRowSelection()}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+            onClick={() => setConfirmOpen(true)}
+          >
+            <Trash2 /> Delete
+          </Button>
+        </div>
+      )}
 
       <div className="ao-reveal ao-reveal-3 flex flex-col gap-2.5">
         <DataTableToolbar table={table} />
         {loading && rows.length === 0 ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
-              <SelectableCard key={`sk-${i}`} loading />
+              <SessionCardSkeleton key={`sk-${i}`} />
             ))}
           </div>
         ) : rows.length === 0 ? (
@@ -425,17 +514,35 @@ export const SessionsPage =({ onSessionClick }: { onSessionClick?: (sessionId: s
         <DataTablePagination table={table} totalRowCount={totalCount} />
       </div>
 
-      <DeleteConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={`Delete ${selectedCount} session${selectedCount === 1 ? '' : 's'}?`}
-        description={`This permanently removes the selected session${selectedCount === 1 ? '' : 's'} and any associated chat history, metrics, and recording references. This cannot be undone.`}
-        deleting={deleting}
-        deleteError={deleteError}
-        confirmLabel={`Delete ${selectedCount}`}
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmOpen(false)}
-      />
+      <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedCount} session{selectedCount === 1 ? '' : 's'}?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the selected session{selectedCount === 1 ? '' : 's'} and any
+              associated chat history, metrics, and recording references. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="text-s-400 text-[hsl(var(--destructive))]">
+              Failed to delete: {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : `Delete ${selectedCount}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

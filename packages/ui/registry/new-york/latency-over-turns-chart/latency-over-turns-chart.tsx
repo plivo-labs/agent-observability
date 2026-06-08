@@ -66,8 +66,8 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
 
   const legend = [
     chart.hasPerceived && { color: 'hsl(var(--primary))', label: 'User Perceived' },
-    chart.hasLlm && { color: 'hsl(var(--foreground))', label: 'LLM TTFT' },
-    chart.hasTts && { color: 'hsl(var(--foreground))', label: 'TTS TTFB' },
+    chart.hasLlm && { color: 'hsl(var(--accent-purple))', label: 'LLM TTFT' },
+    chart.hasTts && { color: 'hsl(var(--success))', label: 'TTS TTFB' },
   ].filter(Boolean) as Array<{ color: string; label: string }>
 
   return (
@@ -90,8 +90,8 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
         />
         <Tooltip content={<LatencyTooltip />} />
         {chart.hasPerceived && <Line type="monotone" dataKey="perceived" name="User Perceived" stroke="hsl(var(--primary))" dot={false} strokeWidth={2} connectNulls />}
-        {chart.hasLlm && <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(var(--foreground))" dot={false} strokeWidth={2} connectNulls />}
-        {chart.hasTts && <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(var(--foreground))" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasLlm && <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(var(--accent-purple))" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasTts && <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(var(--success))" dot={false} strokeWidth={2} connectNulls />}
       </LineChart>
     </ChartCard>
   )

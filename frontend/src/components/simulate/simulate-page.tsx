@@ -16,14 +16,12 @@ import {
   type CaseStatus, type JudgeTreeT, type Persona, type Rubric, type Severity, type SimResult, type Turn,
 } from './sim-data'
 import { readSimRun, writeSimRun, clearSimRun } from './run-persistence'
-import { toneForRate, toneClass, toneColorVar } from '@/lib/tone'
 
-/* ---------- helpers (shared 80/65 score bucketing, mapped per output) ---------- */
-const scoreT = (s: number) => toneForRate(s, 80, 65)
-const scoreText = (s: number) => ({ good: 'text-success', warn: 'text-warning', bad: 'text-destructive' } as const)[scoreT(s)]
-const scoreStroke = (s: number) => toneColorVar(scoreT(s))
-const scoreBar = (s: number) => ({ good: 'bg-success', warn: 'bg-warning', bad: 'bg-destructive' } as const)[scoreT(s)]
-const scoreTone = (s: number) => toneClass(s, 80, 65)
+/* ---------- helpers ---------- */
+const scoreText = (s: number) => (s >= 80 ? 'text-success' : s >= 65 ? 'text-warning' : 'text-destructive')
+const scoreStroke = (s: number) => (s >= 80 ? 'hsl(var(--success))' : s >= 65 ? 'hsl(var(--warning))' : 'hsl(var(--destructive))')
+const scoreBar = (s: number) => (s >= 80 ? 'bg-success' : s >= 65 ? 'bg-warning' : 'bg-destructive')
+const scoreTone = (s: number) => (s >= 80 ? 'is-good' : s >= 65 ? 'is-warn' : 'is-bad')
 const initials = (name: string) => name.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
 /* ---------- primitives ---------- */
@@ -321,7 +319,6 @@ export interface RunConfig { prompt?: string; yaml?: string; mode: string; perso
 function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
   const [tab, setTab] = useState('prompt')
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
-  const mode = 'text'
   const [typeFilter, setTypeFilter] = useState('all')
   const [lib, setLib] = useState<Persona[]>(PERSONAS)
   const [selected, setSelected] = useState(PERSONAS.map((p) => p.id))
@@ -359,8 +356,8 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
       .finally(() => setGenLoading(false))
   }
   const run = () => onRun(tab === 'yaml'
-    ? { yaml: SIM_YAML, mode, personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold }
-    : { prompt, mode, personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold })
+    ? { yaml: SIM_YAML, mode: 'text', personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold }
+    : { prompt, mode: 'text', personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold })
 
   return (
     <div className="animate-in fade-in duration-300">
@@ -474,7 +471,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
             </div>
           </Card>
           <button className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run}><Play size={17} /> Run simulation</button>
-          <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">{mode}</span></div>
+          <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">text</span></div>
         </div>
       </div>
     </div>

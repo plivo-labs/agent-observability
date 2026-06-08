@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Activity, AlertTriangle, BellRing, CalendarClock, Gauge, Pause, Play, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { toneClass } from '@/lib/tone'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -75,7 +74,7 @@ export function SchedulesPage() {
   const ratedItems = items.filter((s) => s.last_pass_rate != null)
   const avgRate = ratedItems.length ? Math.round(ratedItems.reduce((a, s) => a + (s.last_pass_rate ?? 0), 0) / ratedItems.length) : null
   const breaching = items.filter((s) => s.alert_pass_rate != null && s.last_pass_rate != null && s.last_pass_rate < (s.alert_pass_rate ?? 0)).length
-  const avgTone = avgRate == null ? 'is-accent' : toneClass(avgRate, 80, 50)
+  const avgTone = avgRate == null ? 'is-accent' : avgRate >= 80 ? 'is-good' : avgRate >= 50 ? 'is-warn' : 'is-bad'
 
   return (
     <>
