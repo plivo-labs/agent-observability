@@ -6,16 +6,43 @@
 [![pytest-agent-observability](https://img.shields.io/pypi/v/pytest-agent-observability.svg?label=pytest-agent-observability)](https://pypi.org/project/pytest-agent-observability/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Session report callback server for [agent-transport](https://github.com/plivo-labs/agent-transport) with a built-in dashboard UI and a [shadcn component registry](packages/ui/README.md) for embedding observability views in your own app.
+A voice-agent QA platform — **one app, one database, one timeline** — that does
+monitoring, evals, and simulations, with a built-in dashboard and a [shadcn
+component registry](packages/ui/README.md) for embedding views in your own app.
 
 ## What it does
 
-When a voice agent call ends, the agent-transport SDK uploads a session report containing:
-- **Chat transcript** — full conversation with per-turn metrics (e2e latency, TTS TTFB, LLM TTFT, STT delay)
-- **Audio recording** — OGG/Opus call recording (optional)
-- **Session metadata** — session ID, start time, duration
+| Capability | What you get | You set up |
+|---|---|---|
+| **Monitor** | Every real/production call: per-turn latency (STT/LLM/TTS), transcript, audio, tags, outcomes | Point your agent's telemetry at AO |
+| **Evals** | CI test-suite results — runs & cases, judge verdicts, failure detail | Install the pytest / vitest plugin |
+| **Simulate / Live** | Persona-driven QA *before* launch — text sims and real phone calls, scored by an LLM judge | Use the dashboard (a prompt is enough) |
 
-This server receives that report, extracts session metrics, optionally uploads the audio to S3, and saves everything to Postgres. The dashboard UI lets you browse sessions and view detailed performance metrics.
+The same personas, rubrics, and judge power all three; a simulation, a CI eval,
+and a production call all land in the same store and UI.
+
+When a call ends, the [agent-transport](https://github.com/plivo-labs/agent-transport)
+SDK uploads a session report (chat transcript with per-turn metrics, optional
+OGG audio, metadata). AO parses it, optionally uploads audio to S3, saves to
+Postgres, and renders it in **Monitor**.
+
+## Start here — what do you want to do?
+
+New to AO? The **[integration guides](docs/integration/README.md)** walk you
+through adopting it as a consumer (no need to have written AO):
+
+| You want to… | Go to |
+|---|---|
+| Stand it up and see a first call (15 min) | [Quickstart](docs/integration/01-quickstart.md) |
+| Monitor production calls | [Send your agent's telemetry](docs/integration/02-send-telemetry.md) |
+| Gate releases on agent quality in CI | [Run evals in CI](docs/integration/03-run-evals-in-ci.md) |
+| QA an agent before launch | [Run a simulation or live call](docs/integration/04-run-a-simulation-or-live-call.md) |
+| Deploy it securely | [Auth & deployment](docs/integration/06-auth-and-deployment.md) |
+| Build against the API | [API reference](docs/integration/07-api-reference.md) |
+| Embed AO's views in your own UI | [shadcn registry](packages/ui/README.md) *(full module embedding is on the roadmap)* |
+
+Working *on* AO (contributing)? The setup, architecture, and conventions are
+below and in [`CLAUDE.md`](CLAUDE.md).
 
 ## Setup
 

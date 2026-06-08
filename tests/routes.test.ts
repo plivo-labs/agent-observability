@@ -991,7 +991,7 @@ describe("GET /api/sessions", () => {
     expect(body.meta.previous).toContain("offset=0");
   });
 
-  test("passes account_id filter as a case-insensitive LIKE predicate", async () => {
+  test("passes account_id filter as a case-insensitive LIKE predicate (account OR session id)", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 0 }])
       .mockResolvedValueOnce([]);
@@ -1003,13 +1003,16 @@ describe("GET /api/sessions", () => {
     );
     expect(res.status).toBe(200);
 
-    // Count + rows = 2 SQL calls; both must include the WHERE clause and the param.
+    // Count + rows = 2 SQL calls; the free-text filter matches account_id OR
+    // session_id (one bound param), so both queries reference both columns.
     expect(mockSql).toHaveBeenCalledTimes(2);
     const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
-    expect(countQuery).toContain("WHERE LOWER(account_id) LIKE");
+    expect(countQuery).toContain("LOWER(account_id) LIKE");
+    expect(countQuery).toContain("LOWER(session_id) LIKE");
     expect(countParams).toEqual(["%acct-xyz%"]);
     const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
-    expect(rowsQuery).toContain("WHERE LOWER(account_id) LIKE");
+    expect(rowsQuery).toContain("LOWER(account_id) LIKE");
+    expect(rowsQuery).toContain("LOWER(session_id) LIKE");
     expect(rowsParams).toEqual(["%acct-xyz%", 20, 0]);
   });
 

@@ -38,10 +38,23 @@ export function DataTableFacetedFilter<TData, TValue>({
   multiple,
 }: DataTableFacetedFilterProps<TData, TValue>) {
   const [open, setOpen] = React.useState(false);
+  // cmdk auto-highlights its first item on mount, which renders as a stray
+  // grey `bg-accent` bar hugging the search divider before the user has
+  // touched anything. Control the active value (start empty → nothing
+  // highlighted) so the panel opens clean. cmdk still fires onValueChange on
+  // mount to auto-select the first row, so we ignore changes until the user
+  // actually interacts (pointer move / key); after that hover + keyboard nav
+  // drive the highlight normally. Reset on each open.
+  const [activeValue, setActiveValue] = React.useState("");
+  const interactedRef = React.useRef(false);
 
   const columnFilterValue = column?.getFilterValue();
-  const selectedValues = new Set(
-    Array.isArray(columnFilterValue) ? columnFilterValue : [],
+  // Memoize so the Set identity is stable across renders — otherwise the
+  // `onItemSelect` useCallback (which deps on it) is rebuilt every render,
+  // defeating its memoization.
+  const selectedValues = React.useMemo(
+    () => new Set(Array.isArray(columnFilterValue) ? columnFilterValue : []),
+    [columnFilterValue],
   );
 
   const onItemSelect = React.useCallback(
@@ -74,7 +87,16 @@ export function DataTableFacetedFilter<TData, TValue>({
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) {
+          interactedRef.current = false;
+          setActiveValue("");
+        }
+        setOpen(next);
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -91,6 +113,7 @@ export function DataTableFacetedFilter<TData, TValue>({
               tabIndex={0}
               className="rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               onClick={onReset}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onReset() } }}
             >
               <XCircle />
             </div>
@@ -137,7 +160,18 @@ export function DataTableFacetedFilter<TData, TValue>({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-50 p-0" align="start">
-        <Command>
+        <Command
+          value={activeValue}
+          onValueChange={(v) => {
+            if (interactedRef.current) setActiveValue(v);
+          }}
+          onPointerMove={() => {
+            interactedRef.current = true;
+          }}
+          onKeyDown={() => {
+            interactedRef.current = true;
+          }}
+        >
           <CommandInput placeholder={title} />
           <CommandList className="max-h-full">
             <CommandEmpty>No results found.</CommandEmpty>

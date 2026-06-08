@@ -120,7 +120,7 @@ export function SessionTimeline({
             >
               <div
                 ref={cursorRef}
-                className="absolute top-0 bottom-0 w-px bg-secondary"
+                className="absolute top-0 bottom-0 w-0.5 bg-primary"
                 style={{ left: `${totalMs > 0 ? (currentTimeMs / totalMs) * 100 : 0}%` }}
               />
             </div>

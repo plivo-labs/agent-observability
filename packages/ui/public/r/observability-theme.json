@@ -217,10 +217,6 @@
       "--text-xxs-400": "400 11px/14px var(--font-sans)",
       "--text-xl-700": "700 32px/40px var(--font-display)",
       "--card-shadow": "none",
-      "--ao-shadow-sm": "none",
-      "--ao-accent": "hsl(var(--foreground))",
-      "--ao-accent-soft": "hsl(var(--muted))",
-      "--ao-accent-ring": "hsl(var(--ring))",
       "--mono": "\"Fragment Mono\", \"JetBrains Mono\", ui-monospace, \"SF Mono\", Menlo, monospace"
     },
     ":where(.dark)": {

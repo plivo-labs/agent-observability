@@ -23,6 +23,6 @@ async def judge(payload: JudgeRequest, _org: uuid.UUID = Depends(require_auth)) 
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "at least one criterion is required")
     criteria = [{"key": c.key, "question": c.question, "weight": c.weight} for c in payload.criteria]
     try:
-        return await judge_transcript_text(payload.transcript, criteria)
+        return await judge_transcript_text(payload.transcript, criteria, scopes=tuple(payload.scopes))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"judge failed: {e}") from e

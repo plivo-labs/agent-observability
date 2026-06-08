@@ -9,7 +9,7 @@
  * `name`=`key`, so it round-trips into AO judge.criteria[].name.
  */
 import { config } from "../config.js";
-import { type Criterion, type CriterionVerdict } from "./engine.js";
+import { type Criterion, type CriterionVerdict, type JudgeScopes } from "./engine.js";
 
 const base = () => (config.TRUMAN_API_URL ?? "").replace(/\/$/, "");
 
@@ -30,14 +30,22 @@ async function tFetch(path: string, opts: { method?: string; body?: unknown } = 
 
 /** Judge a transcript with LiveKit's judges via Truman's POST /v1/judge.
  *  Maps AO criteria {name,question,weight} → Truman {key,question,weight} and
- *  returns AO's {criteria, overall, notes} verdict shape. */
+ *  returns AO's {criteria, overall, notes} verdict shape.
+ *
+ *  Leveled judging: pass `scopes` (default ["flow"]) — when more than ["flow"]
+ *  is requested, the Python judge additively returns a `scopes` block
+ *  (flow/agent/task/node) alongside the top-level verdict. We carry it through
+ *  verbatim. With the default ["flow"] the response is byte-identical to today,
+ *  so cost is unchanged. */
 export async function judgeTranscript(
   transcript: string,
   criteria: Criterion[],
-): Promise<{ criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string }> {
+  scopes: string[] = ["flow"],
+): Promise<{ criteria: CriterionVerdict[]; overall: "pass" | "fail"; notes: string; scopes?: JudgeScopes }> {
   const body = {
     transcript,
     criteria: criteria.map((c) => ({ key: c.name, question: c.question || c.name, weight: c.weight ?? 1 })),
+    scopes: scopes.length ? scopes : ["flow"],
   };
   const jr = await tFetch("/v1/judge", { method: "POST", body });
   return {
@@ -46,5 +54,7 @@ export async function judgeTranscript(
       : [],
     overall: jr?.overall === "pass" ? "pass" : "fail",
     notes: String(jr?.notes ?? ""),
+    // Carry the additive leveled-judge block verbatim when present.
+    ...(jr?.scopes && typeof jr.scopes === "object" ? { scopes: jr.scopes as JudgeScopes } : {}),
   };
 }

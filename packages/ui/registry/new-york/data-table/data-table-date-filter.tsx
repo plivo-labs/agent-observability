@@ -116,8 +116,8 @@ export function DataTableDateFilter<TData>({
   );
 
   const onReset = React.useCallback(
-    (event: React.MouseEvent) => {
-      event.stopPropagation();
+    (event?: React.MouseEvent) => {
+      event?.stopPropagation();
       column.setFilterValue(undefined);
     },
     [column],
@@ -201,6 +201,7 @@ export function DataTableDateFilter<TData>({
               aria-label={`Clear ${title} filter`}
               tabIndex={0}
               onClick={onReset}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onReset() } }}
               className="rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <XCircle />

@@ -19,6 +19,11 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   const finishedAt = new Date(run.finished_at * 1000);
   const durationMs = Math.max(0, Math.round((run.finished_at - run.started_at) * 1000));
 
+  // jsonb columns (ci, sim_report, events, judgments, failure) are bound as the
+  // raw JS value into `${value}::jsonb` — NOT JSON.stringify'd first. Stringifying
+  // double-encodes into a jsonb *string scalar* ("[…]") that breaks raw jsonb
+  // operators downstream. Keep every jsonb write in this form. (Readers tolerate
+  // legacy string scalars; see decodeCaseJsonb / getEvalRun.)
   await sql.begin(async (tx: any) => {
     await tx`
       INSERT INTO eval_runs (
@@ -27,7 +32,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         testing_framework, testing_framework_version,
         started_at, finished_at, duration_ms,
         total, passed, failed, errored, skipped,
-        ci
+        ci, sim_report
       ) VALUES (
         ${run.run_id},
         ${run.account_id ?? null},
@@ -44,7 +49,8 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.failed},
         ${summary.errored},
         ${summary.skipped},
-        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb
+        ${(run.ci ?? null) as any}::jsonb,
+        ${(run.sim_report ?? null) as any}::jsonb
       )
     `;
 
@@ -66,9 +72,9 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${c.status},
           ${caseDurationMs},
           ${c.user_input ?? null},
-          ${JSON.stringify(c.events ?? [])}::jsonb,
-          ${JSON.stringify(c.judgments ?? [])}::jsonb,
-          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb,
+          ${(c.events ?? []) as any}::jsonb,
+          ${(c.judgments ?? []) as any}::jsonb,
+          ${(c.failure ?? null) as any}::jsonb,
           ${c.recording_url ?? null}
         )
       `;
@@ -124,33 +130,52 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
 }
 
 export async function getEvalRun(runId: string): Promise<any | null> {
+  // Detail view additionally carries the full simulation report blob (sim
+  // runs only; null for live-call / pytest / vitest). Parse the jsonb so the
+  // route returns a structured object, not a string.
   const rows = await sql.unsafe(
-    `SELECT ${RUN_SELECT_COLS}
+    `SELECT ${RUN_SELECT_COLS}, sim_report,
+            (SELECT phone_number FROM sim_live_suites WHERE eval_run_id = eval_runs.run_id LIMIT 1) AS dialed_number
      FROM eval_runs
      WHERE run_id = $1
      LIMIT 1`,
     [runId],
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  if (typeof row.sim_report === "string") {
+    try { row.sim_report = JSON.parse(row.sim_report); } catch { /* leave as-is */ }
+  }
+  return row;
 }
 
+// live-call cost lives on `sim_live_calls.cost` (JSONB), not on `eval_cases`.
+// The run was persisted from a live suite, so join back through
+// `sim_live_suites.eval_run_id = eval_cases.run_id` and match the call by
+// `persona_name = eval_cases.name`. Non-live runs have no match → cost is null.
 export async function listEvalCases(runId: string): Promise<any[]> {
   const rows = await sql`
-    SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, recording_url, created_at
-    FROM eval_cases
-    WHERE run_id = ${runId}
-    ORDER BY created_at ASC
+    SELECT ec.case_id, ec.run_id, ec.name, ec.file, ec.status, ec.duration_ms,
+           ec.user_input, ec.events, ec.judgments, ec.failure, ec.recording_url,
+           ec.created_at, lc.cost
+    FROM eval_cases ec
+    LEFT JOIN sim_live_suites ls ON ls.eval_run_id = ec.run_id
+    LEFT JOIN sim_live_calls lc ON lc.suite_id = ls.id AND lc.persona_name = ec.name
+    WHERE ec.run_id = ${runId}
+    ORDER BY ec.created_at ASC
   `;
   return rows.map(decodeCaseJsonb);
 }
 
 export async function getEvalCase(runId: string, caseId: string): Promise<any | null> {
   const rows = await sql`
-    SELECT case_id, run_id, name, file, status, duration_ms, user_input,
-           events, judgments, failure, recording_url, created_at
-    FROM eval_cases
-    WHERE run_id = ${runId} AND case_id = ${caseId}
+    SELECT ec.case_id, ec.run_id, ec.name, ec.file, ec.status, ec.duration_ms,
+           ec.user_input, ec.events, ec.judgments, ec.failure, ec.recording_url,
+           ec.created_at, lc.cost
+    FROM eval_cases ec
+    LEFT JOIN sim_live_suites ls ON ls.eval_run_id = ec.run_id
+    LEFT JOIN sim_live_calls lc ON lc.suite_id = ls.id AND lc.persona_name = ec.name
+    WHERE ec.run_id = ${runId} AND ec.case_id = ${caseId}
     LIMIT 1
   `;
   return rows[0] ? decodeCaseJsonb(rows[0]) : null;
@@ -221,6 +246,8 @@ function decodeCaseJsonb(row: any): any {
     events: typeof row.events === "string" ? JSON.parse(row.events) : row.events,
     judgments: typeof row.judgments === "string" ? JSON.parse(row.judgments) : row.judgments,
     failure: typeof row.failure === "string" ? JSON.parse(row.failure) : row.failure,
+    // live-call cost (JSONB via the join); null for non-live runs.
+    cost: row.cost == null ? null : typeof row.cost === "string" ? JSON.parse(row.cost) : row.cost,
   };
 }
 

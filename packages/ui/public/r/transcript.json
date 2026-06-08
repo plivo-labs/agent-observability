@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "transcript",
+  "title": "Run-detail Transcript",
+  "description": "Shared Truman-style run-detail transcript: role-aligned turn bubbles with index/timestamp gutter, role chip, latency and flag meta",
+  "dependencies": [
+    "lucide-react"
+  ],
+  "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/run-detail/transcript.tsx",
+      "content": "/* transcript.tsx — shared Truman-style run-detail transcript.\n * Role-aligned turn rows: caller/user right-aligned, agent left-aligned; a\n * left gutter with a zero-padded index + mm:ss timestamp (when `ts` present),\n * a mono UPPERCASE role chip, and a tinted bubble per role. On-theme (Neo\n * tokens only). Prop-driven + self-contained — reused by Simulate + Evals. */\nimport { AlertTriangle, Timer } from 'lucide-react'\nimport { cn } from '@/lib/utils'\n\nexport interface TranscriptTurn {\n  role: 'user' | 'agent'\n  t: string\n  ms?: number | null\n  flag?: string | null\n  ts?: number\n}\n\nconst mmss = (sec: number) => {\n  const s = Math.max(0, Math.floor(sec))\n  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`\n}\n\nexport function Transcript({ turns, highlight, refMap }: {\n  turns: TranscriptTurn[]\n  highlight?: number | null\n  refMap?: React.MutableRefObject<Record<number, HTMLDivElement | null>>\n}) {\n  if (turns.length === 0) {\n    return <div className=\"py-8 text-center text-sm text-muted-foreground\">No turns yet.</div>\n  }\n  return (\n    <div className=\"flex flex-col gap-3\">\n      {turns.map((t, i) => {\n        const isUser = t.role === 'user'\n        return (\n          <div\n            key={i}\n            ref={(el) => { if (refMap) refMap.current[i] = el }}\n            className={cn('flex gap-2.5', isUser ? 'flex-row-reverse' : '')}\n            style={highlight === i ? { outline: '2px solid hsl(var(--ring))', outlineOffset: 4, borderRadius: 12 } : undefined}\n          >\n            {/* gutter — zero-padded index + mm:ss */}\n            <div className=\"flex w-10 shrink-0 flex-col items-center gap-0.5 pt-1 text-[10px] tabular-nums text-muted-foreground/70\">\n              <span className=\"font-mono\">{String(i + 1).padStart(2, '0')}</span>\n              {t.ts != null && <span className=\"font-mono\">{mmss(t.ts)}</span>}\n            </div>\n            <div className={cn('flex min-w-0 flex-col gap-1', isUser ? 'items-end' : 'items-start')}>\n              {/* role chip */}\n              <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em]',\n                isUser ? 'bg-muted text-muted-foreground' : 'bg-primary/12 text-primary')}>\n                {isUser ? 'caller' : 'agent'}\n              </span>\n              {/* bubble */}\n              <div className={cn('max-w-[46ch] rounded-xl px-3 py-2 text-sm leading-relaxed',\n                isUser ? 'bg-muted text-foreground' : 'bg-primary/8 text-foreground',\n                t.flag ? 'ring-1 ring-destructive/40' : '')}>\n                {t.t}\n              </div>\n              {/* meta — latency + flag */}\n              {(t.ms != null || t.flag) && (\n                <div className=\"flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground\">\n                  {!isUser && t.ms != null && (\n                    <span className={cn('inline-flex items-center gap-1', t.ms > 800 ? 'text-destructive' : '')}>\n                      <Timer size={11} />{t.ms}ms\n                    </span>\n                  )}\n                  {t.flag && (\n                    <span className=\"inline-flex items-center gap-1 text-destructive\">\n                      <AlertTriangle size={11} /> {t.flag}\n                    </span>\n                  )}\n                </div>\n              )}\n            </div>\n          </div>\n        )\n      })}\n    </div>\n  )\n}\n",
+      "type": "registry:component",
+      "target": "components/run-detail/transcript.tsx"
+    }
+  ],
+  "type": "registry:component"
+}

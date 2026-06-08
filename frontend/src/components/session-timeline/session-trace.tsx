@@ -485,7 +485,7 @@ const TraceContent = memo(
 
         {currentTimeMs != null && currentTimeMs > 0 && (
           <div
-            className="absolute top-0 bottom-0 w-px bg-primary z-10 pointer-events-none"
+            className="absolute top-0 bottom-0 w-0.5 bg-primary z-10 pointer-events-none"
             style={{ left: `${(currentTimeMs / totalMs) * 100}%` }}
           />
         )}
