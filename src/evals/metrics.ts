@@ -4,7 +4,7 @@
 // (callers `await ensurePricesLoaded()` once, then run any number of
 // `computeCaseMetrics()` calls without await).
 //
-// Event shape (per plugins/pytest-agent-observability/.../events.py):
+// Event shape (per plugins/agent-observability-sdk/src/agent_observability/livekit/pytest/events.py):
 //   { type: 'message', role: 'assistant', interrupted: bool,
 //     metrics: { llm_node_ttft, tts_node_ttfb, llm_prompt_tokens,
 //                llm_completion_tokens, llm_total_tokens,
