@@ -15,8 +15,6 @@ import { registerEvalRoutes } from "./evals/routes.js";
 import { registerSimulationRoutes } from "./simulation/routes.js";
 import { registerLibraryRoutes } from "./simulation/library.js";
 import { registerScheduleRoutes, startScheduler } from "./simulation/schedules.js";
-import { startLiveReconciler } from "./simulation/live.js";
-import { registerLiveWsRoutes, websocket } from "./simulation/ws.js";
 import { sortSessionEvents } from "./events.js";
 import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
 import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
@@ -64,9 +62,7 @@ registerEvalRoutes(app);
 registerSimulationRoutes(app);
 registerLibraryRoutes(app);
 registerScheduleRoutes(app);
-registerLiveWsRoutes(app);
 startScheduler();
-startLiveReconciler();
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 
@@ -385,17 +381,10 @@ app.get("/api/sessions/:id", async (c) => {
 if (process.env.NODE_ENV === "production") {
   app.use("/assets/*", serveStatic({ root: "./frontend/dist" }));
   app.use("/favicon*", serveStatic({ root: "./frontend/dist" }));
-  // AudioWorklet modules live at the dist root (Vite copies them from public/).
-  // Serve them explicitly so the SPA catch-all below doesn't return index.html
-  // for them — otherwise addModule() receives HTML and live-call audio fails
-  // with "Unable to load a worklet's module".
-  app.use("/pcm-player-worklet.js", serveStatic({ root: "./frontend/dist" }));
-  app.use("/mic-capture-worklet.js", serveStatic({ root: "./frontend/dist" }));
   app.get("*", serveStatic({ root: "./frontend/dist", path: "index.html" }));
 }
 
 export default {
   port: config.PORT,
   fetch: app.fetch,
-  websocket,
 };
