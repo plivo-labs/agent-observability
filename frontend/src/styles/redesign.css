@@ -16,7 +16,48 @@
   min-height: 100vh;
   background: var(--app-bg);
 }
-.obs-side, .obs-main { position: relative; z-index: 1; }
+.obs-side, .obs-nav, .obs-main { position: relative; z-index: 1; }
+
+/* ── Solid sticky nav (no glass blur — Truman uses flat surfaces) ─────────── */
+.obs-nav {
+  height: 60px;
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+  box-shadow: none;
+}
+
+/* ── Brand: display type + solid ink square mark ──────────────────────────── */
+.obs-nav-brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.obs-nav-brand .dot {
+  width: 26px; height: 26px; border-radius: var(--radius-md);
+  background: hsl(var(--primary));
+  box-shadow: none;
+  color: hsl(var(--primary-foreground));
+}
+
+/* ── Tabs: uppercase mono nav items, subtle muted active bg ───────────────── */
+.obs-tab {
+  height: 34px;
+  border-radius: var(--radius-md);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: background .16s ease, color .16s ease;
+}
+.obs-tab:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.obs-tab.active {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  box-shadow: none;
+}
+.obs-tab.active svg { color: hsl(var(--foreground)); }
 
 /* ── Surfaces: panels, metric tiles, shadcn cards — flat 1px frames ───────── */
 .obs-panel,
@@ -57,7 +98,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .obs-page { animation: none; }
-  .metric-tile, .bg-card.border.rounded-lg, .obs-iconbtn { transition: none; }
+  .obs-tab, .metric-tile, .bg-card.border.rounded-lg, .obs-iconbtn { transition: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════════════════

@@ -1,13 +1,5 @@
 export type DataTableConfig = typeof dataTableConfig;
 
-/**
- * Truman table-header treatment — uppercase tracked mono muted. Shared by the
- * `<TableHead>` primitive and the `DataTableColumnHeader` label so every table
- * header reads identically.
- */
-export const TABLE_HEADER_LABEL_CLASS =
-  "font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground";
-
 export const dataTableConfig = {
   textOperators: [
     { label: "Contains", value: "iLike" as const },

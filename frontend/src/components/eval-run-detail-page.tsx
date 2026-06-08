@@ -28,7 +28,6 @@ import { formatDate, formatDuration, formatMs } from '@/lib/observability-format
 import { useEvalRun } from '@/lib/observability-hooks'
 import type { CaseStatus, EvalCaseRow, RunEvent, RunEventMessage } from '@/lib/observability-types'
 import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
-import { StatusBadge } from '@/components/run-detail/status-badge'
 
 const STATUS_OPTIONS: Array<{ label: string; value: CaseStatus }> = [
   { label: 'Passed', value: 'passed' },
@@ -47,6 +46,14 @@ function durationToneClass(ms: number | null): string {
   return 'text-[hsl(var(--destructive))]'
 }
 
+/** Maps a case status to its `ao-badge` tone modifier. */
+const STATUS_BADGE_TONE: Record<CaseStatus, string> = {
+  passed: 'is-success',
+  failed: 'is-danger',
+  errored: 'is-warning',
+  skipped: 'is-neutral',
+}
+
 /** Mean of `metrics.llm_node_ttft` (seconds → ms) across all `message`
  * events with metrics. Returns null when no samples exist. */
 function caseAvgTtftMs(events: RunEvent[]): number | null {
@@ -57,6 +64,14 @@ function caseAvgTtftMs(events: RunEvent[]): number | null {
     if (typeof ttft === 'number') ttfts.push(ttft * 1000)
   }
   return ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null
+}
+
+function StatusChip({ status }: { status: CaseStatus }) {
+  return (
+    <span className={cn('ao-badge ao-badge--dot capitalize', STATUS_BADGE_TONE[status])}>
+      {status}
+    </span>
+  )
 }
 
 type StatTone = 'good' | 'warn' | 'bad' | 'zero' | 'default'
@@ -202,7 +217,7 @@ export const EvalRunDetailPage = ({
         id: 'status',
         accessorKey: 'status',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
-        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+        cell: ({ row }) => <StatusChip status={row.original.status} />,
         enableColumnFilter: true,
         enableSorting: false,
         meta: {

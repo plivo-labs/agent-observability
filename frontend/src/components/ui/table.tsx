@@ -1,7 +1,6 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
-import { TABLE_HEADER_LABEL_CLASS } from "@/components/data-table/data-table-config"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
@@ -69,9 +68,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "px-4 py-3 text-left align-middle whitespace-nowrap",
-        TABLE_HEADER_LABEL_CLASS,
-        "[&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "px-4 py-3 text-left align-middle whitespace-nowrap font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
       {...props}

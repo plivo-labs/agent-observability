@@ -197,6 +197,62 @@ body {
   background: var(--app-bg);
 }
 
+.obs-nav {
+  height: 56px;
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 0 28px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.obs-nav-brand {
+  font: var(--text-p-600);
+  color: hsl(var(--foreground));
+  letter-spacing: -0.005em;
+  display: flex; align-items: center; gap: 10px;
+}
+.obs-nav-brand .dot {
+  width: 22px; height: 22px; border-radius: 0.125rem;
+  background: hsl(var(--primary));
+  display: grid; place-items: center;
+  color: hsl(var(--primary-foreground));
+}
+.obs-nav-tabs { display: flex; gap: 2px; align-items: center; margin-left: 6px; }
+.obs-tab {
+  height: 32px; padding: 0 14px;
+  border-radius: 0.125rem;
+  display: inline-flex; align-items: center; gap: 7px;
+  font: var(--text-s-500);
+  color: hsl(var(--muted-foreground));
+  transition: background .12s, color .12s;
+}
+.obs-tab:hover { background: hsl(var(--bg2)); color: hsl(var(--foreground)); }
+.obs-tab.active {
+  background: hsl(var(--bg3));
+  color: hsl(var(--foreground));
+  font: var(--text-s-600);
+}
+.obs-tab .count {
+  font: var(--text-xxs-600);
+  color: hsl(var(--tertiary));
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  padding: 1px 6px;
+  border-radius: 999px;
+  min-width: 16px;
+  text-align: center;
+}
+.obs-tab.active .count { background: hsl(var(--bg2)); color: hsl(var(--foreground)); }
+
+.obs-nav-spacer { flex: 1; }
+.obs-nav-right {
+  display: flex; align-items: center; gap: 8px;
+  color: hsl(var(--tertiary));
+}
 .obs-iconbtn {
   width: 32px; height: 32px; border-radius: 0.125rem;
   display: grid; place-items: center;

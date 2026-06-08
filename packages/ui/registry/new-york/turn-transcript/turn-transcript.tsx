@@ -261,55 +261,91 @@ export const TurnTranscriptSection = ({
 
   // If we have structured turn data from metrics, show that
   if (metrics?.turns?.length) {
-    const content = (
-      <>
-        <div className="flex items-center gap-2 mb-5">
-          <MessageSquare size={15} className="text-muted-foreground" />
-          <span className="text-s-400 font-medium">Conversation</span>
-          <span className="text-xs text-muted-foreground">
-            {metrics.turns.length} turn{metrics.turns.length !== 1 ? 's' : ''}
-          </span>
+    const turns = metrics.turns
+    if (embedded) {
+      return (
+        <>
+          <div className="flex items-center gap-2 mb-5">
+            <MessageSquare size={15} className="text-muted-foreground" />
+            <span className="text-s-400 font-medium">Conversation</span>
+            <span className="text-xs text-muted-foreground">
+              {turns.length} turn{turns.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="mx-auto max-w-3xl flex flex-col">
+            {turns.map((turn, i) => (
+              <TurnCard
+                key={turn.turn_id || i}
+                turn={turn}
+                highlighted={highlightedTurn === turn.turn_number}
+                turnRef={(el) => { turnRefs.current[turn.turn_number] = el }}
+                alignment={alignment}
+              />
+            ))}
+          </div>
+        </>
+      )
+    }
+    return (
+      <section className="ao-panel">
+        <div className="ao-panel-head">
+          <div>
+            <div className="ao-panel-title">
+              <MessageSquare /> Conversation
+            </div>
+            <div className="ao-panel-sub">
+              {turns.length} turn{turns.length !== 1 ? 's' : ''} · per-turn latency & tokens
+            </div>
+          </div>
         </div>
-        <div className="mx-auto max-w-3xl flex flex-col">
-          {metrics.turns.map((turn, i) => (
-            <TurnCard
-              key={turn.turn_id || i}
-              turn={turn}
-              highlighted={highlightedTurn === turn.turn_number}
-              turnRef={(el) => { turnRefs.current[turn.turn_number] = el }}
-              alignment={alignment}
-            />
-          ))}
+        <div className="ao-panel-body">
+          <div className="mx-auto max-w-3xl flex flex-col">
+            {turns.map((turn, i) => (
+              <TurnCard
+                key={turn.turn_id || i}
+                turn={turn}
+                highlighted={highlightedTurn === turn.turn_number}
+                turnRef={(el) => { turnRefs.current[turn.turn_number] = el }}
+                alignment={alignment}
+              />
+            ))}
+          </div>
         </div>
-      </>
+      </section>
     )
-
-    if (embedded) return content
-    return <div className="rounded-lg border bg-card p-5">{content}</div>
   }
 
   // Fallback to raw chat history
   if (chatHistory?.length) {
     const messages = chatHistory.filter((item) => item.type === 'message')
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <MessageSquare size={15} className="text-muted-foreground" />
-          <span className="text-s-400 font-medium">Transcript</span>
-          <span className="text-xs text-muted-foreground">({messages.length} messages)</span>
+      <section className="ao-panel">
+        <div className="ao-panel-head">
+          <div>
+            <div className="ao-panel-title">
+              <MessageSquare /> Transcript
+            </div>
+            <div className="ao-panel-sub">{messages.length} messages</div>
+          </div>
         </div>
-        <div className="space-y-1 max-h-[600px] overflow-y-auto">
-          {messages.map((item, i) => (
-            <ChatMessageCard key={item.id || i} item={item} />
-          ))}
+        <div className="ao-panel-body">
+          <div className="space-y-1 max-h-[600px] overflow-y-auto">
+            {messages.map((item, i) => (
+              <ChatMessageCard key={item.id || i} item={item} />
+            ))}
+          </div>
         </div>
-      </div>
+      </section>
     )
   }
 
   return (
-    <div className="flex items-center justify-center p-12 text-muted-foreground text-s-400">
-      No turn data available
+    <div className="ao-empty">
+      <div className="ao-empty-icon">
+        <MessageSquare />
+      </div>
+      <div className="ao-empty-title">No transcript</div>
+      <div className="ao-empty-text">No turn data was captured for this session.</div>
     </div>
   )
 }

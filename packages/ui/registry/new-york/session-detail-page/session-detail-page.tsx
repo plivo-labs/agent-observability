@@ -1,8 +1,5 @@
 import { useState } from 'react'
 import { Activity, AudioLines, BarChart3, ChevronRight, Settings2 } from 'lucide-react'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useSession } from '@/lib/observability-hooks'
 import { MetricSummaryCards } from '@/components/metric-summary-cards'
@@ -23,26 +20,45 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
 
   if (loading) {
     return (
-      <ScrollArea className="h-[calc(100vh-53px)]">
-        <div className="flex flex-col gap-5 p-6" aria-busy="true">
-          <Skeleton className="h-4 w-48" />
-          <Skeleton className="h-[120px] w-full rounded-xl" />
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-[76px] rounded-lg" />
-            ))}
-          </div>
-          <Skeleton className="h-9 w-80" />
-          <Skeleton className="h-[320px] w-full rounded-xl" />
+      <div className="flex flex-col gap-6" aria-busy="true">
+        <div className="flex flex-col gap-3">
+          <div className="ao-skeleton ao-skeleton--title" style={{ width: '30%' }} />
+          <div className="ao-skeleton ao-skeleton--line" style={{ width: '55%' }} />
         </div>
-      </ScrollArea>
+        <div className="ao-stat-row">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="ao-stat">
+              <div className="ao-skeleton" style={{ height: 12, width: '50%', marginBottom: 14 }} />
+              <div className="ao-skeleton" style={{ height: 28, width: '65%' }} />
+            </div>
+          ))}
+        </div>
+        <div className="ao-panel">
+          <div className="ao-panel-body flex flex-col gap-3">
+            <div className="ao-skeleton ao-skeleton--title" />
+            <div className="ao-skeleton ao-skeleton--line" />
+            <div className="ao-skeleton ao-skeleton--line" style={{ width: '80%' }} />
+          </div>
+        </div>
+      </div>
     )
   }
 
   if (error || !session) {
     return (
-      <div className="p-12 text-center text-foreground">
-        <p>{error ?? 'Session not found'}</p>
+      <div className="ao-empty">
+        <div className="ao-empty-icon">
+          <AudioLines />
+        </div>
+        <div className="ao-empty-title">Session not found</div>
+        <div className="ao-empty-text">{error ?? 'We couldn’t load this session.'}</div>
+        {onBack && (
+          <div className="ao-empty-actions">
+            <button type="button" className="ao-btn ao-btn--outline" onClick={onBack}>
+              Back to sessions
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -53,83 +69,80 @@ export const SessionDetailPage = ({ onBack }: { onBack?: () => void }) => {
   const hasRecording = Boolean(session.record_url)
 
   return (
-    <ScrollArea className="h-[calc(100vh-53px)]">
-      <div className="flex flex-col gap-5 p-6">
-        {onBack && (
-          <nav className="flex items-center gap-1.5 text-s-400">
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors bg-transparent border-none p-0 text-s-400"
-              onClick={onBack}
-            >
-              Sessions
-            </button>
-            <ChevronRight size={14} className="text-muted-foreground/60" />
-            <span className="truncate max-w-[300px]">{session.session_id}</span>
-          </nav>
-        )}
+    <>
+      {onBack && (
+        <nav className="mb-4 flex items-center gap-1.5 font-mono text-[12px] text-[hsl(var(--tertiary))]">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-[hsl(var(--muted-foreground))] transition-colors hover:text-[hsl(var(--link))]"
+          >
+            Sessions
+          </button>
+          <ChevronRight size={13} className="opacity-60" />
+          <span className="truncate text-foreground">{session.session_id}</span>
+        </nav>
+      )}
 
-        {/* Auto-connected — these components use hooks internally */}
-        <SessionHeader onEvaluationsClick={() => setEvaluationsOpen(true)} />
+      <SessionHeader onEvaluationsClick={() => setEvaluationsOpen(true)} />
+
+      <div className="ao-reveal ao-reveal-1 mt-6">
         <MetricSummaryCards />
-        <SessionEvaluationsDrawer
-          open={evaluationsOpen}
-          onOpenChange={setEvaluationsOpen}
-        />
-
-        <Tabs defaultValue="session" className="w-full min-w-0">
-          <TabsList className="sticky top-0 z-10 max-w-full overflow-x-auto bg-background">
-            <TabsTrigger value="session" className="gap-1.5">
-              <AudioLines size={13} />
-              Session{turnCount > 0 && ` (${turnCount})`}
-            </TabsTrigger>
-            <TabsTrigger value="metrics" className="gap-1.5">
-              <BarChart3 size={13} />
-              Performance
-            </TabsTrigger>
-            <TabsTrigger value="events" className="gap-1.5">
-              <Activity size={13} />
-              Events{eventCount > 0 && ` (${eventCount})`}
-            </TabsTrigger>
-            <TabsTrigger value="config" className="gap-1.5">
-              <Settings2 size={13} />
-              Config
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="session" className="mt-4 min-w-0">
-            <div className="rounded-lg border p-5">
-              {hasRecording && (
-                <>
-                  <SessionTimeline />
-                  <Separator className="my-5" />
-                </>
-              )}
-              <TurnTranscriptSection embedded />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="metrics" className="mt-4 flex min-w-0 flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <LatencyPercentilesChart />
-              <PipelineBreakdownChart />
-            </div>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <LatencyOverTurnsChart />
-              <TokenUsageSection />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="events" className="mt-4 min-w-0">
-            <SessionEvents />
-          </TabsContent>
-
-          <TabsContent value="config" className="mt-4 min-w-0">
-            <SessionConfig />
-          </TabsContent>
-
-        </Tabs>
       </div>
-    </ScrollArea>
+
+      <SessionEvaluationsDrawer
+        open={evaluationsOpen}
+        onOpenChange={setEvaluationsOpen}
+      />
+
+      <Tabs defaultValue="session" className="ao-reveal ao-reveal-2 mt-8 min-w-0">
+        <TabsList className="ao-subtabs max-w-full overflow-x-auto">
+          <TabsTrigger value="session">
+            <AudioLines size={14} /> Session
+            {turnCount > 0 && <span className="count">{turnCount}</span>}
+          </TabsTrigger>
+          <TabsTrigger value="metrics">
+            <BarChart3 size={14} /> Performance
+          </TabsTrigger>
+          <TabsTrigger value="events">
+            <Activity size={14} /> Events
+            {eventCount > 0 && <span className="count">{eventCount}</span>}
+          </TabsTrigger>
+          <TabsTrigger value="config">
+            <Settings2 size={14} /> Config
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="session" className="min-w-0">
+          <div className="flex flex-col gap-4">
+            {hasRecording && (
+              <div className="ao-panel">
+                <div className="ao-panel-body">
+                  <SessionTimeline />
+                </div>
+              </div>
+            )}
+            <TurnTranscriptSection />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="metrics" className="min-w-0">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <LatencyPercentilesChart />
+            <PipelineBreakdownChart />
+            <LatencyOverTurnsChart />
+            <TokenUsageSection />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="events" className="min-w-0">
+          <SessionEvents />
+        </TabsContent>
+
+        <TabsContent value="config" className="min-w-0">
+          <SessionConfig />
+        </TabsContent>
+      </Tabs>
+    </>
   )
 }

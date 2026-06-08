@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef, Row } from '@tanstack/react-table'
 import {
@@ -7,28 +7,31 @@ import {
   CheckCircle2,
   FlaskConical,
   Layers,
+  Trash2,
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
 import { DataTablePagination } from '@/components/data-table/data-table-pagination'
 import { useDataTable } from '@/components/data-table/use-data-table'
-import { useDayFilter } from '@/components/data-table/use-day-filter'
-import { useBulkDelete } from '@/components/data-table/use-bulk-delete'
-import {
-  DeleteConfirmDialog,
-  SelectionToolbar,
-} from '@/components/data-table/delete-confirm-dialog'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
 import type { EvalRunRow } from '@/lib/observability-types'
-import { toneForRate, toneClass, toneColorVar } from '@/lib/tone'
-import { SelectableCard } from '@/components/selectable-card'
 
 // Agent framework — what the agent under test is built with.
 const FRAMEWORK_OPTIONS = [
@@ -47,7 +50,12 @@ const TESTING_FRAMEWORK_OPTIONS = [
 function PassRateBar({ passed, total }: { passed: number; total: number }) {
   const pct = total > 0 ? Math.round((passed / total) * 100) : 0
   // Tone the fill by health so a sweep of the column reads at a glance.
-  const tone = toneColorVar(toneForRate(pct))
+  const tone =
+    pct >= 90
+      ? 'hsl(var(--success))'
+      : pct >= 60
+        ? 'hsl(var(--warning))'
+        : 'hsl(var(--destructive))'
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
       <span
@@ -108,11 +116,7 @@ function deriveVerdict(run: EvalRunRow): { label: string; tone: string } {
         'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',
     }
   }
-  // A run is complete once every case is accounted for (passed/failed/errored/
-  // skipped). Skipped cases don't block a pass — keying off `passed >= total`
-  // alone left a finished run with skipped cases stuck on "pending" forever.
-  const accounted = run.passed + run.failed + run.errored + run.skipped
-  if (run.total > 0 && accounted >= run.total) {
+  if (run.total > 0 && run.passed >= run.total) {
     return {
       label: 'pass',
       tone: 'text-[hsl(var(--success))] border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)]',
@@ -144,32 +148,60 @@ function RunCard({
       : 'No cases recorded yet.'
 
   return (
-    <SelectableCard
-      selected={row.getIsSelected()}
-      onToggle={(value) => row.toggleSelected(value)}
-      onOpen={() => onOpen(run.run_id)}
-      selectAriaLabel={`Select run ${run.run_id}`}
-      title={title}
-      meta={
-        <>
-          {run.account_id && (
-            <>
-              <span className="truncate">{run.account_id}</span>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        const t = e.target as HTMLElement
+        if (t.closest('button, a, input, select, [role="menuitem"]')) return
+        onOpen(run.run_id)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(run.run_id)
+        }
+      }}
+      data-state={row.getIsSelected() ? 'selected' : undefined}
+      className={cn(
+        'group block cursor-pointer border bg-card px-5 py-4 shadow-sm transition-colors',
+        'rounded-[var(--radius)] hover:border-[hsl(var(--muted-foreground)/0.4)] hover:bg-muted/30',
+        row.getIsSelected() && 'border-[hsl(var(--primary))] bg-muted/30',
+      )}
+      style={{ borderRadius: 'var(--radius)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <Checkbox
+            aria-label={`Select run ${run.run_id}`}
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-base text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+              {title}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground" style={{ fontFamily: 'var(--mono)' }}>
+              {run.account_id && (
+                <>
+                  <span className="truncate">{run.account_id}</span>
+                  <span aria-hidden>·</span>
+                </>
+              )}
+              <span>run {run.run_id.slice(0, 8)}</span>
               <span aria-hidden>·</span>
-            </>
-          )}
-          <span>run {run.run_id.slice(0, 8)}</span>
-          <span aria-hidden>·</span>
-          <span>{formatDuration(run.duration_ms)}</span>
-          {run.testing_framework && (
-            <>
-              <span aria-hidden>·</span>
-              <span className="truncate">{run.testing_framework}</span>
-            </>
-          )}
-        </>
-      }
-      pill={
+              <span>{formatDuration(run.duration_ms)}</span>
+              {run.testing_framework && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="truncate">{run.testing_framework}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
         <span
           className={cn(
             'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
@@ -178,9 +210,8 @@ function RunCard({
         >
           {verdict.label}
         </span>
-      }
-      footer={formatDate(run.started_at)}
-    >
+      </div>
+
       <div className="mt-3 line-clamp-2 text-sm text-muted-foreground">
         <span className="text-foreground">{summary}</span>
       </div>
@@ -193,11 +224,34 @@ function RunCard({
           version={run.testing_framework_version}
         />
       </div>
-    </SelectableCard>
+
+      <div className="mt-3 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80" style={{ fontFamily: 'var(--mono)' }}>
+        {formatDate(run.started_at)}
+      </div>
+    </div>
   )
 }
 
-export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
+function RunCardSkeleton() {
+  return (
+    <div
+      className="border bg-card px-5 py-4 shadow-sm"
+      style={{ borderRadius: 'var(--radius)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-3 w-64" />
+        </div>
+        <Skeleton className="h-5 w-14 rounded-full" />
+      </div>
+      <Skeleton className="mt-3 h-4 w-40" />
+      <Skeleton className="mt-3 h-4 w-56" />
+    </div>
+  )
+}
+
+export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
   // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
@@ -213,12 +267,24 @@ export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void 
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
-  // string. `useDayFilter` expands it into a 00:00 → next-midnight window.
+  // string. Expanded server-side into a 00:00 → next-midnight window.
   const [startedAt] = useQueryState(
     'started_at',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
-  const { fromIso: startedFromIso, toIso: startedToIso } = useDayFilter(startedAt)
+  const startedDay = useMemo(() => {
+    const v = startedAt[0]
+    if (!v) return undefined
+    const d = new Date(Number(v))
+    return Number.isNaN(d.getTime()) ? undefined : d
+  }, [startedAt])
+  const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
+  const startedToIso = useMemo(() => {
+    if (!startedDay) return undefined
+    const end = new Date(startedDay)
+    end.setHours(23, 59, 59, 999)
+    return end.toISOString()
+  }, [startedDay])
 
   const { runs, meta, loading, error, refetch } = useEvalRuns(
     perPage,
@@ -410,7 +476,8 @@ export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void 
     const passRate = cases > 0 ? Math.round((passed / cases) * 100) : 0
     return { cases, passed, failed, passRate }
   }, [runs])
-  const passRateTone = stats.cases === 0 ? '' : toneClass(stats.passRate)
+  const passRateTone =
+    stats.cases === 0 ? '' : stats.passRate >= 90 ? 'is-good' : stats.passRate >= 60 ? 'is-warn' : 'is-bad'
 
   const { table } = useDataTable({
     data: runs,
@@ -423,19 +490,26 @@ export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void 
   const rows = table.getRowModel().rows
 
   const { api } = useObservabilityContext()
-  const {
-    confirmOpen,
-    setConfirmOpen,
-    deleting,
-    deleteError,
-    selectedCount,
-    handleDelete,
-    cancelSelection,
-  } = useBulkDelete({
-    table,
-    deleteFn: (ids) => api.deleteEvalRuns(ids),
-    refetch,
-  })
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const selectedIds = Object.keys(table.getState().rowSelection)
+  const selectedCount = selectedIds.length
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deleteEvalRuns(selectedIds)
+      table.resetRowSelection()
+      refetch()
+      setConfirmOpen(false)
+    } catch (e) {
+      setDeleteError((e as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="w-full p-6 flex flex-col gap-5 min-w-0">
@@ -497,18 +571,37 @@ export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void 
         </div>
       )}
 
-      <SelectionToolbar
-        count={selectedCount}
-        onCancel={cancelSelection}
-        onDelete={() => setConfirmOpen(true)}
-      />
+      {selectedCount > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-card shadow-sm">
+          <span className="text-s-500">
+            <b>{selectedCount}</b> selected
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.resetRowSelection()}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={() => setConfirmOpen(true)}
+            >
+              <Trash2 /> Delete
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="ao-reveal ao-reveal-3 flex flex-col gap-2.5">
         <DataTableToolbar table={table} />
         {loading && rows.length === 0 ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
-              <SelectableCard key={`sk-${i}`} loading />
+              <RunCardSkeleton key={`sk-${i}`} />
             ))}
           </div>
         ) : rows.length === 0 ? (
@@ -532,17 +625,35 @@ export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void 
         <DataTablePagination table={table} totalRowCount={totalCount} />
       </div>
 
-      <DeleteConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={`Delete ${selectedCount} eval run${selectedCount === 1 ? '' : 's'}?`}
-        description={`This permanently removes the selected run${selectedCount === 1 ? '' : 's'} and every case, event, and judgment captured under ${selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.`}
-        deleting={deleting}
-        deleteError={deleteError}
-        confirmLabel={`Delete ${selectedCount}`}
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmOpen(false)}
-      />
+      <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedCount} eval run{selectedCount === 1 ? '' : 's'}?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the selected run{selectedCount === 1 ? '' : 's'} and every
+              case, event, and judgment captured under {selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="text-s-400 text-[hsl(var(--destructive))]">
+              Failed to delete: {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : `Delete ${selectedCount}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

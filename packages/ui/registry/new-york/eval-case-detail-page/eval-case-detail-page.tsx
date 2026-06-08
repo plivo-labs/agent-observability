@@ -27,13 +27,13 @@ import { cn } from '@/lib/utils'
 import { formatDuration, formatMs, formatToolValue } from '@/lib/observability-format'
 import { useEvalCase } from '@/lib/observability-hooks'
 import type {
+  CaseStatus,
   JudgmentVerdict,
   RunEvent,
   RunEventFunctionCall,
   RunEventFunctionCallOutput,
   RunEventMessage,
 } from '@/lib/observability-types'
-import { StatusBadge, STATUS_LABEL } from '@/components/run-detail/status-badge'
 
 interface MetricsSummary {
   turnsWithMetrics: number
@@ -70,6 +70,27 @@ function computeCaseMetrics(events: RunEvent[]): MetricsSummary {
     avgTtftMs: ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null,
     models: [...models],
   }
+}
+
+const STATUS_TONE: Record<CaseStatus, string> = {
+  passed: 'is-success',
+  failed: 'is-danger',
+  errored: 'is-warning',
+  skipped: 'is-neutral',
+}
+const STATUS_LABEL: Record<CaseStatus, string> = {
+  passed: 'Passed',
+  failed: 'Failed',
+  errored: 'Errored',
+  skipped: 'Skipped',
+}
+
+function StatusBadge({ status }: { status: CaseStatus }) {
+  return (
+    <span className={cn('ao-badge ao-badge--dot', STATUS_TONE[status])}>
+      {STATUS_LABEL[status]}
+    </span>
+  )
 }
 
 // Friendly labels for the per-turn metric keys LiveKit ships. Anything not
