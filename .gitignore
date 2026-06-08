@@ -27,3 +27,9 @@ plugins/vitest-agent-observability/dist/
 # local design assets + generated docs (not source; large, regenerable)
 design/
 docs/
+
+# vendored truman-calling service
+services/calling/.env
+services/calling/.venv/
+services/calling/data/
+services/calling/**/__pycache__/

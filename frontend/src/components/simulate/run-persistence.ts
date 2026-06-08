@@ -2,16 +2,15 @@
  *
  * The synchronous text simulation has NO server handle, so we snapshot its
  * finished SimResult; if it was interrupted mid-flight we offer a re-run rather
- * than fabricate a recovered run.
- *
- * A version field self-invalidates stale blobs after a shape change. */
-import type { RunConfig } from './simulate/simulate-page'
-import type { SimResult } from './simulate/sim-data'
+ * than fabricate a recovered run. A version field self-invalidates stale blobs
+ * after a shape change. */
+import type { RunConfig } from './simulate-page'
+import type { SimResult } from './sim-data'
 
 const SIM_KEY = 'ao.sim.run'
 const VERSION = 1
 
-export interface SimRun { v: number; config: RunConfig; lastResult?: SimResult }
+export interface SimRun { v: number; config: RunConfig; escalated?: boolean; suiteId?: string; lastResult?: SimResult }
 
 function read<T extends { v: number }>(key: string): T | null {
   try {
@@ -32,8 +31,8 @@ function persist(key: string, obj: Record<string, unknown>): void {
 function clear(key: string): void { try { localStorage.removeItem(key) } catch { /* ignore */ } }
 
 export const readSimRun = (): SimRun | null => read<SimRun>(SIM_KEY)
-// Merge-patch: callers add lastResult as it becomes available. We never persist
-// without a config (nothing to restore from).
+// Merge-patch: callers add suiteId / lastResult / escalated as they become
+// available. We never persist without a config (nothing to restore from).
 export function writeSimRun(patch: Partial<Omit<SimRun, 'v'>>): void {
   const prev = readSimRun()
   const next = { ...(prev ?? {}), ...patch }

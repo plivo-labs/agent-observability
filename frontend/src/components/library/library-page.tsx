@@ -16,19 +16,27 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { api } from '@/lib/api'
-import { initials } from '@/lib/observability-format'
-import type { Agent, Rubric, RubricCriterion as Criterion } from '../simulate/sim-data'
 
 const PERSONA_TYPES = ['baseline', 'edge_case', 'workflow', 'knowledge', 'red_team'] as const
 const AVATARS = ['#6366f1', '#0ea5e9', '#e11d48', '#f59e0b', '#8b5cf6', '#14b8a6', '#16a34a', '#3b82f6']
+const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
-// Library's persona row extends the shared sim-data Persona with `source`
-// (built-in catalog vs. AI-generated), which only the management surface needs.
-import type { Persona as SimPersona } from '../simulate/sim-data'
-interface Persona extends SimPersona { source?: string }
-// Scenarios are a Library-only entity (no sim-data counterpart).
+interface Persona { id: string; name: string; type: string; goal: string; opener: string; voice: string; avatar: string; builtin: boolean; source: string }
+interface Criterion { name: string; question: string; weight?: number }
+interface Rubric { id: string; name: string; criteria: Criterion[]; pass_threshold: number; builtin: boolean }
 interface Scenario { id: string; name: string; yaml: string; created_at: string }
+interface Agent { id: string; name: string; phone_number: string; description: string; system_prompt: string; builtin: boolean; created_at: string }
+
+async function api<T>(url: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(url, { headers: { 'content-type': 'application/json' }, ...opts })
+  if (!res.ok) { let m = `Request failed (${res.status})`; try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ } throw new Error(m) }
+  return res.json()
+}
+
+// The shadcn Button's custom size token (text-xs-500 / text-s-500) collides with
+// text-primary-foreground in tailwind-merge, which drops the white text colour
+// on the dark primary surface. Force it back with an inline style (always wins).
+const PRIMARY_FG = { color: 'hsl(var(--primary-foreground))' } as const
 
 /* ============================ Personas ============================ */
 const emptyPersona = { name: '', type: 'red_team', goal: '', opener: '', voice: 'cartesia/sonic', avatar: AVATARS[0] }
@@ -45,7 +53,7 @@ function PersonasTab() {
   useEffect(() => { load() }, [])
 
   const openNew = () => { setEditing(null); setForm(emptyPersona); setErr(null); setOpen(true) }
-  const openEdit = (p: Persona) => { setEditing(p); setForm({ name: p.name, type: p.type, goal: p.goal, opener: p.opener ?? '', voice: p.voice, avatar: p.avatar }); setErr(null); setOpen(true) }
+  const openEdit = (p: Persona) => { setEditing(p); setForm({ name: p.name, type: p.type, goal: p.goal, opener: p.opener, voice: p.voice, avatar: p.avatar }); setErr(null); setOpen(true) }
   const save = async () => {
     setBusy(true); setErr(null)
     try {
@@ -60,7 +68,7 @@ function PersonasTab() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{items.length} personas · built-ins are locked, your own are editable.</p>
-        <Button size="sm" onClick={openNew}><Plus size={14} /> New persona</Button>
+        <Button size="sm" onClick={openNew} style={PRIMARY_FG}><Plus size={14} /> New persona</Button>
       </div>
       {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -108,7 +116,7 @@ function PersonasTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save} disabled={busy || !form.name.trim()}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create persona'}</Button>
+            <Button onClick={save} disabled={busy || !form.name.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create persona'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -148,7 +156,7 @@ function RubricsTab() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{items.length} rubrics · yes/no criteria the judge evaluates.</p>
-        <Button size="sm" onClick={openNew}><Plus size={14} /> New rubric</Button>
+        <Button size="sm" onClick={openNew} style={PRIMARY_FG}><Plus size={14} /> New rubric</Button>
       </div>
       {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
       <div className="rounded-lg border border-border bg-card">
@@ -199,7 +207,7 @@ function RubricsTab() {
             </div>
             {err && <div className="text-sm text-destructive">{err}</div>}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} disabled={busy || !name.trim()}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create rubric'}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} disabled={busy || !name.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create rubric'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -236,7 +244,7 @@ function AgentsTab() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{items.length} agents · the agent-under-test prompts used by Simulate and Live.</p>
-        <Button size="sm" onClick={openNew}><Plus size={14} /> New agent</Button>
+        <Button size="sm" onClick={openNew} style={PRIMARY_FG}><Plus size={14} /> New agent</Button>
       </div>
       {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -273,7 +281,7 @@ function AgentsTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save} disabled={busy || !form.name.trim() || !form.system_prompt.trim()}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create agent'}</Button>
+            <Button onClick={save} disabled={busy || !form.name.trim() || !form.system_prompt.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create agent'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -309,7 +317,7 @@ function ScenariosTab() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{items.length} scenarios · a YAML sim definition, saved and re-runnable.</p>
-        <Button size="sm" onClick={() => { setErr(null); setOpen(true) }}><Plus size={14} /> New scenario</Button>
+        <Button size="sm" onClick={() => { setErr(null); setOpen(true) }} style={PRIMARY_FG}><Plus size={14} /> New scenario</Button>
       </div>
       {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
       {items.length === 0
@@ -322,7 +330,7 @@ function ScenariosTab() {
                   <pre className="mt-2 max-h-40 overflow-auto rounded-md border border-border bg-muted/40 p-2 text-[11px] leading-relaxed font-mono text-muted-foreground">{s.yaml}</pre>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  <Button size="sm" onClick={() => navigate('/simulate', { state: { scenario: { name: s.name, yaml: s.yaml } } })}><Play size={13} /> Run</Button>
+                  <Button size="sm" style={PRIMARY_FG} onClick={() => navigate('/simulate', { state: { scenario: { name: s.name, yaml: s.yaml } } })}><Play size={13} /> Run</Button>
                   <button onClick={() => del(s)} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
                 </div>
               </div>
@@ -337,7 +345,7 @@ function ScenariosTab() {
             <div><Label>YAML</Label><textarea value={yaml} onChange={(e) => setYaml(e.target.value)} rows={12} className="w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-[12px] leading-relaxed outline-none focus:ring-2 focus:ring-ring" /></div>
             {err && <div className="text-sm text-destructive">{err}</div>}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} disabled={!name.trim() || !yaml.trim()}>Create scenario</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} disabled={!name.trim() || !yaml.trim()} style={PRIMARY_FG}>Create scenario</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

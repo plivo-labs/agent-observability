@@ -1,7 +1,6 @@
 /* sim-data.ts — Simulate module: persona catalog (for the Define screen),
  * defaults, and the API client + result types. Results now come from the
  * backend (/api/simulations), so they reflect the prompt the user pastes. */
-import { api } from '@/lib/api'
 
 export type PersonaType = 'baseline' | 'edge_case' | 'workflow' | 'knowledge' | 'red_team'
 
@@ -62,6 +61,7 @@ run: { parallelism: 5, escalation: text_then_voice_on_fail }`
 
 /* ---------- result types (mirror the backend SimResult) ---------- */
 export type CaseStatus = 'pass' | 'fail'
+export interface CriterionVerdict { name: string; pass: boolean; justification: string }
 export interface Turn { role: 'agent' | 'user'; t: string; ms?: number; flag?: string }
 export interface SimCaseResult {
   pid: string; personaName: string; personaType: PersonaType; avatar: string
@@ -126,45 +126,91 @@ export interface SimRequest {
   threshold: number
 }
 
-/* Per-criterion judge verdict (mirrors the backend). */
-export interface CriterionVerdict { name: string; pass: boolean; justification: string }
-
 export async function listRubrics(): Promise<Rubric[]> {
-  return (await api<{ objects: Rubric[] }>('/api/library/rubrics')).objects
+  const res = await fetch('/api/library/rubrics')
+  if (!res.ok) throw new Error(`Failed to load rubrics (${res.status})`)
+  const d = await res.json()
+  return d.objects as Rubric[]
 }
 
 export async function listAgents(): Promise<Agent[]> {
-  return (await api<{ objects: Agent[] }>('/api/library/agents')).objects
+  const res = await fetch('/api/library/agents')
+  if (!res.ok) throw new Error(`Failed to load agents (${res.status})`)
+  const d = await res.json()
+  return d.objects as Agent[]
 }
 
-export function saveAgent(a: { id?: string; name: string; phone_number?: string; description?: string; system_prompt: string }): Promise<Agent> {
+export async function saveAgent(a: { id?: string; name: string; phone_number?: string; description?: string; system_prompt: string }): Promise<Agent> {
   const { id, ...payload } = a
   const url = id ? `/api/library/agents/${id}` : '/api/library/agents'
-  return api<Agent>(url, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
+  const res = await fetch(url, {
+    method: id ? 'PATCH' : 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let m = `Save failed (${res.status})`
+    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
+    throw new Error(m)
+  }
+  return res.json()
 }
 
-export function deleteAgent(id: string): Promise<void> {
-  return api<void>(`/api/library/agents/${id}`, { method: 'DELETE' })
+export async function deleteAgent(id: string): Promise<void> {
+  const res = await fetch(`/api/library/agents/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    let m = `Delete failed (${res.status})`
+    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
+    throw new Error(m)
+  }
 }
 
 export async function listLibraryPersonas(): Promise<Persona[]> {
-  return (await api<{ objects: Persona[] }>('/api/library/personas')).objects
+  const res = await fetch('/api/library/personas')
+  if (!res.ok) throw new Error(`Failed to load personas (${res.status})`)
+  const d = await res.json()
+  return d.objects as Persona[]
 }
 
-export function savePersonaToLibrary(p: Persona): Promise<Persona> {
-  return api<Persona>('/api/library/personas', {
+export async function savePersonaToLibrary(p: Persona): Promise<Persona> {
+  const res = await fetch('/api/library/personas', {
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name: p.name, type: p.type, goal: p.goal, opener: p.opener ?? '', voice: p.voice, avatar: p.avatar, source: 'generated' }),
   })
+  if (!res.ok) {
+    let m = `Save failed (${res.status})`
+    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
+    throw new Error(m)
+  }
+  return res.json()
 }
 
-export function generatePersonas(prompt: string, count = 3, types: PersonaType[] = ['red_team', 'edge_case']): Promise<{ engine: 'llm' | 'demo'; personas: Persona[] }> {
-  return api<{ engine: 'llm' | 'demo'; personas: Persona[] }>('/api/personas/generate', {
+export async function generatePersonas(prompt: string, count = 3, types: PersonaType[] = ['red_team', 'edge_case']): Promise<{ engine: 'llm' | 'demo'; personas: Persona[] }> {
+  const res = await fetch('/api/personas/generate', {
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ prompt, count, types }),
   })
+  if (!res.ok) {
+    let msg = `Persona generation failed (${res.status})`
+    try { const e = await res.json(); msg = e?.error?.message ?? msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return res.json()
 }
 
-export function runSimulation(req: SimRequest, signal?: AbortSignal): Promise<SimResult> {
-  return api<SimResult>('/api/simulations', { method: 'POST', body: JSON.stringify(req), signal })
+export async function runSimulation(req: SimRequest, signal?: AbortSignal): Promise<SimResult> {
+  const res = await fetch('/api/simulations', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  })
+  if (!res.ok) {
+    let msg = `Simulation failed (${res.status})`
+    try { const e = await res.json(); msg = e?.error?.message ?? msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return res.json()
 }
