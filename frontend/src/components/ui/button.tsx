@@ -66,6 +66,17 @@ function Button({
   }) {
   const Comp = asChild ? Slot.Root : "button"
 
+  // The default (primary) variant's `text-primary-foreground` can be dropped by
+  // tailwind-merge when a custom size token (e.g. `text-xs-500`/`text-s-500`)
+  // is treated as a colliding text utility — leaving dark text on the dark
+  // primary surface. Pin the foreground via an inline style so it always wins,
+  // without colliding in tailwind-merge. Consumers can still override via
+  // `style`. Other variants are unaffected.
+  const style =
+    variant === "default" && !asChild
+      ? { color: "hsl(var(--primary-foreground))", ...props.style }
+      : props.style
+
   return (
     <Comp
       data-slot="button"
@@ -73,6 +84,7 @@ function Button({
       data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
+      style={style}
     />
   )
 }

@@ -20,3 +20,10 @@ __pycache__/
 
 # plugin build output (regenerable; published via npm tarball)
 plugins/vitest-agent-observability/dist/
+
+# OS / local artifacts
+.DS_Store
+
+# local design assets + generated docs (not source; large, regenerable)
+design/
+docs/

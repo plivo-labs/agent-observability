@@ -24,3 +24,15 @@ export const basicAuthEnabled =
 export const liveKitAuthEnabled =
   !!config.LIVEKIT_API_KEY &&
   !!config.LIVEKIT_API_SECRET;
+
+// When set, the Live module places REAL calls via the Truman caller API
+// (Truman judges the real transcript). Otherwise Live runs the demo/LLM shell.
+export const trumanEnabled =
+  !!config.TRUMAN_API_URL &&
+  !!config.TRUMAN_API_TOKEN;
+
+// When set, Simulate generates real conversations via Azure OpenAI (api-key +
+// deployment URL) instead of SIM_LLM / prompt-derived demo.
+export const azureLlmEnabled =
+  !!config.AZURE_OPENAI_ENDPOINT &&
+  !!config.AZURE_OPENAI_API_KEY;
