@@ -34,18 +34,6 @@ async def _handle_job(payload: dict, plivo_client: plivo.RestClient) -> None:
         await mark_run_status(run_id, "failed", error=f"load_run: {e}")
         return
 
-    # Re-check status immediately before dialing: a run can be cancelled while it
-    # sits in the queue, or the stream message can be re-delivered after a worker
-    # crash once the call is already placed. Only "queued" runs should be dialed —
-    # anything else means we'd double-dial or revive a cancelled run.
-    if loaded.run.status != "queued":
-        log.info(
-            "skipping dial for run %s: status is %r, not 'queued'",
-            run_id,
-            loaded.run.status,
-        )
-        return
-
     target = loaded.agent.phone_number
     answer_url = f"{settings.public_answer_url}?run_id={run_id}"
     # Do not log the dialed phone number (target) in clear text — CodeQL flags

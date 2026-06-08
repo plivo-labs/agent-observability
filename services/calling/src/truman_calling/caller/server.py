@@ -380,38 +380,7 @@ async def persona_session(ctx: JobContext) -> None:
             log.exception("audio tap setup failed (live audio will be unavailable)")
 
 
-def _verify_plivo_signature(request: aiohttp_web.Request, params) -> bool:
-    """Verify Plivo's X-Plivo-Signature-V3 over the public callback URL + params.
-
-    These webhooks are internet-reachable (Plivo must hit them), so an unsigned
-    or forged request must NOT be allowed to drive call state or inject a
-    RecordUrl/transcript. Gated by settings.plivo_verify_signature."""
-    if not settings.plivo_verify_signature:
-        return True
-    sig = request.headers.get("X-Plivo-Signature-V3")
-    nonce = request.headers.get("X-Plivo-Signature-V3-Nonce")
-    token = settings.plivo_auth_token
-    if not (sig and nonce and token):
-        log.warning("rejecting %s: missing Plivo signature/nonce (or token unset)", request.path)
-        return False
-    # Plivo signs the PUBLIC URL it called (the tunnel host in public_base_url),
-    # not our internal request host — reconstruct it from the rel_url (path+query).
-    uri = settings.public_base_url.rstrip("/") + str(request.rel_url)
-    try:
-        from plivo.utils import validate_v3_signature
-
-        ok = validate_v3_signature(request.method, uri, nonce, token, sig, params=dict(params or {}))
-    except Exception as e:
-        log.warning("Plivo signature check errored on %s: %s", request.path, e)
-        return False
-    if not ok:
-        log.warning("rejecting %s: Plivo signature mismatch", request.path)
-    return ok
-
-
 async def handle_answer(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    if not _verify_plivo_signature(request, await request.post()):
-        return aiohttp_web.Response(status=403, text="invalid signature")
     public_ws = settings.public_ws_url
     cb_url = settings.public_recording_callback_url
     ack_url = f"{settings.public_base_url.rstrip('/')}/record-ack"
@@ -448,8 +417,6 @@ async def handle_record_ack(request: aiohttp_web.Request) -> aiohttp_web.Respons
 
 async def handle_hangup(request: aiohttp_web.Request) -> aiohttp_web.Response:
     data = await request.post()
-    if not _verify_plivo_signature(request, data):
-        return aiohttp_web.Response(status=403, text="invalid signature")
     run_id = request.query.get("run_id")
     log.info(
         "hangup callback: run_id=%s call_uuid=%s duration=%s status=%s hangup_cause=%s",
@@ -516,8 +483,6 @@ async def _deferred_eval(run_id: str, *, call_uuid: str | None) -> None:
 
 async def handle_recording_callback(request: aiohttp_web.Request) -> aiohttp_web.Response:
     data = await request.post()
-    if not _verify_plivo_signature(request, data):
-        return aiohttp_web.Response(status=403, text="invalid signature")
     payload = {k: v for k, v in data.items()}
     run_id = request.query.get("run_id")
     if run_id:
