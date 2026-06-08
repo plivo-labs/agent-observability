@@ -361,9 +361,6 @@ async function llmJudgeCase(prompt: string, p: Persona, transcript: Turn[], thre
   try {
     const raw = await chat([sys, user], { json: true, max: 300 });
     const j = JSON.parse(raw);
-    // A non-numeric score would become NaN here and silently fall through as a
-    // 0/fail; treat it as a parse failure so we hit the deterministic fallback.
-    if (typeof j.score !== "number" || !Number.isFinite(j.score)) throw new Error("judge returned a non-numeric score");
     const score = Math.max(0, Math.min(100, Math.round(j.score)));
     return { score, status: score >= threshold ? "pass" : "fail", summary: String(j.summary || "").slice(0, 200), flagTurn: j.flagTurn ?? undefined, flag: j.flag || undefined };
   } catch {
@@ -514,11 +511,6 @@ function parseScenarioYaml(yamlStr: string): ParsedScenario {
   return res;
 }
 
-/* ============================================================
- * LIVE CALL (Truman model): one agent + one persona + a criteria rubric →
- * one call. Judged against yes/no criteria (overall = all-pass). Shell for
- * real telephony; transcript comes from the engine.
- * ============================================================ */
 /** A rubric criterion: a yes/no check with the judge `question` prompt and an
  *  optional `weight` (default 1) used only by Simulate's score synthesis. */
 export interface Criterion { name: string; question: string; weight?: number }

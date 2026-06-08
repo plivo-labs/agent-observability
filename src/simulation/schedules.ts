@@ -15,16 +15,7 @@ const scheduleInput = z.object({
   interval_minutes: z.coerce.number().int().min(1).max(43200).default(1440),
   enabled: z.boolean().default(true),
   alert_pass_rate: z.coerce.number().int().min(0).max(100).nullable().optional(),
-  // Restrict to Slack's incoming-webhook host — this URL is fetched server-side
-  // from the background scheduler, so an arbitrary URL is an SSRF vector.
-  slack_webhook: z
-    .string()
-    .url()
-    .refine((u) => { try { return new URL(u).hostname === "hooks.slack.com"; } catch { return false; } }, {
-      message: "slack_webhook must be a https://hooks.slack.com/… URL",
-    })
-    .nullable()
-    .optional(),
+  slack_webhook: z.string().url().nullable().optional(),
 });
 
 // ── run one schedule now ─────────────────────────────────────────────────────
@@ -104,16 +95,12 @@ export function registerScheduleRoutes(app: Hono) {
 
   app.patch("/api/schedules/:id", async (c) => {
     const id = c.req.param("id");
-    // Validate the patch with the same bounds as create (partial) — otherwise
-    // interval_minutes: 0 / negative slips through and hot-loops the scheduler.
-    const parsed = scheduleInput.partial().safeParse(await c.req.json().catch(() => ({})));
-    if (!parsed.success) return c.json(buildErrorResponse("invalid_payload", parsed.error.issues.map((i) => i.message).join("; ")), 400);
-    const body = parsed.data;
+    const body = await c.req.json().catch(() => ({}));
     const [existing] = await sql`SELECT * FROM sim_schedules WHERE id = ${id}`;
     if (!existing) return c.json(buildErrorResponse("not_found", "Schedule not found"), 404);
-    const enabled = body.enabled ?? existing.enabled;
-    const interval = body.interval_minutes ?? existing.interval_minutes;
-    const alert = body.alert_pass_rate !== undefined ? body.alert_pass_rate : existing.alert_pass_rate;
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : existing.enabled;
+    const interval = Number.isFinite(body.interval_minutes) ? body.interval_minutes : existing.interval_minutes;
+    const alert = body.alert_pass_rate === null || Number.isFinite(body.alert_pass_rate) ? body.alert_pass_rate : existing.alert_pass_rate;
     const [row] = await sql`
       UPDATE sim_schedules SET enabled = ${enabled}, interval_minutes = ${interval}, alert_pass_rate = ${alert}
       WHERE id = ${id} RETURNING *`;

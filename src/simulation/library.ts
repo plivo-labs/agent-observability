@@ -5,7 +5,6 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { sql } from "../db.js";
 import { buildErrorResponse, newApiId } from "../response.js";
-import { parseJson } from "../json.js";
 
 const personaInput = z.object({
   name: z.string().min(1),
@@ -34,6 +33,7 @@ const agentInput = z.object({
   system_prompt: z.string().min(1),
 });
 
+const parseJson = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
 
 export function registerLibraryRoutes(app: Hono) {
   /* ---------- personas ---------- */

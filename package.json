@@ -5,7 +5,11 @@
     "dev:frontend": "cd frontend && bun run dev",
     "build:frontend": "cd frontend && bun install && bun run build",
     "start": "NODE_ENV=production bun run src/index.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "caller:infra": "docker compose -f services/calling/docker-compose.yml up -d",
+    "caller:migrate": "uv run --directory services/calling alembic upgrade head",
+    "caller:api": "uv run --directory services/calling uvicorn truman_calling.api.main:app --host 0.0.0.0 --port 9082",
+    "caller:worker": "uv run --directory services/calling python -m truman_calling.caller.server dev"
   },
   "dependencies": {
     "hono": "^4.12.11",

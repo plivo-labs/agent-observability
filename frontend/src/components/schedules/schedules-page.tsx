@@ -11,8 +11,8 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { api } from '@/lib/api'
-import { interval, rateTone, rel } from '@/lib/observability-format'
+
+const PRIMARY_FG = { color: 'hsl(var(--primary-foreground))' } as const
 
 interface Schedule {
   id: string; name: string; scenario_id: string; interval_minutes: number; enabled: boolean
@@ -21,6 +21,25 @@ interface Schedule {
 }
 interface Scenario { id: string; name: string }
 interface Alert { id: number; schedule_name: string; message: string; pass_rate: number | null; eval_run_id: string | null; created_at: string }
+
+async function api<T>(url: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(url, { headers: { 'content-type': 'application/json' }, ...opts })
+  if (!res.ok) { let m = `Request failed (${res.status})`; try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ } throw new Error(m) }
+  return res.json()
+}
+
+function rel(ts: string | null): string {
+  if (!ts) return '—'
+  const d = (Date.now() - new Date(ts).getTime()) / 1000
+  const fmt = (n: number, u: string) => `${Math.round(n)}${u}`
+  if (d < 0) {
+    const a = -d
+    return 'in ' + (a < 60 ? fmt(a, 's') : a < 3600 ? fmt(a / 60, 'm') : fmt(a / 3600, 'h'))
+  }
+  return (d < 60 ? fmt(d, 's') : d < 3600 ? fmt(d / 60, 'm') : d < 86400 ? fmt(d / 3600, 'h') : fmt(d / 86400, 'd')) + ' ago'
+}
+const interval = (m: number) => (m % 1440 === 0 ? `${m / 1440}d` : m % 60 === 0 ? `${m / 60}h` : `${m}m`)
+const rateTone = (r: number | null) => (r == null ? 'text-muted-foreground' : r >= 80 ? 'text-success' : r >= 50 ? 'text-warning' : 'text-destructive')
 
 export function SchedulesPage() {
   const navigate = useNavigate()
@@ -60,7 +79,7 @@ export function SchedulesPage() {
           <h1 className="text-[26px] font-semibold leading-8 text-foreground">Schedules</h1>
           <div className="mt-1 text-sm text-muted-foreground">Run a saved scenario on a cadence; get alerted when the pass-rate slips.</div>
         </div>
-        <Button size="sm" onClick={() => { setErr(null); setOpen(true) }} disabled={scenarios.length === 0}><Plus size={14} /> New schedule</Button>
+        <Button size="sm" style={PRIMARY_FG} onClick={() => { setErr(null); setOpen(true) }} disabled={scenarios.length === 0}><Plus size={14} /> New schedule</Button>
       </div>
       {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
       {scenarios.length === 0 && <div className="mb-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">Create a Scenario in the Library first — schedules run a saved scenario.</div>}
@@ -129,7 +148,7 @@ export function SchedulesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={create} disabled={!form.name.trim() || !form.scenario_id}>Create schedule</Button>
+            <Button style={PRIMARY_FG} onClick={create} disabled={!form.name.trim() || !form.scenario_id}>Create schedule</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -15,16 +15,28 @@ import {
   listRubrics, runSimulation, savePersonaToLibrary,
   type CaseStatus, type JudgeTreeT, type Persona, type Rubric, type Severity, type SimResult, type Turn,
 } from './sim-data'
-import { readSimRun, writeSimRun, clearSimRun } from '../run-persistence'
-import { Card, CardHead, CardSub, CardTitle } from '../run-detail/card'
-import { initials } from '@/lib/observability-format'
+import { readSimRun, writeSimRun, clearSimRun } from './run-persistence'
 
 /* ---------- helpers ---------- */
 const scoreText = (s: number) => (s >= 80 ? 'text-success' : s >= 65 ? 'text-warning' : 'text-destructive')
 const scoreStroke = (s: number) => (s >= 80 ? 'hsl(var(--success))' : s >= 65 ? 'hsl(var(--warning))' : 'hsl(var(--destructive))')
 const scoreBar = (s: number) => (s >= 80 ? 'bg-success' : s >= 65 ? 'bg-warning' : 'bg-destructive')
+const initials = (name: string) => name.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
 /* ---------- primitives ---------- */
+function Card({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn('rounded-lg border border-border bg-card', className)}>{children}</div>
+}
+function CardHead({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn('flex items-center gap-2 border-b border-border px-4 py-3', className)}>{children}</div>
+}
+function CardTitle({ children }: { children: React.ReactNode }) {
+  return <span className="text-sm font-semibold text-foreground">{children}</span>
+}
+function CardSub({ children }: { children: React.ReactNode }) {
+  return <span className="text-xs text-muted-foreground">{children}</span>
+}
+
 function ScoreRing({ score, max = 100, size = 64, stroke = 6, showMax }: { score: number; max?: number; size?: number; stroke?: number; showMax?: boolean }) {
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
@@ -423,7 +435,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                 )}
               </div>
               <div className="mb-3.5 flex flex-col gap-2 text-sm">
-                {[['Pass threshold', `${threshold} / 100`], ['Judge model', 'gpt-4o (default)'], ['Levels', 'flow·agent·task·node'], ['Parallelism', '5 (default)']].map(([k, v]) => (
+                {[['Pass threshold', `${threshold} / 100`], ['Judge model', 'gpt-4o'], ['Levels', 'flow·agent·task·node'], ['Parallelism', '5']].map(([k, v]) => (
                   <div key={k} className="flex items-center justify-between"><span className="text-muted-foreground">{k}</span><span className="font-mono text-xs text-foreground">{v}</span></div>
                 ))}
               </div>
@@ -432,7 +444,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
             </div>
           </Card>
           <button className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run}><Play size={17} /> Run simulation</button>
-          <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">text</span></div>
+          <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations</div>
         </div>
       </div>
     </div>
@@ -669,11 +681,7 @@ export function SimulatePage() {
   if (phase === 'report') {
     if (!result) return <SetupPhase onRun={run} /> // text needs a result
     const rerun = () => { clearSimRun(); setResumable(null); setConfig(null); setResult(null); setPhase('setup') }
-    return (
-      <div className="flex flex-col gap-6">
-        <ReportPhase result={result} onRerun={rerun} />
-      </div>
-    )
+    return <ReportPhase result={result} onRerun={rerun} />
   }
   return (
     <div className="flex flex-col gap-4">
