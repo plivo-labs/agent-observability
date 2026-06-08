@@ -26,7 +26,9 @@ plugins/vitest-agent-observability/dist/
 
 # local design assets + generated docs (not source; large, regenerable)
 design/
-docs/
+docs/*
+# ...but the hand-written integration guides ARE source — track them
+!docs/integration/
 
 # vendored truman-calling service
 services/calling/.env
