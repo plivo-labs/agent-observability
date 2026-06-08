@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import {
-  Check, CheckCircle2, Download, FileCode, GitPullRequest, Loader, Phone,
+  Check, CheckCircle2, Download, FileCode, GitPullRequest, Loader,
   Play, RotateCw, Scale, Sparkles, TextCursorInput,
   Timer, TriangleAlert, UploadCloud, X,
 } from 'lucide-react'
@@ -93,16 +93,6 @@ const STEPPER_STEPS = [
   { id: 'running', label: 'Run', hint: 'Drive conversations' },
   { id: 'report', label: 'Report', hint: 'Leveled judge verdicts' },
 ]
-
-// Real calls live in the Live tab — voice / escalation hand off there, prefilled.
-const voicePayload = (c: RunConfig, personas: Persona[]) => ({
-  prompt: c.prompt ?? '',
-  personas,
-  criteria: (c.rubric?.criteria ?? []).map((cr) => ({ name: cr.name, question: cr.question })),
-  phoneNumber: c.phoneNumber,
-  rubricId: c.rubric?.id,
-  rubricName: c.rubric?.name,
-})
 
 function Stepper({ phase }: { phase: 'setup' | 'running' | 'report' }) {
   const steps = STEPPER_STEPS
@@ -209,13 +199,12 @@ const COVERAGE_OPTIONS: { id: string; label: string; types: PersonaType[] }[] = 
   { id: 'knowledge', label: 'Knowledge base', types: ['knowledge'] },
 ]
 
-export interface RunConfig { prompt?: string; yaml?: string; mode: string; personaIds: string[]; personas?: Persona[]; rubric?: { id?: string; name?: string; criteria?: { name: string; question: string; weight?: number }[]; pass_threshold?: number }; autoGen: boolean; threshold: number; phoneNumber?: string }
+export interface RunConfig { prompt?: string; yaml?: string; mode: string; personaIds: string[]; personas?: Persona[]; rubric?: { id?: string; name?: string; criteria?: { name: string; question: string; weight?: number }[]; pass_threshold?: number }; autoGen: boolean; threshold: number }
 
 /* ---------- Define ---------- */
 function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
   const [tab, setTab] = useState('prompt')
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
-  const [mode, setMode] = useState('text')
   const [typeFilter, setTypeFilter] = useState('all')
   const [lib, setLib] = useState<Persona[]>(PERSONAS)
   const [selected, setSelected] = useState(() => PERSONAS.map((p) => p.id))
@@ -232,7 +221,6 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
   const [threshold, setThreshold] = useState(70)
   const [rubrics, setRubrics] = useState<Rubric[]>([])
   const [rubricId, setRubricId] = useState('')
-  const [phoneNo, setPhoneNo] = useState('') // target # for voice modes (real calls)
   // Load personas + rubrics from the Library so saved/custom ones appear here.
   useEffect(() => {
     listLibraryPersonas().then((ps) => { if (ps.length) { setLib(ps); setSelected(ps.map((p) => p.id)) } }).catch(() => { /* keep built-in fallback */ })
@@ -263,11 +251,9 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
       .catch((e) => setGenErr(e.message))
       .finally(() => setGenLoading(false))
   }
-  const isVoice = mode === 'voice' || mode === 'text_then_voice'
-  const needsPhone = isVoice && !phoneNo.trim()
   const run = () => onRun(tab === 'yaml'
-    ? { yaml: SIM_YAML, mode, personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold, phoneNumber: phoneNo.trim() || undefined }
-    : { prompt, mode, personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold, phoneNumber: phoneNo.trim() || undefined })
+    ? { yaml: SIM_YAML, mode: 'text', personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold }
+    : { prompt, mode: 'text', personaIds: [], personas: [...selectedLib, ...chosenGen], rubric: rubricPayload, autoGen: false, threshold })
 
   return (
     <div className="animate-in fade-in duration-300">
@@ -291,8 +277,7 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
                     <textarea id="sim-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={6} className="ao-textarea mono" />
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="ao-hint">Or reference a registered <span className="font-mono">agent_id</span> / phone number.</span>
-                    <Seg value={mode} onChange={setMode} options={['text', 'voice', 'text_then_voice'].map((m) => ({ id: m, label: <span className="font-mono text-[11px]">{m}</span> }))} />
+                    <span className="ao-hint">Or reference a registered <span className="font-mono">agent_id</span>.</span>
                   </div>
                 </div>
               ) : (
@@ -442,25 +427,8 @@ function SetupPhase({ onRun }: { onRun: (c: RunConfig) => void }) {
               <div className="ao-hint mt-2">Verdicts are produced by the LiveKit-native leveled judge — the same one used in CI evals and production monitoring.</div>
             </div>
           </Card>
-          {isVoice && (
-            <Card>
-              <CardHead><div className="flex min-w-0 items-center gap-2.5"><Phone size={16} className="shrink-0 text-muted-foreground" /><CardTitle>Voice target</CardTitle></div></CardHead>
-              <div className="ao-panel-body">
-                <div className="ao-field">
-                  <label className="ao-label" htmlFor="sim-phone">Phone number to dial <span className="req">*</span></label>
-                  <input id="sim-phone" value={phoneNo} onChange={(e) => setPhoneNo(e.target.value)} placeholder="+1 555 000 0000" className="ao-input mono" />
-                  <span className="ao-hint">
-                    {mode === 'voice'
-                      ? 'Each persona places a real call to this number (Plivo charge).'
-                      : 'Text runs first; failed personas can be escalated to real calls to this number.'}
-                  </span>
-                </div>
-              </div>
-            </Card>
-          )}
-          <button type="button" className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run} disabled={needsPhone}><Play size={17} /> {mode === 'voice' ? 'Place calls' : 'Run simulation'}</button>
-          {needsPhone && <div className="ao-error text-center text-warning">Enter a phone number for {mode} mode.</div>}
-          <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">{mode}</span></div>
+          <button type="button" className={cn(btnPrimary, 'h-12 text-[15px]')} onClick={run}><Play size={17} /> Run simulation</button>
+          <div className="text-center text-xs text-muted-foreground">{selected.length + chosenGen.length} conversations · mode <span className="font-mono">text</span></div>
         </div>
       </div>
     </div>
@@ -765,7 +733,6 @@ export function SimulatePage() {
   // single poller runs per job even across re-renders.
   const jobIdRef = useRef<string | null>(null)
   const pollingRef = useRef<string | null>(null)
-  const navigate = useNavigate()
 
   // Map a JobState's cases into the live LiveCase[] the running UI renders.
   const applyJob = (job: JobState) => {
@@ -835,14 +802,9 @@ export function SimulatePage() {
 
   const run = (c: RunConfig) => {
     jobIdRef.current = null; pollingRef.current = null // drop any in-flight run before starting a new one
-    if (c.mode === 'voice') {
-      // hand off to Live (real calls), prefilled + auto-placed — keeps Simulate text-only
-      navigate('/live', { state: { voiceFromSimulate: voicePayload(c, c.personas ?? []) } })
-      return
-    }
     setConfig(c); setResult(null); setError(null); setResumable(null); setLive([]); setStartedAt(Date.now())
     clearSimRun()
-    setPhase('running')         // text + text_then_voice run the text sim first
+    setPhase('running')
     // Start the run on the SERVER so it survives refresh / in-app nav, then poll.
     // Request the full leveled-judge battery — without scopes the backend
     // defaults to ["flow"] and the Leveled judge tree never gets populated.
@@ -863,11 +825,6 @@ export function SimulatePage() {
     clearSimRun()
     setResult(null); setError(null); setResumable(null); setLive([]); setStartedAt(null); setPhase('setup')
   }
-
-  const failedPersonas = (): Persona[] =>
-    (!config || !result) ? [] : (config.personas ?? []).filter((p) => result.cases.some((cc) => cc.pid === p.id && cc.status === 'fail'))
-  // Escalate the failed personas to real calls — handed off to the Live tab.
-  const escalate = () => { if (config) navigate('/live', { state: { voiceFromSimulate: voicePayload(config, failedPersonas()) } }) }
 
   const location = useLocation()
   const started = useRef(false)
@@ -929,23 +886,7 @@ export function SimulatePage() {
   if (phase === 'report') {
     if (!result) return <SetupPhase onRun={run} /> // text needs a result
     const rerun = () => { jobIdRef.current = null; pollingRef.current = null; clearSimRun(); setResumable(null); setConfig(null); setResult(null); setLive([]); setPhase('setup') }
-    const failed = failedPersonas()
-    return (
-      <div className="flex flex-col gap-6">
-        <ReportPhase result={result} onRerun={rerun} />
-        {config?.mode === 'text_then_voice' && failed.length > 0 && (
-          <Card className="animate-in fade-in duration-300">
-            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div className="flex items-center gap-2.5 text-sm">
-                <Phone size={16} className="shrink-0 text-[hsl(var(--link))]" />
-                <span><b>{failed.length}</b> persona{failed.length > 1 ? 's' : ''} failed the text sim — escalate {failed.length > 1 ? 'them' : 'it'} to real phone calls in the Live tab.</span>
-              </div>
-              <button type="button" onClick={escalate} className={btnPrimary}><Phone size={15} /> Escalate to Live calls</button>
-            </div>
-          </Card>
-        )}
-      </div>
-    )
+    return <ReportPhase result={result} onRerun={rerun} />
   }
   return (
     <div className="flex flex-col gap-4">

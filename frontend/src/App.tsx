@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Activity, CalendarClock, CheckCheck, FlaskConical, Library, List, Moon, Phone, RefreshCw, Sun } from 'lucide-react'
+import { Activity, CalendarClock, CheckCheck, FlaskConical, Library, List, Moon, RefreshCw, Sun } from 'lucide-react'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionsPage } from '@/components/sessions-page'
 import { SimulatePage } from '@/components/simulate/simulate-page'
-import { LiveCallPage } from '@/components/live/live-call-page'
 import { LibraryPage } from '@/components/library/library-page'
 import { SchedulesPage } from '@/components/schedules/schedules-page'
 import { SessionDetailPage } from '@/components/session-detail-page'
@@ -54,7 +53,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   // active state ourselves: each tab claims its detail routes too.
   const isSessionsActive = pathname === '/' || pathname.startsWith('/sessions')
   const isSimulateActive = pathname.startsWith('/simulate')
-  const isLiveActive = pathname.startsWith('/live')
   const isEvalsActive = pathname.startsWith('/evals')
   const isLibraryActive = pathname.startsWith('/library')
   const isSchedulesActive = pathname.startsWith('/schedules')
@@ -75,7 +73,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <div className="obs-side-group">
             <div className="obs-side-grouplabel">Test</div>
             <NavLink to="/simulate" active={isSimulateActive} icon={<FlaskConical size={16} />} label="Simulate" />
-            <NavLink to="/live" active={isLiveActive} icon={<Phone size={16} />} label="Live" />
           </div>
           <div className="obs-side-group">
             <div className="obs-side-grouplabel">Configure</div>
@@ -154,7 +151,6 @@ export default function App() {
             <Routes>
               <Route path="/" element={<SessionsRoute />} />
               <Route path="/simulate" element={<SimulatePage />} />
-              <Route path="/live" element={<LiveCallPage />} />
               <Route path="/sessions/:sessionId" element={<SessionDetailRoute />} />
               <Route path="/library" element={<LibraryPage />} />
               <Route path="/schedules" element={<SchedulesPage />} />
