@@ -4,7 +4,7 @@
 import { randomUUID } from "crypto";
 import { insertEvalRun } from "../evals/db.js";
 import type { EvalPayloadV0 } from "../evals/schema.js";
-import type { CallResult, JudgeScopes, SimResult } from "./engine.js";
+import type { JudgeScopes, SimResult } from "./engine.js";
 import { verdictOf } from "./engine.js";
 
 /* Build eval_case judgments[] for a judged case. These are loose JSON (the
@@ -130,92 +130,6 @@ export async function persistSimRun(result: SimResult): Promise<string | null> {
     return payload.run.run_id;
   } catch (e) {
     console.error(`[sim] could not persist to evals: ${(e as Error).message}`);
-    return null;
-  }
-}
-
-// A batch of live calls (a Truman "suite") → one eval run, one case per call.
-export async function persistCallBatch(agentName: string, calls: CallResult[]): Promise<string | null> {
-  if (!calls.length) return null;
-  try {
-    const finished = Math.floor(Date.now() / 1000);
-    const totalDur = calls.reduce((a, c) => a + c.durationS, 0);
-    const payload: EvalPayloadV0 = {
-      version: "v0",
-      run: {
-        run_id: randomUUID(),
-        account_id: null,
-        agent_id: agentName,
-        framework: "livekit",
-        framework_version: null,
-        testing_framework: "live-call",
-        testing_framework_version: calls[0].engine,
-        started_at: finished - totalDur,
-        finished_at: finished,
-        ci: null,
-      },
-      cases: calls.map((c) => ({
-        case_id: randomUUID(),
-        name: c.personaName,
-        file: c.personaType,
-        status: c.verdict === "pass" ? "passed" : "failed",
-        started_at: null,
-        finished_at: null,
-        duration_ms: c.durationS * 1000,
-        user_input: c.opener,
-        events: c.transcript.map((t) => ({ type: "message", role: t.role === "agent" ? "assistant" : "user", content: t.t, ms: t.ms, flag: t.flag })),
-        judgments: buildJudgments({ scopes: c.judge.scopes, criteria: c.judge.criteria, status: c.verdict, summary: c.judge.notes }),
-        failure: c.verdict === "fail" ? { message: c.judge.notes, type: "CriteriaFailed" } : null,
-        // Live calls carry a Truman run id → proxy the recording so the Evals
-        // page can play each call. Null for demo/text-sim cases (no real audio).
-        recording_url: c.trumanRunId ? `/api/calls/audio/${c.trumanRunId}` : null,
-      })),
-    };
-    await insertEvalRun(payload);
-    return payload.run.run_id;
-  } catch (e) {
-    console.error(`[call] batch persist failed: ${(e as Error).message}`);
-    return null;
-  }
-}
-
-// A single live call → one eval run with one case, judged by criteria.
-export async function persistCallRun(result: CallResult): Promise<string | null> {
-  try {
-    const finished = Math.floor(Date.now() / 1000);
-    const payload: EvalPayloadV0 = {
-      version: "v0",
-      run: {
-        run_id: randomUUID(),
-        account_id: null,
-        agent_id: result.agentName,
-        framework: "livekit",
-        framework_version: null,
-        testing_framework: "live-call",
-        testing_framework_version: result.engine,
-        started_at: finished - result.durationS,
-        finished_at: finished,
-        ci: null,
-      },
-      cases: [{
-        case_id: randomUUID(),
-        name: result.personaName,
-        file: result.personaType,
-        status: result.verdict === "pass" ? "passed" : "failed",
-        started_at: null,
-        finished_at: null,
-        duration_ms: result.durationS * 1000,
-        user_input: result.opener,
-        events: result.transcript.map((t) => ({ type: "message", role: t.role === "agent" ? "assistant" : "user", content: t.t, ms: t.ms, flag: t.flag })),
-        judgments: buildJudgments({ scopes: result.judge.scopes, criteria: result.judge.criteria, status: result.verdict, summary: result.judge.notes }),
-        failure: result.verdict === "fail" ? { message: result.judge.notes, type: "CriteriaFailed" } : null,
-        recording_url: result.trumanRunId ? `/api/calls/audio/${result.trumanRunId}` : null,
-      }],
-    };
-    await insertEvalRun(payload);
-    return payload.run.run_id;
-  } catch (e) {
-    console.error(`[call] could not persist to evals: ${(e as Error).message}`);
     return null;
   }
 }
