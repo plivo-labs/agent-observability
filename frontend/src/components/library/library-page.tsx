@@ -13,13 +13,23 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { VoicePicker } from '@/components/simulate/voice-picker'
 
 const PERSONA_TYPES = ['baseline', 'edge_case', 'workflow', 'knowledge', 'red_team'] as const
+const GENDERS = ['unspecified', 'male', 'female', 'nonbinary'] as const
+const SPEEDS = ['slow', 'normal', 'fast'] as const
+const INTERRUPT_LEVELS = ['low', 'medium', 'high'] as const
+const NOISE_LEVELS = ['none', 'office', 'street', 'cafe'] as const
 const AVATARS = ['#6366f1', '#0ea5e9', '#e11d48', '#f59e0b', '#8b5cf6', '#14b8a6', '#16a34a', '#3b82f6']
 const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('')
 
-interface Persona { id: string; name: string; type: string; goal: string; opener: string; voice: string; avatar: string; builtin: boolean; source: string }
+interface Persona {
+  id: string; name: string; type: string; goal: string; opener: string; voice: string; avatar: string
+  language?: string; gender?: string; accent?: string; speaking_speed?: string; interruption_level?: string; background_noise?: string; enabled?: boolean
+  builtin: boolean; source: string
+}
 interface Criterion { name: string; question: string; weight?: number }
 interface Rubric { id: string; name: string; criteria: Criterion[]; pass_threshold: number; builtin: boolean }
 interface Scenario { id: string; name: string; yaml: string; created_at: string }
@@ -59,7 +69,10 @@ function CardGridSkeleton() {
 }
 
 /* ============================ Personas ============================ */
-const emptyPersona = { name: '', type: 'red_team', goal: '', opener: '', voice: 'cartesia/sonic', avatar: AVATARS[0] }
+const emptyPersona = {
+  name: '', type: 'red_team', goal: '', opener: '', voice: '', avatar: AVATARS[0],
+  language: 'en', gender: 'unspecified', accent: 'neutral', speaking_speed: 'normal', interruption_level: 'medium', background_noise: 'none', enabled: true,
+}
 
 function PersonasTab() {
   const [items, setItems] = useState<Persona[]>([])
@@ -74,7 +87,16 @@ function PersonasTab() {
   useEffect(() => { load() }, [])
 
   const openNew = () => { setEditing(null); setForm(emptyPersona); setErr(null); setOpen(true) }
-  const openEdit = (p: Persona) => { setEditing(p); setForm({ name: p.name, type: p.type, goal: p.goal, opener: p.opener, voice: p.voice, avatar: p.avatar }); setErr(null); setOpen(true) }
+  const openEdit = (p: Persona) => {
+    setEditing(p)
+    setForm({
+      name: p.name, type: p.type, goal: p.goal, opener: p.opener, voice: p.voice, avatar: p.avatar,
+      language: p.language ?? 'en', gender: p.gender ?? 'unspecified', accent: p.accent ?? 'neutral',
+      speaking_speed: p.speaking_speed ?? 'normal', interruption_level: p.interruption_level ?? 'medium',
+      background_noise: p.background_noise ?? 'none', enabled: p.enabled ?? true,
+    })
+    setErr(null); setOpen(true)
+  }
   const save = async () => {
     setBusy(true); setErr(null)
     try {
@@ -101,7 +123,7 @@ function PersonasTab() {
           <div className="ao-empty-icon"><UsersRound /></div>
           <div className="ao-empty-title">No personas yet</div>
           <div className="ao-empty-text">Define a synthetic caller to drive against your agent in Simulate and Live.</div>
-          <div className="ao-empty-actions"><button className="ao-btn ao-btn--primary" onClick={openNew}><Plus size={15} /> New persona</button></div>
+          <div className="ao-empty-actions"><button type="button" className="ao-btn ao-btn--primary" onClick={openNew}><Plus size={15} /> New persona</button></div>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 ao-stagger">
@@ -120,8 +142,8 @@ function PersonasTab() {
                   {p.builtin
                     ? <Lock size={14} className="text-muted-foreground" />
                     : <div className="flex gap-1">
-                        <button onClick={() => openEdit(p)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
-                        <button onClick={() => del(p)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
+                        <button type="button" onClick={() => openEdit(p)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
+                        <button type="button" onClick={() => del(p)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
                       </div>}
                 </div>
                 {p.goal && <div className="text-xs leading-relaxed text-muted-foreground">{p.goal}</div>}
@@ -133,29 +155,59 @@ function PersonasTab() {
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>{editing ? 'Edit persona' : 'New persona'}</DialogTitle></DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="ao-field"><label className="ao-label">Name <span className="req">*</span></label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Refund Demander" /></div>
-            <div className="ao-field-row">
-              <div className="ao-field"><label className="ao-label">Type</label>
+          <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-name">Name <span className="req">*</span></label><Input id="persona-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Refund Demander" /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-voice">Voice (ElevenLabs) <span className="req">*</span></label><VoicePicker id="persona-voice" value={form.voice} onChange={(v) => setForm({ ...form, voice: v })} /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-language">Language</label><Input id="persona-language" value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} placeholder="en" /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-gender">Gender</label>
+                <Select value={form.gender} onValueChange={(v) => setForm({ ...form, gender: v })}>
+                  <SelectTrigger id="persona-gender" aria-label="Gender" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>{GENDERS.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-accent">Accent</label><Input id="persona-accent" value={form.accent} onChange={(e) => setForm({ ...form, accent: e.target.value })} placeholder="neutral" /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-speed">Speaking speed</label>
+                <Select value={form.speaking_speed} onValueChange={(v) => setForm({ ...form, speaking_speed: v })}>
+                  <SelectTrigger id="persona-speed" aria-label="Speaking speed" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SPEEDS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-interrupt">Interruption level</label>
+                <Select value={form.interruption_level} onValueChange={(v) => setForm({ ...form, interruption_level: v })}>
+                  <SelectTrigger id="persona-interrupt" aria-label="Interruption level" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>{INTERRUPT_LEVELS.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-noise">Background noise</label>
+                <Select value={form.background_noise} onValueChange={(v) => setForm({ ...form, background_noise: v })}>
+                  <SelectTrigger id="persona-noise" aria-label="Background noise" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>{NOISE_LEVELS.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="ao-field"><label className="ao-label" htmlFor="persona-type">Type</label>
                 <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="persona-type" aria-label="Type" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{PERSONA_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replace('_', ' ')}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="ao-field"><label className="ao-label">Voice</label><Input value={form.voice} onChange={(e) => setForm({ ...form, voice: e.target.value })} /></div>
+              <div className="ao-field"><span className="ao-label" id="persona-colour-label">Colour</span>
+                <div role="group" aria-labelledby="persona-colour-label" className="flex h-9 items-center gap-2">{AVATARS.map((a) => <button key={a} type="button" aria-label={`Colour ${a}`} aria-pressed={form.avatar === a} onClick={() => setForm({ ...form, avatar: a })} className={cn('size-7 rounded-md transition', form.avatar === a ? 'ring-2 ring-ring ring-offset-2 ring-offset-background' : 'hover:scale-110')} style={{ background: a }} />)}</div>
+              </div>
             </div>
-            <div className="ao-field"><label className="ao-label">Goal</label><textarea value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} rows={2} className="ao-textarea" placeholder="What this caller tries to do" /></div>
-            <div className="ao-field"><label className="ao-label">Opener</label><Input value={form.opener} onChange={(e) => setForm({ ...form, opener: e.target.value })} placeholder="Their first line" /></div>
-            <div className="ao-field"><label className="ao-label">Colour</label>
-              <div className="mt-1 flex gap-2">{AVATARS.map((a) => <button key={a} onClick={() => setForm({ ...form, avatar: a })} className={cn('size-7 rounded-md transition', form.avatar === a ? 'ring-2 ring-ring ring-offset-2 ring-offset-background' : 'hover:scale-110')} style={{ background: a }} />)}</div>
-            </div>
+            <div className="ao-field"><label className="ao-label" htmlFor="persona-opener">Opener</label><Input id="persona-opener" value={form.opener} onChange={(e) => setForm({ ...form, opener: e.target.value })} placeholder="Their first line" /></div>
+            <div className="ao-field"><label className="ao-label" htmlFor="persona-goal">System prompt</label><textarea id="persona-goal" value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} rows={4} className="ao-textarea" placeholder="What this caller tries to do — their motivation, constraints, and behaviour" /></div>
+            <label className="flex items-center gap-2 text-sm text-foreground" htmlFor="persona-enabled">
+              <Checkbox id="persona-enabled" checked={form.enabled} onCheckedChange={(c) => setForm({ ...form, enabled: c === true })} />
+              Available for scenarios
+            </label>
             {err && <div className="ao-error">{err}</div>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save} disabled={busy || !form.name.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Create persona'}</Button>
+            <Button onClick={save} disabled={busy || !form.name.trim() || !form.voice.trim()} style={PRIMARY_FG}>{busy ? 'Saving…' : editing ? 'Save persona' : 'Create persona'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -212,12 +264,12 @@ function RubricsTab() {
           <div className="ao-empty-icon"><ListChecks /></div>
           <div className="ao-empty-title">No rubrics yet</div>
           <div className="ao-empty-text">Author a set of yes/no criteria the judge uses to score every simulation and call.</div>
-          <div className="ao-empty-actions"><button className="ao-btn ao-btn--primary" onClick={openNew}><Plus size={15} /> New rubric</button></div>
+          <div className="ao-empty-actions"><button type="button" className="ao-btn ao-btn--primary" onClick={openNew}><Plus size={15} /> New rubric</button></div>
         </div>
       ) : (
         <div className="ao-panel ao-panel--flush">
           <table className="ao-table">
-            <thead><tr><th>Name</th><th>Criteria</th><th>Pass threshold</th><th /></tr></thead>
+            <thead><tr><th>Name</th><th>Criteria</th><th>Pass threshold</th><th aria-label="Actions" /></tr></thead>
             <tbody>
               {items.map((r) => (
                 <tr key={r.id} style={{ cursor: 'default' }}>
@@ -228,8 +280,8 @@ function RubricsTab() {
                     {r.builtin
                       ? <Lock size={14} className="ml-auto text-muted-foreground" />
                       : <div className="flex justify-end gap-1">
-                          <button onClick={() => openEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
-                          <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
+                          <button type="button" onClick={() => openEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
+                          <button type="button" onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
                         </div>}
                   </td>
                 </tr>
@@ -244,8 +296,8 @@ function RubricsTab() {
           <DialogHeader><DialogTitle>{editing ? 'Edit rubric' : 'New rubric'}</DialogTitle></DialogHeader>
           <div className="flex flex-col gap-3">
             <div className="ao-field-row">
-              <div className="ao-field"><label className="ao-label">Name <span className="req">*</span></label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Support QA rubric" /></div>
-              <div className="ao-field"><label className="ao-label">Pass threshold</label><Input type="number" value={threshold} onChange={(e) => setThreshold(+e.target.value)} /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="rubric-name">Name <span className="req">*</span></label><Input id="rubric-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Support QA rubric" /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="rubric-threshold">Pass threshold</label><Input id="rubric-threshold" type="number" value={threshold} onChange={(e) => setThreshold(+e.target.value)} /></div>
             </div>
             <div>
               <div className="ao-section-label">Criteria</div>
@@ -254,14 +306,14 @@ function RubricsTab() {
                 {criteria.map((c, i) => (
                   <div key={i} className="flex flex-col gap-1.5 rounded-md border border-border bg-muted/30 p-2.5">
                     <div className="flex gap-2">
-                      <Input value={c.name} onChange={(e) => setCriteria(criteria.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} placeholder="Criterion name" />
-                      <Input type="number" step="0.5" value={c.weight ?? 1} onChange={(e) => setCriteria(criteria.map((x, j) => j === i ? { ...x, weight: +e.target.value } : x))} className="w-20" title="weight" />
-                      <button onClick={() => setCriteria(criteria.filter((_, j) => j !== i))} className="rounded p-2 text-muted-foreground hover:text-destructive"><Trash2 size={14} /></button>
+                      <Input aria-label="Criterion name" value={c.name} onChange={(e) => setCriteria(criteria.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} placeholder="Criterion name" />
+                      <Input aria-label="Criterion weight" type="number" step="0.5" value={c.weight ?? 1} onChange={(e) => setCriteria(criteria.map((x, j) => j === i ? { ...x, weight: +e.target.value } : x))} className="w-20" title="weight" />
+                      <button type="button" aria-label="Remove criterion" onClick={() => setCriteria(criteria.filter((_, j) => j !== i))} className="rounded p-2 text-muted-foreground hover:text-destructive"><Trash2 size={14} /></button>
                     </div>
-                    <Input value={c.question} onChange={(e) => setCriteria(criteria.map((x, j) => j === i ? { ...x, question: e.target.value } : x))} placeholder="Judge question — e.g. Did the agent confirm the order total?" />
+                    <Input aria-label="Judge question" value={c.question} onChange={(e) => setCriteria(criteria.map((x, j) => j === i ? { ...x, question: e.target.value } : x))} placeholder="Judge question — e.g. Did the agent confirm the order total?" />
                   </div>
                 ))}
-                <button className="ao-btn ao-btn--outline ao-btn--sm" onClick={() => setCriteria([...criteria, emptyCriterion()])}><Plus size={13} /> Add criterion</button>
+                <button type="button" className="ao-btn ao-btn--outline ao-btn--sm" onClick={() => setCriteria([...criteria, emptyCriterion()])}><Plus size={13} /> Add criterion</button>
               </div>
             </div>
             {err && <div className="ao-error">{err}</div>}
@@ -314,7 +366,7 @@ function AgentsTab() {
           <div className="ao-empty-icon"><Bot /></div>
           <div className="ao-empty-title">No agents yet</div>
           <div className="ao-empty-text">Register an agent-under-test — its system prompt drives Simulate sims and Live calls.</div>
-          <div className="ao-empty-actions"><button className="ao-btn ao-btn--primary" onClick={openNew}><Plus size={15} /> New agent</button></div>
+          <div className="ao-empty-actions"><button type="button" className="ao-btn ao-btn--primary" onClick={openNew}><Plus size={15} /> New agent</button></div>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 ao-stagger">
@@ -330,8 +382,8 @@ function AgentsTab() {
                   {a.builtin
                     ? <Lock size={14} className="text-muted-foreground" />
                     : <div className="flex gap-1">
-                        <button onClick={() => openEdit(a)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
-                        <button onClick={() => del(a)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
+                        <button type="button" onClick={() => openEdit(a)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
+                        <button type="button" onClick={() => del(a)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
                       </div>}
                 </div>
                 {a.description && <div className="text-xs leading-relaxed text-muted-foreground">{a.description}</div>}
@@ -347,11 +399,11 @@ function AgentsTab() {
           <DialogHeader><DialogTitle>{editing ? 'Edit agent' : 'New agent'}</DialogTitle></DialogHeader>
           <div className="flex flex-col gap-3">
             <div className="ao-field-row">
-              <div className="ao-field"><label className="ao-label">Name <span className="req">*</span></label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Pluto Pizza" /></div>
-              <div className="ao-field"><label className="ao-label">Phone number</label><Input value={form.phone_number} onChange={(e) => setForm({ ...form, phone_number: e.target.value })} placeholder="+1 415 555 0142" /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="agent-name">Name <span className="req">*</span></label><Input id="agent-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Pluto Pizza" /></div>
+              <div className="ao-field"><label className="ao-label" htmlFor="agent-phone">Phone number</label><Input id="agent-phone" value={form.phone_number} onChange={(e) => setForm({ ...form, phone_number: e.target.value })} placeholder="+1 415 555 0142" /></div>
             </div>
-            <div className="ao-field"><label className="ao-label">Description</label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What this agent does" /></div>
-            <div className="ao-field"><label className="ao-label">System prompt <span className="req">*</span></label><textarea value={form.system_prompt} onChange={(e) => setForm({ ...form, system_prompt: e.target.value })} rows={7} className="ao-textarea mono" placeholder="You are the … agent. Greet callers warmly, …" /></div>
+            <div className="ao-field"><label className="ao-label" htmlFor="agent-description">Description</label><Input id="agent-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What this agent does" /></div>
+            <div className="ao-field"><label className="ao-label" htmlFor="agent-prompt">System prompt <span className="req">*</span></label><textarea id="agent-prompt" value={form.system_prompt} onChange={(e) => setForm({ ...form, system_prompt: e.target.value })} rows={7} className="ao-textarea mono" placeholder="You are the … agent. Greet callers warmly, …" /></div>
             {err && <div className="ao-error">{err}</div>}
           </div>
           <DialogFooter>
@@ -409,7 +461,7 @@ function ScenariosTab() {
           <div className="ao-empty-icon"><FileCode /></div>
           <div className="ao-empty-title">No scenarios yet</div>
           <div className="ao-empty-text">Create one — it maps 1:1 onto a runnable simulation you can replay any time.</div>
-          <div className="ao-empty-actions"><button className="ao-btn ao-btn--primary" onClick={() => { setErr(null); setOpen(true) }}><Plus size={15} /> New scenario</button></div>
+          <div className="ao-empty-actions"><button type="button" className="ao-btn ao-btn--primary" onClick={() => { setErr(null); setOpen(true) }}><Plus size={15} /> New scenario</button></div>
         </div>
       ) : (
         <div className="flex flex-col gap-3 ao-stagger">
@@ -418,8 +470,8 @@ function ScenariosTab() {
               <div className="ao-panel-head">
                 <div className="ao-panel-title"><FileCode /> {s.name}</div>
                 <div className="ao-hero-actions">
-                  <button className="ao-btn ao-btn--primary ao-btn--sm" onClick={() => navigate('/simulate', { state: { scenario: { name: s.name, yaml: s.yaml } } })}><Play size={13} /> Run</button>
-                  <button onClick={() => del(s)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
+                  <button type="button" className="ao-btn ao-btn--primary ao-btn--sm" onClick={() => navigate('/simulate', { state: { scenario: { name: s.name, yaml: s.yaml } } })}><Play size={13} /> Run</button>
+                  <button type="button" onClick={() => del(s)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
                 </div>
               </div>
               <div className="ao-panel-body">
@@ -434,8 +486,8 @@ function ScenariosTab() {
         <DialogContent>
           <DialogHeader><DialogTitle>New scenario</DialogTitle></DialogHeader>
           <div className="flex flex-col gap-3">
-            <div className="ao-field"><label className="ao-label">Name <span className="req">*</span></label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pluto Pizza pre-launch sweep" /></div>
-            <div className="ao-field"><label className="ao-label">YAML <span className="req">*</span></label><textarea value={yaml} onChange={(e) => setYaml(e.target.value)} rows={12} className="ao-textarea mono" /></div>
+            <div className="ao-field"><label className="ao-label" htmlFor="scenario-name">Name <span className="req">*</span></label><Input id="scenario-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pluto Pizza pre-launch sweep" /></div>
+            <div className="ao-field"><label className="ao-label" htmlFor="scenario-yaml">YAML <span className="req">*</span></label><textarea id="scenario-yaml" value={yaml} onChange={(e) => setYaml(e.target.value)} rows={12} className="ao-textarea mono" /></div>
             {err && <div className="ao-error">{err}</div>}
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} disabled={!name.trim() || !yaml.trim()} style={PRIMARY_FG}>Create scenario</Button></DialogFooter>

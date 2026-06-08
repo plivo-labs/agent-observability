@@ -87,6 +87,10 @@ const evalRunObjectSchema = z.object({
   started_at: z.number(),                 // unix seconds
   finished_at: z.number(),
   ci: ciMetadataSchema.nullable().optional(),
+  // Full simulation report blob (overall/passRate/rubricAxes/worstMoments/
+  // fixes/judgeTree/engine/personaCount) — set only by sim persistence, stored
+  // as-is in eval_runs.sim_report; null for live-call / pytest / vitest runs.
+  sim_report: z.unknown().nullable().optional(),
 });
 
 export const evalRunSchema = z.preprocess((raw) => {

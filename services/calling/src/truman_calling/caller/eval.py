@@ -26,6 +26,21 @@ _TRUMAN_CALLER_LABELS = {"assistant", "persona", "caller", "director", "speaker_
 def _criteria_from_bundled() -> list[dict]:
     return [{"key": k, "question": q} for k, q in rubric.CRITERIA]
 
+
+_VALID_LEVELS = ("flow", "agent", "task", "node")
+
+
+def _resolve_levels(loaded: Any) -> tuple[str, ...]:
+    """Leveled-judge scopes for a live-call run.
+
+    No producer emits per-run level config today — the Simulate path requests
+    scopes directly via POST /v1/judge — so this returns the flow-only default
+    (byte-identical to no `scopes` block). When a producer starts emitting levels
+    (e.g. a rubric/scenario field), parse `loaded` here and return the requested
+    subset of `_VALID_LEVELS`. The previous tag/rubric-dict parsing was removed
+    as dead code: nothing wrote those markers."""
+    return ("flow",)
+
 logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s %(levelname)s %(name)s | %(message)s",
@@ -295,8 +310,10 @@ async def _run_eval_pipeline(
             )
         return
 
-    criteria, rubric_name = await _resolve_rubric_for_run(run_id_raw)
-    result = await judge_transcript_text(transcript, criteria, caller_labels=_TRUMAN_CALLER_LABELS)
+    criteria, rubric_name, levels = await _resolve_rubric_for_run(run_id_raw)
+    result = await judge_transcript_text(
+        transcript, criteria, caller_labels=_TRUMAN_CALLER_LABELS, scopes=levels
+    )
 
     verdict = result.get("overall") if isinstance(result, dict) else None
     if run_id_raw:
@@ -323,9 +340,10 @@ async def _run_eval_pipeline(
     print(json.dumps(result_record, indent=2))
 
 
-async def _resolve_rubric_for_run(run_id_raw: str | None) -> tuple[list[dict], str]:
-    """Return (criteria, rubric_name). Criteria come from the run's DB rubric when
-    available, else the bundled spike rubric. Each criterion is {key, question}."""
+async def _resolve_rubric_for_run(run_id_raw: str | None) -> tuple[list[dict], str, tuple[str, ...]]:
+    """Return (criteria, rubric_name, levels). Criteria come from the run's DB rubric
+    when available, else the bundled spike rubric. Each criterion is {key, question}.
+    `levels` is the leveled-judge scope tuple for this run (default ("flow",))."""
     if run_id_raw:
         try:
             import uuid as _uuid
@@ -333,15 +351,18 @@ async def _resolve_rubric_for_run(run_id_raw: str | None) -> tuple[list[dict], s
             from truman_calling.caller.run_orchestrator import load_run
 
             loaded = await load_run(_uuid.UUID(run_id_raw))
+            rubric_criteria = loaded.rubric.criteria
+            # criteria may be a list (today) or a dict carrying {criteria, judge:{levels}}.
+            crit_list = rubric_criteria.get("criteria") if isinstance(rubric_criteria, dict) else rubric_criteria
             crit = [
                 {"key": str(c.get("key") or c.get("name") or f"c{i}"), "question": str(c.get("question") or "")}
-                for i, c in enumerate(loaded.rubric.criteria)
+                for i, c in enumerate(crit_list or [])
             ]
             if crit:
-                return crit, loaded.rubric.name
+                return crit, loaded.rubric.name, _resolve_levels(loaded)
         except Exception:
             log.exception("falling back to bundled spike rubric")
-    return _criteria_from_bundled(), rubric.NAME
+    return _criteria_from_bundled(), rubric.NAME, ("flow",)
 
 
 async def _persist_run_artifacts(

@@ -14,6 +14,13 @@ const personaInput = z.object({
   voice: z.string().default("cartesia/sonic"),
   avatar: z.string().default("#6366f1"),
   source: z.enum(["user", "generated"]).default("user"),
+  language: z.string().default("en"),
+  gender: z.string().default("unspecified"),
+  accent: z.string().default("neutral"),
+  speaking_speed: z.enum(["slow", "normal", "fast"]).default("normal"),
+  interruption_level: z.enum(["low", "medium", "high"]).default("medium"),
+  background_noise: z.enum(["none", "office", "street", "cafe"]).default("none"),
+  enabled: z.boolean().default(true),
 });
 const rubricInput = z.object({
   name: z.string().min(1),
@@ -48,8 +55,10 @@ export function registerLibraryRoutes(app: Hono) {
     const p = parsed.data;
     const id = randomUUID();
     const [row] = await sql`
-      INSERT INTO sim_personas (id, name, type, goal, opener, voice, avatar, builtin, source)
-      VALUES (${id}, ${p.name}, ${p.type}, ${p.goal}, ${p.opener}, ${p.voice}, ${p.avatar}, false, ${p.source})
+      INSERT INTO sim_personas (id, name, type, goal, opener, voice, avatar, builtin, source,
+        language, gender, accent, speaking_speed, interruption_level, background_noise, enabled)
+      VALUES (${id}, ${p.name}, ${p.type}, ${p.goal}, ${p.opener}, ${p.voice}, ${p.avatar}, false, ${p.source},
+        ${p.language}, ${p.gender}, ${p.accent}, ${p.speaking_speed}, ${p.interruption_level}, ${p.background_noise}, ${p.enabled})
       RETURNING *`;
     return c.json({ api_id: newApiId(), ...row }, 201);
   });
@@ -69,7 +78,14 @@ export function registerLibraryRoutes(app: Hono) {
         goal = ${p.goal ?? existing.goal},
         opener = ${p.opener ?? existing.opener},
         voice = ${p.voice ?? existing.voice},
-        avatar = ${p.avatar ?? existing.avatar}
+        avatar = ${p.avatar ?? existing.avatar},
+        language = ${p.language ?? existing.language},
+        gender = ${p.gender ?? existing.gender},
+        accent = ${p.accent ?? existing.accent},
+        speaking_speed = ${p.speaking_speed ?? existing.speaking_speed},
+        interruption_level = ${p.interruption_level ?? existing.interruption_level},
+        background_noise = ${p.background_noise ?? existing.background_noise},
+        enabled = ${p.enabled ?? existing.enabled}
       WHERE id = ${id} RETURNING *`;
     return c.json({ api_id: newApiId(), ...row });
   });

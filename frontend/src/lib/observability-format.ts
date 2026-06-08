@@ -26,6 +26,25 @@ export const formatDate = (iso: string | null): string => {
   return dayjs(iso).format('MMM D, YYYY h:mm A')
 }
 
+// Compact, column-friendly timestamp for dense list tables. Recent values read
+// as a relative age ("just now", "5m ago", "3h ago"); older ones fall back to a
+// short absolute date ("Jun 4" / "Jun 4, 2025"). Mirrors Truman's `formatAgo`
+// rhythm so the Monitor/Evals rows stay tidy and never overflow their column.
+export const formatDateCompact = (iso: string | null): string => {
+  if (!iso) return '—'
+  const d = dayjs(iso)
+  if (!d.isValid()) return '—'
+  const diffMs = Date.now() - d.valueOf()
+  if (diffMs < 60_000) return 'just now'
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  return d.year() === dayjs().year() ? d.format('MMM D') : d.format('MMM D, YYYY')
+}
+
 export const computeAvg = (values: number[]) => {
   if (!values.length) return 0
   return Math.round(values.reduce((a, b) => a + b, 0) / values.length)

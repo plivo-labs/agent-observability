@@ -405,7 +405,7 @@ export function RecordingPlayer({
       className="flex items-center gap-3"
       style={!controlsContainer && embedded ? { paddingLeft: labelWidth } : undefined}
     >
-      <button
+      <button type="button"
         onClick={handlePlayPause}
         disabled={loadState !== 'ready'}
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -419,7 +419,7 @@ export function RecordingPlayer({
       </span>
 
       <div className="flex items-center gap-1.5 ml-auto">
-        <button
+        <button type="button"
           onClick={handleMuteToggle}
           className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
           aria-label={isMuted ? 'Unmute' : 'Mute'}
@@ -442,7 +442,7 @@ export function RecordingPlayer({
           aria-label="Volume"
         />
 
-        <button
+        <button type="button"
           onClick={cycleSpeed}
           className="ml-1 w-8 text-center text-[12px] text-muted-foreground hover:text-foreground transition-colors tabular-nums"
           aria-label={`Playback speed ${speed}x`}

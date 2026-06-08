@@ -211,6 +211,57 @@ export interface PlivoListResponse<T> {
 
 // ── Eval payload types ──────────────────────────────────────────────────────
 
+/** Persisted simulation report attached to a `simulation` eval run
+ *  (`eval_runs.sim_report`; null for live-call / pytest runs). The leveled-judge
+ *  tree shapes mirror the backend `sim_report` block. Structurally identical to
+ *  the `SimReport` type in `run-detail/report-sections.tsx`, kept here so it
+ *  lives on the shared `EvalRunDetail` rather than a local widening. */
+export type SimReportSeverity = 'critical' | 'high' | 'medium'
+
+export interface SimReportJudgeNode {
+  scope: string
+  status: 'pass' | 'fail'
+  verdict: string
+  turn?: number
+}
+export interface SimReportJudgeTask {
+  id: string
+  name: string
+  score: number
+  status: 'pass' | 'fail'
+  verdict: string
+  turn?: number
+  nodes?: SimReportJudgeNode[]
+}
+export interface SimReportJudgeAgent {
+  id: string
+  name: string
+  score: number
+  status: 'pass' | 'fail'
+  verdict: string
+  tasks: SimReportJudgeTask[]
+}
+export interface SimReportJudgeTree {
+  caseLabel: string
+  flow: { score: number; max: number; status: 'pass' | 'fail'; verdict: string }
+  agents: SimReportJudgeAgent[]
+  nodes: SimReportJudgeNode[]
+}
+export interface SimReport {
+  overallScore: number
+  passRate: number // 0..1
+  threshold: number
+  rubricAxes: { name: string; score: number; weight: number }[]
+  worstMoments: { case: string; scope: string; text: string; sev: SimReportSeverity }[]
+  fixes: { title: string; body: string }[]
+  judgeTree: SimReportJudgeTree
+  /** Per-case leveled-judge trees keyed by `case_id` (== EvalCaseRow.case_id).
+   *  Absent on older persisted runs → caller falls back to `judgeTree`. */
+  caseTrees?: Record<string, SimReportJudgeTree>
+  engine: string
+  personaCount: number
+}
+
 export type CaseStatus = 'passed' | 'failed' | 'errored' | 'skipped'
 
 export type JudgmentVerdict = 'pass' | 'fail' | 'maybe'
@@ -219,6 +270,11 @@ export interface JudgmentResult {
   intent: string
   verdict: JudgmentVerdict
   reasoning: string
+  // Judgments are loose JSON, so a leveled-judge run may additionally tag each
+  // judgment with an optional `scope` string (e.g. "flow" / "agent" / "task" /
+  // "node:turn 3") to indicate which leveled-judge slice produced it. No
+  // structural guarantee — readers should treat it as best-effort metadata.
+  scope?: string
 }
 
 export type FailureKind = 'assertion' | 'error' | 'timeout' | 'judge_failed'
@@ -312,11 +368,17 @@ export interface EvalCaseRow {
   failure: Failure | null
   /** Audio recording proxy URL (live-call cases only); null/absent otherwise. */
   recording_url?: string | null
+  /** Per-call cost breakdown (live-call cases only); null/absent otherwise. */
+  cost?: { llm_tokens: number; tts_chars: number; stt_seconds: number; call_seconds: number; cents: number } | null
   created_at: string
 }
 
 export interface EvalRunDetail extends EvalRunRow {
   api_id?: string
+  /** Dialed phone number for live-call runs (from `sim_live_suites.phone_number`); null for sim/pytest runs. */
+  dialed_number?: string | null
+  /** Persisted simulation report (`simulation` runs only); null for live-call / pytest runs. */
+  sim_report?: SimReport | null
   cases: EvalCaseRow[]
 }
 
@@ -326,7 +388,6 @@ export interface EvalsFilters {
   framework?: string[]
   /** Multi-value test-framework filter (`pytest` / `vitest` / …). */
   testingFramework?: string[]
-  accountId?: string
   startedFrom?: string
   startedTo?: string
 }

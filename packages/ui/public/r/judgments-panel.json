@@ -1,0 +1,23 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "judgments-panel",
+  "title": "Judgments Panel",
+  "description": "Shared per-criterion judgments panel (pass/fail rows with verdict icon + reasoning), used by the Evals run-detail and case-detail pages",
+  "dependencies": [
+    "lucide-react"
+  ],
+  "registryDependencies": [
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-theme.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+    "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/report-sections.json"
+  ],
+  "files": [
+    {
+      "path": "registry/new-york/run-detail/judgments-panel.tsx",
+      "content": "/* judgments-panel.tsx — the ONE shared per-criterion judgments panel used by\n * both the Evals run-detail (selected case) and the Evals case-detail pages, so\n * the pass/fail list renders identically in both. Each judgment is a tinted\n * row with a verdict icon + badge and optional reasoning. Self-contained +\n * on-theme (Neo tokens only). */\nimport { CheckCircle2, CircleHelp, XCircle } from 'lucide-react'\nimport { cn } from '@/lib/utils'\nimport type { JudgmentResult, JudgmentVerdict } from '@/lib/observability-types'\nimport { SectionTitle } from '@/components/run-detail/report-sections'\n\n/** Per-criterion verdict tone for the judgments pass/fail list. */\nexport function verdictTone(v: JudgmentVerdict): 'pass' | 'fail' | 'other' {\n  return v === 'pass' ? 'pass' : v === 'fail' ? 'fail' : 'other'\n}\n\nexport function JudgmentsPanel({ judgments, icon }: {\n  judgments: JudgmentResult[]\n  /** Optional leading icon for the panel head (case-detail shows a success check). */\n  icon?: React.ReactNode\n}) {\n  if (judgments.length === 0) return null\n  const passCount = judgments.filter((j) => j.verdict === 'pass').length\n  return (\n    <div className=\"ao-panel\">\n      <div className=\"ao-panel-head\">\n        <SectionTitle icon={icon} title=\"Judgments\" hint=\"per-criterion pass / fail\" />\n        <span className=\"ao-panel-sub\">{passCount}/{judgments.length} passed</span>\n      </div>\n      <div className=\"flex flex-col gap-2.5 p-4\">\n        {judgments.map((j, i) => {\n          const tone = verdictTone(j.verdict)\n          return (\n            <div\n              key={`${j.intent}-${i}`}\n              className={cn(\n                'rounded-lg border px-3.5 py-3',\n                tone === 'pass' && 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]',\n                tone === 'fail' && 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',\n                tone === 'other' && 'border-border bg-muted/40',\n              )}\n            >\n              <div className=\"flex items-start justify-between gap-3\">\n                <div className=\"flex min-w-0 items-start gap-2\">\n                  {tone === 'pass' ? <CheckCircle2 className=\"mt-0.5 h-4 w-4 shrink-0 text-success\" />\n                    : tone === 'fail' ? <XCircle className=\"mt-0.5 h-4 w-4 shrink-0 text-destructive\" />\n                      : <CircleHelp className=\"mt-0.5 h-4 w-4 shrink-0 text-muted-foreground\" />}\n                  <p className=\"m-0 text-sm text-foreground\">{j.intent}</p>\n                </div>\n                <span className={cn('ao-badge shrink-0', tone === 'pass' ? 'is-success' : tone === 'fail' ? 'is-danger' : 'is-neutral')}>\n                  {tone === 'pass' ? 'pass' : tone === 'fail' ? 'fail' : 'maybe'}\n                </span>\n              </div>\n              {j.reasoning && <p className=\"ml-6 mt-2 whitespace-pre-wrap text-sm text-muted-foreground\">{j.reasoning}</p>}\n            </div>\n          )\n        })}\n      </div>\n    </div>\n  )\n}\n",
+      "type": "registry:component",
+      "target": "components/run-detail/judgments-panel.tsx"
+    }
+  ],
+  "type": "registry:component"
+}
