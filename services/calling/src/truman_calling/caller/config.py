@@ -3,32 +3,33 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from truman_calling.core.settings import PROJECT_ROOT, CoreSettings
+def _find_project_root() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / ".env").exists() or (parent / ".env.example").exists():
+            return parent
+    return here.parent
 
-_PROJECT_ROOT = PROJECT_ROOT
+
+_PROJECT_ROOT = _find_project_root()
 
 AUDIO_SAMPLE_RATE = 8000
 
 
-class Settings(CoreSettings):
-    """Caller-process settings.
-
-    Extends the shared ``CoreSettings`` (DB, Redis, Azure OpenAI, ElevenLabs,
-    API token, log level) with the telephony + media fields only the outbound
-    caller needs — Plivo creds, public callback URLs, Deepgram, and the local
-    recording/transcript/eval directories. Shared fields are inherited, not
-    re-declared, so there's a single source of truth for them.
-    """
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=_PROJECT_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
     plivo_auth_id: str
     plivo_auth_token: str
     plivo_from_number: str
     target_number: str
-    # Verify X-Plivo-Signature-V3 on the public webhooks (/answer, /hangup,
-    # /recording-callback). On by default; can be disabled (e.g. local testing
-    # without a public-URL match) via PLIVO_VERIFY_SIGNATURE=false.
-    plivo_verify_signature: bool = True
 
     public_base_url: str
     public_ws_base_url: str = ""
@@ -41,9 +42,22 @@ class Settings(CoreSettings):
     deepgram_api_key: str = "self-hosted"
     deepgram_model: str = "nova-2-phonecall"
 
+    elevenlabs_api_key: str
+    elevenlabs_voice_id: str
+    elevenlabs_model_id: str = "eleven_turbo_v2_5"
+    elevenlabs_base_url: str = ""
+
+    azure_openai_endpoint: str
+    azure_openai_api_key: str
+    azure_openai_api_version: str = "2024-12-01-preview"
+    azure_openai_persona_deployment: str = "gpt-4o"
+    azure_openai_judge_deployment: str = "gpt-4o"
+
     recordings_dir: Path = Field(default=_PROJECT_ROOT / "data" / "recordings")
     transcripts_dir: Path = Field(default=_PROJECT_ROOT / "data" / "transcripts")
     evals_dir: Path = Field(default=_PROJECT_ROOT / "data" / "evals")
+
+    log_level: str = "INFO"
 
     @field_validator("recordings_dir", "transcripts_dir", "evals_dir", mode="after")
     @classmethod

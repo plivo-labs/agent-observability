@@ -51,32 +51,18 @@ def _slug(value: str) -> str:
 
 
 # SSRF guard — the recording URL arrives in the Plivo callback payload, so it is
-# attacker-influenceable. Only fetch https URLs from Plivo's own hosts or Plivo's
-# S3 recording bucket — NOT any amazonaws bucket (a bare "*.amazonaws.com"
-# allowlist lets an attacker bucket through).
-_ALLOWED_RECORDING_HOSTS = ("plivo.com",)
-# Plivo stores call recordings in this S3 bucket. If your account's recordings
-# come from a different bucket/host, update this (verify against a real RecordUrl).
-_PLIVO_S3_BUCKET = "plivocloud"
+# attacker-influenceable. Only fetch https URLs on a known Plivo / S3 host.
+_ALLOWED_RECORDING_HOSTS = ("plivo.com", "amazonaws.com")
 
 
 def _validate_recording_url(url: str) -> str:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https":
+    if parsed.scheme != "https" or not any(
+        host == d or host.endswith("." + d) for d in _ALLOWED_RECORDING_HOSTS
+    ):
         raise ValueError(f"refusing to fetch recording from untrusted URL: host={host!r}")
-    # Plivo's own hosts.
-    if any(host == d or host.endswith("." + d) for d in _ALLOWED_RECORDING_HOSTS):
-        return url
-    # Plivo's S3 recording bucket only — virtual-hosted (plivocloud.s3[.region]
-    # .amazonaws.com) or path-style (s3[.region].amazonaws.com/plivocloud/...).
-    if host == "amazonaws.com" or host.endswith(".amazonaws.com"):
-        if host.startswith(f"{_PLIVO_S3_BUCKET}.s3."):
-            return url
-        first_seg = parsed.path.lstrip("/").split("/", 1)[0]
-        if first_seg == _PLIVO_S3_BUCKET:
-            return url
-    raise ValueError(f"refusing to fetch recording from untrusted URL: host={host!r}")
+    return url
 
 
 async def download_recording(record_url: str, dest: Path) -> Path:
@@ -244,17 +230,6 @@ async def process_recording_callback(payload: dict) -> None:
 async def _run_eval_pipeline(
     record_url: str | None, call_uuid: str, run_id_raw: str | None
 ) -> None:
-    # run_id_raw is an untrusted Plivo-callback query param used as a filename
-    # below — validate it as a UUID so it can't traverse paths (e.g.
-    # run_id=../../../foo). Fall back to the slugged call_uuid if it's not one.
-    if run_id_raw is not None:
-        try:
-            import uuid as _uuid
-
-            _uuid.UUID(run_id_raw)
-        except (ValueError, AttributeError, TypeError):
-            log.warning("ignoring non-UUID run_id from callback: %r", run_id_raw)
-            run_id_raw = None
     slug = run_id_raw or _slug(call_uuid)
     wav_path = settings.recordings_dir / f"{slug}.wav"
     transcript_json_path = settings.transcripts_dir / f"{slug}.json"

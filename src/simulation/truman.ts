@@ -2,8 +2,8 @@
  *
  * Simulate routes its judging through LiveKit's eval judges, which run behind
  * Truman's HTTP API. AO sends the generated transcript + criteria; Truman runs
- * the judge (one per criterion) and returns a per-criterion verdict. This
- * module is the thin HTTP client for that judge endpoint.
+ * `livekit.agents.evals` (one judge per criterion) and returns a per-criterion
+ * verdict. This module is the thin HTTP client for that judge endpoint.
  *
  * Semantic mapping: AO criteria `name` → Truman `key`; the judge echoes
  * `name`=`key`, so it round-trips into AO judge.criteria[].name.

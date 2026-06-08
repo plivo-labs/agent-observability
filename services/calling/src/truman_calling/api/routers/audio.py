@@ -12,18 +12,17 @@ Auth via ?token=... since browsers can't set Authorization on <audio src>.
 from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
 import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from truman_calling.api.db import SessionLocal, get_session
+from truman_calling.api.db import get_session
 from truman_calling.core.models import Run
 from truman_calling.core.settings import settings
 
@@ -37,22 +36,18 @@ POLL_INTERVAL = 0.15
 TAIL_IDLE_TIMEOUT = 30.0  # stop tailing after this much silence on disk
 
 
-def _auth(token: str | None) -> None:
-    if not settings.truman_api_token or not token or not hmac.compare_digest(token, settings.truman_api_token):
+def _auth(token: str) -> None:
+    if not settings.truman_api_token or token != settings.truman_api_token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
 
 
 @router.get("/{run_id}/audio.ogg")
 async def run_audio_ogg(
     run_id: uuid.UUID,
-    # Prefer Authorization: Bearer (keeps the token out of access logs); fall
-    # back to ?token= for browsers that can't set headers on <audio src>.
-    token: str | None = Query(None, description="TRUMAN_API_TOKEN (or use Authorization: Bearer)"),
-    authorization: str | None = Header(None),
+    token: str = Query(..., description="TRUMAN_API_TOKEN"),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    bearer = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
-    _auth(bearer or token)
+    _auth(token)
 
     run = (
         await session.execute(select(Run).where(Run.id == run_id))
@@ -96,17 +91,13 @@ async def run_audio_ogg(
                     idle += POLL_INTERVAL
 
                     # Re-check the run status periodically to detect terminal
-                    # transitions while we're tailing. The request-scoped `session`
-                    # is already closed by the time this generator runs (FastAPI
-                    # finalises Depends(get_session) when the handler returns), so
-                    # open a fresh short-lived session for each check.
+                    # transitions while we're tailing.
                     if idle >= 2.0:
-                        async with SessionLocal() as check_session:
-                            idle_check = (
-                                await check_session.execute(
-                                    select(Run.status).where(Run.id == run_id)
-                                )
-                            ).scalar_one()
+                        idle_check = (
+                            await session.execute(
+                                select(Run.status).where(Run.id == run_id)
+                            )
+                        ).scalar_one()
                         if idle_check in {"done", "failed"}:
                             # Drain any final bytes the recorder wrote between
                             # the last read and the status flip, then stop.
