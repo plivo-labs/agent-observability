@@ -2,15 +2,14 @@
  * A schedule runs a saved scenario on a cadence; alerts fire when pass-rate slips. */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { AlertTriangle, CalendarClock, Pause, Play, Plus, Trash2 } from 'lucide-react'
+import { Activity, AlertTriangle, BellRing, CalendarClock, Gauge, Pause, Play, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toneClass } from '@/lib/tone'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const PRIMARY_FG = { color: 'hsl(var(--primary-foreground))' } as const
 
@@ -72,62 +71,134 @@ export function SchedulesPage() {
   const del = (s: Schedule) => { if (!confirm(`Delete schedule "${s.name}"?`)) return; api(`/api/schedules/${s.id}`, { method: 'DELETE' }).then(load).catch((e) => setErr(e.message)) }
   const scenarioName = (id: string) => scenarios.find((s) => s.id === id)?.name ?? id.slice(0, 8)
 
+  const activeN = items.filter((s) => s.enabled).length
+  const ratedItems = items.filter((s) => s.last_pass_rate != null)
+  const avgRate = ratedItems.length ? Math.round(ratedItems.reduce((a, s) => a + (s.last_pass_rate ?? 0), 0) / ratedItems.length) : null
+  const breaching = items.filter((s) => s.alert_pass_rate != null && s.last_pass_rate != null && s.last_pass_rate < (s.alert_pass_rate ?? 0)).length
+  const avgTone = avgRate == null ? 'is-accent' : toneClass(avgRate, 80, 50)
+
   return (
-    <div className="animate-in fade-in duration-300">
-      <div className="mb-5 flex items-start justify-between gap-4">
+    <>
+      <header className="ao-hero ao-reveal">
         <div>
-          <h1 className="text-[26px] font-semibold leading-8 text-foreground">Schedules</h1>
-          <div className="mt-1 text-sm text-muted-foreground">Run a saved scenario on a cadence; get alerted when the pass-rate slips.</div>
+          <div className="ao-hero-eyebrow"><CalendarClock /> Recurring evals</div>
+          <h1 className="ao-hero-title">Schedules</h1>
+          <p className="ao-hero-sub">Run a saved scenario on a cadence; get alerted when the pass-rate slips below its threshold.</p>
         </div>
-        <Button size="sm" style={PRIMARY_FG} onClick={() => { setErr(null); setOpen(true) }} disabled={scenarios.length === 0}><Plus size={14} /> New schedule</Button>
-      </div>
-      {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
-      {scenarios.length === 0 && <div className="mb-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">Create a Scenario in the Library first — schedules run a saved scenario.</div>}
+        <div className="ao-hero-actions">
+          <Button size="sm" style={PRIMARY_FG} onClick={() => { setErr(null); setOpen(true) }} disabled={scenarios.length === 0}><Plus size={14} /> New schedule</Button>
+        </div>
+      </header>
 
-      <div className="mb-6 rounded-lg border border-border bg-card">
-        <Table>
-          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Scenario</TableHead><TableHead>Every</TableHead><TableHead>Last run</TableHead><TableHead>Pass rate</TableHead><TableHead>Next</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader>
-          <TableBody>
-            {items.length === 0 && <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">No schedules yet.</TableCell></TableRow>}
-            {items.map((s) => (
-              <TableRow key={s.id}>
-                <TableCell className="font-medium">{s.name}{s.alert_pass_rate != null && <span className="ml-2 text-[11px] text-muted-foreground">alert &lt;{s.alert_pass_rate}%</span>}</TableCell>
-                <TableCell className="text-muted-foreground">{scenarioName(s.scenario_id)}</TableCell>
-                <TableCell className="tabular-nums">{interval(s.interval_minutes)}</TableCell>
-                <TableCell className="text-muted-foreground">{rel(s.last_run_at)}</TableCell>
-                <TableCell>{s.last_pass_rate == null ? <span className="text-muted-foreground">—</span> : <span className={cn('font-semibold tabular-nums', rateTone(s.last_pass_rate))}>{s.last_pass_rate}%</span>}</TableCell>
-                <TableCell className="text-muted-foreground">{s.enabled ? rel(s.next_run_at) : '—'}</TableCell>
-                <TableCell>{s.enabled ? <Badge variant="outline" className="text-success">active</Badge> : <Badge variant="outline" className="text-muted-foreground">paused</Badge>}</TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    {s.last_eval_run_id && <button title="Open last run" onClick={() => navigate(`/evals/${s.last_eval_run_id}`)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><CalendarClock size={15} /></button>}
-                    <button title="Run now" onClick={() => runNow(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><Play size={15} /></button>
-                    <button title={s.enabled ? 'Pause' : 'Resume'} onClick={() => toggle(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">{s.enabled ? <Pause size={15} /> : <Play size={15} />}</button>
-                    <button title="Delete" onClick={() => del(s)} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={15} /></button>
+      {err && <div className="ao-alert is-danger ao-reveal ao-reveal-1 mb-4"><AlertTriangle size={15} /> {err}</div>}
+      {scenarios.length === 0 && <div className="ao-alert is-info ao-reveal ao-reveal-1 mb-4"><Activity size={15} /> Create a Scenario in the Library first — schedules run a saved scenario.</div>}
+
+      <div className="ao-stat-row ao-stagger mb-6">
+        <div className="ao-stat ao-stat--feature is-accent">
+          <div className="ao-stat-label"><CalendarClock /> Schedules</div>
+          <div className="ao-stat-value">{items.length}</div>
+          <div className="ao-stat-meta">{activeN} active · {Math.max(0, items.length - activeN)} paused</div>
+        </div>
+        <div className={cn('ao-stat', avgTone)}>
+          <div className="ao-stat-label"><Gauge /> Avg pass rate</div>
+          <div className="ao-stat-value">{avgRate == null ? '—' : <>{avgRate}<span className="unit">%</span></>}</div>
+          <div className="ao-stat-meta">{ratedItems.length} with a recent run</div>
+        </div>
+        <div className={cn('ao-stat', breaching > 0 ? 'is-bad' : 'is-good')}>
+          <div className="ao-stat-label"><ShieldCheck /> Below threshold</div>
+          <div className="ao-stat-value">{breaching}</div>
+          <div className="ao-stat-meta">{breaching > 0 ? 'pass-rate slipping' : 'all holding'}</div>
+        </div>
+        <div className={cn('ao-stat', alerts.length > 0 ? 'is-warn' : 'is-good')}>
+          <div className="ao-stat-label"><BellRing /> Recent alerts</div>
+          <div className="ao-stat-value">{alerts.length}</div>
+          <div className="ao-stat-meta">{alerts.length > 0 ? `last ${rel(alerts[0]?.created_at)}` : 'none fired'}</div>
+        </div>
+      </div>
+
+      <section className="ao-panel ao-reveal ao-reveal-2 mb-6">
+        <div className="ao-panel-head">
+          <div>
+            <div className="ao-panel-title"><CalendarClock /> Schedules</div>
+            <div className="ao-panel-sub">Each runs its scenario on a fixed cadence and persists to Evals.</div>
+          </div>
+        </div>
+        {items.length === 0
+          ? (
+            <div className="ao-panel-body">
+              <div className="ao-empty">
+                <div className="ao-empty-icon"><CalendarClock /></div>
+                <div className="ao-empty-title">No schedules yet</div>
+                <div className="ao-empty-text">Create a schedule to run a saved scenario on a cadence and watch its pass-rate over time.</div>
+                {scenarios.length > 0 && (
+                  <div className="ao-empty-actions">
+                    <button className="ao-btn ao-btn--primary" onClick={() => { setErr(null); setOpen(true) }}><Plus size={14} /> New schedule</button>
                   </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+                )}
+              </div>
+            </div>
+          )
+          : (
+            <div className="ao-panel--flush" style={{ marginTop: 4 }}>
+              <table className="ao-table">
+                <thead>
+                  <tr>
+                    <th>Name</th><th>Scenario</th><th>Every</th><th>Last run</th><th>Pass rate</th><th>Next</th><th>Status</th><th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <span className="font-medium text-foreground">{s.name}</span>
+                        {s.alert_pass_rate != null && <span className="ao-mono ml-2 text-[11px]">alert &lt;{s.alert_pass_rate}%</span>}
+                      </td>
+                      <td className="muted">{scenarioName(s.scenario_id)}</td>
+                      <td className="num">{interval(s.interval_minutes)}</td>
+                      <td className="muted">{rel(s.last_run_at)}</td>
+                      <td className="num">{s.last_pass_rate == null ? <span className="muted">—</span> : <span className={cn('font-semibold', rateTone(s.last_pass_rate))}>{s.last_pass_rate}%</span>}</td>
+                      <td className="muted">{s.enabled ? rel(s.next_run_at) : '—'}</td>
+                      <td>{s.enabled ? <span className="ao-badge is-success ao-badge--dot is-pulse">active</span> : <span className="ao-badge is-neutral ao-badge--dot">paused</span>}</td>
+                      <td>
+                        <div className="flex justify-end gap-1">
+                          {s.last_eval_run_id && <button title="Open last run" onClick={() => navigate(`/evals/${s.last_eval_run_id}`)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><CalendarClock size={15} /></button>}
+                          <button title="Run now" onClick={() => runNow(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><Play size={15} /></button>
+                          <button title={s.enabled ? 'Pause' : 'Resume'} onClick={() => toggle(s)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">{s.enabled ? <Pause size={15} /> : <Play size={15} />}</button>
+                          <button title="Delete" onClick={() => del(s)} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={15} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+      </section>
 
-      <div>
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground"><AlertTriangle size={16} className="text-warning" /> Recent alerts</div>
+      <section className="ao-reveal ao-reveal-3">
+        <div className="ao-section-label flex items-center gap-2"><AlertTriangle size={14} className="text-warning" /> Recent alerts</div>
         {alerts.length === 0
-          ? <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No alerts — pass-rates are holding above their thresholds.</div>
-          : <div className="flex flex-col gap-2">
+          ? (
+            <div className="ao-empty">
+              <div className="ao-empty-icon"><ShieldCheck /></div>
+              <div className="ao-empty-title">No alerts</div>
+              <div className="ao-empty-text">Pass-rates are holding above their thresholds.</div>
+            </div>
+          )
+          : (
+            <div className="flex flex-col gap-2">
               {alerts.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-4 rounded-lg border border-warning/30 bg-warning/8 px-3.5 py-2.5">
+                <div key={a.id} className="ao-alert is-warning flex items-center justify-between gap-4">
                   <div className="flex items-center gap-2.5 text-sm"><AlertTriangle size={15} className="shrink-0 text-warning" /><span className="text-foreground">{a.message}</span></div>
-                  <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-                    <span>{rel(a.created_at)}</span>
+                  <div className="flex shrink-0 items-center gap-3 text-xs">
+                    <span className="ao-mono">{rel(a.created_at)}</span>
                     {a.eval_run_id && <button onClick={() => navigate(`/evals/${a.eval_run_id}`)} className="font-medium text-primary hover:underline">view run</button>}
                   </div>
                 </div>
               ))}
-            </div>}
-      </div>
+            </div>
+          )}
+      </section>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -152,6 +223,6 @@ export function SchedulesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   )
 }

@@ -1,27 +1,34 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
-import type { ColumnDef } from '@tanstack/react-table'
-import { Bot, FlaskConical, Trash2, type LucideIcon } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
+import type { ColumnDef, Row } from '@tanstack/react-table'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  FlaskConical,
+  Layers,
+  XCircle,
+  type LucideIcon,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header'
 import { DataTableToolbar } from '@/components/data-table/data-table-toolbar'
-import { ObsDataTable } from '@/components/data-table/obs-data-table'
+import { DataTablePagination } from '@/components/data-table/data-table-pagination'
 import { useDataTable } from '@/components/data-table/use-data-table'
+import { useDayFilter } from '@/components/data-table/use-day-filter'
+import { useBulkDelete } from '@/components/data-table/use-bulk-delete'
+import {
+  DeleteConfirmDialog,
+  SelectionToolbar,
+} from '@/components/data-table/delete-confirm-dialog'
 import { cn } from '@/lib/utils'
 import { formatDate, formatDuration } from '@/lib/observability-format'
 import { useEvalRuns } from '@/lib/observability-hooks'
 import { useObservabilityContext } from '@/lib/observability-provider'
 import type { EvalRunRow } from '@/lib/observability-types'
+import { toneForRate, toneClass, toneColorVar } from '@/lib/tone'
+import { SelectableCard } from '@/components/selectable-card'
 
 // Agent framework — what the agent under test is built with.
 const FRAMEWORK_OPTIONS = [
@@ -39,11 +46,21 @@ const TESTING_FRAMEWORK_OPTIONS = [
 
 function PassRateBar({ passed, total }: { passed: number; total: number }) {
   const pct = total > 0 ? Math.round((passed / total) * 100) : 0
+  // Tone the fill by health so a sweep of the column reads at a glance.
+  const tone = toneColorVar(toneForRate(pct))
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
-      <span className="font-mono text-xs-600 tabular-nums w-10">{pct}%</span>
+      <span
+        className="font-mono text-xs-600 tabular-nums w-10"
+        style={{ color: total > 0 ? tone : undefined }}
+      >
+        {pct}%
+      </span>
       <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden max-w-[90px]">
-        <div className="h-full bg-foreground" style={{ width: `${pct}%` }} />
+        <div
+          className="h-full rounded-full transition-[width]"
+          style={{ width: `${pct}%`, background: total > 0 ? tone : 'hsl(var(--muted-foreground))' }}
+        />
       </div>
     </div>
   )
@@ -78,7 +95,109 @@ function TestingFrameworkBadge({ name, version }: { name: string; version: strin
   return <FrameworkPill name={name} version={version} icon={FlaskConical} />
 }
 
-export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
+// Derive a Truman-style verdict from the run's case tallies:
+//   pass    — every case finished and passed (total > 0)
+//   fail    — at least one case failed or errored
+//   pending — nothing has finished yet (in-flight / queued)
+function deriveVerdict(run: EvalRunRow): { label: string; tone: string } {
+  const failed = run.failed + run.errored
+  if (failed > 0) {
+    return {
+      label: 'fail',
+      tone:
+        'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]',
+    }
+  }
+  // A run is complete once every case is accounted for (passed/failed/errored/
+  // skipped). Skipped cases don't block a pass — keying off `passed >= total`
+  // alone left a finished run with skipped cases stuck on "pending" forever.
+  const accounted = run.passed + run.failed + run.errored + run.skipped
+  if (run.total > 0 && accounted >= run.total) {
+    return {
+      label: 'pass',
+      tone: 'text-[hsl(var(--success))] border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)]',
+    }
+  }
+  return {
+    label: 'pending',
+    tone: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)]',
+  }
+}
+
+// One eval run rendered as a Truman "Recent runs" card: sharp-radius panel,
+// title + mono meta line + verdict pill, a pass summary body, and a
+// localized timestamp footer. Clickable → run detail (via onOpen).
+function RunCard({
+  row,
+  onOpen,
+}: {
+  row: Row<EvalRunRow>
+  onOpen: (runId: string) => void
+}) {
+  const run = row.original
+  const verdict = deriveVerdict(run)
+  const title = run.agent_id || `Run ${run.run_id.slice(0, 8)}`
+  const failed = run.failed + run.errored
+  const summary =
+    run.total > 0
+      ? `${run.passed}/${run.total} cases passed${failed > 0 ? ` · ${failed} failed` : ''}`
+      : 'No cases recorded yet.'
+
+  return (
+    <SelectableCard
+      selected={row.getIsSelected()}
+      onToggle={(value) => row.toggleSelected(value)}
+      onOpen={() => onOpen(run.run_id)}
+      selectAriaLabel={`Select run ${run.run_id}`}
+      title={title}
+      meta={
+        <>
+          {run.account_id && (
+            <>
+              <span className="truncate">{run.account_id}</span>
+              <span aria-hidden>·</span>
+            </>
+          )}
+          <span>run {run.run_id.slice(0, 8)}</span>
+          <span aria-hidden>·</span>
+          <span>{formatDuration(run.duration_ms)}</span>
+          {run.testing_framework && (
+            <>
+              <span aria-hidden>·</span>
+              <span className="truncate">{run.testing_framework}</span>
+            </>
+          )}
+        </>
+      }
+      pill={
+        <span
+          className={cn(
+            'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+            verdict.tone,
+          )}
+        >
+          {verdict.label}
+        </span>
+      }
+      footer={formatDate(run.started_at)}
+    >
+      <div className="mt-3 line-clamp-2 text-sm text-muted-foreground">
+        <span className="text-foreground">{summary}</span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <PassRateBar passed={run.passed} total={run.total} />
+        <FrameworkBadge name={run.framework} version={run.framework_version} />
+        <TestingFrameworkBadge
+          name={run.testing_framework}
+          version={run.testing_framework_version}
+        />
+      </div>
+    </SelectableCard>
+  )
+}
+
+export const EvalsPage =({ onRunClick }: { onRunClick?: (runId: string) => void }) => {
   // URL-synced filter state — written by the DataTable toolbar via `useDataTable`.
   // Column ids below (`agent_id`, `account_id`, `framework`, `started_at`) become the URL keys.
   const [page] = useQueryState('page', parseAsInteger.withDefault(1))
@@ -94,24 +213,12 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
-  // string. Expanded server-side into a 00:00 → next-midnight window.
+  // string. `useDayFilter` expands it into a 00:00 → next-midnight window.
   const [startedAt] = useQueryState(
     'started_at',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
-  const startedDay = useMemo(() => {
-    const v = startedAt[0]
-    if (!v) return undefined
-    const d = new Date(Number(v))
-    return Number.isNaN(d.getTime()) ? undefined : d
-  }, [startedAt])
-  const startedFromIso = useMemo(() => startedDay?.toISOString(), [startedDay])
-  const startedToIso = useMemo(() => {
-    if (!startedDay) return undefined
-    const end = new Date(startedDay)
-    end.setHours(23, 59, 59, 999)
-    return end.toISOString()
-  }, [startedDay])
+  const { fromIso: startedFromIso, toIso: startedToIso } = useDayFilter(startedAt)
 
   const { runs, meta, loading, error, refetch } = useEvalRuns(
     perPage,
@@ -289,6 +396,22 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
   const totalCount = meta.total_count
   const pageCount = Math.max(1, Math.ceil(totalCount / perPage))
 
+  // Page-scoped aggregates for the KPI rail — derived purely from the runs
+  // already in hand (the current page), no extra fetch. Reads as "this view".
+  const stats = useMemo(() => {
+    let cases = 0
+    let passed = 0
+    let failed = 0
+    for (const r of runs) {
+      cases += r.total
+      passed += r.passed
+      failed += r.failed + r.errored
+    }
+    const passRate = cases > 0 ? Math.round((passed / cases) * 100) : 0
+    return { cases, passed, failed, passRate }
+  }, [runs])
+  const passRateTone = stats.cases === 0 ? '' : toneClass(stats.passRate)
+
   const { table } = useDataTable({
     data: runs,
     columns,
@@ -297,111 +420,129 @@ export const EvalsPage = ({ onRunClick }: { onRunClick?: (runId: string) => void
     getRowId: (row) => row.run_id,
   })
 
-  const { api } = useObservabilityContext()
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-  const selectedIds = Object.keys(table.getState().rowSelection)
-  const selectedCount = selectedIds.length
+  const rows = table.getRowModel().rows
 
-  const handleDelete = async () => {
-    setDeleting(true)
-    setDeleteError(null)
-    try {
-      await api.deleteEvalRuns(selectedIds)
-      table.resetRowSelection()
-      refetch()
-      setConfirmOpen(false)
-    } catch (e) {
-      setDeleteError((e as Error).message)
-    } finally {
-      setDeleting(false)
-    }
-  }
+  const { api } = useObservabilityContext()
+  const {
+    confirmOpen,
+    setConfirmOpen,
+    deleting,
+    deleteError,
+    selectedCount,
+    handleDelete,
+    cancelSelection,
+  } = useBulkDelete({
+    table,
+    deleteFn: (ids) => api.deleteEvalRuns(ids),
+    refetch,
+  })
 
   return (
-    <div className="w-full p-6 flex flex-col gap-4 min-w-0">
-      <div className="flex items-center justify-between">
+    <div className="w-full p-6 flex flex-col gap-5 min-w-0">
+      <header className="ao-hero ao-reveal">
         <div>
-          <h1 className="text-h2-600 font-semibold m-0">Evals</h1>
-          <div className="text-s-400 text-muted-foreground">Test runs across your agents.</div>
+          <div className="ao-hero-eyebrow">
+            <FlaskConical /> Evals
+          </div>
+          <h1 className="ao-hero-title">Eval runs</h1>
+          <p className="ao-hero-sub">
+            Every test run across your agents — by framework, testing harness, and pass rate.
+          </p>
         </div>
-        <div className="text-s-400 text-muted-foreground">
-          <b className="text-foreground">{totalCount}</b> total
+        <div className="ao-hero-actions">
+          <span className="ao-badge is-neutral ao-badge--dot">
+            {totalCount} {totalCount === 1 ? 'run' : 'runs'}
+          </span>
+        </div>
+      </header>
+
+      <div className="ao-stat-row ao-stagger ao-reveal ao-reveal-2">
+        <div className="ao-stat ao-stat--feature is-accent">
+          <div className="ao-stat-label">
+            <Layers /> Runs
+          </div>
+          <div className="ao-stat-value">{totalCount}</div>
+          <div className="ao-stat-meta">
+            {runs.length} on this page
+          </div>
+        </div>
+        <div className={cn('ao-stat', passRateTone)}>
+          <div className="ao-stat-label">Pass rate</div>
+          <div className="ao-stat-value">
+            {stats.passRate}
+            <span className="unit">%</span>
+          </div>
+          <div className="ao-stat-meta">across {stats.cases} cases</div>
+        </div>
+        <div className="ao-stat is-good">
+          <div className="ao-stat-label">
+            <CheckCircle2 /> Passed
+          </div>
+          <div className="ao-stat-value">{stats.passed}</div>
+          <div className="ao-stat-meta">cases on this page</div>
+        </div>
+        <div className={cn('ao-stat', stats.failed > 0 && 'is-bad')}>
+          <div className="ao-stat-label">
+            <XCircle /> Failed
+          </div>
+          <div className="ao-stat-value">{stats.failed}</div>
+          <div className="ao-stat-meta">incl. errored</div>
         </div>
       </div>
 
       {error && (
-        <div
-          role="alert"
-          className="border border-border bg-muted text-foreground px-4 py-2.5 rounded-lg text-s-400"
-        >
-          Failed to load eval runs: {error}
+        <div role="alert" className="ao-alert is-danger">
+          <AlertTriangle />
+          <span>Failed to load eval runs: {error}</span>
         </div>
       )}
 
-      {selectedCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-card">
-          <span className="text-s-500">
-            <b>{selectedCount}</b> selected
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => table.resetRowSelection()}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
-              onClick={() => setConfirmOpen(true)}
-            >
-              <Trash2 /> Delete
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <ObsDataTable
-        table={table}
-        toolbar={<DataTableToolbar table={table} />}
-        onRowClick={(row) => onRunClick?.(row.original.run_id)}
-        totalRowCount={totalCount}
-        loading={loading}
+      <SelectionToolbar
+        count={selectedCount}
+        onCancel={cancelSelection}
+        onDelete={() => setConfirmOpen(true)}
       />
 
-      <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete {selectedCount} eval run{selectedCount === 1 ? '' : 's'}?</DialogTitle>
-            <DialogDescription>
-              This permanently removes the selected run{selectedCount === 1 ? '' : 's'} and every
-              case, event, and judgment captured under {selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          {deleteError && (
-            <div className="text-s-400 text-[hsl(var(--destructive))]">
-              Failed to delete: {deleteError}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
-              onClick={handleDelete}
-              disabled={deleting}
-            >
-              {deleting ? 'Deleting…' : `Delete ${selectedCount}`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <div className="ao-reveal ao-reveal-3 flex flex-col gap-2.5">
+        <DataTableToolbar table={table} />
+        {loading && rows.length === 0 ? (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <SelectableCard key={`sk-${i}`} loading />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div
+            className="flex h-24 items-center justify-center border bg-card text-muted-foreground shadow-sm"
+            style={{ borderRadius: 'var(--radius)' }}
+          >
+            No results.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {rows.map((row) => (
+              <RunCard
+                key={row.id}
+                row={row}
+                onOpen={(runId) => onRunClick?.(runId)}
+              />
+            ))}
+          </div>
+        )}
+        <DataTablePagination table={table} totalRowCount={totalCount} />
+      </div>
+
+      <DeleteConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={`Delete ${selectedCount} eval run${selectedCount === 1 ? '' : 's'}?`}
+        description={`This permanently removes the selected run${selectedCount === 1 ? '' : 's'} and every case, event, and judgment captured under ${selectedCount === 1 ? 'it' : 'them'}. This cannot be undone.`}
+        deleting={deleting}
+        deleteError={deleteError}
+        confirmLabel={`Delete ${selectedCount}`}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   )
 }

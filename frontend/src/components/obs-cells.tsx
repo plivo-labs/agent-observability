@@ -3,50 +3,61 @@
  * class-driven — the styles live in `styles/observability.css`.
  */
 
-import { AudioLines, FlaskConical, Phone, TriangleAlert } from 'lucide-react'
-import type { CaseStatus, Transport } from '@/lib/observability-types'
+import { AudioLines, MessageSquare, Phone, TriangleAlert } from 'lucide-react'
+import type { Transport } from '@/lib/observability-types'
 import { formatDuration } from '@/lib/observability-format'
 
 export function CapsChips({
   stt, llm, tts,
 }: { stt: boolean; llm: boolean; tts: boolean }) {
-  const capabilities = [
-    stt && { label: 'STT', className: 'cap-stt' },
-    llm && { label: 'LLM', className: 'cap-llm' },
-    tts && { label: 'TTS', className: 'cap-tts' },
-  ].filter(Boolean) as Array<{ label: string; className: string }>
-
-  if (capabilities.length === 0) {
-    return <span className="muted">—</span>
+  if (!stt && !llm && !tts) {
+    return <span className="ao-mono muted">—</span>
   }
-
+  // Truman-inspired pipeline rail: render the whole STT → LLM → TTS pipeline,
+  // lit stages = active, dim = absent — more legible than separate chips.
+  const stages = [
+    { label: 'STT', on: stt },
+    { label: 'LLM', on: llm },
+    { label: 'TTS', on: tts },
+  ]
   return (
-    <div className="caps">
-      {capabilities.map((capability) => (
-        <span key={capability.label} className={`cap ${capability.className}`}>
-          {capability.label}
+    <div className="ao-pipeline">
+      {stages.map((s, i) => (
+        <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center' }}>
+          <span className={`ao-pipe-stage${s.on ? ' on' : ''}`}>
+            <span className="dot" />{s.label}
+          </span>
+          {i < stages.length - 1 && (
+            <span className={`ao-pipe-rail${s.on && stages[i + 1].on ? ' on' : ''}`} />
+          )}
         </span>
       ))}
     </div>
   )
 }
 
+const TRANSPORT_META: Record<string, { label: string; Icon: typeof Phone }> = {
+  sip: { label: 'SIP', Icon: Phone },
+  phone: { label: 'Phone', Icon: Phone },
+  audio_stream: { label: 'Audio Stream', Icon: AudioLines },
+  text: { label: 'Text', Icon: MessageSquare },
+  terminal_text: { label: 'Terminal Text', Icon: MessageSquare },
+}
+
 export function TransportPill({ value }: { value: Transport | null }) {
-  if (value === 'sip') {
+  if (!value) return <span className="ao-mono muted">—</span>
+  const meta = TRANSPORT_META[value]
+  if (meta) {
+    const { label, Icon } = meta
     return (
-      <span className="transport">
-        <Phone size={12} /> SIP
+      <span className="ao-badge is-neutral">
+        <Icon size={12} /> {label}
       </span>
     )
   }
-  if (value === 'audio_stream') {
-    return (
-      <span className="transport">
-        <AudioLines size={12} /> Audio Stream
-      </span>
-    )
-  }
-  return <span className="muted">—</span>
+  // Known-present but unmapped transport — surface the raw value rather than
+  // swallowing it to "—" (which hid text/terminal_text/phone sessions).
+  return <span className="ao-badge is-neutral">{value}</span>
 }
 
 /**
@@ -58,45 +69,10 @@ export function TransportPill({ value }: { value: Transport | null }) {
 export function DurationCell({ ms }: { ms: number | null }) {
   if (ms != null && ms < 0) {
     return (
-      <span className="dur-bad">
+      <span className="ao-badge is-danger">
         <TriangleAlert size={12} /> invalid
       </span>
     )
   }
-  return <span className="mono tnum">{formatDuration(ms)}</span>
-}
-
-/** Framework pill (evals list) — `flask-conical` icon + name + muted version. */
-export function FrameworkPill({
-  name, version,
-}: { name: string; version?: string | null }) {
-  return (
-    <span className="framework">
-      <FlaskConical size={12} /> {name}
-      {version && <span className="ver">{version}</span>}
-    </span>
-  )
-}
-
-/**
- * Pass-rate meter: numeric label + fill bar + "N failed" chip when any
- * case failed. Variant maps to design thresholds (95 / 70 / below).
- */
-export function PassRate({
-  passed, total, failed,
-}: { passed: number; total: number; failed: number }) {
-  const pct = total > 0 ? Math.round((passed / total) * 100) : 0
-  const variant = pct >= 95 ? 'good' : pct >= 70 ? 'warn' : 'bad'
-  return (
-    <div className={`passrate ${variant}`}>
-      <span className="label">{pct}%</span>
-      <span className="meter"><i style={{ width: `${pct}%` }} /></span>
-      {failed > 0 && <span className="fail">{failed} failed</span>}
-    </div>
-  )
-}
-
-/** Eval case status chip — maps `.status-chip passed|failed|errored|skipped`. */
-export function StatusChip({ status }: { status: CaseStatus }) {
-  return <span className={`status-chip ${status}`}>{status}</span>
+  return <span className="ao-mono tnum">{formatDuration(ms)}</span>
 }
