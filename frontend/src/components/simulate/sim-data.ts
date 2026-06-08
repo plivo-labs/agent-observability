@@ -37,7 +37,7 @@ Keep replies under two sentences.`
 export const SIM_YAML = `version: v0
 name: "Pre-launch sweep"
 target:                        # the agent under test
-  mode: voice                  # text | voice | text_then_voice
+  mode: text                   # text simulation
   prompt_file: ./agent.txt
 defaults: { max_turns: 12, language: en }
 personas:
@@ -57,7 +57,7 @@ rubric:
 judge:
   levels: [flow, agent, task, node]
   model: gpt-4o
-run: { parallelism: 5, escalation: text_then_voice_on_fail }`
+run: { parallelism: 5 }`
 
 /* ---------- result types (mirror the backend SimResult) ---------- */
 export type CaseStatus = 'pass' | 'fail'
@@ -155,108 +155,8 @@ export interface SimRequest {
   scopes?: ('flow' | 'agent' | 'task' | 'node')[]
 }
 
-/* ---------- live call (Truman model) ---------- */
+/* Per-criterion verdict, as produced by the LiveKit judge (used by SimCaseResult). */
 export interface CriterionVerdict { name: string; pass: boolean; justification: string }
-/** Per-call lifecycle as reported by Truman (real mode); absent in demo mode. */
-export type CallStatus = 'queued' | 'dialing' | 'live' | 'recording' | 'evaluating' | 'done' | 'failed'
-export interface CallResult {
-  engine: 'llm' | 'demo' | 'real'
-  evalRunId?: string | null
-  agentName: string
-  personaName: string
-  personaType: string
-  avatar: string
-  opener: string
-  transcript: Turn[]
-  verdict: 'pass' | 'fail'
-  judge: { criteria: CriterionVerdict[]; overall: 'pass' | 'fail'; notes: string }
-  cost: { llm_tokens: number; tts_chars: number; stt_seconds: number; call_seconds: number; cents: number }
-  durationS: number
-  // real (Truman) mode only:
-  status?: CallStatus
-  recordingUrl?: string | null
-  error?: string | null
-  trumanRunId?: string
-  // Monitor session built from the caller agent's LiveKit metrics for this call.
-  sessionId?: string | null
-}
-
-export interface CallCriterion { name: string; question: string }
-
-/* Which Live mode the backend is in (real Truman calls vs demo/LLM shell). */
-export type LiveMode = 'demo' | 'llm' | 'truman'
-export async function getCallConfig(): Promise<{ mode: LiveMode; truman: boolean }> {
-  try {
-    const res = await fetch('/api/calls/config')
-    if (!res.ok) return { mode: 'demo', truman: false }
-    return res.json()
-  } catch { return { mode: 'demo', truman: false } }
-}
-
-export async function placeCall(req: { prompt: string; persona: Persona; criteria: CallCriterion[]; opener?: string }): Promise<CallResult> {
-  const res = await fetch('/api/calls', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) })
-  if (!res.ok) {
-    let m = `Call failed (${res.status})`
-    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
-    throw new Error(m)
-  }
-  return res.json()
-}
-
-export interface CallBatchResult {
-  agentName: string
-  evalRunId?: string | null
-  calls: CallResult[]
-  // real (Truman) mode only — async suite the frontend polls:
-  suiteId?: string
-  mode?: LiveMode
-  status?: string
-}
-export async function placeCallBatch(req: {
-  prompt: string; personas: Persona[]; criteria: CallCriterion[]; opener?: string
-  phoneNumber?: string; rubricId?: string; rubricName?: string
-}): Promise<CallBatchResult> {
-  const res = await fetch('/api/calls/batch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) })
-  if (!res.ok) {
-    let m = `Call batch failed (${res.status})`
-    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
-    throw new Error(m)
-  }
-  return res.json()
-}
-
-/* Poll a real (Truman) suite until its calls finish. */
-export async function getSuiteStatus(suiteId: string): Promise<CallBatchResult> {
-  const res = await fetch(`/api/calls/batch/${suiteId}`)
-  if (!res.ok) {
-    let m = `Suite poll failed (${res.status})`
-    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
-    throw new Error(m)
-  }
-  return res.json()
-}
-
-/* ---------- live in-call (real Truman calls) ---------- */
-// WS proxies hit AO (same origin), which bridges to Truman with the token server-side.
-function wsBase(): string {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.host}`
-}
-export const streamWsUrl = (runId: string) => `${wsBase()}/api/calls/${runId}/stream`
-export const audioWsUrl = (runId: string) => `${wsBase()}/api/calls/${runId}/audio`
-export const takeoverAudioWsUrl = (runId: string) => `${wsBase()}/api/calls/${runId}/takeover/audio`
-
-async function callControl(path: string): Promise<void> {
-  const res = await fetch(path, { method: 'POST' })
-  if (!res.ok) {
-    let m = `Control failed (${res.status})`
-    try { m = (await res.json())?.error?.message ?? m } catch { /* ignore */ }
-    throw new Error(m)
-  }
-}
-export const takeoverStart = (runId: string) => callControl(`/api/calls/${runId}/takeover/start`)
-export const takeoverStop = (runId: string) => callControl(`/api/calls/${runId}/takeover/stop`)
-export const endCall = (runId: string) => callControl(`/api/calls/${runId}/end-call`)
 
 export async function listRubrics(): Promise<Rubric[]> {
   const res = await fetch('/api/library/rubrics')
