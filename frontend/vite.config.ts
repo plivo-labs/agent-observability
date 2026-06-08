@@ -13,7 +13,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:9090',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:9090',
         changeOrigin: true,
         ws: true, // proxy WebSocket upgrades (live transcript/audio/takeover) to the backend
       },

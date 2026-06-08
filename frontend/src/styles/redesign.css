@@ -1,0 +1,778 @@
+/* redesign.css — modern "mission-control" refresh layered over observability.css.
+ *
+ * Loaded LAST (after observability.css) so it refines the app shell, nav, tabs,
+ * surfaces, motion and focus without rewriting any component. Everything is
+ * token-driven and works in both light and dark themes. Retuned to TRUMAN's
+ * monochrome-on-white design language — type is Sora (display) / Google Sans
+ * Text (sans) / Fragment Mono (mono), surfaces are flat with sharp 0.125rem
+ * radii, and the only hues are the phosphor/amber/crimson state accents. */
+
+/* ── Flat paper backdrop (Truman: monochrome on white/black, no glow/grid) ── */
+.obs-app {
+  position: relative;
+  display: flex;
+  flex-direction: row;        /* sidebar shell: rail + main (was a column with top nav) */
+  align-items: stretch;
+  min-height: 100vh;
+  background: var(--app-bg);
+}
+.obs-side, .obs-main { position: relative; z-index: 1; }
+
+/* ── Surfaces: panels, metric tiles, shadcn cards — flat 1px frames ───────── */
+.obs-panel,
+.metric-tile,
+.bg-card.border.rounded-lg {
+  box-shadow: none;
+  transition: border-color .18s ease;
+}
+.metric-tile:hover,
+.bg-card.border.rounded-lg:hover {
+  box-shadow: none;
+  border-color: hsl(var(--ring));
+}
+
+/* Big metric numbers read as data: mono face + tabular slashed figures */
+.metric-tile .val {
+  font-family: var(--mono);
+  font-feature-settings: "tnum" 1, "zero" 1;
+  letter-spacing: -0.005em;
+}
+
+/* ── Icon buttons ─────────────────────────────────────────────────────────── */
+.obs-iconbtn { border-radius: var(--radius-md); transition: background .16s ease, color .16s ease; }
+.obs-iconbtn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+
+/* ── Motion: one well-orchestrated page entrance ──────────────────────────── */
+@keyframes obs-rise {
+  from { opacity: 0; transform: translateY(9px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.obs-page { animation: obs-rise .42s cubic-bezier(.22, .61, .36, 1) both; }
+
+/* ── Focus ring (Truman: neutral ring, no brand hue) ──────────────────────── */
+:where(button, a, input, select, textarea, [role="tab"]):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .obs-page { animation: none; }
+  .metric-tile, .bg-card.border.rounded-lg, .obs-iconbtn { transition: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   AO DESIGN LANGUAGE — shared component-class library
+   "Refined mission-control / technical-editorial."
+   Prefix `ao-` so these never collide with the legacy `obs-*` chrome (which
+   they're designed to live alongside). Token-only; light + dark parity. Page
+   agents compose these directly in JSX className strings. Everything reads from
+   the HSL tokens declared in index.css / observability.css — never hardcode.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Shared design vars (Truman: flat monochrome — accent IS the foreground
+   ink, no brand hue, no drop-glow). Borders are the 1px rule; "shadows"
+   collapse to none so surfaces read as flat paper. ─────────────────────────── */
+:root {
+  --ao-line: hsl(var(--border));
+  --ao-line-strong: hsl(var(--border));
+  --ao-shadow-sm: none;
+  --ao-shadow: none;
+  --ao-shadow-lg: none;
+  --ao-accent: hsl(var(--foreground));
+  --ao-accent-soft: hsl(var(--muted));
+  --ao-accent-ring: hsl(var(--ring));
+}
+
+/* ── 1. PAGE HERO / HEADER ──────────────────────────────────────────────────
+   Strong editorial page header. `ao-hero` = wrapper, `ao-hero-eyebrow` = mono
+   kicker, `ao-hero-title` = display headline, `ao-hero-sub` = lede, `ao-hero-actions`
+   = right-aligned button cluster. Drop `ao-hero--bare` to remove the bottom rule. */
+.ao-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 18px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--ao-line);
+  position: relative;
+}
+.ao-hero--bare { border-bottom: none; padding-bottom: 0; }
+.ao-hero-eyebrow {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 10px;
+}
+.ao-hero-eyebrow svg { width: 13px; height: 13px; }
+.ao-hero-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 30px;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  color: hsl(var(--foreground));
+  margin: 0;
+}
+/* Truman: solid ink underbar beneath every page title (sharp, monochrome). */
+.ao-hero-title::after {
+  content: ""; display: block;
+  width: 52px; height: 2px; margin-top: 11px; border-radius: 0;
+  background: hsl(var(--foreground));
+  box-shadow: none;
+}
+.ao-hero-sub {
+  margin-top: 8px;
+  font: var(--text-p-400);
+  color: hsl(var(--muted-foreground));
+  max-width: 64ch;
+}
+.ao-hero-actions { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+/* ── 2. KPI / STAT TILE ─────────────────────────────────────────────────────
+   `ao-stat-row` = responsive grid wrapper. `ao-stat` = tile. Inside:
+   `ao-stat-label` (mono uppercase + optional icon), `ao-stat-value` (display,
+   tabular), `ao-stat-meta` (trailing delta/sub). Tones: add `is-good`/`is-warn`/
+   `is-bad`/`is-accent` to color the value + edge. `ao-stat--feature` = hero tile
+   (accent top border). Inside ao-stat-meta use `ao-delta-up`/`ao-delta-down`. */
+.ao-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 14px;
+}
+.ao-stat {
+  position: relative;
+  min-width: 0;
+  background: hsl(var(--card));
+  border: 1px solid var(--ao-line-strong);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px 18px;
+  box-shadow: var(--ao-shadow);
+  transition: box-shadow .18s ease, border-color .18s ease, transform .18s ease;
+  overflow: hidden;
+}
+.ao-stat:hover { box-shadow: var(--ao-shadow-lg); border-color: var(--ao-accent-ring); }
+.ao-stat-label {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+  margin-bottom: 12px;
+}
+.ao-stat-label svg { width: 14px; height: 14px; color: hsl(var(--tertiary)); }
+.ao-stat-value {
+  font-family: var(--mono);                 /* instrument numerals (Truman-inspired) */
+  font-weight: 600;
+  font-size: 29px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: hsl(var(--foreground));
+  font-feature-settings: "tnum", "zero";    /* tabular figures + slashed zero */
+  display: flex; align-items: baseline; gap: 7px;
+}
+.ao-stat-value .unit, .ao-stat-value .suffix {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: hsl(var(--tertiary));
+}
+.ao-stat-meta {
+  margin-top: 8px;
+  font: var(--text-xs-400);
+  color: hsl(var(--tertiary));
+  display: flex; align-items: center; gap: 6px;
+}
+.ao-stat.is-good .ao-stat-value { color: hsl(var(--success-fg, var(--success))); }
+.ao-stat.is-warn .ao-stat-value { color: hsl(var(--warning-fg, var(--warning))); }
+.ao-stat.is-bad .ao-stat-value { color: hsl(var(--destructive)); }
+.ao-stat.is-accent .ao-stat-value { color: var(--ao-accent); }
+/* Truman keeps stat tiles uniform-neutral — no per-card border tint and no
+   hero top-rule; only the VALUE carries the state hue (green/red/amber). */
+.ao-delta-up { color: hsl(var(--success-fg, var(--success))); font-weight: 600; }
+.ao-delta-down { color: hsl(var(--destructive)); font-weight: 600; }
+
+/* ── 3. PANEL / SECTION ─────────────────────────────────────────────────────
+   `ao-panel` = elevated card surface. `ao-panel-head` = header strip
+   (title left, actions right). `ao-panel-title` (with optional icon), `ao-panel-sub`,
+   `ao-panel-body` = padded content, `ao-panel-foot` = bottom strip. Use
+   `ao-panel--flush` when the body owns its own padding (e.g. a table). */
+.ao-panel {
+  background: hsl(var(--card));
+  border: 1px solid var(--ao-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ao-shadow);
+  overflow: hidden;
+}
+.ao-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ao-line);
+}
+.ao-panel-title {
+  display: inline-flex; align-items: center; gap: 9px;
+  font: var(--text-h4-600);
+  color: hsl(var(--foreground));
+  letter-spacing: -0.01em;
+}
+.ao-panel-title svg { width: 16px; height: 16px; color: hsl(var(--muted-foreground)); }
+.ao-panel-sub { font: var(--text-xs-400); color: hsl(var(--muted-foreground)); margin-top: 2px; }
+.ao-panel-body { padding: 18px; }
+.ao-panel--flush .ao-panel-body { padding: 0; }
+.ao-panel-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--ao-line);
+  background: hsl(var(--bg2) / 0.5);
+  font: var(--text-xs-400);
+  color: hsl(var(--muted-foreground));
+}
+/* Section label — small mono caps divider above a block. */
+.ao-section-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+  margin-bottom: 10px;
+}
+
+/* ── 4. DATA-TABLE POLISH ───────────────────────────────────────────────────
+   Apply `ao-table` to a <table> (wrap in `.ao-panel.ao-panel--flush` for a
+   framed look). Header is mono-caps; rows lift on hover; `.is-active` marks a
+   selected row. `td.mono` / `td.num` for monospace / tabular cells. */
+.ao-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font: var(--text-p-400);
+}
+.ao-table thead th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+  padding: 11px 16px;
+  background: hsl(var(--bg2));
+  border-bottom: 1px solid var(--ao-line-strong);
+  white-space: nowrap;
+  position: sticky; top: 0; z-index: 1;
+}
+.ao-table tbody td {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--ao-line);
+  vertical-align: middle;
+  color: hsl(var(--foreground));
+}
+.ao-table tbody tr:last-child td { border-bottom: none; }
+.ao-table tbody tr { transition: background .12s ease; }
+.ao-table tbody tr:hover { background: hsl(var(--bg2)); cursor: pointer; }
+.ao-table tbody tr.is-active { background: var(--ao-accent-soft); box-shadow: inset 2px 0 0 var(--ao-accent); }
+.ao-table td.mono, .ao-table .mono {
+  font-family: var(--mono); font-size: 12.5px; letter-spacing: -0.01em; font-weight: 500;
+}
+.ao-table td.num, .ao-table .num { font-feature-settings: "tnum"; }
+.ao-table .muted { color: hsl(var(--muted-foreground)); }
+
+/* ── 5. TOOLBAR / FILTER BAR ────────────────────────────────────────────────
+   `ao-toolbar` = horizontal control strip (typically above a table/panel).
+   `ao-toolbar-spacer` pushes trailing controls right. Reuse `ao-search` (search
+   field), `ao-chip-btn` (dashed filter trigger; add `is-applied` when active),
+   and `ao-seg`/`ao-btn-*` for the rest. */
+.ao-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 12px 16px;
+  background: hsl(var(--card));
+  border: 1px solid var(--ao-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ao-shadow-sm);
+}
+.ao-toolbar.is-attached {
+  border-bottom: none;
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+}
+.ao-toolbar-spacer { flex: 1 1 auto; }
+.ao-search {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 11px;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-md);
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  min-width: 220px;
+  transition: border-color .14s ease, box-shadow .14s ease;
+}
+.ao-search:focus-within { border-color: var(--ao-accent-ring); box-shadow: 0 0 0 3px var(--ao-accent-soft); }
+.ao-search svg { width: 15px; height: 15px; color: hsl(var(--tertiary)); flex-shrink: 0; }
+.ao-search input {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  font: var(--text-s-400); color: hsl(var(--foreground));
+}
+.ao-search input::placeholder { color: hsl(var(--tertiary)); }
+.ao-chip-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 12px;
+  border: 1px dashed hsl(var(--input));
+  border-radius: var(--radius-md);
+  color: hsl(var(--muted-foreground));
+  font: var(--text-s-500);
+  background: hsl(var(--card));
+  transition: border-color .14s ease, background .14s ease, color .14s ease;
+}
+.ao-chip-btn:hover { background: hsl(var(--bg2)); border-color: var(--ao-accent-ring); color: hsl(var(--foreground)); }
+.ao-chip-btn svg { width: 14px; height: 14px; color: hsl(var(--tertiary)); }
+.ao-chip-btn.is-applied {
+  border-style: solid; border-color: var(--ao-accent-ring);
+  background: var(--ao-accent-soft); color: var(--ao-accent);
+}
+.ao-chip-btn.is-applied svg { color: var(--ao-accent); }
+
+/* ── 6. SEGMENTED CONTROL / TABS ────────────────────────────────────────────
+   `ao-seg` = inline pill group; children are `ao-seg-item` (add `is-active`).
+   For underline-style page subtabs use `ao-subtabs` + `ao-subtab` (`is-active`),
+   which also auto-skins shadcn <Tabs> placed inside (see selectors below). */
+.ao-seg {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px;
+  background: hsl(var(--bg2));
+  border: 1px solid var(--ao-line-strong);
+  border-radius: var(--radius-md);
+}
+.ao-seg-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 12px;
+  border-radius: calc(var(--radius-md) - 3px);
+  font: var(--text-s-500);
+  color: hsl(var(--muted-foreground));
+  transition: background .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.ao-seg-item:hover { color: hsl(var(--foreground)); }
+.ao-seg-item.is-active {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font: var(--text-s-600);
+  box-shadow: var(--ao-shadow-sm);
+}
+.ao-seg-item svg { width: 14px; height: 14px; }
+
+.ao-subtabs {
+  display: flex; align-items: center; gap: 4px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--ao-line-strong);
+}
+.ao-subtab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 13px;
+  font: var(--text-s-500);
+  color: hsl(var(--muted-foreground));
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .14s ease, border-color .14s ease;
+}
+.ao-subtab:hover { color: hsl(var(--foreground)); }
+.ao-subtab.is-active {
+  color: hsl(var(--foreground));
+  border-bottom-color: var(--ao-accent);
+  font: var(--text-s-600);
+}
+.ao-subtab svg { width: 14px; height: 14px; }
+.ao-subtab .count {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  padding: 1px 6px; border-radius: 999px;
+  background: hsl(var(--bg3)); color: hsl(var(--muted-foreground));
+}
+.ao-subtab.is-active .count { background: var(--ao-accent-soft); color: var(--ao-accent); }
+/* Auto-skin shadcn <Tabs> rendered inside an `.ao-subtabs`-marked TabsList. */
+.ao-subtabs[role="tablist"] { padding: 0; height: auto; background: transparent; }
+.ao-subtabs[role="tablist"] [role="tab"] {
+  padding: 9px 13px; height: auto; border-radius: 0; background: transparent; box-shadow: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  font: var(--text-s-500); color: hsl(var(--muted-foreground));
+}
+.ao-subtabs[role="tablist"] [role="tab"][data-state="active"] {
+  color: hsl(var(--foreground)); border-bottom-color: var(--ao-accent); font: var(--text-s-600); background: transparent;
+}
+
+/* ── 7. BUTTONS (plain <button>) ────────────────────────────────────────────
+   For bespoke buttons that aren't the shadcn <Button>. `ao-btn` base +
+   `ao-btn--primary` (accent fill) / `ao-btn--outline` / `ao-btn--ghost` /
+   `ao-btn--danger`. `ao-btn--sm` for compact. Standard text color is safe here
+   (no tailwind-merge token clash — that gotcha only bites shadcn <Button>). */
+.ao-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; padding: 0 15px;
+  border-radius: var(--radius-md);
+  font: var(--text-s-600);
+  border: 1px solid transparent;
+  transition: background .14s ease, border-color .14s ease, color .14s ease, box-shadow .14s ease, transform .1s ease;
+  white-space: nowrap;
+}
+.ao-btn:active { transform: translateY(0.5px); }
+.ao-btn:disabled { opacity: 0.5; pointer-events: none; }
+.ao-btn svg { width: 15px; height: 15px; }
+.ao-btn--sm { height: 30px; padding: 0 11px; font: var(--text-xs-600); }
+.ao-btn--primary {
+  background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+  box-shadow: none;
+}
+.ao-btn--primary:hover { background: hsl(var(--primary) / 0.9); box-shadow: none; }
+.ao-btn--outline { background: hsl(var(--card)); border-color: hsl(var(--input)); color: hsl(var(--foreground)); box-shadow: none; }
+.ao-btn--outline:hover { background: hsl(var(--muted)); border-color: hsl(var(--ring)); }
+.ao-btn--ghost { color: hsl(var(--muted-foreground)); }
+.ao-btn--ghost:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.ao-btn--danger { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); }
+.ao-btn--danger:hover { filter: brightness(1.05); }
+
+/* ── 8. STATUS BADGES / PILLS ───────────────────────────────────────────────
+   `ao-badge` base + a tone: `is-success` / `is-warning` / `is-danger` / `is-info`
+   / `is-accent` / `is-neutral`. Add `ao-badge--dot` for a leading status dot
+   (gets `is-pulse` to animate, e.g. a live call). `ao-badge--solid` for a filled
+   high-emphasis variant. Mono numbers/IDs: wrap in `ao-mono`. */
+.ao-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 9px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.ao-badge.is-neutral { background: hsl(var(--bg2)); color: hsl(var(--muted-foreground)); border-color: var(--ao-line-strong); }
+.ao-badge.is-success { background: hsl(var(--success-bg)); color: hsl(var(--success-fg, var(--success))); border-color: hsl(var(--success-border)); }
+.ao-badge.is-warning { background: hsl(var(--warning-bg)); color: hsl(var(--warning-fg, var(--warning))); border-color: hsl(var(--warning-border)); }
+.ao-badge.is-danger  { background: hsl(var(--destructive-bg)); color: hsl(var(--destructive)); border-color: hsl(var(--destructive-border)); }
+.ao-badge.is-info    { background: hsl(var(--info-bg)); color: hsl(var(--info)); border-color: hsl(var(--info-border)); }
+.ao-badge.is-accent  { background: var(--ao-accent-soft); color: var(--ao-accent); border-color: var(--ao-accent-ring); }
+.ao-badge--solid.is-success { background: hsl(var(--success)); color: hsl(var(--success-foreground, 0 0% 100%)); border-color: transparent; }
+.ao-badge--solid.is-danger  { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); border-color: transparent; }
+.ao-badge--solid.is-accent  { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: transparent; }
+.ao-badge .dot, .ao-badge--dot::before {
+  width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex-shrink: 0;
+}
+.ao-badge--dot::before { content: ""; }
+.ao-badge--dot.is-pulse::before { animation: ao-pulse 1.6s ease-in-out infinite; }
+@keyframes ao-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px transparent; }
+}
+.ao-mono {
+  font-family: var(--mono); font-size: 12px; letter-spacing: -0.01em;
+  color: hsl(var(--muted-foreground)); font-feature-settings: "tnum";
+}
+
+/* ── 9. EMPTY STATE ─────────────────────────────────────────────────────────
+   `ao-empty` = centered placeholder block (dashed frame). `ao-empty-icon`
+   (circular accent-tinted icon), `ao-empty-title`, `ao-empty-text`, then
+   actions. */
+.ao-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center;
+  padding: 56px 32px;
+  border: 1px dashed var(--ao-line-strong);
+  border-radius: var(--radius-lg);
+  background: hsl(var(--bg2) / 0.4);
+}
+.ao-empty-icon {
+  width: 48px; height: 48px; border-radius: var(--radius-lg);
+  display: grid; place-items: center;
+  background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+  margin-bottom: 8px;
+}
+.ao-empty-icon svg { width: 22px; height: 22px; }
+.ao-empty-title { font: var(--text-h4-600); color: hsl(var(--foreground)); }
+.ao-empty-text { font: var(--text-s-400); color: hsl(var(--muted-foreground)); max-width: 42ch; }
+.ao-empty .ao-hero-actions, .ao-empty-actions { margin-top: 12px; display: inline-flex; gap: 10px; }
+
+/* ── 10. LOADING SKELETON (shimmer) ─────────────────────────────────────────
+   `ao-skeleton` = a single shimmering block. Set width/height inline or via
+   `ao-skeleton--line` (text line, 100% × 0.85em) / `ao-skeleton--title`
+   (1.4em). `ao-skeleton--circle` for avatars. Respects reduced-motion. */
+.ao-skeleton {
+  position: relative;
+  border-radius: var(--radius-sm);
+  background: hsl(var(--muted));
+  overflow: hidden;
+}
+.ao-skeleton::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.06), transparent);
+  transform: translateX(-100%);
+  animation: ao-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes ao-shimmer { 100% { transform: translateX(100%); } }
+.ao-skeleton--line { height: 0.85em; width: 100%; border-radius: 999px; }
+.ao-skeleton--title { height: 1.4em; width: 40%; border-radius: 6px; }
+.ao-skeleton--circle { border-radius: 999px; }
+
+/* ── 11. FORM FIELD ─────────────────────────────────────────────────────────
+   For bespoke forms (the shadcn Input/Label/Select still work as-is). `ao-field`
+   = vertical group. `ao-label` (with optional `.req` asterisk), `ao-input` /
+   `ao-textarea` (+ `.mono`), `ao-hint`, `ao-error`. `ao-field-row` = horizontal
+   field grid. */
+.ao-field { display: flex; flex-direction: column; gap: 6px; }
+.ao-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.ao-label {
+  font: var(--text-s-600); color: hsl(var(--foreground)); display: inline-flex; gap: 3px; align-items: center;
+}
+.ao-label .req { color: hsl(var(--destructive)); }
+.ao-input, .ao-textarea {
+  width: 100%;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-md);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: var(--text-s-400);
+  outline: none;
+  transition: border-color .14s ease, box-shadow .14s ease;
+}
+.ao-input { height: 36px; padding: 0 11px; }
+.ao-textarea { padding: 9px 11px; resize: vertical; line-height: 1.5; }
+.ao-input.mono, .ao-textarea.mono { font-family: var(--mono); font-size: 12.5px; }
+.ao-input::placeholder, .ao-textarea::placeholder { color: hsl(var(--tertiary)); }
+.ao-input:focus, .ao-textarea:focus { border-color: var(--ao-accent-ring); box-shadow: 0 0 0 3px var(--ao-accent-soft); }
+.ao-hint { font: var(--text-xs-400); color: hsl(var(--muted-foreground)); }
+.ao-error { font: var(--text-xs-500); color: hsl(var(--destructive)); }
+/* Inline alert/banner — `ao-alert` + a tone (is-danger / is-warning / is-info). */
+.ao-alert {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--ao-line-strong);
+  font: var(--text-s-400);
+  background: hsl(var(--bg2));
+  color: hsl(var(--foreground));
+}
+.ao-alert svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+.ao-alert.is-danger  { background: hsl(var(--destructive-bg)); border-color: hsl(var(--destructive-border)); color: hsl(var(--destructive)); }
+.ao-alert.is-warning { background: hsl(var(--warning-bg)); border-color: hsl(var(--warning-border)); color: hsl(var(--warning-fg, var(--warning))); }
+.ao-alert.is-info    { background: hsl(var(--info-bg)); border-color: hsl(var(--info-border)); color: hsl(var(--info)); }
+
+/* ── 12. DRAWER / DIALOG POLISH ─────────────────────────────────────────────
+   shadcn Dialog already works. These refine: a thicker backdrop blur + lifted
+   panel shadow (auto-applied to Radix dialog content), and a right-side
+   `ao-drawer` for bespoke slide-overs (`ao-drawer-head` / `ao-drawer-body` /
+   `ao-drawer-foot`). */
+[data-slot="dialog-overlay"], [data-radix-dialog-overlay] {
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+[data-slot="dialog-content"], [data-radix-dialog-content] {
+  box-shadow: var(--ao-shadow-lg) !important;
+  border-radius: var(--radius-lg);
+}
+.ao-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(460px, 92vw);
+  background: hsl(var(--card));
+  border-left: 1px solid var(--ao-line-strong);
+  display: flex; flex-direction: column;
+  box-shadow: -12px 0 40px -16px hsl(var(--foreground) / 0.4);
+  animation: ao-slide-in .26s cubic-bezier(.22,.61,.36,1) both;
+}
+@keyframes ao-slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.ao-drawer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 18px; border-bottom: 1px solid var(--ao-line);
+}
+.ao-drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
+.ao-drawer-foot { padding: 14px 18px; border-top: 1px solid var(--ao-line); display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ── 13. CHART FRAME ────────────────────────────────────────────────────────
+   `ao-chart` = panel tuned for a recharts/SVG plot. `ao-chart-head` (title +
+   legend), `ao-chart-title`, `ao-chart-sub`, `ao-chart-body` (the plot area,
+   keeps a min-height), `ao-chart-legend` + `ao-legend-item` w/ `.sw` swatch. */
+.ao-chart {
+  background: hsl(var(--card));
+  border: 1px solid var(--ao-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ao-shadow);
+  padding: 18px 20px 16px;
+}
+.ao-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.ao-chart-title { font: var(--text-p-600); color: hsl(var(--foreground)); }
+.ao-chart-sub { font: var(--text-xs-400); color: hsl(var(--muted-foreground)); margin-top: 2px; }
+.ao-chart-body { min-height: 200px; position: relative; }
+.ao-chart-legend { display: inline-flex; align-items: center; gap: 14px; font: var(--text-xs-500); color: hsl(var(--muted-foreground)); }
+.ao-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.ao-legend-item .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+/* Recharts: keep axes/grid on-token regardless of light/dark. */
+.ao-chart .recharts-cartesian-grid line { stroke: var(--ao-line); }
+.ao-chart .recharts-cartesian-axis-line, .ao-chart .recharts-cartesian-axis-tick-line { stroke: var(--ao-line-strong); }
+.ao-chart .recharts-text { fill: hsl(var(--tertiary)); font-family: var(--mono); font-size: 10.5px; }
+.ao-chart .recharts-tooltip-wrapper { outline: none; }
+.ao-chart .recharts-default-tooltip {
+  background: hsl(var(--popover)) !important;
+  border: 1px solid var(--ao-line-strong) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--ao-shadow-lg) !important;
+  font: var(--text-xs-400) !important;
+  color: hsl(var(--popover-foreground)) !important;
+}
+
+/* ── 14. STAGGERED PAGE-LOAD REVEAL ─────────────────────────────────────────
+   Add `ao-reveal` to top-level blocks in a freshly-mounted page for a soft
+   staggered rise. `ao-reveal-1`…`ao-reveal-6` add escalating delays. Or wrap a
+   group in `ao-stagger` and every direct child auto-staggers (up to 8). Respects
+   reduced-motion. */
+@keyframes ao-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.ao-reveal { animation: ao-rise .46s cubic-bezier(.22,.61,.36,1) both; }
+.ao-reveal-1 { animation-delay: .04s; }
+.ao-reveal-2 { animation-delay: .10s; }
+.ao-reveal-3 { animation-delay: .16s; }
+.ao-reveal-4 { animation-delay: .22s; }
+.ao-reveal-5 { animation-delay: .28s; }
+.ao-reveal-6 { animation-delay: .34s; }
+.ao-stagger > * { animation: ao-rise .46s cubic-bezier(.22,.61,.36,1) both; }
+.ao-stagger > *:nth-child(1) { animation-delay: .03s; }
+.ao-stagger > *:nth-child(2) { animation-delay: .08s; }
+.ao-stagger > *:nth-child(3) { animation-delay: .13s; }
+.ao-stagger > *:nth-child(4) { animation-delay: .18s; }
+.ao-stagger > *:nth-child(5) { animation-delay: .23s; }
+.ao-stagger > *:nth-child(6) { animation-delay: .28s; }
+.ao-stagger > *:nth-child(7) { animation-delay: .33s; }
+.ao-stagger > *:nth-child(8) { animation-delay: .38s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ao-reveal, .ao-stagger > *, .ao-drawer { animation: none; }
+  .ao-skeleton::after { animation: none; }
+  .ao-badge--dot.is-pulse::before { animation: none; }
+  .ao-stat, .ao-search, .ao-chip-btn, .ao-seg-item, .ao-subtab, .ao-btn, .ao-table tbody tr { transition: none; }
+  .ao-pipe-stage.on .dot { animation: none; }
+}
+
+/* ── Pipeline rail (Truman-inspired): STT — LLM — TTS with status dots ─────── */
+/* Shows the full STT→LLM→TTS pipeline; lit stages = active, dim = absent.
+   More legible + characterful than three separate capability chips. */
+.ao-pipeline { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; line-height: 1; }
+.ao-pipe-stage { display: inline-flex; align-items: center; gap: 5px; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.ao-pipe-stage .dot {
+  width: 6px; height: 6px; border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.35);
+  box-shadow: 0 0 0 2px hsl(var(--card));
+}
+.ao-pipe-stage.on { color: hsl(var(--foreground)); }
+.ao-pipe-stage.on .dot {
+  background: hsl(var(--foreground));
+  box-shadow: 0 0 0 2px hsl(var(--card));
+  animation: ao-pipe-pulse 2.6s ease-in-out infinite;
+}
+.ao-pipe-rail { width: 16px; height: 1px; margin: 0 7px; background: hsl(var(--border)); }
+.ao-pipe-rail.on { background: hsl(var(--muted-foreground) / 0.5); }
+@keyframes ao-pipe-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* ── Sidebar shell (Truman: solid bg, uppercase mono nav, subtle active) ──── */
+.obs-side {
+  width: 232px; flex-shrink: 0;
+  position: sticky; top: 0; align-self: flex-start; height: 100vh;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 18px 14px 14px;
+  background: hsl(var(--background));
+  border-right: 1px solid hsl(var(--border));
+  box-shadow: none;
+  overflow-y: auto;
+}
+.obs-side-brand {
+  display: flex; align-items: center; gap: 11px;
+  padding: 4px 8px 16px;
+  font-family: var(--font-display); font-weight: 700; font-size: 15px;
+  letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.12;
+  color: hsl(var(--foreground));
+}
+.obs-side-brand .dot {
+  width: 30px; height: 30px; border-radius: var(--radius-md); flex-shrink: 0;
+  display: grid; place-items: center; color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  box-shadow: none;
+}
+.obs-side-nav { display: flex; flex-direction: column; gap: 17px; margin-top: 4px; }
+.obs-side-group { display: flex; flex-direction: column; gap: 2px; }
+.obs-side-grouplabel {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  letter-spacing: 0.13em; text-transform: uppercase;
+  color: hsl(var(--muted-foreground)); padding: 0 11px 6px;
+}
+.obs-side-link {
+  display: flex; align-items: center; gap: 10px;
+  height: 36px; padding: 0 11px; border-radius: var(--radius-md);
+  font-family: var(--mono); font-size: 12px; font-weight: 400;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  transition: background .16s ease, color .16s ease;
+}
+.obs-side-link svg { color: hsl(var(--tertiary)); transition: color .16s ease; }
+.obs-side-link:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.obs-side-link:hover svg { color: hsl(var(--foreground)); }
+.obs-side-link.active {
+  background: hsl(var(--muted)); color: hsl(var(--foreground)); font-weight: 500;
+  box-shadow: none;
+}
+.obs-side-link.active svg { color: hsl(var(--foreground)); }
+.obs-side-foot {
+  margin-top: auto; padding-top: 12px;
+  display: flex; align-items: center; gap: 6px;
+  border-top: 1px solid hsl(var(--border));
+}
+.obs-main { flex: 1; min-width: 0; }
+
+/* compact icon-rail on narrow viewports */
+@media (max-width: 880px) {
+  .obs-side { width: 58px; padding: 16px 8px 12px; align-items: center; }
+  .obs-side-brand { padding: 4px 0 14px; justify-content: center; }
+  .obs-side-brandtext, .obs-side-grouplabel, .obs-side-linktext { display: none; }
+  .obs-side-link { justify-content: center; padding: 0; width: 38px; }
+  .obs-side-foot { flex-direction: column; }
+}
+
+/* ── Call-result widgets (Truman-inspired): script box + metric strip ─────── */
+.ao-scriptbox {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--bg2));
+  overflow: hidden;
+}
+.ao-scriptbox-cap {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 14px;
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  border-bottom: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--card) / 0.5);
+}
+.ao-scriptbox-body { padding: 14px; }
+
+.ao-metricstrip {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  overflow: hidden; background: hsl(var(--card));
+}
+.ao-metricstrip > * + * { border-left: 1px solid hsl(var(--border) / 0.7); }
+.ao-metric-cell { padding: 12px 16px; min-width: 0; }
+.ao-metric-cell .k {
+  display: block; font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; color: hsl(var(--tertiary)); margin-bottom: 5px;
+}
+.ao-metric-cell .v {
+  font-family: var(--mono); font-size: 15px; font-weight: 600;
+  font-feature-settings: "tnum", "zero"; color: hsl(var(--foreground));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ao-metric-cell .v.is-pass { color: hsl(var(--success)); }
+.ao-metric-cell .v.is-fail { color: hsl(var(--destructive)); }
+@media (max-width: 640px) {
+  .ao-metricstrip { grid-auto-flow: row; grid-auto-columns: auto; }
+  .ao-metricstrip > * + * { border-left: 0; border-top: 1px solid hsl(var(--border) / 0.7); }
+}

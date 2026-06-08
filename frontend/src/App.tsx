@@ -38,6 +38,14 @@ const useDarkMode = () => {
   return [dark, () => setDark((d) => !d)] as const
 }
 
+// Hoisted to module scope: defining it inside Layout re-created the component
+// on every render, remounting every nav item (and dropping focus/transition state).
+const NavLink = ({ to, active, icon, label }: { to: string; active: boolean; icon: React.ReactNode; label: string }) => (
+  <Link to={to} className={`obs-side-link${active ? ' active' : ''}`}>
+    {icon}<span className="obs-side-linktext">{label}</span>
+  </Link>
+)
+
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
   const { pathname } = useLocation()
@@ -53,48 +61,36 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <div className="obs-app">
-      <nav className="obs-nav">
-        <Link to="/" className="obs-nav-brand">
-          <span className="dot"><Activity size={13} strokeWidth={2} /></span>
-          Agent Observability
+      <aside className="obs-side">
+        <Link to="/" className="obs-side-brand">
+          <span className="dot"><Activity size={15} strokeWidth={2} /></span>
+          <span className="obs-side-brandtext">Agent<br />Observability</span>
         </Link>
-        <div className="obs-nav-tabs">
-          <Link to="/" className={`obs-tab${isSessionsActive ? ' active' : ''}`}>
-            <List size={14} /> Monitor
-          </Link>
-          <Link to="/simulate" className={`obs-tab${isSimulateActive ? ' active' : ''}`}>
-            <FlaskConical size={14} /> Simulate
-          </Link>
-          <Link to="/evals" className={`obs-tab${isEvalsActive ? ' active' : ''}`}>
-            <CheckCheck size={14} /> Evals
-          </Link>
-          <Link to="/library" className={`obs-tab${isLibraryActive ? ' active' : ''}`}>
-            <Library size={14} /> Library
-          </Link>
-          <Link to="/schedules" className={`obs-tab${isSchedulesActive ? ' active' : ''}`}>
-            <CalendarClock size={14} /> Schedules
-          </Link>
-        </div>
-        <div className="obs-nav-spacer" />
-        <div className="obs-nav-right">
-          <button
-            type="button"
-            className="obs-iconbtn"
-            title="Refresh"
-            onClick={() => window.location.reload()}
-          >
+        <nav className="obs-side-nav">
+          <div className="obs-side-group">
+            <div className="obs-side-grouplabel">Observe</div>
+            <NavLink to="/" active={isSessionsActive} icon={<List size={16} />} label="Monitor" />
+            <NavLink to="/evals" active={isEvalsActive} icon={<CheckCheck size={16} />} label="Evals" />
+          </div>
+          <div className="obs-side-group">
+            <div className="obs-side-grouplabel">Test</div>
+            <NavLink to="/simulate" active={isSimulateActive} icon={<FlaskConical size={16} />} label="Simulate" />
+          </div>
+          <div className="obs-side-group">
+            <div className="obs-side-grouplabel">Configure</div>
+            <NavLink to="/library" active={isLibraryActive} icon={<Library size={16} />} label="Library" />
+            <NavLink to="/schedules" active={isSchedulesActive} icon={<CalendarClock size={16} />} label="Schedules" />
+          </div>
+        </nav>
+        <div className="obs-side-foot">
+          <button type="button" className="obs-iconbtn" title="Refresh" onClick={() => window.location.reload()}>
             <RefreshCw size={16} />
           </button>
-          <button
-            type="button"
-            className="obs-iconbtn"
-            onClick={toggleDark}
-            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
+          <button type="button" className="obs-iconbtn" onClick={toggleDark} title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
             {dark ? <Sun size={16} /> : <Moon size={16} />}
           </button>
         </div>
-      </nav>
+      </aside>
       <main className="obs-main">
         <div className="obs-page">{children}</div>
       </main>

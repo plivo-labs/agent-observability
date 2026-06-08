@@ -38,11 +38,13 @@
   --color-st1: hsl(var(--st1));
   --color-st2: hsl(var(--st2));
 
-  --color-chart-1: hsl(225 100% 45%);
-  --color-chart-2: hsl(270 82% 51%);
-  --color-chart-3: hsl(149 89% 42%);
-  --color-chart-4: hsl(38 96% 50%);
-  --color-chart-5: hsl(0 100% 64%);
+  /* Truman charts: monochrome ink + state accents (phosphor / amber / crimson).
+     Bars/segments read as data, not decoration. */
+  --color-chart-1: hsl(0 0% 4%);      /* ink (foreground) */
+  --color-chart-2: hsl(0 0% 42%);     /* muted ink */
+  --color-chart-3: hsl(142 71% 29%);  /* phosphor green (pass) */
+  --color-chart-4: hsl(28 91% 37%);   /* amber/rust (pending/fail portion) */
+  --color-chart-5: hsl(0 73% 42%);    /* crimson (fail) */
 
   /* Typography scale — matches Neo design system */
   --font-size-h1-600: 26px; --line-height-h1-600: 32px;
@@ -74,48 +76,48 @@
   --color-hv3: hsl(var(--hv3));
 }
 
-/* Light theme */
+/* Light theme — Truman monochrome-on-white (truman/apps/web/src/index.css
+   light block, hex → HSL-triplet). Pure greys; the only hues are the
+   state accents (phosphor/amber/crimson). */
 :root {
-  --background: 0 0% 100%;
-  --foreground: 230 75% 9%;
-  --card: 0 0% 100%;
-  --card-foreground: 230 75% 9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 230 75% 9%;
-  /* Primary = dark ink (slate-900-ish) per Plivo CX Neo — used for primary
-     buttons, active nav, focus rings. Brand red (#E02020) lives on destructive
-     refs and the Plivo logo only (see --plivo-red). */
-  --primary: 222 47% 11%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 215 19% 35%;
-  --secondary-foreground: 0 0% 98%;
-  --tertiary: 215 20% 65%;
-  --tertiary-foreground: 0 0% 98%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --success: 149 89% 42%;
+  --background: 0 0% 100%;        /* #ffffff */
+  --foreground: 0 0% 4%;          /* #0a0a0a */
+  --card: 0 0% 98%;               /* #fafafa */
+  --card-foreground: 0 0% 4%;
+  --popover: 0 0% 98%;            /* #fafafa */
+  --popover-foreground: 0 0% 4%;
+  /* Primary = ink black (Truman: black on light, white on dark). */
+  --primary: 0 0% 4%;             /* #0a0a0a */
+  --primary-foreground: 0 0% 100%;/* #ffffff */
+  --secondary: 0 0% 96%;          /* #f4f4f4 */
+  --secondary-foreground: 0 0% 4%;
+  --tertiary: 0 0% 42%;           /* muted-foreground #6b6b6b */
+  --tertiary-foreground: 0 0% 100%;
+  --muted: 0 0% 96%;              /* #f4f4f4 */
+  --muted-foreground: 0 0% 42%;   /* #6b6b6b */
+  --accent: 0 0% 93%;             /* subtle hover tint — shadcn bg-accent (was ink) */
+  --accent-foreground: 0 0% 4%;   /* ink text on the hover tint */
+  --destructive: 0 73% 42%;       /* crimson #b91c1c */
+  --destructive-foreground: 0 0% 100%;
+  --success: 142 71% 29%;         /* phosphor #15803d */
   --success-foreground: 0 0% 100%;
-  --warning: 38 96% 50%;
+  --warning: 28 91% 37%;          /* amber/rust #b45309 */
   --warning-foreground: 0 0% 100%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 240 10% 3.9%;
-  --st1: 213 27% 84%;
-  --st2: 214 32% 91%;
-  --bg1: 210 8% 95%;
-  --bg2: 210 13% 97%;
-  --bg3: 240 5% 96%;
-  --hv1: 210 40% 96%;
-  --hv2: 210 5% 92%;
-  --hv3: 210 4% 90%;
-  --link: 211 100% 60%;
+  --border: 0 0% 92%;             /* rgba(0,0,0,0.08) on white */
+  --input: 0 0% 92%;              /* rgba(0,0,0,0.08) */
+  --ring: 0 0% 70%;               /* rgba(0,0,0,0.30) */
+  --st1: 0 0% 90%;
+  --st2: 0 0% 94%;
+  --bg1: 0 0% 98%;                /* panel #fafafa */
+  --bg2: 0 0% 97%;                /* bg-2 #f7f7f7 */
+  --bg3: 0 0% 94%;
+  --hv1: 0 0% 96%;
+  --hv2: 0 0% 94%;
+  --hv3: 0 0% 92%;
+  --link: 0 0% 4%;                /* monochrome: links read as foreground ink */
   --bubble-customer: var(--bg2);
-  --bubble-agent: 220 100% 96%;
-  --radius: 0.5rem;
+  --bubble-agent: 0 0% 96%;
+  --radius: 0.125rem;             /* Truman is sharp / near-square */
 }
 
 /* Brand color variables */
@@ -133,49 +135,45 @@
   --plivo-red: #E02020;
 }
 
-/* Dark theme — matching console dark mode */
+/* Dark theme — Truman monochrome-on-black (truman/apps/web/src/index.css
+   :root/.dark default block, hex → HSL-triplet). */
 .dark {
-  --background: 240 10% 4%;
-  --foreground: 0 0% 100%;
-  /* Card / popover sit on top of the body bg (`--bg1: 240 11% 7%`), so they
-   * need to be a touch lighter than the body bg to read as elevated.
-   * Previously they were 3.9% — darker than --bg1 — which made dropdowns,
-   * the multiselect popover and the rows-per-page select look surfaceless. */
-  --card: 240 7% 11%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 7% 11%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 222 47% 11%;
-  --secondary: 234 6% 65%;
-  --secondary-foreground: 0 0% 100%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 100% 60%;
-  --destructive-foreground: 0 0% 98%;
-  --success: 173 81% 26%;
-  --success-foreground: 174 58% 91%;
-  --warning: 26 89% 37%;
-  --warning-foreground: 44 95% 92%;
-  /* Bumped from 15.9% → 22% so chrome (popover edges, pagination outline
-   * buttons, select triggers) is visible against the dark surfaces. */
-  --border: 240 5% 22%;
-  --input: 240 5% 22%;
-  --ring: 240 4.9% 83.9%;
-  --tertiary: 234 5% 37%;
-  --tertiary-foreground: 0 0% 98%;
-  --st1: 210 5% 16%;
-  --st2: 220 4% 15%;
-  --bg1: 240 11% 7%;
-  --bg2: 240 10% 6%;
-  --bg3: 240 10% 40%;
-  --hv1: 240 12% 13%;
-  --hv2: 240 14% 11%;
-  --hv3: 240 12% 13%;
+  --background: 0 0% 4%;          /* #0a0a0a */
+  --foreground: 0 0% 96%;         /* #f5f5f5 */
+  --card: 0 0% 9%;                /* #161616 */
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 9%;             /* #161616 */
+  --popover-foreground: 0 0% 96%;
+  --primary: 0 0% 96%;            /* #f5f5f5 — white ink on dark */
+  --primary-foreground: 0 0% 4%;  /* #0a0a0a */
+  --secondary: 0 0% 8%;           /* #141414 */
+  --secondary-foreground: 0 0% 96%;
+  --muted: 0 0% 8%;               /* #141414 */
+  --muted-foreground: 0 0% 54%;   /* #8a8a8a */
+  --accent: 0 0% 16%;             /* subtle hover tint — shadcn bg-accent (was near-white) */
+  --accent-foreground: 0 0% 96%;
+  --destructive: 0 84% 60%;       /* crimson #ef4444 */
+  --destructive-foreground: 0 0% 96%;
+  --success: 142 71% 45%;         /* phosphor #22c55e */
+  --success-foreground: 0 0% 4%;
+  --warning: 38 92% 50%;          /* amber #f59e0b */
+  --warning-foreground: 0 0% 4%;
+  --border: 0 0% 11%;             /* rgba(255,255,255,0.08) on #0a0a0a */
+  --input: 0 0% 11%;
+  --ring: 0 0% 30%;               /* rgba(255,255,255,0.30) */
+  --tertiary: 0 0% 54%;           /* #8a8a8a */
+  --tertiary-foreground: 0 0% 96%;
+  --st1: 0 0% 13%;
+  --st2: 0 0% 11%;
+  --bg1: 0 0% 4%;                 /* #0a0a0a */
+  --bg2: 0 0% 7%;                 /* bg-2 #111111 */
+  --bg3: 0 0% 16%;
+  --hv1: 0 0% 11%;
+  --hv2: 0 0% 13%;
+  --hv3: 0 0% 16%;
+  --link: 0 0% 96%;               /* monochrome: links read as foreground ink */
   --bubble-customer: var(--hv1);
-  --bubble-agent: 233 37% 22%;
+  --bubble-agent: 0 0% 11%;
 }
 
 @layer base {
@@ -184,6 +182,9 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--font-sans, "Google Sans Text", ui-sans-serif, system-ui, sans-serif);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 }
