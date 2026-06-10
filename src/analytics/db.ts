@@ -8,21 +8,16 @@ import {
   PERCEIVED_MS_WHERE,
   RANGE_TO_INTERVAL,
 } from "../stats-sql.js";
+import { getStatsCore, type CoreStatsBucket } from "../stats-core.js";
 
 // ── Fleet-wide stats ────────────────────────────────────────────────────────
 //
-// Same engine as getAgentStats (src/agents/db.ts) minus the agent_id
-// predicate: every query starts from a `win` CTE of all sessions in the
-// time window, optionally scoped to one account. The SQL fragments are
-// shared via src/stats-sql.ts so the metric definitions can't drift
-// between the per-agent and fleet views.
+// The bucket/totals engine is src/stats-core.ts (shared with the per-agent
+// Overview tab — agentId=null widens it to the whole fleet). This module
+// adds the fleet-only extras: interruption rates, latest-outcome success,
+// active-agent count, and the agent/account breakdown tables.
 
-export interface FleetStatsBucket {
-  bucket_start: string;
-  session_count: number;
-  avg_duration_ms: number | null;
-  p95_user_perceived_ms: number | null;
-  estimated_cost_usd: number | null;
+export interface FleetStatsBucket extends CoreStatsBucket {
   /** interrupted assistant turns / assistant turns in bucket, 0..1 */
   interruption_rate: number | null;
 }
@@ -68,19 +63,10 @@ const WIN_WHERE = `
   ended_at >= NOW() - $1::interval
   AND ($2::text IS NULL OR account_id = $2)`;
 
-// Interruption rate over chat_history: turn semantics match
-// src/metrics.ts — one turn per assistant message; interrupted is the
-// boolean barge-in flag on that item.
-const INTERRUPTION_COUNTS = (winAlias: string) => `
-  SELECT
-    COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE})::int AS assistant_turns,
-    COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE} AND ${INTERRUPTED_WHERE})::int AS interrupted_turns
-  FROM ${winAlias}, ${CHAT_HISTORY_ELEMS(`${winAlias}.chat_history`)} AS item`;
-
-function rate(interrupted: unknown, total: unknown): number | null {
+function rate(part: unknown, total: unknown): number | null {
   const t = Number(total);
   if (!Number.isFinite(t) || t <= 0) return null;
-  return Number(interrupted) / t;
+  return Number(part) / t;
 }
 
 export async function getFleetStats(
@@ -89,77 +75,16 @@ export async function getFleetStats(
 ): Promise<FleetStats> {
   const { interval, bucket } = RANGE_TO_INTERVAL[range] ?? RANGE_TO_INTERVAL["24h"];
 
-  const [bucketRows, totalsRow, agentRows, accountRows] = await Promise.all([
-    // 1. Per-bucket series: counts/durations/cost + p95 perceived +
-    //    interruption rate. Same three-layer CTE shape as getAgentStats,
-    //    plus interruption_buckets over chat_history.
+  const [core, extrasRow, interruptionBucketRows, agentRows, accountRows] = await Promise.all([
+    // Shared engine: volume/duration/cost/p95 buckets + window totals +
+    // pass rates, fleet-wide via agentId=null.
+    getStatsCore(null, range, accountId),
+    // Fleet-only window totals.
     sql.unsafe(
       `WITH win AS (
-         SELECT id, ended_at, duration_ms, session_metrics, chat_history, estimated_cost_usd
+         SELECT id, session_id, agent_id, chat_history
          FROM agent_transport_sessions
          WHERE ${WIN_WHERE}
-       ),
-       session_buckets AS (
-         SELECT
-           date_trunc($3, ended_at) AS bucket,
-           COUNT(*)::int                  AS session_count,
-           AVG(duration_ms)::int          AS avg_duration_ms,
-           SUM(estimated_cost_usd)::float AS estimated_cost_usd
-         FROM win
-         GROUP BY date_trunc($3, ended_at)
-       ),
-       turns AS (
-         SELECT
-           date_trunc($3, win.ended_at) AS bucket,
-           ${PERCEIVED_MS_SQL} AS perceived_ms
-         FROM win, ${PER_TURN_ELEMS("win.session_metrics")} AS m
-         WHERE ${PERCEIVED_MS_WHERE}
-       ),
-       turn_buckets AS (
-         SELECT
-           bucket,
-           percentile_disc(0.95) WITHIN GROUP (ORDER BY perceived_ms)::int
-             AS p95_user_perceived_ms
-         FROM turns
-         GROUP BY bucket
-       ),
-       interruption_buckets AS (
-         SELECT
-           date_trunc($3, win.ended_at) AS bucket,
-           COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE})::int AS assistant_turns,
-           COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE} AND ${INTERRUPTED_WHERE})::int AS interrupted_turns
-         FROM win, ${CHAT_HISTORY_ELEMS("win.chat_history")} AS item
-         GROUP BY date_trunc($3, win.ended_at)
-       )
-       SELECT
-         sb.bucket AS bucket_start,
-         sb.session_count,
-         sb.avg_duration_ms,
-         sb.estimated_cost_usd,
-         tb.p95_user_perceived_ms,
-         ib.assistant_turns,
-         ib.interrupted_turns
-       FROM session_buckets sb
-       LEFT JOIN turn_buckets tb USING (bucket)
-       LEFT JOIN interruption_buckets ib USING (bucket)
-       ORDER BY sb.bucket ASC`,
-      [interval, accountId, bucket],
-    ),
-    // 2. Window totals.
-    sql.unsafe(
-      `WITH win AS (
-         SELECT id, session_id, agent_id, session_metrics, chat_history,
-                duration_ms, turn_count, estimated_cost_usd
-         FROM agent_transport_sessions
-         WHERE ${WIN_WHERE}
-       ),
-       turns AS (
-         SELECT ${PERCEIVED_MS_SQL} AS perceived_ms
-         FROM win, ${PER_TURN_ELEMS("win.session_metrics")} AS m
-         WHERE ${PERCEIVED_MS_WHERE}
-       ),
-       interruptions AS (
-         ${INTERRUPTION_COUNTS("win")}
        ),
        latest_outcomes AS (
          SELECT DISTINCT ON (session_id) session_id, outcome
@@ -168,44 +93,41 @@ export async function getFleetStats(
          ORDER BY session_id, COALESCE(observed_at, updated_at, created_at) DESC
        )
        SELECT
-         (SELECT COUNT(*) FROM win)::int AS total_sessions,
          (SELECT COUNT(DISTINCT agent_id) FROM win WHERE agent_id IS NOT NULL)::int AS active_agents,
-         (SELECT SUM(estimated_cost_usd) FROM win)::float AS total_estimated_cost_usd,
-         (SELECT AVG(duration_ms) FROM win)::int AS avg_duration_ms,
-         (SELECT AVG(turn_count) FROM win)::float AS avg_turn_count,
-         (SELECT percentile_disc(0.50) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p50_user_perceived_ms,
-         (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p95_user_perceived_ms,
-         (SELECT percentile_disc(0.99) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p99_user_perceived_ms,
-         (SELECT assistant_turns FROM interruptions) AS assistant_turns,
-         (SELECT interrupted_turns FROM interruptions) AS interrupted_turns,
          (
-           SELECT CASE
-             WHEN COUNT(*) = 0 THEN NULL
-             ELSE SUM(CASE WHEN verdict = 'pass' THEN 1 ELSE 0 END)::float / COUNT(*)::float
-           END
-           FROM session_external_evals see
-           WHERE see.session_id IN (SELECT session_id FROM win)
-         ) AS llm_pass_rate,
+           SELECT COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE})::int
+           FROM win, ${CHAT_HISTORY_ELEMS("win.chat_history")} AS item
+         ) AS assistant_turns,
+         (
+           SELECT COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE} AND ${INTERRUPTED_WHERE})::int
+           FROM win, ${CHAT_HISTORY_ELEMS("win.chat_history")} AS item
+         ) AS interrupted_turns,
          (
            SELECT CASE
              WHEN COUNT(*) = 0 THEN NULL
              ELSE SUM(CASE WHEN outcome IN ('success', 'lk.success') THEN 1 ELSE 0 END)::float / COUNT(*)::float
            END
            FROM latest_outcomes
-         ) AS outcome_success_rate,
-         (
-           SELECT CASE
-             WHEN SUM(total) = 0 OR SUM(total) IS NULL THEN NULL
-             ELSE SUM(passed)::float / SUM(total)::float
-           END
-           FROM eval_runs
-           WHERE started_at >= NOW() - $1::interval
-             AND ($2::text IS NULL OR account_id = $2)
-         ) AS ci_pass_rate`,
+         ) AS outcome_success_rate`,
       [interval, accountId],
     ),
-    // 3. Top agents by volume. agent_id can be NULL on legacy rows —
-    //    grouped under a NULL bucket the UI labels "(unattributed)".
+    // Per-bucket interruption rates — merged into the core buckets in JS.
+    sql.unsafe(
+      `WITH win AS (
+         SELECT ended_at, chat_history
+         FROM agent_transport_sessions
+         WHERE ${WIN_WHERE}
+       )
+       SELECT
+         date_trunc($3, win.ended_at) AS bucket_start,
+         COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE})::int AS assistant_turns,
+         COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE} AND ${INTERRUPTED_WHERE})::int AS interrupted_turns
+       FROM win, ${CHAT_HISTORY_ELEMS("win.chat_history")} AS item
+       GROUP BY date_trunc($3, win.ended_at)`,
+      [interval, accountId, bucket],
+    ),
+    // Top agents by volume. agent_id can be NULL on legacy rows —
+    // grouped under a NULL bucket the UI labels "(unattributed)".
     sql.unsafe(
       `WITH win AS (
          SELECT id, session_id, agent_id, agent_name, ended_at, duration_ms,
@@ -273,7 +195,7 @@ export async function getFleetStats(
        LIMIT 10`,
       [interval, accountId],
     ),
-    // 4. Sessions by account.
+    // Sessions by account.
     sql.unsafe(
       `SELECT account_id,
               COUNT(*)::int AS session_count,
@@ -287,32 +209,28 @@ export async function getFleetStats(
     ),
   ]);
 
-  const totals = totalsRow[0] ?? {};
+  const extras = extrasRow[0] ?? {};
+
+  // Fold per-bucket interruption rates into the shared buckets.
+  const interruptionByBucket = new Map<string, number | null>(
+    interruptionBucketRows.map((r: any) => [
+      new Date(r.bucket_start).toISOString(),
+      rate(r.interrupted_turns, r.assistant_turns),
+    ]),
+  );
 
   return {
     range,
     account_id: accountId,
-    total_sessions: totals.total_sessions ?? 0,
-    active_agents: totals.active_agents ?? 0,
-    total_estimated_cost_usd:
-      totals.total_estimated_cost_usd != null ? Number(totals.total_estimated_cost_usd) : null,
-    avg_duration_ms: totals.avg_duration_ms ?? null,
-    avg_turn_count: totals.avg_turn_count != null ? Number(totals.avg_turn_count) : null,
-    p50_user_perceived_ms: totals.p50_user_perceived_ms ?? null,
-    p95_user_perceived_ms: totals.p95_user_perceived_ms ?? null,
-    p99_user_perceived_ms: totals.p99_user_perceived_ms ?? null,
-    interruption_rate: rate(totals.interrupted_turns, totals.assistant_turns),
-    llm_pass_rate: totals.llm_pass_rate != null ? Number(totals.llm_pass_rate) : null,
+    ...core.totals,
+    active_agents: extras.active_agents ?? 0,
+    interruption_rate: rate(extras.interrupted_turns, extras.assistant_turns),
     outcome_success_rate:
-      totals.outcome_success_rate != null ? Number(totals.outcome_success_rate) : null,
-    ci_pass_rate: totals.ci_pass_rate != null ? Number(totals.ci_pass_rate) : null,
-    buckets: bucketRows.map((r: any) => ({
-      bucket_start: r.bucket_start,
-      session_count: r.session_count,
-      avg_duration_ms: r.avg_duration_ms,
-      p95_user_perceived_ms: r.p95_user_perceived_ms,
-      estimated_cost_usd: r.estimated_cost_usd != null ? Number(r.estimated_cost_usd) : null,
-      interruption_rate: rate(r.interrupted_turns, r.assistant_turns),
+      extras.outcome_success_rate != null ? Number(extras.outcome_success_rate) : null,
+    buckets: core.buckets.map((b) => ({
+      ...b,
+      interruption_rate:
+        interruptionByBucket.get(new Date(b.bucket_start).toISOString()) ?? null,
     })),
     agent_breakdown: agentRows.map((r: any) => ({
       agent_id: r.agent_id,

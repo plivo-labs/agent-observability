@@ -1,27 +1,18 @@
 import { useMemo } from 'react'
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatCost, formatDuration } from '@/lib/observability-format'
+import {
+  bucketTickFormatter,
+  formatCost,
+  formatDuration,
+  formatMsExact,
+  formatPercent,
+} from '@/lib/observability-format'
 import { useAgentStats } from '@/lib/observability-hooks'
 import type { AgentStatsRange } from '@/lib/observability-types'
 import { KpiTile } from '@/components/kpi'
+import { TimeSeriesCard } from '@/components/observability-chart-shared'
 
 interface AgentOverviewTabProps {
   agentId: string
@@ -29,16 +20,6 @@ interface AgentOverviewTabProps {
 }
 
 const numberFmt = new Intl.NumberFormat()
-
-function formatPct(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `${Math.round(value * 100)}%`
-}
-
-function formatMs(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `${numberFmt.format(value)} ms`
-}
 
 // Color palette pulled from the existing chart files so this dashboard
 // feels visually consistent with the per-session detail.
@@ -55,27 +36,8 @@ const COLORS = {
 export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
   const { stats, loading, error } = useAgentStats(agentId, range)
 
-  // Bucket axis labels: trim ISO timestamps to HH:MM (or MM-DD for 30d range)
-  // so the X axis stays readable. Recharts hands us the raw bucket_start
-  // string and the formatter runs on tick render.
-  const xTickFormatter = useMemo(() => {
-    if (range === '30d') {
-      return (iso: string) => {
-        const d = new Date(iso)
-        return `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d
-          .getDate()
-          .toString()
-          .padStart(2, '0')}`
-      }
-    }
-    return (iso: string) => {
-      const d = new Date(iso)
-      return `${d.getHours().toString().padStart(2, '0')}:${d
-        .getMinutes()
-        .toString()
-        .padStart(2, '0')}`
-    }
-  }, [range])
+  // Bucket axis labels: HH:MM for hour buckets, MM-DD for the 30d range.
+  const xTickFormatter = useMemo(() => bucketTickFormatter(range), [range])
 
   if (error) {
     return (
@@ -152,8 +114,8 @@ export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
         />
         <KpiTile
           label="p95 perceived latency"
-          value={formatMs(stats.p95_user_perceived_ms)}
-          sub={`p50 ${formatMs(stats.p50_user_perceived_ms)} · p99 ${formatMs(
+          value={formatMsExact(stats.p95_user_perceived_ms)}
+          sub={`p50 ${formatMsExact(stats.p50_user_perceived_ms)} · p99 ${formatMsExact(
             stats.p99_user_perceived_ms,
           )}`}
           sparkValues={p95Series}
@@ -161,14 +123,14 @@ export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
         />
         <KpiTile
           label="LiveKit judge pass rate"
-          value={formatPct(stats.llm_pass_rate)}
+          value={formatPercent(stats.llm_pass_rate)}
           sub="conversation-level judges"
           barPct={llmRatePct ?? undefined}
           barVariant={passRateBarVariant(llmRatePct)}
         />
         <KpiTile
           label="Simulation pass rate"
-          value={formatPct(stats.ci_pass_rate)}
+          value={formatPercent(stats.ci_pass_rate)}
           sub="scenarios run against the agent"
           barPct={ciRatePct ?? undefined}
           barVariant={passRateBarVariant(ciRatePct)}
@@ -183,136 +145,40 @@ export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
         <>
           {/* Sessions over time + latency over time, side-by-side */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">
-                  Sessions over time
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={stats.buckets}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis
-                      allowDecimals={false}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      contentStyle={{
-                        background: 'hsl(var(--background))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                    />
-                    <Bar dataKey="session_count" fill={COLORS.accent} radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">
-                  p95 perceived latency (ms)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={stats.buckets}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis
-                      tickFormatter={(v) => `${v}`}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      formatter={(v) => [`${v} ms`, 'p95']}
-                      contentStyle={{
-                        background: 'hsl(var(--background))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="p95_user_perceived_ms"
-                      stroke={COLORS.bad}
-                      dot={false}
-                      strokeWidth={2}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            <TimeSeriesCard
+              title="Sessions over time"
+              data={stats.buckets}
+              dataKey="session_count"
+              kind="bar"
+              color={COLORS.accent}
+              xTickFormatter={xTickFormatter}
+              allowDecimals={false}
+            />
+            <TimeSeriesCard
+              title="p95 perceived latency (ms)"
+              data={stats.buckets}
+              dataKey="p95_user_perceived_ms"
+              kind="line"
+              color={COLORS.bad}
+              xTickFormatter={xTickFormatter}
+              valueFormatter={(v) => `${v} ms`}
+              valueLabel="p95"
+            />
           </div>
 
           {/* Avg session duration over time + provider breakdown */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">
-                  Avg session duration (ms)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <AreaChart data={stats.buckets}>
-                    <defs>
-                      <linearGradient id="durFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={COLORS.accent} stopOpacity={0.4} />
-                        <stop offset="100%" stopColor={COLORS.accent} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis
-                      tickFormatter={(v) => formatDuration(Number(v))}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      formatter={(v) => [formatDuration(Number(v)), 'avg duration']}
-                      contentStyle={{
-                        background: 'hsl(var(--background))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="avg_duration_ms"
-                      stroke={COLORS.accent}
-                      fill="url(#durFill)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            <TimeSeriesCard
+              title="Avg session duration (ms)"
+              data={stats.buckets}
+              dataKey="avg_duration_ms"
+              kind="area"
+              color={COLORS.accent}
+              xTickFormatter={xTickFormatter}
+              yTickFormatter={(v) => formatDuration(Number(v))}
+              valueFormatter={(v) => formatDuration(Number(v))}
+              valueLabel="avg duration"
+            />
 
             <Card>
               <CardHeader className="pb-1">

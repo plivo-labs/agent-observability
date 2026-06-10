@@ -1,41 +1,21 @@
 import { useMemo, useState } from 'react'
 import { useQueryState, parseAsString, parseAsStringEnum } from 'nuqs'
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatCost } from '@/lib/observability-format'
+import {
+  bucketTickFormatter,
+  formatCost,
+  formatMsExact,
+  formatPercent,
+} from '@/lib/observability-format'
 import { useFleetStats } from '@/lib/observability-hooks'
 import type { AgentStatsRange, FleetStats } from '@/lib/observability-types'
 import { KpiTile } from '@/components/kpi'
+import { TimeSeriesCard } from '@/components/observability-chart-shared'
 
 const numberFmt = new Intl.NumberFormat()
-
-function formatPct(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `${Math.round(value * 100)}%`
-}
-
-function formatMs(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `${numberFmt.format(value)} ms`
-}
 
 // Same palette as agent-overview-tab so fleet and per-agent views read
 // as one product.
@@ -71,24 +51,7 @@ export const AnalyticsPage = ({
   const range = rangeRaw as AgentStatsRange
   const { stats, loading, error } = useFleetStats(range, accountId || null)
 
-  const xTickFormatter = useMemo(() => {
-    if (range === '30d') {
-      return (iso: string) => {
-        const d = new Date(iso)
-        return `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d
-          .getDate()
-          .toString()
-          .padStart(2, '0')}`
-      }
-    }
-    return (iso: string) => {
-      const d = new Date(iso)
-      return `${d.getHours().toString().padStart(2, '0')}:${d
-        .getMinutes()
-        .toString()
-        .padStart(2, '0')}`
-    }
-  }, [range])
+  const xTickFormatter = useMemo(() => bucketTickFormatter(range), [range])
 
   const header = (
     <div className="flex flex-wrap items-center gap-3">
@@ -222,28 +185,28 @@ const FleetStatsBody = ({
         />
         <KpiTile
           label="p95 perceived latency"
-          value={formatMs(stats.p95_user_perceived_ms)}
-          sub={`p50 ${formatMs(stats.p50_user_perceived_ms)} · p99 ${formatMs(stats.p99_user_perceived_ms)}`}
+          value={formatMsExact(stats.p95_user_perceived_ms)}
+          sub={`p50 ${formatMsExact(stats.p50_user_perceived_ms)} · p99 ${formatMsExact(stats.p99_user_perceived_ms)}`}
           sparkValues={p95Series}
           sparkColor={p95Bad ? 'hsl(0 70% 50%)' : 'hsl(210 90% 42%)'}
         />
         <KpiTile
           label="Interruption rate"
-          value={formatPct(stats.interruption_rate)}
+          value={formatPercent(stats.interruption_rate)}
           sub="interrupted agent turns"
           barPct={interruptionPct ?? undefined}
           barVariant={interruptionBarVariant(interruptionPct)}
         />
         <KpiTile
           label="LLM judge pass rate"
-          value={formatPct(stats.llm_pass_rate)}
+          value={formatPercent(stats.llm_pass_rate)}
           sub="conversation-level judges"
           barPct={llmRatePct ?? undefined}
           barVariant={passRateBarVariant(llmRatePct)}
         />
         <KpiTile
           label="Outcome success rate"
-          value={formatPct(stats.outcome_success_rate)}
+          value={formatPercent(stats.outcome_success_rate)}
           sub="latest outcome per session"
           barPct={outcomeRatePct ?? undefined}
           barVariant={passRateBarVariant(outcomeRatePct)}
@@ -257,139 +220,51 @@ const FleetStatsBody = ({
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">Sessions over time</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={stats.buckets}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis allowDecimals={false} stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      contentStyle={chartTooltipStyle}
-                    />
-                    <Bar dataKey="session_count" fill={COLORS.accent} radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">p95 perceived latency (ms)</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={stats.buckets}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      formatter={(v) => [`${v} ms`, 'p95']}
-                      contentStyle={chartTooltipStyle}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="p95_user_perceived_ms"
-                      stroke={COLORS.bad}
-                      dot={false}
-                      strokeWidth={2}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            <TimeSeriesCard
+              title="Sessions over time"
+              data={stats.buckets}
+              dataKey="session_count"
+              kind="bar"
+              color={COLORS.accent}
+              xTickFormatter={xTickFormatter}
+              allowDecimals={false}
+            />
+            <TimeSeriesCard
+              title="p95 perceived latency (ms)"
+              data={stats.buckets}
+              dataKey="p95_user_perceived_ms"
+              kind="line"
+              color={COLORS.bad}
+              xTickFormatter={xTickFormatter}
+              valueFormatter={(v) => `${v} ms`}
+              valueLabel="p95"
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">LLM cost over time</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <AreaChart data={stats.buckets}>
-                    <defs>
-                      <linearGradient id="fleetCostFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={COLORS.warn} stopOpacity={0.4} />
-                        <stop offset="100%" stopColor={COLORS.warn} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis
-                      tickFormatter={(v) => formatCost(Number(v))}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      formatter={(v) => [formatCost(Number(v)), 'cost']}
-                      contentStyle={chartTooltipStyle}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="estimated_cost_usd"
-                      stroke={COLORS.warn}
-                      fill="url(#fleetCostFill)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium">Interruption rate (%)</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={bucketsWithPct}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="bucket_start"
-                      tickFormatter={xTickFormatter}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                    />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} unit="%" />
-                    <Tooltip
-                      labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
-                      formatter={(v) => [`${v}%`, 'interruptions']}
-                      contentStyle={chartTooltipStyle}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="interruption_pct"
-                      stroke={COLORS.warn}
-                      dot={false}
-                      strokeWidth={2}
-                      connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            <TimeSeriesCard
+              title="LLM cost over time"
+              data={stats.buckets}
+              dataKey="estimated_cost_usd"
+              kind="area"
+              color={COLORS.warn}
+              xTickFormatter={xTickFormatter}
+              yTickFormatter={(v) => formatCost(Number(v))}
+              valueFormatter={(v) => formatCost(Number(v))}
+              valueLabel="cost"
+            />
+            <TimeSeriesCard
+              title="Interruption rate (%)"
+              data={bucketsWithPct}
+              dataKey="interruption_pct"
+              kind="line"
+              color={COLORS.warn}
+              xTickFormatter={xTickFormatter}
+              valueFormatter={(v) => `${v}%`}
+              valueLabel="interruptions"
+              yUnit="%"
+              connectNulls
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -436,10 +311,10 @@ const FleetStatsBody = ({
                             {a.p95_user_perceived_ms != null ? `${a.p95_user_perceived_ms}ms` : '—'}
                           </td>
                           <td className="py-1.5 pr-2 text-right tabular-nums">
-                            {formatPct(a.interruption_rate)}
+                            {formatPercent(a.interruption_rate)}
                           </td>
                           <td className="py-1.5 pr-2 text-right tabular-nums">
-                            {formatPct(a.outcome_success_rate)}
+                            {formatPercent(a.outcome_success_rate)}
                           </td>
                           <td className="py-1.5 text-right tabular-nums">
                             {formatCost(a.estimated_cost_usd)}

@@ -1562,7 +1562,8 @@ describe("GET /api/analytics/stats", () => {
   });
 
   test("returns fleet stats with computed rates", async () => {
-    // Queries start in Promise.all array order: buckets, totals, agents, accounts.
+    // Queries start in call order: stats-core buckets, stats-core totals,
+    // fleet extras, interruption buckets, agent breakdown, account breakdown.
     mockSql.mockResolvedValueOnce([
       {
         bucket_start: "2026-06-10T00:00:00Z",
@@ -1570,26 +1571,31 @@ describe("GET /api/analytics/stats", () => {
         avg_duration_ms: 30000,
         estimated_cost_usd: "0.5",
         p95_user_perceived_ms: 1200,
-        assistant_turns: 10,
-        interrupted_turns: 2,
       },
     ]);
     mockSql.mockResolvedValueOnce([
       {
         total_sessions: 4,
-        active_agents: 2,
         total_estimated_cost_usd: "0.5",
         avg_duration_ms: 30000,
         avg_turn_count: "3.5",
         p50_user_perceived_ms: 800,
         p95_user_perceived_ms: 1200,
         p99_user_perceived_ms: 1500,
-        assistant_turns: 10,
-        interrupted_turns: 2,
         llm_pass_rate: "0.75",
-        outcome_success_rate: "0.5",
         ci_pass_rate: null,
       },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      {
+        active_agents: 2,
+        assistant_turns: 10,
+        interrupted_turns: 2,
+        outcome_success_rate: "0.5",
+      },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      { bucket_start: "2026-06-10T00:00:00Z", assistant_turns: 10, interrupted_turns: 2 },
     ]);
     mockSql.mockResolvedValueOnce([
       {
@@ -1642,9 +1648,10 @@ describe("GET /api/analytics/stats", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.range).toBe("7d");
-    // First positional param of the first query is the interval string.
+    // Stats-core bucket query params: [agentId, interval, bucket, accountId].
     const firstCallParams = mockSql.mock.calls[0][1];
-    expect(firstCallParams[0]).toBe("7 days");
+    expect(firstCallParams[0]).toBeNull(); // fleet-wide: no agent filter
+    expect(firstCallParams[1]).toBe("7 days");
   });
 
   test("passes account_id through to every query", async () => {

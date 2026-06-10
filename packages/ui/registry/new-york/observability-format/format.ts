@@ -57,6 +57,32 @@ export const formatCost = (usd: number | null | undefined): string => {
 export const formatPercent = (ratio: number | null | undefined): string =>
   ratio == null ? '—' : `${Math.round(ratio * 100)}%`
 
+/** Exact thousands-grouped millisecond rendering for KPI tiles —
+ *  "1,234 ms" (vs formatMs's compact "1.23s"). Nullish renders "—". */
+export const formatMsExact = (value: number | null | undefined): string =>
+  value == null ? '—' : `${new Intl.NumberFormat().format(value)} ms`
+
+/** X-axis tick formatter for time-bucketed stats charts. Hour buckets
+ *  (24h/7d ranges) render HH:MM; day buckets (30d) render MM-DD. */
+export const bucketTickFormatter = (range: string) => {
+  if (range === '30d') {
+    return (iso: string) => {
+      const d = new Date(iso)
+      return `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d
+        .getDate()
+        .toString()
+        .padStart(2, '0')}`
+    }
+  }
+  return (iso: string) => {
+    const d = new Date(iso)
+    return `${d.getHours().toString().padStart(2, '0')}:${d
+      .getMinutes()
+      .toString()
+      .padStart(2, '0')}`
+  }
+}
+
 // ── Tone thresholds + helpers ───────────────────────────────────────────────
 // Centralized here so the latency / ASR / pass-rate thresholds live in exactly
 // one place. Consumed by the eval-run-detail KPIs (latencyTone / asrTone /

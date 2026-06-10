@@ -1,5 +1,18 @@
-import { Fragment } from 'react'
-import { ResponsiveContainer } from 'recharts'
+import { Fragment, useId } from 'react'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 interface TooltipRow {
   label: string
@@ -49,6 +62,131 @@ export const ChartLegendItem = ({ color, label }: { color: string; label: string
 interface LegendEntry {
   color: string
   label: string
+}
+
+// ── Time-series card ────────────────────────────────────────────────────────
+//
+// The standard bucketed-stats chart used by the agent Overview tab and the
+// fleet /analytics page: one metric over `bucket_start` time buckets with
+// the dashboard's shared grid/axis/tooltip styling. Keeping it here means
+// new stats pages don't re-copy ~40 lines of recharts boilerplate per chart.
+
+const TS_TOOLTIP_STYLE = {
+  background: 'hsl(var(--background))',
+  border: '1px solid hsl(var(--border))',
+  borderRadius: 8,
+  fontSize: 12,
+} as const
+
+export interface TimeSeriesCardProps {
+  title: string
+  /** Bucketed rows — anything with a `bucket_start` field plus the dataKey. */
+  data: object[]
+  dataKey: string
+  kind: 'bar' | 'line' | 'area'
+  color: string
+  xTickFormatter: (iso: string) => string
+  yTickFormatter?: (v: number) => string
+  /** Tooltip value renderer + label, e.g. (v) => `${v} ms` / 'p95'. */
+  valueFormatter?: (v: number) => string
+  valueLabel?: string
+  yUnit?: string
+  allowDecimals?: boolean
+  connectNulls?: boolean
+  height?: number
+}
+
+export const TimeSeriesCard = ({
+  title,
+  data,
+  dataKey,
+  kind,
+  color,
+  xTickFormatter,
+  yTickFormatter,
+  valueFormatter,
+  valueLabel,
+  yUnit,
+  allowDecimals = true,
+  connectNulls = false,
+  height = 220,
+}: TimeSeriesCardProps) => {
+  const gradientId = useId()
+
+  const axes = (
+    <>
+      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+      <XAxis
+        dataKey="bucket_start"
+        tickFormatter={xTickFormatter}
+        stroke="hsl(var(--muted-foreground))"
+        fontSize={11}
+      />
+      <YAxis
+        allowDecimals={allowDecimals}
+        tickFormatter={yTickFormatter}
+        unit={yUnit}
+        stroke="hsl(var(--muted-foreground))"
+        fontSize={11}
+      />
+      <Tooltip
+        labelFormatter={(iso) => new Date(iso as string).toLocaleString()}
+        formatter={
+          valueFormatter
+            ? (v) => [valueFormatter(Number(v)), valueLabel ?? title]
+            : undefined
+        }
+        contentStyle={TS_TOOLTIP_STYLE}
+      />
+    </>
+  )
+
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-2">
+        <ResponsiveContainer width="100%" height={height}>
+          {kind === 'bar' ? (
+            <BarChart data={data}>
+              {axes}
+              <Bar dataKey={dataKey} fill={color} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          ) : kind === 'line' ? (
+            <LineChart data={data}>
+              {axes}
+              <Line
+                type="monotone"
+                dataKey={dataKey}
+                stroke={color}
+                dot={false}
+                strokeWidth={2}
+                connectNulls={connectNulls}
+              />
+            </LineChart>
+          ) : (
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity={0.4} />
+                  <stop offset="100%" stopColor={color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              {axes}
+              <Area
+                type="monotone"
+                dataKey={dataKey}
+                stroke={color}
+                fill={`url(#${gradientId})`}
+                strokeWidth={2}
+              />
+            </AreaChart>
+          )}
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  )
 }
 
 export const ChartCard = ({
