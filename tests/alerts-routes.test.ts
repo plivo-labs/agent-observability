@@ -72,7 +72,6 @@ mock.module("../src/alerts/db.js", () => ({
   markDelivered: mock(() => Promise.resolve()),
   markRetry: mock(() => Promise.resolve()),
   markFailed: mock(() => Promise.resolve()),
-  setRuleLastFired: mock(() => Promise.resolve()),
 }));
 
 // NOTE: alerts/{deliver,engine,sweeper}.js are deliberately NOT module-
@@ -140,6 +139,7 @@ describe("alert rule routes", () => {
     ["missing threshold for count rule", { ...validRule, threshold_count: undefined }],
     ["missing pass-rate threshold", { ...validRule, trigger_type: "pass_rate", threshold_pass_rate: undefined }],
     ["bad trigger type", { ...validRule, trigger_type: "latency" }],
+    ["judge on outcome rule", { ...validRule, trigger_type: "outcome_count", verdicts: ["fail"] }],
     ["non-http webhook", { ...validRule, webhook_url: "ftp://example.com/x" }],
     ["bad method", { ...validRule, http_method: "DELETE" }],
   ])("rejects invalid payload: %s", async (_label, payload) => {

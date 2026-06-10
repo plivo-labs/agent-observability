@@ -45,7 +45,12 @@ const baseRuleShape = {
 };
 
 function checkThresholds(
-  data: { trigger_type?: TriggerType; threshold_count?: number | null; threshold_pass_rate?: number | null },
+  data: {
+    trigger_type?: TriggerType;
+    judge_name?: string | null;
+    threshold_count?: number | null;
+    threshold_pass_rate?: number | null;
+  },
   ctx: z.RefinementCtx,
 ) {
   if (data.trigger_type == null) return; // PATCH without type change
@@ -62,6 +67,14 @@ function checkThresholds(
       code: z.ZodIssueCode.custom,
       path: ["threshold_count"],
       message: "threshold_count is required for count rules",
+    });
+  }
+  // Outcomes have no judge — reject rather than silently ignoring the filter.
+  if (data.trigger_type === "outcome_count" && data.judge_name != null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["judge_name"],
+      message: "judge_name does not apply to outcome_count rules",
     });
   }
 }

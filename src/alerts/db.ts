@@ -35,6 +35,14 @@ function parseJsonb<T>(value: unknown, fallback: T): T {
   return value as T;
 }
 
+/** Split the `COUNT(*) OVER() AS _total` column off a page of rows. */
+function takeTotal(rows: any[]): { rows: any[]; totalCount: number } {
+  return {
+    rows: rows.map(({ _total, ...rest }) => rest),
+    totalCount: rows[0]?._total ?? 0,
+  };
+}
+
 function mapRule(row: any): AlertRuleRow {
   return {
     ...row,
@@ -60,13 +68,8 @@ export async function listAlertRules(
     ORDER BY created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
-  return {
-    rules: rows.map((r: any) => {
-      const { _total, ...rest } = r;
-      return mapRule(rest);
-    }),
-    totalCount: rows[0]?._total ?? 0,
-  };
+  const page = takeTotal(rows);
+  return { rules: page.rows.map(mapRule), totalCount: page.totalCount };
 }
 
 export async function getAlertRule(id: string): Promise<AlertRuleRow | null> {
@@ -95,30 +98,14 @@ export async function insertAlertRule(input: AlertRuleCreate): Promise<AlertRule
 }
 
 export async function updateAlertRule(id: string, patch: AlertRulePatch): Promise<AlertRuleRow | null> {
-  // Fetch-merge-update: keys absent from the patch keep their stored
-  // value; explicit nulls clear nullable fields. A read-modify-write race
-  // is acceptable on the single-instance deployment this targets.
+  // Fetch-merge-update: keys absent from the patch (undefined) keep their
+  // stored value; explicit nulls clear nullable fields. A read-modify-write
+  // race is acceptable on the single-instance deployment this targets.
   const existing = await getAlertRule(id);
   if (!existing) return null;
-  const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k);
   const merged = {
-    name: has("name") ? patch.name! : existing.name,
-    enabled: has("enabled") ? patch.enabled! : existing.enabled,
-    account_id: has("account_id") ? patch.account_id ?? null : existing.account_id,
-    agent_id: has("agent_id") ? patch.agent_id ?? null : existing.agent_id,
-    trigger_type: has("trigger_type") ? patch.trigger_type! : existing.trigger_type,
-    judge_name: has("judge_name") ? patch.judge_name ?? null : existing.judge_name,
-    verdicts: has("verdicts") ? patch.verdicts! : existing.verdicts,
-    threshold_count: has("threshold_count") ? patch.threshold_count ?? null : existing.threshold_count,
-    threshold_pass_rate: has("threshold_pass_rate")
-      ? patch.threshold_pass_rate ?? null
-      : existing.threshold_pass_rate,
-    min_samples: has("min_samples") ? patch.min_samples! : existing.min_samples,
-    window_minutes: has("window_minutes") ? patch.window_minutes! : existing.window_minutes,
-    webhook_url: has("webhook_url") ? patch.webhook_url! : existing.webhook_url,
-    http_method: has("http_method") ? patch.http_method! : existing.http_method,
-    secret: has("secret") ? patch.secret ?? null : existing.secret,
-    headers: has("headers") ? patch.headers ?? null : existing.headers,
+    ...existing,
+    ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
   };
   const rows = await sql`
     UPDATE alert_rules SET
@@ -181,13 +168,8 @@ export async function listFirings(
     ORDER BY created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
-  return {
-    firings: rows.map((r: any) => {
-      const { _total, ...rest } = r;
-      return mapFiring(rest);
-    }),
-    totalCount: rows[0]?._total ?? 0,
-  };
+  const page = takeTotal(rows);
+  return { firings: page.rows.map(mapFiring), totalCount: page.totalCount };
 }
 
 /** Due deliveries joined to their rule's webhook config. */
@@ -207,18 +189,33 @@ export interface DueDelivery extends AlertFiringRow {
   headers: Record<string, string> | null;
 }
 
+/** How long a claimed firing is leased before it becomes due again. If
+ *  the claiming process crashes mid-delivery, the row simply re-becomes
+ *  due after the lease — at-least-once with no stale-claim machinery. */
+const CLAIM_LEASE = "2 minutes";
+
 export async function claimDueFirings(limit = 50): Promise<DueDelivery[]> {
+  // Atomic claim: push next_attempt_at forward in the same statement that
+  // selects the batch (FOR UPDATE SKIP LOCKED), so two sweepers — e.g. an
+  // inline API sweeper misconfigured alongside the worker — never deliver
+  // the same firing. markDelivered/markRetry/markFailed overwrite the lease.
   const rows = await sql`
-    SELECT f.*,
-           r.name AS rule_name, r.trigger_type, r.judge_name, r.verdicts,
-           r.threshold_count, r.threshold_pass_rate, r.window_minutes,
-           r.agent_id, r.account_id,
-           r.webhook_url, r.http_method, r.secret, r.headers
-    FROM alert_firings f
-    JOIN alert_rules r ON r.id = f.rule_id
-    WHERE f.status = 'pending' AND f.next_attempt_at <= NOW()
-    ORDER BY f.next_attempt_at ASC
-    LIMIT ${limit}
+    WITH due AS (
+      SELECT id FROM alert_firings
+      WHERE status = 'pending' AND next_attempt_at <= NOW()
+      ORDER BY next_attempt_at ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE alert_firings f
+    SET next_attempt_at = NOW() + ${CLAIM_LEASE}::interval, updated_at = NOW()
+    FROM due, alert_rules r
+    WHERE f.id = due.id AND r.id = f.rule_id
+    RETURNING f.*,
+              r.name AS rule_name, r.trigger_type, r.judge_name, r.verdicts,
+              r.threshold_count, r.threshold_pass_rate, r.window_minutes,
+              r.agent_id, r.account_id,
+              r.webhook_url, r.http_method, r.secret, r.headers
   `;
   return rows.map((r: any) => ({
     ...mapFiring(r),
@@ -295,11 +292,27 @@ export async function insertWebhookAttempt(input: WebhookAttemptInput): Promise<
   `;
 }
 
+export interface WebhookAttemptRow {
+  id: string;
+  rule_id: string | null;
+  rule_name: string | null;
+  firing_id: string | null;
+  kind: "firing" | "test";
+  url: string;
+  http_method: string;
+  attempt_number: number;
+  ok: boolean;
+  response_status: number | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
 export async function listWebhookAttempts(
   ruleId: string | null,
   limit: number,
   offset: number,
-): Promise<{ attempts: any[]; totalCount: number }> {
+): Promise<{ attempts: WebhookAttemptRow[]; totalCount: number }> {
   const rows = await sql`
     SELECT a.*, r.name AS rule_name, COUNT(*) OVER()::int AS _total
     FROM alert_webhook_attempts a
@@ -308,13 +321,8 @@ export async function listWebhookAttempts(
     ORDER BY a.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
-  return {
-    attempts: rows.map((r: any) => {
-      const { _total, ...rest } = r;
-      return rest;
-    }),
-    totalCount: rows[0]?._total ?? 0,
-  };
+  const page = takeTotal(rows);
+  return { attempts: page.rows, totalCount: page.totalCount };
 }
 
 /** Aggregate webhook delivery stats for the alerts dashboard header. */
@@ -377,8 +385,4 @@ export async function getWebhookStats(range = "7d"): Promise<{
     buckets: bucketRows,
     rule_breakdown: ruleRows,
   };
-}
-
-export async function setRuleLastFired(ruleId: string, at: Date): Promise<void> {
-  await sql`UPDATE alert_rules SET last_fired_at = ${at}, updated_at = NOW() WHERE id = ${ruleId}`;
 }

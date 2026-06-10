@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { AlertRuleRow, DueDelivery } from "./db.js";
+import type { AlertRuleRow, DueDelivery, WebhookAttemptInput } from "./db.js";
 import { insertWebhookAttempt } from "./db.js";
 
 // ── Webhook delivery ────────────────────────────────────────────────────────
@@ -25,6 +25,15 @@ interface WebhookRequest {
   extraHeaders: Record<string, string> | null;
   body: string;
   idHeaders: Record<string, string>;
+}
+
+/** Audit-trail insert that never breaks a delivery — failures only log. */
+async function recordAttempt(input: WebhookAttemptInput): Promise<void> {
+  try {
+    await insertWebhookAttempt(input);
+  } catch (e) {
+    console.error(`[alerts] attempt audit insert failed: ${(e as Error).message}`);
+  }
 }
 
 async function sendWebhook(req: WebhookRequest): Promise<DeliveryResult> {
@@ -96,22 +105,18 @@ export async function deliverFiring(d: DueDelivery): Promise<DeliveryResult> {
     body: buildFiringPayload(d),
     idHeaders: { "x-alert-firing-id": d.id, "x-alert-rule-id": d.rule_id },
   });
-  try {
-    await insertWebhookAttempt({
-      ruleId: d.rule_id,
-      firingId: d.id,
-      kind: "firing",
-      url: d.webhook_url,
-      httpMethod: d.http_method,
-      attemptNumber: d.attempt_count + 1,
-      ok: result.ok,
-      responseStatus: result.status,
-      error: result.error,
-      durationMs: result.durationMs,
-    });
-  } catch (e) {
-    console.error(`[alerts] attempt audit insert failed: ${(e as Error).message}`);
-  }
+  await recordAttempt({
+    ruleId: d.rule_id,
+    firingId: d.id,
+    kind: "firing",
+    url: d.webhook_url,
+    httpMethod: d.http_method,
+    attemptNumber: d.attempt_count + 1,
+    ok: result.ok,
+    responseStatus: result.status,
+    error: result.error,
+    durationMs: result.durationMs,
+  });
   return result;
 }
 
@@ -130,21 +135,17 @@ export async function deliverTest(rule: AlertRuleRow): Promise<DeliveryResult> {
     body,
     idHeaders: { "x-alert-rule-id": rule.id },
   });
-  try {
-    await insertWebhookAttempt({
-      ruleId: rule.id,
-      firingId: null,
-      kind: "test",
-      url: rule.webhook_url,
-      httpMethod: rule.http_method,
-      attemptNumber: 1,
-      ok: result.ok,
-      responseStatus: result.status,
-      error: result.error,
-      durationMs: result.durationMs,
-    });
-  } catch (e) {
-    console.error(`[alerts] attempt audit insert failed: ${(e as Error).message}`);
-  }
+  await recordAttempt({
+    ruleId: rule.id,
+    firingId: null,
+    kind: "test",
+    url: rule.webhook_url,
+    httpMethod: rule.http_method,
+    attemptNumber: 1,
+    ok: result.ok,
+    responseStatus: result.status,
+    error: result.error,
+    durationMs: result.durationMs,
+  });
   return result;
 }

@@ -6,9 +6,9 @@
  *
  *   bun src/worker.ts
  *
- * Pair it with ALERT_SWEEPER=off on the API process — exactly one sweeper
- * may run (the delivery state machine assumes a single claimer; add
- * FOR UPDATE SKIP LOCKED claiming before scaling this out).
+ * Pair it with ALERT_SWEEPER=off on the API process so only one sweeper
+ * burns cycles. (Running two is safe — suppression stamps and delivery
+ * claims are atomic — just wasteful.)
  *
  * Migrations stay API-owned (AUTO_MIGRATE on the API): the worker never
  * migrates, so there is no startup race between the two entrypoints.

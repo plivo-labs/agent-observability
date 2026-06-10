@@ -41,7 +41,6 @@ mock.module("../src/alerts/db.js", () => ({
   markDelivered: mockMarkDelivered,
   markRetry: mockMarkRetry,
   markFailed: mockMarkFailed,
-  setRuleLastFired: mock(() => Promise.resolve()),
 }));
 
 const { runSweepOnce } = await import("../src/alerts/sweeper.js");

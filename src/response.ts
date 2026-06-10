@@ -53,3 +53,32 @@ export function buildErrorResponse(code: string, message: string) {
 export function escapeLikePattern(s: string): string {
   return s.replace(/[\\%_]/g, "\\$&");
 }
+
+/** Parse + clamp a `limit` query param. Each route family keeps its own
+ *  ceiling — pass it explicitly so the bound is visible at the call site. */
+export function parseLimit(
+  raw: string | undefined,
+  { fallback, max }: { fallback: number; max: number },
+): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(n)));
+}
+
+/** Compact zod-error rendering for `invalid_payload` responses — first
+ *  five issues as `path: message`, joined. */
+export function formatZodError(err: unknown): string {
+  try {
+    const issues = (err as any)?.issues;
+    if (Array.isArray(issues)) {
+      return issues
+        .slice(0, 5)
+        .map((i: any) => {
+          const path = Array.isArray(i.path) ? i.path.join(".") : "";
+          return path ? `${path}: ${i.message}` : i.message;
+        })
+        .join("; ");
+    }
+  } catch {}
+  return "Validation failed";
+}

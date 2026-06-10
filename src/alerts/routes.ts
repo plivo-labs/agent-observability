@@ -1,5 +1,11 @@
 import type { Hono } from "hono";
-import { buildErrorResponse, buildListResponse, newApiId } from "../response.js";
+import {
+  buildErrorResponse,
+  buildListResponse,
+  formatZodError,
+  newApiId,
+  parseLimit,
+} from "../response.js";
 import {
   deleteAlertRule,
   getAlertRule,
@@ -15,33 +21,14 @@ import { alertRuleCreateSchema, alertRulePatchSchema } from "./schema.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function formatZodError(err: unknown): string {
-  try {
-    const issues = (err as any)?.issues;
-    if (Array.isArray(issues)) {
-      return issues
-        .slice(0, 5)
-        .map((i: any) => {
-          const path = Array.isArray(i.path) ? i.path.join(".") : "";
-          return path ? `${path}: ${i.message}` : i.message;
-        })
-        .join("; ");
-    }
-  } catch {}
-  return "Validation failed";
-}
 
-function clampLimit(raw: string | undefined, fallback = 20): number {
-  const n = Number(raw ?? fallback);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(100, Math.max(1, Math.floor(n)));
-}
+const LIMIT = { fallback: 20, max: 100 } as const;
 
 export function registerAlertRoutes(app: Hono) {
   // ── Rules CRUD ────────────────────────────────────────────────────────────
 
   app.get("/api/alert-rules", async (c) => {
-    const limit = clampLimit(c.req.query("limit"));
+    const limit = parseLimit(c.req.query("limit"), LIMIT);
     const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
     const enabledParam = c.req.query("enabled");
     try {
@@ -129,7 +116,7 @@ export function registerAlertRoutes(app: Hono) {
     if (!UUID_RE.test(id)) {
       return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);
     }
-    const limit = clampLimit(c.req.query("limit"));
+    const limit = parseLimit(c.req.query("limit"), LIMIT);
     const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
     try {
       const { firings, totalCount } = await listFirings(id, limit, offset);
@@ -143,7 +130,7 @@ export function registerAlertRoutes(app: Hono) {
   });
 
   app.get("/api/alerts/webhook-attempts", async (c) => {
-    const limit = clampLimit(c.req.query("limit"));
+    const limit = parseLimit(c.req.query("limit"), LIMIT);
     const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
     const ruleId = c.req.query("rule_id") || null;
     if (ruleId && !UUID_RE.test(ruleId)) {

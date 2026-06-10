@@ -1,5 +1,4 @@
 import { sql } from "../db.js";
-import { setRuleLastFired } from "./db.js";
 
 // ── Windowed rule evaluation ────────────────────────────────────────────────
 //
@@ -151,7 +150,20 @@ export async function evaluateRules(): Promise<number> {
 
       const now = new Date();
       const windowStart = new Date(now.getTime() - rule.window_minutes * 60_000);
+      let claimed = false;
       await sql.begin(async (tx: any) => {
+        // Stamping last_fired_at doubles as the atomic suppression claim:
+        // the conditional UPDATE succeeds for exactly one evaluator per
+        // window, so concurrent sweepers can't double-fire a rule.
+        const claim = await tx`
+          UPDATE alert_rules SET last_fired_at = ${now}, updated_at = NOW()
+          WHERE id = ${rule.id}
+            AND (last_fired_at IS NULL
+                 OR last_fired_at <= NOW() - (window_minutes || ' minutes')::interval)
+          RETURNING id
+        `;
+        if (claim.length === 0) return;
+        claimed = true;
         await tx`
           INSERT INTO alert_firings (
             rule_id, window_start, window_end, matched_count, total_count,
@@ -162,8 +174,8 @@ export async function evaluateRules(): Promise<number> {
             ${result.sample_session_ids ?? []}::jsonb
           )
         `;
-        await tx`UPDATE alert_rules SET last_fired_at = ${now}, updated_at = NOW() WHERE id = ${rule.id}`;
       });
+      if (!claimed) continue;
       fired++;
       console.log(
         `[alerts] rule fired id=${rule.id} type=${rule.trigger_type} matched=${result.matched_count}` +
@@ -175,6 +187,3 @@ export async function evaluateRules(): Promise<number> {
   }
   return fired;
 }
-
-// Re-exported so the sweeper module doesn't need a second db import.
-export { setRuleLastFired };

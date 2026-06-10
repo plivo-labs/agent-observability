@@ -76,9 +76,10 @@ CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules (enabled) WHER
 -- ─── alert_firings ──────────────────────────────────────────────────────────
 --
 -- One row per rule trip. Delivery state machine: pending → delivered |
--- failed, with next_attempt_at driving the retry schedule. Single-instance
--- sweeper: no claim locking (add FOR UPDATE SKIP LOCKED before running
--- multiple replicas).
+-- failed, with next_attempt_at driving the retry schedule. Claims are a
+-- lease: the sweeper atomically pushes next_attempt_at forward when it
+-- picks a batch (FOR UPDATE SKIP LOCKED), so concurrent sweepers never
+-- double-deliver and a crash mid-delivery simply re-dues the row.
 
 CREATE TABLE IF NOT EXISTS alert_firings (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),

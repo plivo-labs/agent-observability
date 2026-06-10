@@ -58,6 +58,7 @@ describe("alerts/engine evaluateRules", () => {
   test("count rule fires at the threshold and stamps last_fired_at in a transaction", async () => {
     mockSql.mockResolvedValueOnce([countRule]); // rules list
     mockSql.unsafe.mockResolvedValueOnce([{ matched: 5, session_ids: ["s-1", "s-2"] }]);
+    mockSql.mockResolvedValueOnce([{ id: "r1" }]); // suppression claim succeeds
 
     const fired = await evaluateRules();
     expect(fired).toBe(1);
@@ -81,6 +82,7 @@ describe("alerts/engine evaluateRules", () => {
   test("pass_rate rule fires when rate is below threshold with enough samples", async () => {
     mockSql.mockResolvedValueOnce([passRateRule]);
     mockSql.unsafe.mockResolvedValueOnce([{ total: 10, passed: 6, session_ids: ["s-9"] }]);
+    mockSql.mockResolvedValueOnce([{ id: "r2" }]); // suppression claim
 
     const fired = await evaluateRules();
     expect(fired).toBe(1); // 0.6 < 0.8 with 10 ≥ 5 samples
@@ -107,9 +109,21 @@ describe("alerts/engine evaluateRules", () => {
     mockSql.unsafe
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce([{ matched: 9, session_ids: [] }]);
+    mockSql.mockResolvedValueOnce([{ id: "r3" }]); // suppression claim for r3
 
     const fired = await evaluateRules();
     expect(fired).toBe(1);
+  });
+
+  test("a lost suppression claim does not count as a firing", async () => {
+    mockSql.mockResolvedValueOnce([countRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ matched: 9, session_ids: [] }]);
+    // Claim UPDATE returns no rows — another evaluator already stamped
+    // last_fired_at inside this window.
+    mockSql.mockResolvedValueOnce([]);
+
+    const fired = await evaluateRules();
+    expect(fired).toBe(0);
   });
 
   test("no enabled rules → no work", async () => {

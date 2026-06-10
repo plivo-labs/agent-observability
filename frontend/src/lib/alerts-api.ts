@@ -27,10 +27,27 @@ export interface AlertRule {
   updated_at: string
 }
 
-export type AlertRuleInput = Omit<
-  Partial<AlertRule>,
-  'id' | 'last_fired_at' | 'created_at' | 'updated_at'
->
+/** Create payload — required fields are genuinely required, so
+ *  `createRule({})` is a type error rather than a server 400. */
+export interface AlertRuleCreate {
+  name: string
+  enabled: boolean
+  trigger_type: AlertTriggerType
+  judge_name: string | null
+  verdicts: string[]
+  threshold_count: number | null
+  threshold_pass_rate: number | null
+  min_samples: number
+  window_minutes: number
+  agent_id: string | null
+  account_id: string | null
+  webhook_url: string
+  http_method: AlertHttpMethod
+  secret: string | null
+  headers: Record<string, string> | null
+}
+
+export type AlertRulePatch = Partial<AlertRuleCreate>
 
 export interface AlertFiring {
   id: string
@@ -115,9 +132,9 @@ export function createAlertsApi(baseUrl: string) {
   return {
     listRules: (limit = 50, offset = 0) =>
       fetchJson<ListResponse<AlertRule>>(`/alert-rules?limit=${limit}&offset=${offset}`),
-    createRule: (input: AlertRuleInput) =>
+    createRule: (input: AlertRuleCreate) =>
       fetchJson<AlertRule>('/alert-rules', { method: 'POST', ...json(input) }),
-    updateRule: (id: string, patch: AlertRuleInput) =>
+    updateRule: (id: string, patch: AlertRulePatch) =>
       fetchJson<AlertRule>(`/alert-rules/${id}`, { method: 'PATCH', ...json(patch) }),
     deleteRule: (id: string) =>
       fetchJson<{ deleted: boolean }>(`/alert-rules/${id}`, { method: 'DELETE' }),
@@ -134,3 +151,6 @@ export function createAlertsApi(baseUrl: string) {
 }
 
 export type AlertsApi = ReturnType<typeof createAlertsApi>
+
+/** Shared dashboard instance — the alert pages all talk to /api. */
+export const alertsApi = createAlertsApi('/api')

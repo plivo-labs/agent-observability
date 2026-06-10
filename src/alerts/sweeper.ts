@@ -7,8 +7,9 @@ import { evaluateRules } from "./engine.js";
 // Time-driven loop: every SWEEP_INTERVAL_MS, (1) evaluate all rule
 // conditions over their trailing windows, (2) deliver due firings with
 // bounded concurrency. All state lives in Postgres, so retries survive
-// restarts. Single-instance design — add FOR UPDATE SKIP LOCKED claiming
-// before running multiple server replicas.
+// restarts. Both the suppression stamp (engine) and the delivery claim
+// (claimDueFirings lease) are atomic, so a misconfigured second sweeper
+// degrades to wasted work — never double-fires or double-delivers.
 
 export const SWEEP_INTERVAL_MS = 30_000;
 const DELIVERY_CONCURRENCY = 5;
