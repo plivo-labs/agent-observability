@@ -247,6 +247,54 @@ export interface AgentStats {
   provider_breakdown: Array<{ provider: string; model: string; count: number }>
 }
 
+export interface FleetStatsBucket {
+  bucket_start: string
+  session_count: number
+  avg_duration_ms: number | null
+  p95_user_perceived_ms: number | null
+  estimated_cost_usd: number | null
+  /** interrupted assistant turns / assistant turns in bucket, 0..1 */
+  interruption_rate: number | null
+}
+
+export interface FleetAgentBreakdownRow {
+  agent_id: string | null
+  agent_name: string | null
+  session_count: number
+  avg_duration_ms: number | null
+  p95_user_perceived_ms: number | null
+  estimated_cost_usd: number | null
+  interruption_rate: number | null
+  outcome_success_rate: number | null
+}
+
+export interface FleetAccountBreakdownRow {
+  account_id: string | null
+  session_count: number
+  estimated_cost_usd: number | null
+}
+
+/** Fleet-wide rollup across all agents — GET /api/analytics/stats. */
+export interface FleetStats {
+  range: AgentStatsRange
+  account_id: string | null
+  total_sessions: number
+  active_agents: number
+  total_estimated_cost_usd: number | null
+  avg_duration_ms: number | null
+  avg_turn_count: number | null
+  p50_user_perceived_ms: number | null
+  p95_user_perceived_ms: number | null
+  p99_user_perceived_ms: number | null
+  interruption_rate: number | null
+  llm_pass_rate: number | null
+  outcome_success_rate: number | null
+  ci_pass_rate: number | null
+  buckets: FleetStatsBucket[]
+  agent_breakdown: FleetAgentBreakdownRow[]
+  account_breakdown: FleetAccountBreakdownRow[]
+}
+
 export type SessionEvaluationVerdict = 'pass' | 'fail' | 'maybe' | string
 
 export interface SessionTag {

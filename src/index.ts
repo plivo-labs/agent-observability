@@ -14,6 +14,7 @@ import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { registerAgentRoutes } from "./agents/routes.js";
+import { registerAnalyticsRoutes } from "./analytics/routes.js";
 import { sortSessionEvents } from "./events.js";
 import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
 import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
@@ -60,6 +61,10 @@ registerEvalRoutes(app);
 //    distinct agent_name across sessions + eval_runs) ─────────────────────────
 
 registerAgentRoutes(app);
+
+// ── Fleet analytics (cross-agent rollups for the /analytics page) ──────────
+
+registerAnalyticsRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 

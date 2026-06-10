@@ -271,6 +271,52 @@ body {
   color: hsl(var(--secondary));
 }
 
+/* ───── App sidebar (instrument rail) ─────────────────────────
+ * Flat chassis: nav items are full-bleed rows; the active item carries a
+ * 2px brand-red index-mark on the left edge — a meter-needle, not a pill. */
+.app-sidebar [data-sidebar="menu-button"] {
+  position: relative;
+  border-radius: 0;
+  font: var(--text-s-500);
+  height: 34px;
+}
+.app-sidebar [data-sidebar="menu-button"]::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 5px; bottom: 5px;
+  width: 2px;
+  background: transparent;
+  transition: background .12s;
+}
+.app-sidebar [data-sidebar="menu-button"][data-active="true"] {
+  font: var(--text-s-600);
+  background: hsl(var(--hv1));
+}
+.app-sidebar [data-sidebar="menu-button"][data-active="true"]::before {
+  background: var(--instrument-accent);
+}
+.app-sidebar [data-sidebar="group-label"] {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+  border-radius: 0;
+}
+.app-sidebar-build {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid hsl(var(--border));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--tertiary));
+  /* Hide when the rail collapses to icons. */
+}
+[data-state="collapsed"] .app-sidebar-build { display: none; }
+
 .obs-main {
   flex: 1;
   padding: 28px 32px 40px;

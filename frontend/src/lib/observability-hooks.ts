@@ -13,6 +13,7 @@ import type {
   EvalRunDetail,
   EvalRunRow,
   EvalsFilters,
+  FleetStats,
   MetricsSummary,
   PlivoMeta,
   SessionExternalEvaluation,
@@ -401,6 +402,30 @@ export function useAgentStats(
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
   }, [api, agentId, range, accountId])
+
+  return { stats, loading, error }
+}
+
+export function useFleetStats(
+  range: AgentStatsRange = '7d',
+  accountId?: string | null,
+) {
+  const { api } = useObservabilityContext()
+  const [stats, setStats] = useState<FleetStats | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .getFleetStats(range, accountId)
+      .then((res) => !cancelled && setStats(res))
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, range, accountId])
 
   return { stats, loading, error }
 }

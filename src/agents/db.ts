@@ -1,5 +1,11 @@
 import { sql } from "../db.js";
 import { escapeLikePattern } from "../response.js";
+import {
+  PER_TURN_ELEMS,
+  PERCEIVED_MS_SQL,
+  PERCEIVED_MS_WHERE,
+  RANGE_TO_INTERVAL,
+} from "../stats-sql.js";
 
 // ── List ────────────────────────────────────────────────────────────────────
 //
@@ -244,14 +250,9 @@ export interface AgentStats {
   provider_breakdown: Array<{ provider: string; model: string; count: number }>;
 }
 
-// `interval` feeds NOW() - $::interval and accepts the natural plural
-// form. `bucket` feeds date_trunc(), which takes the unit name only —
-// "hour"/"day" rather than "1 hour"/"1 day".
-const RANGE_TO_INTERVAL: Record<string, { interval: string; bucket: string }> = {
-  "24h": { interval: "24 hours", bucket: "hour" },
-  "7d":  { interval: "7 days",   bucket: "hour" },
-  "30d": { interval: "30 days",  bucket: "day" },
-};
+// Shared SQL fragments (RANGE_TO_INTERVAL, PER_TURN_ELEMS, PERCEIVED_MS_*)
+// live in src/stats-sql.ts — one definition shared with the fleet-wide
+// analytics queries so the metric semantics can't drift.
 
 export async function getAgentStats(
   agentId: string,
@@ -262,41 +263,6 @@ export async function getAgentStats(
   // Account-scope predicate is inlined per query (parameter slot varies).
   // accountId === null bypasses the predicate so a single-account lookup
   // and an all-accounts rollup share the same code path.
-
-  // Helper inline expression: jsonb_array_elements blows up on NULL or
-  // non-array values, so we guard with jsonb_typeof before unpacking. The
-  // pattern repeats across the bucket / totals / provider queries.
-  const PER_TURN_ELEMS = (col: string) => `
-    jsonb_array_elements(
-      CASE WHEN jsonb_typeof(${col}->'per_turn') = 'array'
-           THEN ${col}->'per_turn'
-           ELSE '[]'::jsonb
-      END
-    )
-  `;
-
-  // Perceived-latency definition, in ONE place, referenced by both the
-  // bucket query and the totals query below (they used to carry two
-  // copy-pasted copies that could drift). Canonical fallback:
-  //   e2e_latency ?? llm_node_ttft
-  // e2e_latency is the audio-pipeline measure (STT→LLM→TTS round trip);
-  // text-only sessions have no e2e_latency on their per-turn metrics —
-  // they only carry llm_node_ttft — so fall back to that. Same rule the
-  // read path uses (src/turn-rules.ts perceivedMs / metrics.ts); without
-  // it, text-mode agents show an empty p95 chart on the Overview tab.
-  // Result is multiplied by 1000 (seconds → ms). `m` must be the
-  // per-turn element alias produced by PER_TURN_ELEMS.
-  const PERCEIVED_MS_SQL = `
-    COALESCE(
-      NULLIF(m->>'e2e_latency', '')::float,
-      NULLIF(m->>'llm_node_ttft', '')::float
-    ) * 1000`;
-
-  // Companion WHERE filter: keep only per-turn rows carrying a numeric
-  // value for at least one of the two fields PERCEIVED_MS_SQL reads.
-  const PERCEIVED_MS_WHERE = `
-    (m->>'e2e_latency') ~ '^[0-9.]+$'
-       OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'`;
 
   const [bucketRows, totalsRow, providerRows, transportRows] = await Promise.all([
     // Per-bucket aggregates.
