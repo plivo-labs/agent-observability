@@ -1,0 +1,32 @@
+---
+title: Latency Over Turns
+description: User-perceived latency plotted turn-by-turn. Reveals drift, warm-up effects, and the one bad turn that tanks the average.
+---
+
+## Preview
+
+<ComponentPreview slug="latency-over-turns" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="latency-over-turns-chart" />
+
+## Usage
+
+```tsx
+import { LatencyOverTurnsChart } from '@/components/latency-over-turns-chart'
+
+;<LatencyOverTurnsChart />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description: 'Override the metrics resolved from provider context.',
+    },
+  ]}
+/>

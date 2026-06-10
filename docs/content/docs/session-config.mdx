@@ -1,0 +1,21 @@
+---
+title: Session Config
+description: 'Snapshot of the agent configuration used for the session: model IDs, voice settings, active tools, and any runtime options that shaped the conversation.'
+---
+
+## Preview
+
+<ComponentPreview slug="session-config" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="session-config" />
+
+## Usage
+
+```tsx
+import { SessionConfig } from '@/components/session-config'
+
+// No props — reads the options blob from provider context
+;<SessionConfig />
+```

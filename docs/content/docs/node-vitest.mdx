@@ -1,0 +1,51 @@
+---
+title: Node — Vitest reporter
+description: Stream Vitest eval results into the dashboard. Every vitest run becomes one eval_run; every it(...) becomes an eval_case with events, judgments, and failure detail.
+---
+
+The SDK ships a Vitest reporter that turns every `vitest run` into one
+`eval_run` on the dashboard, and every `it(...)` into an `eval_case` with its
+events, judgments, and failure detail.
+
+## Configure
+
+Register the reporter and its setup file in `vitest.config.ts`:
+
+```ts
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+import AgentObservability from "agent-observability-sdk/livekit/vitest";
+
+export default defineConfig({
+  test: {
+    setupFiles: ["agent-observability-sdk/livekit/vitest/setup"],
+    reporters: ["default", new AgentObservability()],
+  },
+});
+```
+
+Point it at the dashboard and run:
+
+```bash
+export AGENT_OBSERVABILITY_URL=https://obs.example.com
+export AGENT_OBSERVABILITY_AGENT_ID=9c2f7e3d-…
+vitest run
+```
+
+## Inside a test
+
+Auto-capture and `.judge()` interception are automatic. The `captureRunResult`
+helper is exported for results produced outside the standard `session.run(...)`
+path:
+
+```ts
+import { captureRunResult } from "agent-observability-sdk/livekit/vitest";
+
+it("greets politely", async () => {
+  const result = captureRunResult(await session.run({ userInput: "Hello" }));
+  result.expect.nextEvent().isMessage({ role: "assistant" });
+});
+```
+
+CI metadata (GitHub / GitLab / CircleCI / Buildkite) is auto-detected from
+standard env vars.

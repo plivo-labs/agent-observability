@@ -1,0 +1,115 @@
+---
+title: Chart Shared
+description: Layout primitives for building additional charts that match the look of the built-in ones. Exports a ChartCard wrapper (title / subtitle / recharts container / legend row), a ChartTooltipShell for custom recharts tooltips, and a ChartLegendItem color-swatch row.
+---
+
+## Installation
+
+<InstallTabs pkg="observability-chart-shared" />
+
+## Usage
+
+```tsx
+import { Bar, BarChart, Tooltip, XAxis, YAxis } from 'recharts'
+import {
+  ChartCard,
+  ChartTooltipShell,
+} from '@/components/observability-chart-shared'
+
+export function MyChart({ data }: { data: Row[] }) {
+  return (
+    <ChartCard
+      title="My metric"
+      subtitle="Per-turn trend"
+      legend={[{ color: 'hsl(var(--primary))', label: 'Value' }]}
+    >
+      <BarChart data={data}>
+        <XAxis dataKey="turn" />
+        <YAxis />
+        <Tooltip
+          content={({ active, label, payload }) => (
+            <ChartTooltipShell
+              active={active}
+              label={label}
+              rows={(payload ?? []).map((p) => ({
+                label: String(p.dataKey),
+                value: String(p.value),
+              }))}
+            />
+          )}
+        />
+        <Bar dataKey="value" fill="hsl(var(--primary))" />
+      </BarChart>
+    </ChartCard>
+  )
+}
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'ChartCard.title',
+      type: 'string',
+      required: true,
+      description: 'Card title shown at the top-left.',
+    },
+    {
+      name: 'ChartCard.subtitle',
+      type: 'string',
+      description: 'Optional subtitle under the title.',
+    },
+    {
+      name: 'ChartCard.legend',
+      type: '{ color: string; label: string }[]',
+      required: true,
+      description:
+        'Legend entries. Pass an empty array to suppress the legend row.',
+    },
+    {
+      name: 'ChartCard.chartHeight',
+      type: 'string',
+      default: "'h-64'",
+      description:
+        'Tailwind height class applied to the ResponsiveContainer wrapper.',
+    },
+    {
+      name: 'ChartCard.children',
+      type: 'React.ReactElement',
+      required: true,
+      description: 'A single recharts element (e.g. <BarChart>, <LineChart>).',
+    },
+    {
+      name: 'ChartTooltipShell.active',
+      type: 'boolean',
+      description:
+        'Forwarded by recharts — the component renders nothing when false.',
+    },
+    {
+      name: 'ChartTooltipShell.label',
+      type: 'string | number',
+      description:
+        'Axis label for the hovered point (rendered as "Turn {label}").',
+    },
+    {
+      name: 'ChartTooltipShell.rows',
+      type: '{ label: string; value: string; color?: string }[]',
+      required: true,
+      description:
+        'Two-column key/value rows rendered inside the tooltip. Each row may override the label color.',
+    },
+    {
+      name: 'ChartLegendItem.color',
+      type: 'string',
+      required: true,
+      description: 'Any CSS color — used for the small square swatch.',
+    },
+    {
+      name: 'ChartLegendItem.label',
+      type: 'string',
+      required: true,
+      description: 'Legend text.',
+    },
+  ]}
+/>

@@ -1,0 +1,42 @@
+---
+title: Sessions Page
+description: Tabular index of captured sessions. Monospace IDs, tabular-number duration, capability badges, row-hover navigation, and server-backed pagination.
+---
+
+## Preview
+
+<ComponentPreview slug="sessions-page" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="sessions-page" />
+
+## Usage
+
+```tsx
+import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { SessionsPage } from '@/components/sessions-page'
+import { useNavigate } from 'react-router'
+
+export function SessionsRoute() {
+  const navigate = useNavigate()
+  return (
+    <AgentObservabilityProvider baseUrl="https://observability.example.com/api">
+      <SessionsPage onSessionClick={(id) => navigate(`/sessions/${id}`)} />
+    </AgentObservabilityProvider>
+  )
+}
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'onSessionClick',
+      type: '(sessionId: string) => void',
+      description:
+        'Fires when a row is clicked. Wire it up to your router for navigation. Omit to render a non-interactive list.',
+    },
+  ]}
+/>

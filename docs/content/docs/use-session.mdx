@@ -1,0 +1,33 @@
+---
+title: useSession
+description: Returns the single session loaded by the provider. Read-only convenience wrapper — the actual fetch is done by AgentObservabilityProvider when a sessionId is passed to it.
+---
+
+## Signature
+
+```ts
+useSession(): { session, loading, error }
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { useSession } from '@/lib/observability-hooks'
+
+function SessionTitle() {
+  const { session, loading, error } = useSession()
+  if (loading) return <span>Loading…</span>
+  if (error || !session) return <span>—</span>
+  return <h1>{session.session_id}</h1>
+}
+```
+
+## Returns
+
+```ts
+{ session: AgentSessionRow | null, loading: boolean, error: string | null }
+```

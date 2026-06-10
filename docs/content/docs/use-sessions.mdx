@@ -1,0 +1,72 @@
+---
+title: useSessions
+description: Paginated session list fetcher. Holds its own cursor — pass a stable initialOffset and drive pagination with setOffset. Refetches automatically whenever filters or offset change.
+---
+
+## Signature
+
+```ts
+useSessions(limit?: number, initialOffset?: number, filters?: SessionsFilters): { sessions, meta, loading, error, offset, setOffset }
+```
+
+## Installation
+
+<InstallTabs pkg="observability-hooks" />
+
+## Usage
+
+```tsx
+import { useSessions } from '@/lib/observability-hooks'
+
+export function MyList() {
+  const { sessions, meta, loading, offset, setOffset } = useSessions(20, 0, {
+    accountId: 'acc_demo',
+  })
+  if (loading) return <Spinner />
+  return (
+    <>
+      {sessions.map((s) => (
+        <Row key={s.id} session={s} />
+      ))}
+      <Pagination
+        offset={offset}
+        limit={meta.limit}
+        total={meta.total_count}
+        onChange={setOffset}
+      />
+    </>
+  )
+}
+```
+
+## Parameters
+
+<ParamsTable
+  rows={[
+    {
+      name: 'limit',
+      type: 'number',
+      default: '20',
+      description: 'Page size. The server clamps to [1, 20].',
+    },
+    {
+      name: 'initialOffset',
+      type: 'number',
+      default: '0',
+      description:
+        'Starting offset. Syncs when the prop changes (so you can drive it from URL state) AND exposes setOffset for local pagination.',
+    },
+    {
+      name: 'filters',
+      type: 'SessionsFilters',
+      description:
+        'Optional filters: { accountId?, startedFrom?, startedTo? }. Offset auto-resets to 0 when any filter changes.',
+    },
+  ]}
+/>
+
+## Returns
+
+```ts
+{ sessions: AgentSessionRow[], meta: PlivoMeta, loading: boolean, error: string | null, offset: number, setOffset: (n: number) => void }
+```

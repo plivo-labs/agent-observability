@@ -1,0 +1,62 @@
+---
+title: Turn Transcript
+description: Two-column conversation transcript with per-turn metadata. Agent and user messages are paired; each pair links back to the corresponding timeline segment.
+---
+
+## Preview
+
+<ComponentPreview slug="turn-transcript" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="turn-transcript" />
+
+## Usage
+
+```tsx
+import { TurnTranscriptSection } from '@/components/turn-transcript'
+
+// Default — chat-paired, context-driven
+<TurnTranscriptSection />
+
+// Embedded under a parent card, left-aligned log view
+<TurnTranscriptSection embedded alignment="left" />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'chatHistory',
+      type: 'ChatItem[] | null',
+      description:
+        'Override the raw chat history resolved from provider context. Falls back to structured turn data from metrics when omitted.',
+    },
+    {
+      name: 'metrics',
+      type: 'SessionMetrics | null',
+      description: 'Override the per-turn metrics resolved from provider context.',
+    },
+    {
+      name: 'highlightedTurn',
+      type: 'number | null',
+      description:
+        'Scrolls the matching turn into view when set. The provider updates this when users click turn chips in the timeline.',
+    },
+    {
+      name: 'embedded',
+      type: 'boolean',
+      default: 'false',
+      description:
+        'Strips the outer card/header when embedding the transcript under another container (e.g. inside the session detail Session tab).',
+    },
+    {
+      name: 'alignment',
+      type: "'chat' | 'left'",
+      default: "'chat'",
+      description:
+        '"chat" pairs user/agent messages across the column; "left" stacks both sides on the left for a log-style view.',
+    },
+  ]}
+/>

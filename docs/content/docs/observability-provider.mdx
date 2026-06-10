@@ -1,0 +1,54 @@
+---
+title: Agent Observability Provider
+description: Context provider that every other component from this library expects. Install and mount it once, high in your tree — it creates the API client, resolves the current session, and shares the hooks that drive the rest of the UI. No visual output of its own.
+---
+
+## Installation
+
+<InstallTabs pkg="observability-provider" />
+
+## Usage
+
+```tsx
+import { AgentObservabilityProvider } from '@/lib/observability-provider'
+import { SessionDetailPage } from '@/components/session-detail-page'
+
+// Wrap the subtree that needs session data. Pass a sessionId when
+// rendering a single-session page; list pages can drop it.
+export function App({ sessionId }: { sessionId: string }) {
+  return (
+    <AgentObservabilityProvider
+      baseUrl="https://observability.example.com/api"
+      sessionId={sessionId}
+    >
+      <SessionDetailPage />
+    </AgentObservabilityProvider>
+  )
+}
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'baseUrl',
+      type: 'string',
+      required: true,
+      description:
+        'Base URL of your Agent Observability API. In Vite dev, pair this with a /api proxy; in production, point it at the deployed service.',
+    },
+    {
+      name: 'sessionId',
+      type: 'string',
+      description:
+        'Optional session id the provider loads up-front. Downstream detail components (SessionHeader, SessionTimeline, TurnTranscriptSection, SessionEvents, SessionConfig, charts) read this through the context. Omit on list pages.',
+    },
+    {
+      name: 'children',
+      type: 'React.ReactNode',
+      required: true,
+      description: 'Your application tree.',
+    },
+  ]}
+/>

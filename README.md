@@ -112,7 +112,7 @@ To run locally:
 ```bash
 cd docs
 bun install
-bun run dev  # http://localhost:5174/agent-observability/
+bun run dev  # http://localhost:3000/agent-observability/
 ```
 
 ## Eval Plugins

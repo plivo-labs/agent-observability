@@ -1,0 +1,75 @@
+---
+title: Python — Raw LiveKit
+description: Instrument a worker that drives LiveKit Agents directly. init_observability emits the tag bundle the server expects; run_judges_on_report runs judges at end-of-call.
+---
+
+agent-transport's `AudioStreamServer` wires observability internally. When you
+drive LiveKit Agents directly — your own `AgentServer` with
+`@server.rtc_session(...)` — two helpers replace the hand-rolled plumbing:
+
+- **`init_observability(ctx.tagger, …)`** — validates the upload URL (raises if
+  unset) and emits the full tag bundle (`agent_id`, `account_id`, `agent.name`,
+  `transport`) the server's ingest path expects. One call instead of ~20 lines
+  of `tagger.add(...)`.
+- **`run_judges_on_report(report, judges=…)`** — wraps the `JudgeGroup`
+  construction, exception handling, structured logging, and `llm.aclose()`
+  cleanup. Mix LiveKit built-ins with SDK judges freely.
+
+## Minimal worker
+
+```python
+from agent_observability.livekit import init_observability, run_judges_on_report
+from agent_observability.livekit.judges import default_judges
+from livekit.agents import AgentServer, JobContext
+from livekit.agents.evals import accuracy_judge
+
+server = AgentServer()
+
+
+async def on_session_end(ctx: JobContext) -> None:
+    report = ctx.make_session_report()
+    await run_judges_on_report(
+        report,
+        judges=[
+            accuracy_judge(),     # LiveKit built-in
+            *default_judges(),    # 4 ground-truth-free SDK judges
+        ],
+    )
+
+
+@server.rtc_session(agent_name="support-bot", on_session_end=on_session_end)
+async def entrypoint(ctx: JobContext) -> None:
+    init_observability(
+        ctx.tagger,
+        agent_id="9c2f7e3d-…",   # stable opaque UUID
+        agent_name="support-bot",
+        account_id="acct-7",
+        transport="text",
+    )
+    # …your usual AgentSession.start(...) setup
+```
+
+That's the whole observability surface for a raw-LiveKit worker — no hand-rolled
+`tagger.add(...)`, no `JudgeGroup` boilerplate, no `llm.aclose()` cleanup.
+
+## URL resolution
+
+`init_observability` raises if neither `LIVEKIT_OBSERVABILITY_URL` nor the
+`AGENT_OBSERVABILITY_URL` fallback is set — there's no point continuing if the
+report has nowhere to go. For a non-fatal, warn-only contract, call
+`ensure_observability_url()` yourself instead.
+
+## Runnable example
+
+A complete text-only worker (tool call, recording options, judges at
+end-of-call) lives in the repo at
+[`plugins/examples/python/text_only_livekit_worker.py`](https://github.com/plivo-labs/agent-observability/blob/main/plugins/examples/python/text_only_livekit_worker.py):
+
+```bash
+export LIVEKIT_OBSERVABILITY_URL=https://obs.example.com
+export AGENT_OBSERVABILITY_AGENT_ID=9c2f7e3d-4b8a-4d2e-9f1b-textonly
+export OPENAI_API_KEY=sk-...
+uv run plugins/examples/python/text_only_livekit_worker.py console --text --record
+```
+
+See the [judge reference](/python-judges) for the full catalogue.

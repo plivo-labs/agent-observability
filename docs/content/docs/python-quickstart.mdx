@@ -1,0 +1,61 @@
+---
+title: Python — Quickstart
+description: Install agent-observability-sdk and point your Python agent at the dashboard. Covers the agent-transport path (observability auto-emits) and where to go for raw LiveKit workers.
+---
+
+## Install
+
+```bash
+pip install agent-observability-sdk
+```
+
+`livekit-agents>=1.5.2,<1.6`, `pytest>=7.0`, and `httpx>=0.24` are hard deps and
+installed automatically. Python ≥ 3.10.
+
+## Point it at the dashboard
+
+Every upload path reads the same environment. The URL is required; the agent id
+is strongly recommended so sessions are parented to an agent row on the
+dashboard.
+
+```bash
+export AGENT_OBSERVABILITY_URL=https://obs.example.com
+export AGENT_OBSERVABILITY_AGENT_ID=9c2f7e3d-4b8a-4d2e-9f1b-…
+```
+
+See the full variable list in the [Client setup overview](/client-overview#environment).
+
+## agent-transport workers
+
+If your agent runs on agent-transport's `AudioStreamServer`, **you're done** —
+the transport layer emits the observability tags and runs judges through its own
+`EvaluationConfig`. You don't call the LiveKit helpers. You may still want to
+pull judges from this package into your config:
+
+```python
+from agent_observability.livekit.judges import (
+    default_judges,
+    IntentAccuracyJudge,
+    rigid_response_accuracy_judge,
+)
+from agent_transport import AudioStreamServer
+from agent_transport.evaluation import EvaluationConfig
+from livekit.agents.evals import accuracy_judge
+
+ctx.evaluation = EvaluationConfig(
+    judge_llm=judge_llm,
+    judges=[
+        accuracy_judge(),
+        IntentAccuracyJudge(expected_intent="book_flight", actual_intent=...),
+        rigid_response_accuracy_judge(expected_response="...", llm=judge_llm),
+        *default_judges(llm=judge_llm),
+    ],
+)
+```
+
+See the full [judge reference](/python-judges).
+
+## Next steps
+
+- Driving LiveKit Agents directly? See [Raw LiveKit](/python-raw-livekit).
+- Running evals from a test suite? See the [pytest plugin](/pytest-plugin).

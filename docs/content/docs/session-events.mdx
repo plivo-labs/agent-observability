@@ -1,0 +1,48 @@
+---
+title: Session Events
+description: Chronological stream of raw pipeline events captured during the session — function calls, agent handoffs, state changes. Filterable by event type.
+---
+
+## Preview
+
+<ComponentPreview slug="session-events" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="session-events" />
+
+## Usage
+
+```tsx
+import { SessionEvents } from '@/components/session-events'
+
+// Default badge palette
+<SessionEvents />
+
+// Recolor a specific event type
+<SessionEvents
+  typeBadgeClass={{
+    function_call: 'bg-orange-100 text-orange-800',
+  }}
+/>
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'typeBadgeClass',
+      type: 'Partial<Record<string, string>>',
+      description:
+        'Per-event-type Tailwind className overrides. Merged over the built-in defaults so you only need to specify the types you want to recolor.',
+    },
+    {
+      name: 'fallbackBadgeClass',
+      type: 'string',
+      default: "'bg-muted text-muted-foreground'",
+      description:
+        'Fallback className used when an event type has no mapping in the defaults or overrides.',
+    },
+  ]}
+/>

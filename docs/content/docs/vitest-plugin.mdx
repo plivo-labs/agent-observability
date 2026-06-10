@@ -1,0 +1,96 @@
+---
+title: Vitest reporter
+description: "Vitest reporter that uploads LiveKit-agents eval results to Agent Observability. Same model as the pytest plugin: each `vitest run` is one eval_run; every `it(...)` becomes one eval_case."
+---
+
+## Install
+
+```bash
+npm install -D agent-observability-sdk
+```
+
+Requires Node 18+ and `vitest >= 1.0`. `@livekit/agents` is optional — the
+reporter works for plain Vitest suites too.
+
+## Configure
+
+The reporter is added as a Vitest reporter; the setup file registers an
+`afterEach` hook that flushes captured `RunResult`/judgment data into
+`task.meta`. Without the setup file, nothing will be uploaded from tests running
+in worker pools.
+
+```ts
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import AgentObservability from 'agent-observability-sdk/livekit/vitest';
+
+export default defineConfig({
+  test: {
+    setupFiles: ['agent-observability-sdk/livekit/vitest/setup'],
+    reporters: [
+      'default',
+      new AgentObservability({
+        // Optional — falls back to AGENT_OBSERVABILITY_URL env var.
+        // url: 'http://localhost:9090',
+        agentId: 'support-bot',
+        agentName: 'Support Bot',
+        runName: 'PR #482',          // optional, shown in the run list
+        accountId: 'acct_abc123',    // optional
+        liveStreaming: false,        // emit per-case as they finish
+        timeout: 10_000,             // upload timeout (ms)
+        maxRetries: 3,
+        fallbackDir: '.agent-observability-cache',
+      }),
+    ],
+  },
+});
+```
+
+Every option is also readable from an environment variable (e.g.
+`AGENT_OBSERVABILITY_AGENT_ID`, `AGENT_OBSERVABILITY_RUN_NAME`). Constructor
+options take precedence when both are present.
+
+## Use inside a test
+
+Auto-capture is on by default. The plugin monkey-patches
+`AgentSession.prototype.run` so every `RunResult` flows into the collector
+automatically. `captureRunResult(...)` is still exported for results produced
+outside `.run()`; it's idempotent.
+
+```ts
+import { describe, it } from 'vitest';
+import { Agent, AgentSession, inference } from '@livekit/agents';
+
+class Assistant extends Agent {
+  constructor() { super({ instructions: 'Be helpful.' }); }
+}
+
+describe('Assistant', () => {
+  it('greets politely', async () => {
+    const llm = new inference.LLM({ model: 'openai/gpt-4.1-mini' });
+    const session = new AgentSession({ llm });
+    await session.start({ agent: new Assistant() });
+
+    const result = await session.run({ userInput: 'Hello' });
+
+    result.expect.nextEvent().isMessage({ role: 'assistant' });
+    await result.expect.nextEvent({ type: 'message' }).judge(llm, {
+      intent: 'greets politely',
+    });
+  });
+});
+```
+
+## Run
+
+```bash
+# Inline config + env
+AGENT_OBSERVABILITY_URL=http://obs.example.com \
+  npx vitest run
+
+# Or just inline if AGENT_OBSERVABILITY_URL is already exported
+npx vitest run
+```
+
+The run shows up at `Agents → support-bot → Simulation Evals` alongside any
+pytest runs against the same `agent_id`.

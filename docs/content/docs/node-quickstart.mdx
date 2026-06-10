@@ -1,0 +1,38 @@
+---
+title: Node — Quickstart
+description: Install agent-observability-sdk (Node) and point your agent at the dashboard. Covers the agent-transport path (observability auto-emits) and where to go for raw LiveKit workers.
+---
+
+## Install
+
+```bash
+npm install -D agent-observability-sdk
+```
+
+Vitest is an optional peer dependency — only required if you use the
+[reporter](/node-vitest). Node ≥ 18.
+
+## Point it at the dashboard
+
+```bash
+export AGENT_OBSERVABILITY_URL=https://obs.example.com
+export AGENT_OBSERVABILITY_AGENT_ID=9c2f7e3d-…
+```
+
+See the full variable list in the [Client setup overview](/client-overview#environment).
+
+## agent-transport workers
+
+If your agent runs on agent-transport's `AudioStreamServer`, **observability is
+automatic** — the transport layer emits the tags internally. You only set the
+environment above; no LiveKit helpers to call.
+
+<Callout title="No judges yet">
+The Python SDK ships nine LiveKit-compatible judges, but LiveKit Node Agents
+1.3.0 has no Judge API. Judges land on the Node side once LiveKit catches up.
+</Callout>
+
+## Next steps
+
+- Driving LiveKit Agents directly? See [Raw LiveKit](/node-raw-livekit).
+- Running evals from a test suite? See the [Vitest reporter](/node-vitest).

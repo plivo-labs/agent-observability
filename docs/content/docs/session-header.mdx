@@ -1,0 +1,37 @@
+---
+title: Session Header
+description: The identity strip at the top of every session detail page. Shows session ID, capability badges, duration, start/end timestamps, and a download-recording action.
+---
+
+## Preview
+
+<ComponentPreview slug="session-header" stage="stretch" />
+
+## Installation
+
+<InstallTabs pkg="session-header" />
+
+## Usage
+
+```tsx
+import { SessionHeader } from '@/components/session-header'
+
+// Context-driven (preferred)
+<SessionHeader />
+
+// With an explicit session row
+<SessionHeader session={mySession} />
+```
+
+## Props
+
+<PropsTable
+  rows={[
+    {
+      name: 'session',
+      type: 'AgentSessionRow',
+      description:
+        'Override the session resolved from provider context. Handy when embedding the header in a list or custom page.',
+    },
+  ]}
+/>

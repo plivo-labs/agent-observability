@@ -1,0 +1,44 @@
+---
+title: Agent Observability
+description: Run the observability server, stream eval results from your test suites, and drop the dashboard React components into your own app.
+---
+
+Agent Observability captures what your voice and chat agents actually do —
+session recordings, per-turn latency, token usage, tool calls, and eval
+verdicts — and gives you a dashboard to inspect it all. It receives session
+reports from the agent-transport SDKs, stores them in Postgres, and serves a
+dashboard UI you can run as-is or rebuild from the published component
+registry.
+
+These docs cover four areas:
+
+## Server setup
+
+The Bun/Hono server is the ingest endpoint and the dashboard host. Bring it up
+with Docker Compose, point your SDKs at it, and read back captured sessions
+through the dashboard API. See the [Quickstart](/server-quickstart),
+[Environment](/server-env) configuration reference, and the full
+[API routes](/server-api) surface.
+
+## Eval plugins
+
+Stream LiveKit-agents eval results into the dashboard straight from your test
+runner. Each run lands as one `eval_run`; every test becomes an `eval_case`
+with its events, judge verdicts, and failure detail. Available for
+[pytest](/pytest-plugin) and [Vitest](/vitest-plugin).
+
+## Client setup
+
+Instrument your agent to ship session reports and eval results to the server.
+Observability is automatic on agent-transport workers; raw LiveKit workers wire
+it with one helper call. Start with the [overview](/client-overview), then the
+[Python](/python-quickstart) or [Node](/node-quickstart) SDK guide.
+
+## UI components
+
+The dashboard is built from a shadcn-style component registry you can install
+into your own React app. Mount the
+[Agent Observability Provider](/observability-provider) once, then compose the
+[hooks](/use-sessions), [pages](/sessions-page),
+[components](/metric-summary-cards), and [charts](/latency-percentiles) to build
+exactly the views you need.
