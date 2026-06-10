@@ -1,5 +1,5 @@
 import { Coins, DollarSign, Gauge, MessageCircle, OctagonX, Wrench } from 'lucide-react'
-import { formatCost, formatMs, perceivedLatencyTone } from '@/lib/observability-format'
+import { formatCost, formatMs, formatPercent, perceivedLatencyTone } from '@/lib/observability-format'
 import type { SessionMetrics } from '@/lib/observability-types'
 import { usePerformance, useSession } from '@/lib/observability-hooks'
 
@@ -67,7 +67,16 @@ export const MetricSummaryCards = ({
   return (
     <div className="obs-metrics">
       <MetricTile icon={<MessageCircle size={12} />} label="Turns" value={summary.total_turns} />
-      <MetricTile icon={<OctagonX size={12} />} label="Interruptions" value={interruptions} />
+      <MetricTile
+        icon={<OctagonX size={12} />}
+        label="Interruptions"
+        value={interruptions}
+        sub={
+          summary.interruption_rate != null
+            ? `${formatPercent(summary.interruption_rate)} of agent turns`
+            : undefined
+        }
+      />
       <MetricTile icon={<Wrench size={12} />} label="Tool Calls" value={summary.total_tool_calls} />
       <MetricTile
         icon={<Gauge size={12} />}

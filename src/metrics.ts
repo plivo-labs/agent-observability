@@ -24,6 +24,14 @@ interface TurnRecord {
   llm_ttft_ms?: number;
   tts_ttfb_ms?: number;
   turn_decision_ms?: number;
+  user_speech_ms?: number;
+  agent_speech_ms?: number;
+  /** Time-to-first-audio: user stopped speaking → agent started speaking.
+   * Clamped to ≥ 0 — barge-in overlap means "no wait", not negative wait. */
+  ttfa_ms?: number;
+  /** Silence between the previous turn's agent speech end and this turn's
+   * user speech start. Clamped to ≥ 0. Undefined on the first turn. */
+  inter_turn_gap_ms?: number;
   /** STT confidence for the user utterance, 0–1. Source:
    * `chat_history[item].transcript_confidence` from LiveKit's ChatMessage.
    * Present only when the STT plugin populates it (Deepgram, Google, etc.). */
@@ -51,6 +59,30 @@ interface ToolCallRecord {
   timestamp: string;
 }
 
+interface VoiceSummary {
+  ttfa?: { avg: number; p50: number; p90: number; p95: number; count: number };
+  /** Session start → first agent speech ("first greeting" latency). */
+  greeting_ttfa_ms?: number;
+  user_speech_ms?: number;
+  agent_speech_ms?: number;
+  /** Agent share of total speaking time, 0–1. */
+  talk_ratio?: number;
+  longest_monologue_ms?: number;
+  longest_monologue_turn?: number;
+  user_wpm?: number;
+  agent_wpm?: number;
+  dead_air?: {
+    threshold_ms: number;
+    count: number;
+    total_ms: number;
+    max_ms: number;
+    events: Array<{ turn_number: number; kind: "inter_turn" | "response"; gap_ms: number }>;
+  };
+  /** Fraction of session duration with nobody speaking, 0–1. Approximation:
+   * overlapped (barge-in) speech double-subtracts, so the value is clamped. */
+  silence_pct?: number;
+}
+
 interface MetricsSummary {
   total_turns: number;
   total_llm_tokens: number;
@@ -59,8 +91,11 @@ interface MetricsSummary {
   total_tts_characters: number;
   total_tool_calls: number;
   interruptions: number;
+  /** interruptions / agent turns, 0–1. Undefined when there are no agent turns. */
+  interruption_rate?: number;
   avg_user_perceived_ms?: number;
   p95_user_perceived_ms?: number;
+  voice?: VoiceSummary;
   providers?: {
     stt_provider?: string;
     stt_model?: string;
@@ -85,6 +120,27 @@ function toMs(seconds: number | undefined | null): number | undefined {
 /** Convert unix float seconds to ISO string, returning undefined if input is nil */
 function toIso(unixSeconds: number | undefined | null): string | undefined {
   return unixSeconds != null ? new Date(unixSeconds * 1000).toISOString() : undefined;
+}
+
+/** Gaps (inter-turn or response) at/above this count as dead-air events. */
+export const DEAD_AIR_THRESHOLD_MS = 3000;
+
+/** Difference in ms between two ISO timestamps; undefined when either side
+ * is missing or unparseable — callers must filter, never receive NaN. */
+function isoDeltaMs(from: string | undefined, to: string | undefined): number | undefined {
+  if (!from || !to) return undefined;
+  const a = Date.parse(from);
+  const b = Date.parse(to);
+  if (Number.isNaN(a) || Number.isNaN(b)) return undefined;
+  return b - a;
+}
+
+function clamp0(v: number | undefined): number | undefined {
+  return v == null ? undefined : Math.max(0, v);
+}
+
+function wordCount(text: string | null): number {
+  return text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
 }
 
 /** Normalize content that may be a string or string[] into a single string */
@@ -138,10 +194,19 @@ function computePercentile(values: number[], p: number): number {
   return sorted[idx];
 }
 
+export interface BuildSessionMetricsOptions {
+  /** Session wall-clock duration (row.duration_ms) — enables silence_pct. */
+  durationMs?: number | string | null;
+  /** Session start (row.started_at) — enables greeting_ttfa_ms. Accepts a
+   * Date because bun:sql returns TIMESTAMPTZ columns as Date objects. */
+  startedAt?: string | Date | null;
+}
+
 export function buildSessionMetrics(
   chatHistory: any[] | null,
   sessionMetrics: any | null,
-  turnCount: number
+  turnCount: number,
+  options: BuildSessionMetricsOptions = {}
 ): SessionMetrics | null {
   if (!chatHistory?.length && !sessionMetrics) return null;
 
@@ -350,6 +415,129 @@ export function buildSessionMetrics(
     }
   }
 
+  // Voice-dynamics post-pass: runs over the finished turn list so flushed
+  // partial turns (caller hung up mid-conversation) get identical treatment.
+  for (let i = 0; i < turns.length; i++) {
+    const t = turns[i];
+    const userMs = isoDeltaMs(t.user_started_speaking_at, t.user_stopped_speaking_at);
+    const agentMs = isoDeltaMs(t.agent_started_speaking_at, t.agent_stopped_speaking_at);
+    // A negative duration is a corrupt timestamp pair, not meaningful — drop it.
+    if (userMs != null && userMs > 0) t.user_speech_ms = userMs;
+    if (agentMs != null && agentMs > 0) t.agent_speech_ms = agentMs;
+    t.ttfa_ms = clamp0(isoDeltaMs(t.user_stopped_speaking_at, t.agent_started_speaking_at));
+    if (i > 0) {
+      t.inter_turn_gap_ms = clamp0(
+        isoDeltaMs(turns[i - 1].agent_stopped_speaking_at, t.user_started_speaking_at)
+      );
+    }
+  }
+
+  // Voice summary aggregates — `voice` is emitted only when something was
+  // measurable, so text-only sessions (no speaking timestamps) omit it.
+  const ttfaValues = turns
+    .map((t) => t.ttfa_ms)
+    .filter((v): v is number => v != null);
+
+  let userSpeechMs = 0;
+  let agentSpeechMs = 0;
+  let speechMeasured = false;
+  let longestMonologueMs: number | undefined;
+  let longestMonologueTurn: number | undefined;
+  let userWords = 0;
+  let userSpokenMs = 0;
+  let agentWords = 0;
+  let agentSpokenMs = 0;
+  let gapMeasured = false;
+  const deadAirEvents: Array<{ turn_number: number; kind: "inter_turn" | "response"; gap_ms: number }> = [];
+
+  for (const t of turns) {
+    if (t.user_speech_ms != null) {
+      userSpeechMs += t.user_speech_ms;
+      speechMeasured = true;
+      const words = wordCount(t.user_text);
+      // WPM pairs words with the same turn's measured speech time, so a
+      // turn with text but no timestamps can't inflate the rate.
+      if (words > 0) {
+        userWords += words;
+        userSpokenMs += t.user_speech_ms;
+      }
+    }
+    if (t.agent_speech_ms != null) {
+      agentSpeechMs += t.agent_speech_ms;
+      speechMeasured = true;
+      if (longestMonologueMs == null || t.agent_speech_ms > longestMonologueMs) {
+        longestMonologueMs = t.agent_speech_ms;
+        longestMonologueTurn = t.turn_number;
+      }
+      const words = wordCount(t.agent_text);
+      if (words > 0) {
+        agentWords += words;
+        agentSpokenMs += t.agent_speech_ms;
+      }
+    }
+    if (t.inter_turn_gap_ms != null) {
+      gapMeasured = true;
+      if (t.inter_turn_gap_ms >= DEAD_AIR_THRESHOLD_MS) {
+        deadAirEvents.push({ turn_number: t.turn_number, kind: "inter_turn", gap_ms: t.inter_turn_gap_ms });
+      }
+    }
+    if (t.ttfa_ms != null) {
+      gapMeasured = true;
+      if (t.ttfa_ms >= DEAD_AIR_THRESHOLD_MS) {
+        deadAirEvents.push({ turn_number: t.turn_number, kind: "response", gap_ms: t.ttfa_ms });
+      }
+    }
+  }
+
+  const startedAtIso =
+    options.startedAt instanceof Date
+      ? options.startedAt.toISOString()
+      : options.startedAt ?? undefined;
+  const firstAgentStart = turns.find((t) => t.agent_started_speaking_at)?.agent_started_speaking_at;
+  const greetingTtfaMs = clamp0(isoDeltaMs(startedAtIso, firstAgentStart));
+
+  const totalSpeechMs = userSpeechMs + agentSpeechMs;
+  const sessionDurationMs = options.durationMs != null ? Number(options.durationMs) : undefined;
+  const silencePct =
+    speechMeasured && sessionDurationMs != null && Number.isFinite(sessionDurationMs) && sessionDurationMs > 0
+      ? Math.min(1, Math.max(0, (sessionDurationMs - totalSpeechMs) / sessionDurationMs))
+      : undefined;
+
+  const voice: VoiceSummary = {};
+  if (ttfaValues.length > 0) {
+    voice.ttfa = {
+      avg: computeAvg(ttfaValues),
+      p50: computePercentile(ttfaValues, 0.5),
+      p90: computePercentile(ttfaValues, 0.9),
+      p95: computePercentile(ttfaValues, 0.95),
+      count: ttfaValues.length,
+    };
+  }
+  if (greetingTtfaMs != null) voice.greeting_ttfa_ms = greetingTtfaMs;
+  if (speechMeasured) {
+    voice.user_speech_ms = userSpeechMs;
+    voice.agent_speech_ms = agentSpeechMs;
+    if (totalSpeechMs > 0) voice.talk_ratio = agentSpeechMs / totalSpeechMs;
+  }
+  if (longestMonologueMs != null) {
+    voice.longest_monologue_ms = longestMonologueMs;
+    voice.longest_monologue_turn = longestMonologueTurn;
+  }
+  if (userWords > 0 && userSpokenMs > 0) voice.user_wpm = Math.round(userWords / (userSpokenMs / 60000));
+  if (agentWords > 0 && agentSpokenMs > 0) voice.agent_wpm = Math.round(agentWords / (agentSpokenMs / 60000));
+  if (gapMeasured) {
+    voice.dead_air = {
+      threshold_ms: DEAD_AIR_THRESHOLD_MS,
+      count: deadAirEvents.length,
+      total_ms: deadAirEvents.reduce((sum, e) => sum + e.gap_ms, 0),
+      max_ms: deadAirEvents.reduce((max, e) => Math.max(max, e.gap_ms), 0),
+      events: deadAirEvents,
+    };
+  }
+  if (silencePct != null) voice.silence_pct = silencePct;
+
+  const agentTurnCount = turns.filter((t) => t.agent_text != null).length;
+
   // Compute summary stats
   const perceivedValues = turns
     .map((t) => t.user_perceived_ms)
@@ -388,8 +576,10 @@ export function buildSessionMetrics(
     total_tts_characters: totalTtsChars,
     total_tool_calls: totalToolCalls,
     interruptions: totalInterruptions,
+    interruption_rate: agentTurnCount > 0 ? totalInterruptions / agentTurnCount : undefined,
     avg_user_perceived_ms: perceivedValues.length > 0 ? computeAvg(perceivedValues) : undefined,
     p95_user_perceived_ms: perceivedValues.length > 0 ? computePercentile(perceivedValues, 0.95) : undefined,
+    voice: Object.keys(voice).length > 0 ? voice : undefined,
     providers: (firstStt || firstLlm || firstTts) ? {
       stt_provider: firstStt?.stt_provider,
       stt_model: firstStt?.stt_model,
