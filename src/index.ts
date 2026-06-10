@@ -487,7 +487,10 @@ app.get("/api/sessions/:id", async (c) => {
   }
 
   row.chat_history = chatHistory;
-  row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count);
+  row.session_metrics = buildSessionMetrics(chatHistory, sessionMetrics, row.turn_count, {
+    durationMs: row.duration_ms,
+    startedAt: row.started_at,
+  });
   row.raw_report = rawReport;
   row.events = sortSessionEvents(rawReport?.events ?? null);
   row.options = rawReport?.options ?? null;

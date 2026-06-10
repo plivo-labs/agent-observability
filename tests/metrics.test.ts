@@ -549,3 +549,201 @@ describe("buildSessionMetrics", () => {
     expect(result.turns[0].agent_started_speaking_at).toContain("1970-01-01T00:16:45");
   });
 });
+
+describe("voice metrics", () => {
+  // Fixture helpers — timestamps are unix-second floats like real payloads.
+  const u = (id: string, content: string, started: number, stopped: number) => ({
+    id,
+    type: "message",
+    role: "user",
+    content,
+    metrics: { started_speaking_at: started, stopped_speaking_at: stopped },
+  });
+  const a = (
+    id: string,
+    content: string,
+    started: number,
+    stopped: number,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    id,
+    type: "message",
+    role: "assistant",
+    content,
+    metrics: { started_speaking_at: started, stopped_speaking_at: stopped },
+    ...extra,
+  });
+
+  test("computes per-turn ttfa and summary percentiles", () => {
+    const chat = [
+      u("u1", "one", 100, 102), a("a1", "reply", 102.5, 105),   // ttfa 500
+      u("u2", "two", 106, 107), a("a2", "reply", 108, 110),     // ttfa 1000
+      u("u3", "three", 111, 112), a("a3", "reply", 115, 116),   // ttfa 3000
+    ];
+    const result = buildSessionMetrics(chat, null, 3)!;
+    expect(result.turns[0].ttfa_ms).toBe(500);
+    expect(result.turns[1].ttfa_ms).toBe(1000);
+    expect(result.turns[2].ttfa_ms).toBe(3000);
+    const ttfa = result.summary.voice!.ttfa!;
+    expect(ttfa.count).toBe(3);
+    expect(ttfa.avg).toBe(1500);
+    expect(ttfa.p50).toBe(1000);
+    expect(ttfa.p90).toBe(3000);
+    expect(ttfa.p95).toBe(3000);
+    // The 3000ms response gap is a dead-air event of kind "response"
+    const events = result.summary.voice!.dead_air!.events;
+    expect(events).toContainEqual({ turn_number: 3, kind: "response", gap_ms: 3000 });
+  });
+
+  test("computes inter-turn gaps and flags dead air between turns", () => {
+    const chat = [
+      u("u1", "one", 100, 102), a("a1", "reply", 103, 110),
+      u("u2", "two", 115, 116), a("a2", "reply", 117, 118),  // gap 115−110 = 5s
+    ];
+    const result = buildSessionMetrics(chat, null, 2)!;
+    expect(result.turns[0].inter_turn_gap_ms).toBeUndefined();
+    expect(result.turns[1].inter_turn_gap_ms).toBe(5000);
+    const deadAir = result.summary.voice!.dead_air!;
+    expect(deadAir.threshold_ms).toBe(3000);
+    expect(deadAir.count).toBe(1);
+    expect(deadAir.max_ms).toBe(5000);
+    expect(deadAir.events).toEqual([{ turn_number: 2, kind: "inter_turn", gap_ms: 5000 }]);
+  });
+
+  test("emits dead_air block with zero count when gaps were measurable but small", () => {
+    const chat = [u("u1", "hi", 100, 101), a("a1", "hey", 101.5, 103)];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.summary.voice!.dead_air).toEqual({
+      threshold_ms: 3000,
+      count: 0,
+      total_ms: 0,
+      max_ms: 0,
+      events: [],
+    });
+  });
+
+  test("computes speech durations, talk ratio, and longest monologue", () => {
+    const chat = [
+      u("u1", "hello there", 100, 104),       // user 4s
+      a("a1", "long agent answer", 105, 111), // agent 6s
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].user_speech_ms).toBe(4000);
+    expect(result.turns[0].agent_speech_ms).toBe(6000);
+    const voice = result.summary.voice!;
+    expect(voice.user_speech_ms).toBe(4000);
+    expect(voice.agent_speech_ms).toBe(6000);
+    expect(voice.talk_ratio).toBeCloseTo(0.6);
+    expect(voice.longest_monologue_ms).toBe(6000);
+    expect(voice.longest_monologue_turn).toBe(1);
+  });
+
+  test("computes words-per-minute per speaker", () => {
+    const twentyWords = Array.from({ length: 20 }, (_, i) => `w${i}`).join(" ");
+    const chat = [
+      u("u1", "five words spoken right here", 100, 105),  // 5 words / 5s = 60 wpm
+      a("a1", twentyWords, 106, 116),                     // 20 words / 10s = 120 wpm
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.summary.voice!.user_wpm).toBe(60);
+    expect(result.summary.voice!.agent_wpm).toBe(120);
+  });
+
+  test("computes silence_pct only when durationMs is provided", () => {
+    const chat = [
+      u("u1", "hi", 100, 104),   // 4s
+      a("a1", "hey", 105, 111),  // 6s → total speech 10s
+    ];
+    const withDuration = buildSessionMetrics(chat, null, 1, { durationMs: 20000 })!;
+    expect(withDuration.summary.voice!.silence_pct).toBeCloseTo(0.5);
+    const withoutDuration = buildSessionMetrics(chat, null, 1)!;
+    expect(withoutDuration.summary.voice!.silence_pct).toBeUndefined();
+  });
+
+  test("clamps silence_pct when overlapping speech exceeds duration", () => {
+    const chat = [
+      u("u1", "hi", 100, 110),
+      a("a1", "hey", 100, 110), // fully overlapped: 20s speech in a 15s session
+    ];
+    const result = buildSessionMetrics(chat, null, 1, { durationMs: 15000 })!;
+    expect(result.summary.voice!.silence_pct).toBe(0);
+  });
+
+  test("computes greeting ttfa from session start to first agent speech", () => {
+    const chat = [a("a1", "welcome!", 101.5, 103)];
+    const startedAt = new Date(99 * 1000).toISOString();
+    const result = buildSessionMetrics(chat, null, 1, { startedAt })!;
+    expect(result.summary.voice!.greeting_ttfa_ms).toBe(2500);
+  });
+
+  test("accepts a Date for startedAt (bun:sql TIMESTAMPTZ shape)", () => {
+    const chat = [a("a1", "welcome!", 101.5, 103)];
+    const result = buildSessionMetrics(chat, null, 1, { startedAt: new Date(99 * 1000) })!;
+    expect(result.summary.voice!.greeting_ttfa_ms).toBe(2500);
+  });
+
+  test("computes interruption_rate over agent turns", () => {
+    const chat = [
+      u("u1", "a", 100, 101), a("a1", "r1", 102, 103),
+      u("u2", "b", 104, 105), a("a2", "r2", 106, 107, { interrupted: true }),
+      u("u3", "c", 108, 109), a("a3", "r3", 110, 111),
+      u("u4", "d", 112, 113), a("a4", "r4", 114, 115),
+    ];
+    const result = buildSessionMetrics(chat, null, 4)!;
+    expect(result.summary.interruptions).toBe(1);
+    expect(result.summary.interruption_rate).toBeCloseTo(0.25);
+  });
+
+  test("interruption_rate is undefined when there are no agent turns", () => {
+    const chat = [u("u1", "anyone there?", 100, 102)];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.summary.interruption_rate).toBeUndefined();
+  });
+
+  test("text-only session emits no voice block and no NaN", () => {
+    const chat = [
+      { id: "u1", type: "message", role: "user", content: "hello" },
+      { id: "a1", type: "message", role: "assistant", content: "hi" },
+    ];
+    const result = buildSessionMetrics(chat, null, 1, { durationMs: 60000 })!;
+    expect(result.summary.voice).toBeUndefined();
+    expect(result.turns[0].ttfa_ms).toBeUndefined();
+    expect(result.turns[0].user_speech_ms).toBeUndefined();
+    expect(result.turns[0].agent_speech_ms).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("NaN");
+  });
+
+  test("clamps barge-in overlap to zero ttfa and drops negative durations", () => {
+    const chat = [
+      // Agent started before the user stopped (barge-in) → ttfa 0, not negative.
+      // User stopped before they started (corrupt) → duration dropped.
+      {
+        id: "u1", type: "message", role: "user", content: "hi",
+        metrics: { started_speaking_at: 105, stopped_speaking_at: 103 },
+      },
+      a("a1", "hey", 102, 106),
+    ];
+    const result = buildSessionMetrics(chat, null, 1)!;
+    expect(result.turns[0].ttfa_ms).toBe(0);
+    expect(result.turns[0].user_speech_ms).toBeUndefined();
+    expect(result.turns[0].agent_speech_ms).toBe(4000);
+  });
+
+  test("agent_first turns have no ttfa or user speech; partial turns keep user-side metrics", () => {
+    const chat = [
+      a("a1", "welcome!", 100, 102),          // agent_first: no user timestamps
+      u("u1", "bye", 108, 110),               // dangling user → partial turn
+    ];
+    const result = buildSessionMetrics(chat, null, 2)!;
+    expect(result.turns[0].ttfa_ms).toBeUndefined();
+    expect(result.turns[0].user_speech_ms).toBeUndefined();
+    expect(result.turns[0].agent_speech_ms).toBe(2000);
+    // Partial turn: user speech measured, gap back to agent speech end = 6s
+    expect(result.turns[1].user_speech_ms).toBe(2000);
+    expect(result.turns[1].inter_turn_gap_ms).toBe(6000);
+    expect(result.turns[1].agent_speech_ms).toBeUndefined();
+    expect(result.summary.voice!.dead_air!.events).toContainEqual({
+      turn_number: 2, kind: "inter_turn", gap_ms: 6000,
+    });
+  });
+});

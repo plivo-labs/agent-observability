@@ -14,6 +14,14 @@ export interface TurnRecord {
   llm_ttft_ms?: number
   tts_ttfb_ms?: number
   turn_decision_ms?: number
+  user_speech_ms?: number
+  agent_speech_ms?: number
+  /** Time-to-first-audio: user stopped speaking → agent started speaking.
+   * Clamped to ≥ 0 — barge-in overlap means "no wait", not negative wait. */
+  ttfa_ms?: number
+  /** Silence between the previous turn's agent speech end and this turn's
+   * user speech start. Clamped to ≥ 0. Undefined on the first turn. */
+  inter_turn_gap_ms?: number
   /** STT confidence for the user utterance, 0–1. Populated by the STT
    * plugin (Deepgram, Google, …); absent when the plugin doesn't report
    * confidence. */
@@ -64,6 +72,30 @@ export interface LatencyPercentiles {
   avg: number
 }
 
+export interface VoiceSummary {
+  ttfa?: { avg: number; p50: number; p90: number; p95: number; count: number }
+  /** Session start → first agent speech ("first greeting" latency). */
+  greeting_ttfa_ms?: number
+  user_speech_ms?: number
+  agent_speech_ms?: number
+  /** Agent share of total speaking time, 0–1. */
+  talk_ratio?: number
+  longest_monologue_ms?: number
+  longest_monologue_turn?: number
+  user_wpm?: number
+  agent_wpm?: number
+  dead_air?: {
+    threshold_ms: number
+    count: number
+    total_ms: number
+    max_ms: number
+    events: Array<{ turn_number: number; kind: 'inter_turn' | 'response'; gap_ms: number }>
+  }
+  /** Fraction of session duration with nobody speaking, 0–1. Approximation:
+   * overlapped (barge-in) speech double-subtracts, so the value is clamped. */
+  silence_pct?: number
+}
+
 export interface MetricsSummary {
   total_turns: number
   total_llm_tokens: number
@@ -72,8 +104,11 @@ export interface MetricsSummary {
   total_tts_characters: number
   total_tool_calls: number
   interruptions: number
+  /** interruptions / agent turns, 0–1. Undefined when there are no agent turns. */
+  interruption_rate?: number
   avg_user_perceived_ms?: number
   p95_user_perceived_ms?: number
+  voice?: VoiceSummary
   latency?: Record<string, LatencyPercentiles>
   usage?: {
     total_llm_tokens: number

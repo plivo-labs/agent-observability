@@ -9,6 +9,7 @@ import { LatencyPercentilesChart } from '@/components/latency-percentiles-chart'
 import { PipelineBreakdownChart } from '@/components/pipeline-breakdown-chart'
 import { LatencyOverTurnsChart } from '@/components/latency-over-turns-chart'
 import { TokenUsageSection } from '@/components/token-usage-section'
+import { ConversationDynamics } from '@/components/conversation-dynamics'
 import { TurnTranscriptSection } from '@/components/turn-transcript'
 import { SessionHeader } from '@/components/session-header'
 import { SessionTimeline } from '@/components/session-timeline/session-timeline'
@@ -102,6 +103,7 @@ export const SessionDetailPage = () => {
 
         <TabsContent value="metrics" className="min-w-0 mt-1">
           <div className="perf-grid">
+            <ConversationDynamics />
             <LatencyPercentilesChart />
             <PipelineBreakdownChart />
             <LatencyOverTurnsChart />

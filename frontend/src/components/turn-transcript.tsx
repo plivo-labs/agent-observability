@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { Fragment, useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { Bot, ChevronRight, Code2, MessageSquare, User, Zap } from 'lucide-react'
+import { Bot, ChevronRight, Code2, MessageSquare, Timer, User, Zap } from 'lucide-react'
 import { formatMs, formatToolValue } from '@/lib/observability-format'
 import type { ChatItem, SessionMetrics, TurnRecord } from '@/lib/observability-types'
 import { useTranscript } from '@/lib/observability-hooks'
@@ -72,6 +72,20 @@ const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) =
     </Badge>
   )
 }
+
+/** Silence marker between turns — rendered when the gap between the previous
+ * turn's agent speech end and this turn's user speech start crosses the
+ * dead-air threshold reported in the metrics summary. */
+const DeadAirDivider = ({ gapMs }: { gapMs: number }) => (
+  <div className="flex items-center gap-2 py-1.5" aria-label={`${formatMs(gapMs)} of silence`}>
+    <div className="flex-1 border-t border-dashed border-border" />
+    <span className="flex items-center gap-1 font-mono text-[10px] tabular-nums text-muted-foreground">
+      <Timer size={10} />
+      {formatMs(gapMs)} silence
+    </span>
+    <div className="flex-1 border-t border-dashed border-border" />
+  </div>
+)
 
 export type TranscriptAlignment = 'chat' | 'left'
 
@@ -268,6 +282,7 @@ export const TurnTranscriptSection = ({
 
   // If we have structured turn data from metrics, show that
   if (metrics?.turns?.length) {
+    const deadAirThresholdMs = metrics.summary?.voice?.dead_air?.threshold_ms ?? 3000
     const content = (
       <>
         <div className="flex items-center gap-2 mb-5">
@@ -279,13 +294,17 @@ export const TurnTranscriptSection = ({
         </div>
         <div className="mx-auto max-w-3xl flex flex-col">
           {metrics.turns.map((turn, i) => (
-            <TurnCard
-              key={turn.turn_id || i}
-              turn={turn}
-              highlighted={highlightedTurn === turn.turn_number}
-              turnRef={(el) => { turnRefs.current[turn.turn_number] = el }}
-              alignment={alignment}
-            />
+            <Fragment key={turn.turn_id || i}>
+              {turn.inter_turn_gap_ms != null && turn.inter_turn_gap_ms >= deadAirThresholdMs && (
+                <DeadAirDivider gapMs={turn.inter_turn_gap_ms} />
+              )}
+              <TurnCard
+                turn={turn}
+                highlighted={highlightedTurn === turn.turn_number}
+                turnRef={(el) => { turnRefs.current[turn.turn_number] = el }}
+                alignment={alignment}
+              />
+            </Fragment>
           ))}
         </div>
       </>

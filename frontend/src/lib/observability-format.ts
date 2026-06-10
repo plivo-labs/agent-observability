@@ -52,6 +52,11 @@ export const formatCost = (usd: number | null | undefined): string => {
   return `$${usd.toFixed(2)}`
 }
 
+/** Ratio (0–1) → whole-percent string. Nullish renders "—" so callers can
+ *  pass optional summary fields straight through. */
+export const formatPercent = (ratio: number | null | undefined): string =>
+  ratio == null ? '—' : `${Math.round(ratio * 100)}%`
+
 // ── Tone thresholds + helpers ───────────────────────────────────────────────
 // Centralized here so the latency / ASR / pass-rate thresholds live in exactly
 // one place. Consumed by the eval-run-detail KPIs (latencyTone / asrTone /
