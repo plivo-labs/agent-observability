@@ -25,12 +25,12 @@ const numberFmt = new Intl.NumberFormat()
 // feels visually consistent with the per-session detail.
 const COLORS = {
   primary: 'var(--foreground)',
-  accent: '#60a5fa',
-  warn: '#fbbf24',
-  bad: '#f87171',
-  good: '#34d399',
+  accent: 'var(--chart-2)',
+  warn: 'var(--chart-4)',
+  bad: 'var(--destructive)',
+  good: 'var(--chart-3)',
   muted: 'var(--muted-foreground)',
-  pie: ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#fb923c', '#22d3ee', '#94a3b8'],
+  pie: ['var(--chart-2)', 'var(--chart-5)', 'var(--chart-1)', 'var(--chart-3)', 'var(--chart-4)'],
 }
 
 export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {

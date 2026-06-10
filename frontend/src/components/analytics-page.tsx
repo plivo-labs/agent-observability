@@ -20,10 +20,10 @@ const numberFmt = new Intl.NumberFormat()
 // Same palette as agent-overview-tab so fleet and per-agent views read
 // as one product.
 const COLORS = {
-  accent: '#60a5fa',
-  warn: '#fbbf24',
-  bad: '#f87171',
-  pie: ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#fb923c', '#22d3ee', '#94a3b8'],
+  accent: 'var(--chart-2)',
+  warn: 'var(--chart-4)',
+  bad: 'var(--destructive)',
+  pie: ['var(--chart-2)', 'var(--chart-5)', 'var(--chart-1)', 'var(--chart-3)', 'var(--chart-4)'],
 }
 
 const RANGES: AgentStatsRange[] = ['24h', '7d', '30d']
