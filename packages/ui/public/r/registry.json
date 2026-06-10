@@ -1711,7 +1711,6 @@
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/obs-cells.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/agent-scope-header.json",
-        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/agent-overview-tab.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/agent-runs-page.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/sessions-page.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/conversation-evals-tab.json",
