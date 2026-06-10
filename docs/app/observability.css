@@ -8,6 +8,12 @@
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                "Helvetica Neue", Arial, sans-serif;
   --font-display: var(--font-sans);
+  /* Real monospace stays at :root — Tailwind wires docs code blocks to
+   * --default-mono-font-family: var(--font-mono), resolved at runtime,
+   * and documentation code must stay mono. The dashboard's retired mono
+   * voice is mirrored only inside component demos (see .not-prose below).
+   * NOTE: this file is a vendored snapshot of the dashboard theme
+   * (frontend/src/styles/observability.css) — mirror changes manually. */
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
                "Liberation Mono", monospace;
 
@@ -2644,4 +2650,12 @@ body {
   font-family: var(--font-mono);
   font-size: 12px;
   color: hsl(var(--muted-foreground));
+}
+
+/* Component demos mirror the dashboard, where the mono voice was retired
+ * (June 2026): inside PreviewShell (.not-prose) identifiers and labels
+ * render in Inter, exactly like the real app. Markdown code blocks sit
+ * outside .not-prose and keep true monospace. */
+.not-prose {
+  --font-mono: var(--font-sans);
 }
