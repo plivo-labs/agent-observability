@@ -179,12 +179,15 @@ export const AlertRuleDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && !o && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+      {/* Flex column with a fixed header/footer and a scrollable middle, so
+       * the action buttons stay pinned instead of scrolling off-screen on
+       * short viewports. */}
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{editing ? 'Edit alert rule' : 'New alert rule'}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-4">
+        <div className="grid gap-4 overflow-y-auto py-4">
           <div>
             <FieldLabel>Name</FieldLabel>
             <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Fail spike — support bot" />
@@ -418,7 +421,7 @@ export const AlertRuleDialog = ({
           {error && <div className="text-sm text-destructive">{error}</div>}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="border-t pt-4">
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
