@@ -115,10 +115,9 @@ body {
   display: flex; align-items: center; gap: 10px;
 }
 .obs-nav-brand .dot {
-  width: 22px; height: 22px; border-radius: 6px;
-  background: linear-gradient(135deg, #cd3ef9, #323dfe);
-  display: grid; place-items: center;
-  color: var(--primary-foreground);
+  /* Brand mark is a self-contained SVG (rounded ink square + AO letterforms). */
+  width: 22px; height: 22px;
+  display: block;
 }
 .obs-nav-tabs { display: flex; gap: 2px; align-items: center; margin-left: 6px; }
 .obs-tab {
@@ -2814,26 +2813,12 @@ body {
   color: var(--foreground);
 }
 .obs-nav-brand .dot {
+  /* The SVG mark carries its own rounded ink square — no painted
+   * background or tick; CSS just sizes it. */
   width: 28px;
   height: 28px;
-  border-radius: 0 !important;
-  background: var(--foreground);
-  color: var(--background);
-  display: grid;
-  place-items: center;
-  position: relative;
-  font: 700 16px/1 "Sora", serif;
-}
-.obs-nav-brand .dot::after {
-  /* a hairline tick mark at the bottom-right of the brand glyph — the
-   * little "scientific instrument" detail. */
-  content: "";
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 6px;
-  height: 6px;
-  background: var(--instrument-accent);
+  background: none;
+  display: block;
 }
 .obs-iconbtn {
   width: 32px;

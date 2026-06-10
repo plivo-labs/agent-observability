@@ -68,7 +68,7 @@ const AppSidebar = () => {
     <Sidebar collapsible="icon" className="app-sidebar">
       <SidebarHeader>
         <Link to="/" className="obs-nav-brand px-1 py-1.5">
-          <span className="dot" aria-hidden>Ω</span>
+          <img src="/favicon.svg" className="dot" alt="" />
           <span className="truncate group-data-[state=collapsed]:hidden">Agent Observability</span>
         </Link>
       </SidebarHeader>
