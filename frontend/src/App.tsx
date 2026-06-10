@@ -5,7 +5,6 @@ import { BarChart3, BellRing, Bot, Moon, RefreshCw, Sun } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -95,9 +94,6 @@ const AppSidebar = () => {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
-        <span aria-hidden className="app-sidebar-build">BUILD 04 · LIVE</span>
-      </SidebarFooter>
     </Sidebar>
   )
 }

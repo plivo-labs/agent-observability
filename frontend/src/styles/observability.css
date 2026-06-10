@@ -206,20 +206,6 @@ body {
   color: var(--tertiary);
   border-radius: 0;
 }
-.app-sidebar-build {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--tertiary);
-  /* Hide when the rail collapses to icons. */
-}
-[data-state="collapsed"] .app-sidebar-build { display: none; }
-
 .obs-main {
   flex: 1;
   padding: 28px 32px 40px;
