@@ -41,6 +41,12 @@ description: Configuration comes from environment variables. Only DATABASE_URL i
         'LiveKit JWT HS256 signing secret. When both LIVEKIT_API_KEY and _SECRET are set, native ingest routes (recordings, OTLP) accept Bearer JWTs minted with this pair (payload must carry observability.write === true). Use the same pair the LiveKit SDK signs with on the agent side.',
     },
     {
+      name: 'ALERT_SWEEPER',
+      default: 'inline',
+      description:
+        'Where the alert sweeper runs. inline = inside the API process (zero-config single-container default). Set to off when the dedicated worker (bun run start:worker) is deployed, so exactly one sweeper is active.',
+    },
+    {
       name: 'S3_BUCKET',
       description:
         'Target bucket for uploaded audio recordings. S3 upload is enabled only when the bucket and credentials are all set.',
