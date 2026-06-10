@@ -13,9 +13,22 @@ bun run dev              # Start backend with hot reload (port 9090)
 bun run dev:frontend     # Start Vite dev server (port 5173, proxies /api to :9090)
 bun run build:frontend   # Build frontend for production
 bun run start            # Start production server (API + static files)
-docker compose up        # Start Postgres + app
+bun run dev:worker       # Background worker (alert sweeper) with hot reload
+bun run start:worker     # Background worker in production
+docker compose up        # Start Postgres + app + worker
 docker compose up postgres -d  # Postgres only for local dev
 ```
+
+Two entrypoints share the codebase: `src/index.ts` (REST API) and
+`src/worker.ts` (background job loop — alert sweeper + webhook delivery
+retries; no ports). The API runs the sweeper inline by default
+(`ALERT_SWEEPER=inline`) for zero-config single-container deploys; set
+`ALERT_SWEEPER=off` on the API when the worker runs so exactly one
+sweeper is active. Both handle SIGTERM/SIGINT gracefully. bun:sql
+gotchas that bit here (see `src/alerts/engine.ts` header): pass JS
+arrays/objects raw for `::jsonb` params (never pre-`JSON.stringify` —
+it lands as a jsonb string scalar) and never use the jsonb `?` operator
+in query text (bun rewrites it as a placeholder; use `jsonb_exists()`).
 
 ## Architecture
 

@@ -25,6 +25,23 @@ services:
       AUTO_MIGRATE: "true"
       PORT: "9090"
       NODE_ENV: "production"
+      # The dedicated worker below owns the alert sweeper. Exactly one
+      # sweeper may run — remove the worker service AND this line to fall
+      # back to the zero-config inline sweeper.
+      ALERT_SWEEPER: "off"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Background worker — alert sweeper + webhook delivery retries. Same
+  # image as the app, different entrypoint; no ports, just a job loop.
+  worker:
+    build: .
+    command: ["bun", "src/worker.ts"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://observability:observability@postgres:5432/agent_observability
+      NODE_ENV: "production"
     depends_on:
       postgres:
         condition: service_healthy

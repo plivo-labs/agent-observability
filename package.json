@@ -5,6 +5,8 @@
     "dev:frontend": "cd frontend && bun run dev",
     "build:frontend": "cd frontend && bun install && bun run build",
     "start": "NODE_ENV=production bun run src/index.ts",
+    "dev:worker": "bun run --hot src/worker.ts",
+    "start:worker": "NODE_ENV=production bun run src/worker.ts",
     "test": "bun test"
   },
   "dependencies": {

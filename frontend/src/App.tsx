@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { BarChart3, Bot, Moon, RefreshCw, Sun } from 'lucide-react'
+import { BarChart3, BellRing, Bot, Moon, RefreshCw, Sun } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -25,6 +25,7 @@ import { EvalRunComparePage } from '@/components/eval-run-compare-page'
 import { AgentsPage } from '@/components/agents-page'
 import { AgentDetailPage } from '@/components/agent-detail-page'
 import { AnalyticsPage } from '@/components/analytics-page'
+import { AlertRulesPage } from '@/components/alert-rules-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -57,6 +58,7 @@ const useDarkMode = () => {
 const NAV_ITEMS = [
   { to: '/', label: 'Agents', icon: Bot, isActive: (p: string) => p === '/' || p.startsWith('/agents') },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, isActive: (p: string) => p.startsWith('/analytics') },
+  { to: '/alerts', label: 'Alerts', icon: BellRing, isActive: (p: string) => p.startsWith('/alerts') },
 ]
 
 const AppSidebar = () => {
@@ -232,6 +234,7 @@ export default function App() {
               <Route path="/" element={<AgentsRoute />} />
               <Route path="/agents" element={<AgentsRoute />} />
               <Route path="/analytics" element={<AnalyticsRoute />} />
+              <Route path="/alerts" element={<AlertRulesPage />} />
               <Route path="/agents/:agentId" element={<AgentDetailRoute />} />
               <Route path="/agents/:agentId/sessions/:sessionId" element={<SessionDetailRoute />} />
               <Route path="/agents/:agentId/simulation-evals/compare" element={<EvalRunCompareRoute />} />
