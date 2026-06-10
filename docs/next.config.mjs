@@ -99,6 +99,9 @@ const config = {
       '@/components/token-usage-section': reg(
         'token-usage-section/token-usage-section.tsx',
       ),
+      '@/components/conversation-dynamics': reg(
+        'conversation-dynamics/conversation-dynamics.tsx',
+      ),
       '@/components/talk-time-chart': reg('talk-time-chart/talk-time-chart.tsx'),
       '@/components/cache-efficiency-chart': reg(
         'cache-efficiency-chart/cache-efficiency-chart.tsx',
