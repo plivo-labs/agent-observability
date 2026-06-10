@@ -2863,16 +2863,13 @@ body {
   border-radius: 999px !important;
 }
 
-/* Restore paper grid on body — observability.css's earlier `background:
- * var(--app-bg)` shorthand wipes the background-image set in index.css. */
+/* Solid paper body — the graph-paper grid texture from the original
+ * redesign was retired (June 2026); pages sit on plain warm paper. The
+ * !important keeps this winning over the earlier `background: var(--app-bg)`
+ * shorthand. */
 body {
   background-color: hsl(var(--background)) !important;
-  background-image:
-    linear-gradient(to right,  hsl(var(--bg3)) 1px, transparent 1px),
-    linear-gradient(to bottom, hsl(var(--bg3)) 1px, transparent 1px) !important;
-  background-size: 32px 32px !important;
-  background-position: -1px -1px !important;
-  background-attachment: fixed !important;
+  background-image: none !important;
 }
 
 /* Panels lift off the paper via a single hairline border. No more

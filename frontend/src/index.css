@@ -340,18 +340,6 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 
-    /* Paper grid — the signature texture. 32px pitch, hairline soft rule.
-     * Switched off via `data-no-grid` for embedded artboards / drawers. */
-    background-image:
-      linear-gradient(to right,  hsl(var(--bg3)) 1px, transparent 1px),
-      linear-gradient(to bottom, hsl(var(--bg3)) 1px, transparent 1px);
-    background-size: 32px 32px;
-    background-position: -1px -1px;
-    background-attachment: fixed;
-  }
-
-  body[data-no-grid="true"] {
-    background-image: none;
   }
 
   h1, h2, h3, h4, h5, h6,
