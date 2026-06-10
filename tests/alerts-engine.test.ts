@@ -56,13 +56,6 @@ const latencyRule = {
   min_samples: 10,
 };
 
-const volumeRule = {
-  ...failRateRule,
-  id: "r5",
-  metric: "session_volume",
-  threshold_value: 5,
-  min_samples: 1,
-};
 
 describe("alerts/engine evaluateRules", () => {
   beforeEach(() => {
@@ -139,22 +132,7 @@ describe("alerts/engine evaluateRules", () => {
     expect(fired).toBe(0);
   });
 
-  test("session_volume fires when the count falls BELOW the floor", async () => {
-    mockSql.mockResolvedValueOnce([volumeRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 2 }]);
-    mockSql.mockResolvedValueOnce([{ id: "r5" }]); // suppression claim
 
-    const fired = await evaluateRules();
-    expect(fired).toBe(1); // 2 < 5 — the inverted, agent-down metric
-  });
-
-  test("session_volume stays quiet at or above the floor", async () => {
-    mockSql.mockResolvedValueOnce([volumeRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 5 }]);
-
-    const fired = await evaluateRules();
-    expect(fired).toBe(0);
-  });
 
   test("a failing rule does not block the others", async () => {
     mockSql.mockResolvedValueOnce([countRule, { ...countRule, id: "r3" }]);

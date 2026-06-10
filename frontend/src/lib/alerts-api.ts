@@ -12,10 +12,8 @@ export type AlertMetric =
   | 'latency_tts_ttfb_p95'
   | 'latency_stt_p95'
   | 'interruption_rate'
-  | 'session_volume'
 
-/** Rate metrics store thresholds as 0..1 fractions; latency in ms;
- *  session_volume as a session count (and fires BELOW the floor). */
+/** Rate metrics store thresholds as 0..1 fractions; latency in ms. */
 export const RATE_METRICS: ReadonlySet<AlertMetric> = new Set([
   'eval_fail_rate',
   'outcome_fail_rate',

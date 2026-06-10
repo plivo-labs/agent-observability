@@ -228,26 +228,6 @@ async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
   };
 }
 
-async function evaluateSessionVolume(rule: RuleToEvaluate): Promise<WindowResult> {
-  const rows = await sql.unsafe(
-    `SELECT COUNT(*)::int AS total
-     FROM agent_transport_sessions
-     WHERE ended_at > NOW() - ${WINDOW_SQL}
-       AND ($2::text IS NULL OR agent_id = $2)
-       AND ($3::text IS NULL OR account_id = $3)`,
-    [String(rule.window_minutes), rule.agent_id, rule.account_id],
-  );
-  const total = rows[0]?.total ?? 0;
-  return {
-    matched_count: total,
-    total_count: total,
-    observed_value: total,
-    sample_session_ids: [],
-    // The inverted metric: silence is the failure. No min_samples gate —
-    // zero sessions is exactly the condition this exists to catch.
-    fired: rule.threshold_value != null && total < rule.threshold_value,
-  };
-}
 
 function evaluateMetricRule(rule: RuleToEvaluate): Promise<WindowResult> {
   switch (rule.metric) {
@@ -257,8 +237,6 @@ function evaluateMetricRule(rule: RuleToEvaluate): Promise<WindowResult> {
       return evaluateOutcomeFailRate(rule);
     case "interruption_rate":
       return evaluateInterruptionRate(rule);
-    case "session_volume":
-      return evaluateSessionVolume(rule);
     case "latency_perceived_p95":
     case "latency_llm_ttft_p95":
     case "latency_tts_ttfb_p95":

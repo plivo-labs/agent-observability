@@ -17,15 +17,12 @@ export const METRIC_LABEL: Record<AlertMetric, string> = {
   latency_tts_ttfb_p95: 'p95 TTS TTFB',
   latency_stt_p95: 'p95 STT delay',
   interruption_rate: 'Interruption rate',
-  session_volume: 'Session volume floor',
 }
 
-export type MetricKind = 'rate' | 'latency' | 'volume'
+export type MetricKind = 'rate' | 'latency'
 
 export function metricKind(metric: AlertMetric): MetricKind {
-  if (RATE_METRICS.has(metric)) return 'rate'
-  if (metric === 'session_volume') return 'volume'
-  return 'latency'
+  return RATE_METRICS.has(metric) ? 'rate' : 'latency'
 }
 
 export const WINDOW_OPTIONS = [
@@ -40,17 +37,12 @@ export function windowLabel(minutes: number): string {
   return WINDOW_OPTIONS.find((w) => w.minutes === minutes)?.label ?? `${minutes}m`
 }
 
-/** Render a metric value in its native unit (rate %, latency ms, count). */
+/** Render a metric value in its native unit (rate %, latency ms). */
 export function metricValue(metric: AlertMetric, value: number | null | undefined): string {
   if (value == null) return '—'
-  switch (metricKind(metric)) {
-    case 'rate':
-      return `${Math.round(value * 100)}%`
-    case 'latency':
-      return `${Math.round(value).toLocaleString()} ms`
-    case 'volume':
-      return `${value} session${value === 1 ? '' : 's'}`
-  }
+  return metricKind(metric) === 'rate'
+    ? `${Math.round(value * 100)}%`
+    : `${Math.round(value).toLocaleString()} ms`
 }
 
 /** Human summary of the trigger condition — the table's load-bearing cell. */
@@ -59,7 +51,6 @@ export function triggerSummary(rule: AlertRule): string {
   if (rule.trigger_type === 'metric_threshold' && rule.metric) {
     const value = metricValue(rule.metric, rule.threshold_value)
     const judge = rule.judge_name ? ` · ${rule.judge_name}` : ''
-    if (rule.metric === 'session_volume') return `< ${value} in ${win}`
     const samples = rule.min_samples > 1 ? ` (min ${rule.min_samples})` : ''
     return `> ${value} over ${win}${samples}${judge}`
   }

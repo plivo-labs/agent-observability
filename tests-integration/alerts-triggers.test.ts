@@ -188,36 +188,5 @@ describeDb("alert triggers against real Postgres", () => {
     expect(Number(firings[0].observed_value)).toBeCloseTo(0.5);
   });
 
-  test("session_volume fires when the count is BELOW the floor (agent-down)", async () => {
-    const acct = t.uid("acct");
-    await t.seedSession({ accountId: acct }); // 1 session < floor of 5
 
-    const rule = await t.createRule({
-      trigger_type: "metric_threshold",
-      metric: "session_volume",
-      account_id: acct,
-      threshold_count: null,
-      threshold_value: 5,
-    });
-    await evaluateRules();
-    const firings = await t.firingsFor(rule.id);
-    expect(firings).toHaveLength(1);
-    expect(Number(firings[0].observed_value)).toBe(1);
-  });
-
-  test("session_volume stays quiet at the floor", async () => {
-    const acct = t.uid("acct");
-    await t.seedSession({ accountId: acct });
-    await t.seedSession({ accountId: acct });
-
-    const rule = await t.createRule({
-      trigger_type: "metric_threshold",
-      metric: "session_volume",
-      account_id: acct,
-      threshold_count: null,
-      threshold_value: 2, // 2 sessions is NOT below 2
-    });
-    await evaluateRules();
-    expect(await t.firingsFor(rule.id)).toHaveLength(0);
-  });
 });

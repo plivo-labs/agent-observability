@@ -9,10 +9,7 @@ import { z } from "zod";
 //     rates (0..1):  eval_fail_rate, outcome_fail_rate, interruption_rate
 //     latency (ms):  latency_perceived_p95, latency_llm_ttft_p95,
 //                    latency_tts_ttfb_p95, latency_stt_p95
-//     count:         session_volume — the inverted one: fires when the
-//                    session count falls BELOW the threshold (agent-down
-//                    detector); everything else fires when the value
-//                    EXCEEDS the threshold.
+//   Every metric fires when the value EXCEEDS the threshold.
 
 export const triggerTypeSchema = z.enum(["evaluation_count", "outcome_count", "metric_threshold"]);
 export type TriggerType = z.infer<typeof triggerTypeSchema>;
@@ -25,7 +22,6 @@ export const alertMetricSchema = z.enum([
   "latency_tts_ttfb_p95",
   "latency_stt_p95",
   "interruption_rate",
-  "session_volume",
 ]);
 export type AlertMetric = z.infer<typeof alertMetricSchema>;
 
@@ -63,8 +59,7 @@ const baseRuleShape = {
   verdicts: verdictsSchema.default(["fail"]),
   threshold_count: z.number().int().min(1).nullable().optional(),
   threshold_value: z.number().gt(0).nullable().optional(),
-  // Gates rate and latency metrics. Deliberately IGNORED by
-  // session_volume — zero traffic is exactly what that metric detects.
+  // Gates rate and latency metrics — one bad sample can't fire a rule.
   min_samples: z.number().int().min(1).default(1),
   window_minutes: z.number().int().min(15),
   webhook_url: webhookUrlSchema,

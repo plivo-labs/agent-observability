@@ -7,8 +7,7 @@
 --     window. Metrics: eval_fail_rate, outcome_fail_rate (rates 0..1),
 --     latency_perceived_p95 / latency_llm_ttft_p95 / latency_tts_ttfb_p95 /
 --     latency_stt_p95 (ms), interruption_rate (0..1) — all fire when the
---     value EXCEEDS the threshold; session_volume fires when the session
---     count falls BELOW it (the agent-down detector).
+--     value EXCEEDS the threshold over the window.
 -- A rule that fires is suppressed for one window length (last_fired_at).
 --
 -- Webhook trust model: URLs are operator-configured plaintext (consistent
@@ -68,7 +67,7 @@ BEGIN
         'eval_fail_rate', 'outcome_fail_rate',
         'latency_perceived_p95', 'latency_llm_ttft_p95',
         'latency_tts_ttfb_p95', 'latency_stt_p95',
-        'interruption_rate', 'session_volume'));
+        'interruption_rate'));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'alert_rules_threshold_value_check') THEN
     ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_threshold_value_check

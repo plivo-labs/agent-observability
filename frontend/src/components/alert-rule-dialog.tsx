@@ -28,7 +28,7 @@ import { METRIC_LABEL, metricKind, WINDOW_OPTIONS } from '@/lib/alerts-format'
 
 // Form model. threshold_input holds the value in the metric's NATIVE UI
 // unit — percent integer for rates (converted to a 0–1 fraction on save),
-// milliseconds for latency, session count for the volume floor.
+// milliseconds for latency.
 const EMPTY_FORM = {
   name: '',
   // Metric threshold is the headline trigger — open with the full metric
@@ -236,10 +236,7 @@ export const AlertRuleDialog = ({
                   const m = v as AlertMetric
                   set('metric', m)
                   // Reset the threshold to a sensible default in the new unit.
-                  set(
-                    'threshold_input',
-                    metricKind(m) === 'rate' ? 30 : metricKind(m) === 'latency' ? 2000 : 5,
-                  )
+                  set('threshold_input', metricKind(m) === 'rate' ? 30 : 2000)
                 }}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -312,13 +309,7 @@ export const AlertRuleDialog = ({
           {isMetric && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <FieldLabel>
-                  {kind === 'rate'
-                    ? 'Fire when above (%)'
-                    : kind === 'latency'
-                      ? 'Fire when above (ms)'
-                      : 'Fire when sessions below'}
-                </FieldLabel>
+                <FieldLabel>{kind === 'rate' ? 'Fire when above (%)' : 'Fire when above (ms)'}</FieldLabel>
                 <Input
                   type="number"
                   min={1}
@@ -330,17 +321,15 @@ export const AlertRuleDialog = ({
                   }}
                 />
               </div>
-              {kind !== 'volume' && (
-                <div>
-                  <FieldLabel>Minimum samples in window</FieldLabel>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={form.min_samples}
-                    onChange={(e) => set('min_samples', Math.max(1, Number(e.target.value) || 1))}
-                  />
-                </div>
-              )}
+              <div>
+                <FieldLabel>Minimum samples in window</FieldLabel>
+                <Input
+                  type="number"
+                  min={1}
+                  value={form.min_samples}
+                  onChange={(e) => set('min_samples', Math.max(1, Number(e.target.value) || 1))}
+                />
+              </div>
             </div>
           )}
 

@@ -23,8 +23,7 @@ Two entrypoints share the codebase: `src/index.ts` (REST API) and
 `src/worker.ts` (background job loop — alert sweeper + webhook delivery
 retries; no ports). Alert rules are windowed triggers: count rules
 (≥ N matching verdicts/outcomes) and metric thresholds (eval/outcome
-fail rates, latency p95s, interruption rate — fire above X; session
-volume fires below X). Integration suites in `tests-integration/` run
+fail rates, latency p95s, interruption rate — fire above X). Integration suites in `tests-integration/` run
 every trigger and the delivery pipeline against real Postgres
 (`bun run test:integration`; separate process because `tests/` mocks
 the db module). The API runs the sweeper inline by default
