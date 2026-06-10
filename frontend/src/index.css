@@ -5,17 +5,17 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ===========================================================================
- * Instrument Panel theme — mapped onto Plivo CX Neo / shadcn token names.
+ * Stone theme — neutral OKLCH palette on shadcn token names.
  *
- * Aesthetic: scientific instrument / editorial. Paper bg, ink scale,
- * hairlines, near-zero radius, near-zero shadow, brand red rationed as a
- * verb. Letter-spacing carries hierarchy. Tabular numerals everywhere
- * numeric.
+ * Aesthetic: developer-grade neutral. White surfaces, warm-gray ink ladder
+ * (hue ~107), hairline borders, near-zero radius, monochrome chart ramp.
+ * Letter-spacing carries hierarchy. Tabular numerals everywhere numeric.
  *
- * Fonts: Inter everywhere (body, labels, numbers, codes) + Sora for
- * display headings. The former ui-monospace voice was retired June 2026;
- * the label signature now comes from the tight letter-spacing ladder +
- * uppercase, with tabular-nums keeping digits aligned.
+ * Tokens hold COMPLETE colors (oklch/hsl values), consumed as `var(--x)` —
+ * never `hsl(var(--x))`. Alpha variants use
+ * `color-mix(in oklab, var(--x) N%, transparent)`.
+ *
+ * Fonts: Inter (body, labels, numbers, codes) + Sora (display headings).
  * ======================================================================== */
 
 @theme inline {
@@ -29,32 +29,62 @@
   --radius-xs: 0.125rem;
   --radius-pill: 9999px;
 
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-tertiary: hsl(var(--tertiary));
-  --color-tertiary-foreground: hsl(var(--tertiary-foreground));
-  --color-link: hsl(var(--link));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-success: hsl(var(--success));
-  --color-warning: hsl(var(--warning));
-  --color-st1: hsl(var(--st1));
-  --color-st2: hsl(var(--st2));
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-tertiary: var(--tertiary);
+  --color-tertiary-foreground: var(--tertiary-foreground);
+  --color-ink-2: var(--ink-2);
+  --color-link: var(--link);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-st1: var(--st1);
+  --color-st2: var(--st2);
+
+  /* Status duos + chart ramp as first-class utilities (text-success-fg,
+   * bg-info-bg, border-warning-border, fill-chart-2, …). */
+  --color-success-bg: var(--success-bg);
+  --color-success-border: var(--success-border);
+  --color-success-fg: var(--success-fg);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-warning-fg: var(--warning-fg);
+  --color-destructive-bg: var(--destructive-bg);
+  --color-destructive-border: var(--destructive-border);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-bg: var(--info-bg);
+  --color-info-border: var(--info-border);
+  --color-accent-purple: var(--accent-purple);
+  --color-accent-purple-foreground: var(--accent-purple-foreground);
+  --color-accent-purple-bg: var(--accent-purple-bg);
+  --color-accent-purple-border: var(--accent-purple-border);
+  --color-bubble-user: var(--bubble-user);
+  --color-bubble-agent: var(--bubble-agent);
+  --color-bubble-customer: var(--bubble-customer);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 
   /* Letter-spacing ladder — the editorial signature. */
   --tracking-tight: 0.04em;
@@ -110,12 +140,12 @@
   --text-xxs-600: 10px;  --text-xxs-600--line-height: 13px;
 
   /* Aliases used in legacy class names — kept resolving. */
-  --color-bg1: hsl(var(--bg1));
-  --color-bg2: hsl(var(--bg2));
-  --color-bg3: hsl(var(--bg3));
-  --color-hv1: hsl(var(--hv1));
-  --color-hv2: hsl(var(--hv2));
-  --color-hv3: hsl(var(--hv3));
+  --color-bg1: var(--bg1);
+  --color-bg2: var(--bg2);
+  --color-bg3: var(--bg3);
+  --color-hv1: var(--hv1);
+  --color-hv2: var(--hv2);
+  --color-hv3: var(--hv3);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -127,99 +157,100 @@
 }
 
 /* ===========================================================================
- * Light theme — paper / ink
+ * Light theme — stone
  * ======================================================================== */
 :root {
-  /* Surface tier */
-  --background: 47 21% 96%;          /* #F7F6F2 — warm paper */
-  --foreground: 60 7% 5%;            /* #0E0E0C — primary ink */
-  --card: 0 0% 100%;                 /* pure white — panels lift off paper */
-  --card-foreground: 60 7% 5%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 60 7% 5%;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.153 0.006 107.1);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.153 0.006 107.1);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.153 0.006 107.1);
+  --primary: oklch(0.228 0.013 107.4);
+  --primary-foreground: oklch(0.988 0.003 106.5);
+  --secondary: oklch(0.966 0.005 106.5);
+  --secondary-foreground: oklch(0.228 0.013 107.4);
+  --muted: oklch(0.966 0.005 106.5);
+  --muted-foreground: oklch(0.58 0.031 107.3);
+  --accent: oklch(0.966 0.005 106.5);
+  --accent-foreground: oklch(0.228 0.013 107.4);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.93 0.007 106.5);
+  --input: oklch(0.93 0.007 106.5);
+  --ring: oklch(0.737 0.021 106.9);
+  --chart-1: oklch(0.88 0.011 106.6);
+  --chart-2: oklch(0.58 0.031 107.3);
+  --chart-3: oklch(0.466 0.025 107.3);
+  --chart-4: oklch(0.394 0.023 107.4);
+  --chart-5: oklch(0.286 0.016 107.4);
+  --radius: 0;
+  --sidebar: oklch(0.988 0.003 106.5);
+  --sidebar-foreground: oklch(0.153 0.006 107.1);
+  --sidebar-primary: oklch(0.228 0.013 107.4);
+  --sidebar-primary-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-accent: oklch(0.966 0.005 106.5);
+  --sidebar-accent-foreground: oklch(0.228 0.013 107.4);
+  --sidebar-border: oklch(0.93 0.007 106.5);
+  --sidebar-ring: oklch(0.737 0.021 106.9);
 
-  /* Ink ladder */
-  --primary: 60 7% 5%;               /* ink — primary buttons stay dark */
-  --primary-foreground: 47 21% 96%;  /* paper, on filled-primary */
-  --secondary: 47 11% 20%;           /* #38362F — body labels */
-  --secondary-foreground: 47 21% 96%;
-  --tertiary: 42 6% 40%;             /* #6E6A60 — captions */
-  --tertiary-foreground: 47 21% 96%;
+  /* --- Extended tokens (not in the base shadcn set) ----------------------
+   * Ink ladder: foreground (0.153) → ink-2 (0.286, body labels) →
+   * tertiary (0.58, captions). Replaces the old secondary/tertiary ink roles
+   * now that --secondary is the shadcn "subtle wash" semantic. */
+  --ink-2: oklch(0.286 0.016 107.4);
+  --tertiary: oklch(0.58 0.031 107.3);
+  --tertiary-foreground: oklch(0.988 0.003 106.5);
+  --destructive-foreground: oklch(0.988 0.003 106.5);
 
-  --muted: 45 25% 91%;               /* #EDE9DF — rule-soft, bg dividers */
-  --muted-foreground: 42 6% 40%;     /* #6E6A60 — tertiary */
-  --accent: 9 78% 45%;               /* #C8341C — brand red ("verb") */
-  --accent-foreground: 0 0% 100%;
-  --destructive: 9 78% 45%;          /* same as accent — brand red */
-  --destructive-foreground: 0 0% 100%;
+  --link: oklch(0.228 0.013 107.4);
 
-  --success: 141 42% 29%;            /* #2B6A3F — good */
-  --success-foreground: 0 0% 100%;
-  --warning: 34 85% 36%;              /* #A8650E — warn */
-  --warning-foreground: 0 0% 100%;
+  /* Status colors + soft duos (bg / border / fg per status) — monochrome
+   * G1: every status family sits on the neutral ramp at a distinct step;
+   * destructive is the ONLY hue, with tints mixed from it. Distinction
+   * comes from lightness, weight, and position — not color. */
+  --success: oklch(0.466 0.025 107.3);
+  --success-foreground: oklch(0.988 0.003 106.5);
+  --warning: oklch(0.286 0.016 107.4);
+  --warning-foreground: oklch(0.988 0.003 106.5);
+  --success-bg: oklch(0.966 0.005 106.5);
+  --success-border: oklch(0.88 0.011 106.6);
+  --success-fg: oklch(0.286 0.016 107.4);
+  --info: oklch(0.58 0.031 107.3);
+  --info-foreground: oklch(0.988 0.003 106.5);
+  --info-bg: oklch(0.966 0.005 106.5);
+  --info-border: oklch(0.88 0.011 106.6);
+  --accent-purple: oklch(0.394 0.023 107.4);
+  --accent-purple-foreground: oklch(0.988 0.003 106.5);
+  --accent-purple-bg: oklch(0.966 0.005 106.5);
+  --accent-purple-border: oklch(0.88 0.011 106.6);
+  --warning-bg: oklch(0.966 0.005 106.5);
+  --warning-border: oklch(0.737 0.021 106.9);
+  --warning-fg: oklch(0.153 0.006 107.1);
+  --destructive-bg: color-mix(in oklab, var(--destructive) 8%, var(--background));
+  --destructive-border: color-mix(in oklab, var(--destructive) 25%, var(--background));
 
-  /* Hairlines */
-  --border: 45 21% 83%;              /* #DDD8CB — rule */
-  --input: 45 21% 83%;
-  --ring: 60 7% 5%;                  /* ink — focus border */
+  /* st-tiers preserved for legacy lookups. */
+  --st1: var(--border);
+  --st2: var(--muted);
 
-  /* st-tiers preserved for any legacy lookups */
-  --st1: 45 21% 83%;
-  --st2: 45 25% 91%;
+  /* Surface tiers — page-adjacent neutrals. */
+  --bg1: oklch(0.988 0.003 106.5);
+  --bg2: oklch(1 0 0);
+  --bg3: oklch(0.966 0.005 106.5);
+  --hv1: oklch(0.966 0.005 106.5);
+  --hv2: oklch(0.93 0.007 106.5);
+  --hv3: oklch(0.88 0.011 106.6);
 
-  /* Surface tiers — slightly differentiated paper tones */
-  --bg1: 45 22% 94%;
-  --bg2: 47 21% 96%;
-  --bg3: 45 25% 91%;
-  --hv1: 45 22% 92%;
-  --hv2: 45 20% 88%;
-  --hv3: 45 18% 84%;
-
-  --link: 217 64% 34%;               /* info-blue */
-
-  /* Semantic duos — `bg`/`border`/`fg` per status.
-   * Used widely in observability.css (cap-stt, status-chip, etc.) */
-  --success-bg: 132 24% 91%;
-  --success-border: 132 24% 80%;
-  --success-fg: 141 42% 29%;
-  --info: 217 64% 34%;
-  --info-foreground: 0 0% 100%;
-  --info-bg: 213 31% 91%;
-  --info-border: 213 31% 80%;
-  --accent-purple: 267 53% 42%;
-  --accent-purple-foreground: 0 0% 100%;
-  --accent-purple-bg: 277 41% 92%;
-  --accent-purple-border: 277 41% 82%;
-  --warning-bg: 42 64% 91%;
-  --warning-border: 42 64% 82%;
-  --warning-fg: 34 85% 36%;
-  --destructive-bg: 12 71% 94%;
-  --destructive-border: 12 71% 86%;
-
-  /* Bubble surfaces — paper for user, faint info-soft for agent */
-  --bubble-user: 47 21% 96%;
-  --bubble-agent: 213 31% 95%;
+  /* Bubble surfaces — muted wash for user, near-white + border for agent. */
+  --bubble-user: oklch(0.966 0.005 106.5);
+  --bubble-agent: oklch(0.988 0.003 106.5);
   --bubble-customer: var(--bubble-user);
 
-  /* JSON syntax — monochrome with subtle differentiation */
-  --code-key: 60 7% 5%;
-  --code-string: 42 6% 40%;
-  --code-number: 42 6% 40%;
-  --code-bool: 42 6% 40%;
-
-  /* Radius — flat by default. Pills opt in to 2px. */
-  --radius: 0;
-
-  /* Sidebar — the instrument rail. One paper tier below the page so the
-   * chassis reads as structure, not content; ink ladder for labels. */
-  --sidebar: hsl(45 22% 94%);                 /* --bg1 chassis paper */
-  --sidebar-foreground: hsl(47 11% 20%);      /* secondary ink */
-  --sidebar-primary: hsl(60 7% 5%);           /* ink */
-  --sidebar-primary-foreground: hsl(47 21% 96%);
-  --sidebar-accent: hsl(45 20% 88%);          /* --hv2 hover wash */
-  --sidebar-accent-foreground: hsl(60 7% 5%);
-  --sidebar-border: hsl(45 21% 83%);          /* rule */
-  --sidebar-ring: hsl(60 7% 5%);
+  /* JSON syntax — monochrome with subtle differentiation. */
+  --code-key: oklch(0.153 0.006 107.1);
+  --code-string: oklch(0.58 0.031 107.3);
+  --code-number: oklch(0.58 0.031 107.3);
+  --code-bool: oklch(0.58 0.031 107.3);
 }
 
 /* Brand color variables — retained for the Plivo logo / brand glyph. */
@@ -235,92 +266,95 @@
   --danger-color: #FF4747;
   --plivo-red: #E02020;
 
-  /* The instrument-panel brand red, exposed for places that hand-paint it. */
+  /* The brand red, exposed for the brand glyph and other hand-painted spots. */
   --instrument-accent: #C8341C;
 }
 
 /* ===========================================================================
- * Dark theme — warm-black inversion per design system's dark draft
+ * Dark theme — stone, warm-charcoal inversion
  * ======================================================================== */
 .dark {
-  --background: 48 10% 7%;           /* #14130F */
-  --foreground: 45 35% 93%;          /* #F4F1E8 */
-  --card: 45 9% 10%;                 /* #1C1B17 — surface, slightly above bg */
-  --card-foreground: 45 35% 93%;
-  --popover: 45 9% 10%;
-  --popover-foreground: 45 35% 93%;
+  --background: oklch(0.153 0.006 107.1);
+  --foreground: oklch(0.988 0.003 106.5);
+  --card: oklch(0.228 0.013 107.4);
+  --card-foreground: oklch(0.988 0.003 106.5);
+  --popover: oklch(0.228 0.013 107.4);
+  --popover-foreground: oklch(0.988 0.003 106.5);
+  --primary: oklch(0.93 0.007 106.5);
+  --primary-foreground: oklch(0.228 0.013 107.4);
+  --secondary: oklch(0.286 0.016 107.4);
+  --secondary-foreground: oklch(0.988 0.003 106.5);
+  --muted: oklch(0.286 0.016 107.4);
+  --muted-foreground: oklch(0.737 0.021 106.9);
+  --accent: oklch(0.286 0.016 107.4);
+  --accent-foreground: oklch(0.988 0.003 106.5);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.58 0.031 107.3);
+  --chart-1: oklch(0.88 0.011 106.6);
+  --chart-2: oklch(0.58 0.031 107.3);
+  --chart-3: oklch(0.466 0.025 107.3);
+  --chart-4: oklch(0.394 0.023 107.4);
+  --chart-5: oklch(0.286 0.016 107.4);
+  --sidebar: oklch(0.228 0.013 107.4);
+  --sidebar-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-accent: oklch(0.286 0.016 107.4);
+  --sidebar-accent-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.58 0.031 107.3);
 
-  --primary: 45 35% 93%;             /* inverted: paper on dark = primary fg */
-  --primary-foreground: 48 10% 7%;
-  --secondary: 42 14% 78%;           /* #CFCBBE */
-  --secondary-foreground: 48 10% 7%;
-  --tertiary: 42 8% 53%;             /* #8E8A7E */
-  --tertiary-foreground: 48 10% 7%;
+  /* --- Extended tokens ------------------------------------------------- */
+  --ink-2: oklch(0.88 0.011 106.6);
+  --tertiary: oklch(0.737 0.021 106.9);
+  --tertiary-foreground: oklch(0.153 0.006 107.1);
+  --destructive-foreground: oklch(0.988 0.003 106.5);
 
-  --muted: 45 9% 13%;
-  --muted-foreground: 42 8% 53%;
-  --accent: 9 65% 55%;               /* desat brand red for dark */
-  --accent-foreground: 0 0% 100%;
-  --destructive: 9 65% 55%;
-  --destructive-foreground: 0 0% 98%;
+  --link: oklch(0.93 0.007 106.5);
 
-  --success: 141 35% 48%;
-  --success-foreground: 45 35% 93%;
-  --warning: 34 85% 56%;
-  --warning-foreground: 48 10% 7%;
+  --success: oklch(0.737 0.021 106.9);
+  --success-foreground: oklch(0.153 0.006 107.1);
+  --warning: oklch(0.88 0.011 106.6);
+  --warning-foreground: oklch(0.153 0.006 107.1);
+  --success-bg: oklch(0.286 0.016 107.4);
+  --success-border: oklch(1 0 0 / 10%);
+  --success-fg: oklch(0.88 0.011 106.6);
+  --info: oklch(0.737 0.021 106.9);
+  --info-bg: oklch(0.286 0.016 107.4);
+  --info-border: oklch(1 0 0 / 10%);
+  --accent-purple: oklch(0.88 0.011 106.6);
+  --accent-purple-bg: oklch(0.286 0.016 107.4);
+  --accent-purple-border: oklch(1 0 0 / 10%);
+  --warning-bg: oklch(0.286 0.016 107.4);
+  --warning-border: oklch(1 0 0 / 20%);
+  --warning-fg: oklch(0.988 0.003 106.5);
+  --destructive-bg: color-mix(in oklab, var(--destructive) 15%, var(--background));
+  --destructive-border: color-mix(in oklab, var(--destructive) 35%, var(--background));
 
-  --border: 40 9% 16%;               /* #2E2C26 */
-  --input: 40 9% 16%;
-  --ring: 45 35% 93%;
+  --st1: var(--border);
+  --st2: var(--muted);
 
-  --st1: 40 9% 16%;
-  --st2: 45 9% 13%;
+  --bg1: oklch(0.153 0.006 107.1);
+  --bg2: oklch(0.19 0.009 107.2);
+  --bg3: oklch(0.286 0.016 107.4);
+  --hv1: oklch(0.286 0.016 107.4);
+  --hv2: oklch(0.32 0.017 107.4);
+  --hv3: oklch(0.36 0.019 107.4);
 
-  --bg1: 48 10% 7%;
-  --bg2: 45 9% 9%;
-  --bg3: 45 9% 13%;
-  --hv1: 45 9% 12%;
-  --hv2: 45 8% 15%;
-  --hv3: 40 8% 18%;
-
-  --link: 217 70% 65%;
-
-  --success-bg: 141 35% 12%;
-  --success-border: 141 25% 22%;
-  --success-fg: 141 55% 70%;
-  --info: 217 75% 65%;
-  --info-bg: 217 50% 14%;
-  --info-border: 217 35% 26%;
-  --accent-purple: 267 65% 75%;
-  --accent-purple-bg: 267 40% 16%;
-  --accent-purple-border: 267 30% 30%;
-  --warning-bg: 38 50% 12%;
-  --warning-border: 38 35% 24%;
-  --warning-fg: 38 80% 72%;
-  --destructive-bg: 9 50% 14%;
-  --destructive-border: 9 40% 26%;
-
-  --bubble-user: 45 9% 11%;
-  --bubble-agent: 217 40% 16%;
+  --bubble-user: oklch(0.286 0.016 107.4);
+  --bubble-agent: oklch(0.228 0.013 107.4);
   --bubble-customer: var(--bubble-user);
 
-  --code-key: 45 35% 93%;
-  --code-string: 42 8% 60%;
-  --code-number: 42 8% 60%;
-  --code-bool: 42 8% 60%;
-  /* Sidebar — warm-black chassis, one tier below the dark page. */
-  --sidebar: hsl(45 9% 9%);                   /* --bg2 dark chassis */
-  --sidebar-foreground: hsl(42 14% 78%);      /* secondary on dark */
-  --sidebar-primary: hsl(45 35% 93%);
-  --sidebar-primary-foreground: hsl(48 10% 7%);
-  --sidebar-accent: hsl(45 8% 15%);           /* --hv2 hover wash */
-  --sidebar-accent-foreground: hsl(45 35% 93%);
-  --sidebar-border: hsl(40 9% 16%);           /* rule */
-  --sidebar-ring: hsl(45 35% 93%);
+  --code-key: oklch(0.988 0.003 106.5);
+  --code-string: oklch(0.737 0.021 106.9);
+  --code-number: oklch(0.737 0.021 106.9);
+  --code-bool: oklch(0.737 0.021 106.9);
 }
 
 /* ===========================================================================
- * Base layer — body type, focus styles, paper grid
+ * Base layer — body type, focus styles
  * ======================================================================== */
 @layer base {
   * {
@@ -360,7 +394,7 @@
     font: 600 10px/1.2 var(--font-sans);
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: hsl(var(--tertiary));
+    color: var(--tertiary);
   }
 
   /* Numeric utility — apply `.tabular` / `data-numeric` for column-aligned
@@ -375,9 +409,9 @@
 }
 
 /* ===========================================================================
- * Selection — instrument-panel-themed, not browser default.
+ * Selection — neutral ink wash, not browser default.
  * ======================================================================== */
 ::selection {
-  background: hsl(var(--accent) / 0.18);
-  color: hsl(var(--foreground));
+  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  color: var(--foreground);
 }

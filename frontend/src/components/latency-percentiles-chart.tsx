@@ -67,25 +67,25 @@ export const LatencyPercentilesChart = ({ metrics: metricsProp }: { metrics?: Se
     <ChartCard
       title="Latency Percentiles"
       legend={[
-        { color: 'hsl(var(--primary) / 0.4)', label: 'Avg' },
-        { color: 'hsl(var(--primary))', label: 'P95' },
+        { color: 'color-mix(in oklab, var(--primary) 40%, transparent)', label: 'Avg' },
+        { color: 'var(--primary)', label: 'P95' },
       ]}
     >
       <BarChart data={chartData} barCategoryGap="20%">
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--st1)" />
         <XAxis
           dataKey="name"
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <YAxis
           tickFormatter={(v: number) => formatMs(v)}
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
-        <Tooltip content={<PercentilesTooltip />} cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />
-        <Bar dataKey="avg" name="Avg" fill="hsl(var(--primary) / 0.4)" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="p95" name="P95" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+        <Tooltip content={<PercentilesTooltip />} cursor={{ fill: 'color-mix(in oklab, var(--muted) 40%, transparent)' }} />
+        <Bar dataKey="avg" name="Avg" fill="color-mix(in oklab, var(--primary) 40%, transparent)" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="p95" name="P95" fill="var(--primary)" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ChartCard>
   )

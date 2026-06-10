@@ -46,6 +46,14 @@ export const PERCEIVED_MS_WHERE = `
   (m->>'e2e_latency') ~ '^[0-9.]+$'
      OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'`;
 
+/** A single per-turn metric in milliseconds, from the per_turn[] element
+ *  alias `m` produced by PER_TURN_ELEMS. Raw values are stored in seconds.
+ *  `where` keeps only rows carrying a numeric value — pair them. */
+export const PER_TURN_MS = (field: string) => ({
+  value: `NULLIF(m->>'${field}', '')::float * 1000`,
+  where: `(m->>'${field}') ~ '^[0-9.]+$'`,
+});
+
 // Same NULL/non-array guard for chat_history (raw chat items, not the
 // per_turn metrics array). Element alias convention: `item`.
 export const CHAT_HISTORY_ELEMS = (col: string) => `

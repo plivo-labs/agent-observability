@@ -32,3 +32,5 @@ tests/**/*.test.js
 packages/ui/tests/**/*.test.js
 plugins/examples/node/*.js
 tsconfig.tsbuildinfo
+.claude/
+PLANS.md

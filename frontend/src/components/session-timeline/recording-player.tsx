@@ -38,29 +38,42 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 const SPEEDS = [1, 1.5, 2] as const
 type Speed = (typeof SPEEDS)[number]
 
-/* WaveSurfer assigns wave/progress colors directly to canvas fillStyle.
- * Canvas does NOT resolve CSS `var()` — that only works in stylesheet /
- * inline-style contexts. So we read the raw `H S% L%` triple via
- * getComputedStyle and build literal `hsl(...)` strings ourselves. We
- * also re-resolve on theme change (the .dark class is toggled on
- * <html>) and call setOptions, since wavesurfer caches the parsed
- * color and won't repaint on its own. */
-function readVar(name: string): string {
+/* WaveSurfer assigns wave/progress colors directly to canvas fillStyle,
+ * which doesn't resolve CSS `var()` (vars are CSS-context only). So we
+ * read the token's complete color value (oklch/hsl) via getComputedStyle
+ * and pass it through a scratch canvas, which normalizes any CSS color
+ * to `#rrggbb` — alpha variants append a hex alpha byte. Re-resolve on
+ * theme change since wavesurfer caches the parsed color at paint time.
+ *
+ * Monochrome design: user voice is the lighter ink (muted-foreground),
+ * agent voice is the darker ink (foreground). Differentiation by
+ * weight, not hue. */
+let scratchCtx: CanvasRenderingContext2D | null = null
+function readColor(name: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  // Fallback if the var isn't defined yet (rare initial paint).
-  return v || '0 0% 50%'
+  if (!v) return '#808080'
+  scratchCtx ??= document.createElement('canvas').getContext('2d')
+  if (!scratchCtx) return v
+  scratchCtx.fillStyle = '#808080'
+  scratchCtx.fillStyle = v
+  return scratchCtx.fillStyle
+}
+
+function withAlpha(color: string, alpha: number): string {
+  if (!color.startsWith('#') || color.length !== 7) return color
+  return color + Math.round(alpha * 255).toString(16).padStart(2, '0')
 }
 
 function resolveColors() {
-  const fg = readVar('--foreground')
-  const accent = readVar('--accent-purple')
-  const primary = readVar('--primary')
+  const muted = readColor('--muted-foreground')
+  const fg = readColor('--foreground')
+  const primary = readColor('--primary')
   return {
-    userWave: `hsl(${fg} / 0.45)`,
-    userProgress: `hsl(${fg} / 0.85)`,
-    agentWave: `hsl(${accent} / 0.65)`,
-    agentProgress: `hsl(${accent})`,
-    cursor: `hsl(${primary})`,
+    userWave: withAlpha(muted, 0.55),
+    userProgress: muted,
+    agentWave: withAlpha(fg, 0.45),
+    agentProgress: fg,
+    cursor: primary,
   }
 }
 
@@ -285,10 +298,10 @@ export function RecordingPlayer({
     userWs.seekTo(currentTimeMs / (dur * 1000))
   }, [currentTimeMs])
 
-  /* WaveSurfer caches resolved colors at draw time, so toggling the
-   * `dark` class on <html> doesn't repaint the waves. Watch for that
-   * class change, re-resolve CSS variables (canvas can't read them),
-   * and call setOptions to force a repaint. */
+  /* WaveSurfer caches resolved colors at draw time, so a `dark` class
+   * toggle on <html> won't repaint the canvas with the new theme's
+   * variables. Watch the class change, re-resolve CSS variables (canvas
+   * can't read them), and re-set the colors. */
   useEffect(() => {
     const root = document.documentElement
     const repaint = () => {
@@ -386,14 +399,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor="hsl(var(--foreground) / 0.85)"
+        labelColor="var(--muted-foreground)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor="hsl(var(--accent-purple))"
+        labelColor="var(--foreground)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />

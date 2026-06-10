@@ -129,7 +129,7 @@ function CaseRow({
       <td
         className={cn(
           'h-10 px-3.5 border-b border-border font-mono tabular-nums',
-          ttftBad ? 'text-[hsl(var(--destructive))]' : 'text-foreground/85',
+          ttftBad ? 'text-destructive' : 'text-foreground/85',
         )}
       >
         {c.ttft_avg_ms != null ? formatMs(c.ttft_avg_ms) : '—'}
@@ -138,7 +138,7 @@ function CaseRow({
         <td
           className={cn(
             'h-10 px-3.5 border-b border-border font-mono tabular-nums',
-            ttfbBad ? 'text-[hsl(var(--destructive))]' : 'text-foreground/85',
+            ttfbBad ? 'text-destructive' : 'text-foreground/85',
           )}
         >
           {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
@@ -167,16 +167,16 @@ function CaseRow({
               className={cn(
                 'font-mono tabular-nums',
                 asrBad
-                  ? 'text-[hsl(var(--destructive))]'
+                  ? 'text-destructive'
                   : asrWarn
-                    ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
-                    : 'text-[hsl(var(--success-fg,var(--success)))]',
+                    ? 'text-warning-fg'
+                    : 'text-success-fg',
               )}
             >
               {(c.asr * 100).toFixed(1)}%
             </span>
             {hasInterrupt && (
-              <span className="inline-flex items-center px-1.5 h-[18px] rounded bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border border-[hsl(var(--warning-border))] text-[10px] font-medium tracking-wide">
+              <span className="inline-flex items-center px-1.5 h-[18px] rounded bg-warning-bg text-warning-fg border border-warning-border text-[10px] font-medium tracking-wide">
                 intr
               </span>
             )}

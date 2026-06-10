@@ -72,11 +72,11 @@ export function ResultBadge({ value }: { value: string | null | undefined }) {
       className={cn(
         'gap-1 capitalize',
         tone === 'success' &&
-          'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]',
+          'border-success-border bg-success-bg text-success-fg',
         tone === 'maybe' &&
-          'border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))]',
+          'border-warning-border bg-warning-bg text-warning-fg',
         tone === 'fail' &&
-          'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]',
+          'border-destructive-border bg-destructive-bg text-destructive',
       )}
     >
       {icon}

@@ -81,7 +81,7 @@ export const SessionHeader = ({
               )}
             </div>
           ) : (
-            <span style={{ color: 'hsl(var(--tertiary))' }}>—</span>
+            <span style={{ color: 'var(--tertiary)' }}>—</span>
           )}
         </KVRow>
         <KVRow label="Capabilities">
@@ -112,7 +112,7 @@ export const SessionHeader = ({
               <Download size={12} /> Download
             </a>
           ) : (
-            <span style={{ color: 'hsl(var(--tertiary))' }}>—</span>
+            <span style={{ color: 'var(--tertiary)' }}>—</span>
           )}
         </KVRow>
       </div>

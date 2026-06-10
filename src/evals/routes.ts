@@ -12,6 +12,7 @@ import {
 import {
   buildListResponse,
   buildErrorResponse,
+  formatZodError,
   newApiId,
 } from "../response.js";
 
@@ -180,18 +181,3 @@ export function registerEvalRoutes(app: Hono) {
   });
 }
 
-function formatZodError(err: unknown): string {
-  try {
-    const issues = (err as any)?.issues;
-    if (Array.isArray(issues)) {
-      return issues
-        .slice(0, 5)
-        .map((i: any) => {
-          const path = Array.isArray(i.path) ? i.path.join(".") : "";
-          return path ? `${path}: ${i.message}` : i.message;
-        })
-        .join("; ");
-    }
-  } catch {}
-  return "Validation failed";
-}

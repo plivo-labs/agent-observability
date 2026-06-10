@@ -80,9 +80,9 @@ function VerdictBanner({ judgment }: { judgment: JudgmentResult }) {
 			className={cn(
 				"rounded-md border px-3 py-2.5",
 				failed &&
-					"border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))]",
+					"border-destructive-border bg-destructive-bg",
 				passed &&
-					"border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))]",
+					"border-success-border bg-success-bg",
 				!failed && !passed && "border-border bg-muted/40",
 			)}
 		>
@@ -91,9 +91,9 @@ function VerdictBanner({ judgment }: { judgment: JudgmentResult }) {
 					className={cn(
 						"flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xxs-600",
 						failed &&
-							"bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]",
+							"bg-destructive-bg text-destructive",
 						passed &&
-							"bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg))]",
+							"bg-success-bg text-success-fg",
 						!failed && !passed && "bg-muted text-muted-foreground",
 					)}
 				>
@@ -119,9 +119,9 @@ function VerdictBanner({ judgment }: { judgment: JudgmentResult }) {
 								className={cn(
 									"inline-flex items-center rounded px-1.5 py-0.5 text-xxs-600 font-mono",
 									failed
-										? "bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]"
+										? "bg-destructive-bg text-destructive"
 										: passed
-											? "bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg))]"
+											? "bg-success-bg text-success-fg"
 											: "bg-muted text-muted-foreground",
 								)}
 							>
@@ -211,17 +211,17 @@ type Tone = "muted" | "sky" | "violet" | "rose" | "ink";
 
 const TONE_BG: Record<Tone, string> = {
 	muted: "bg-muted-foreground/60",
-	sky: "bg-[hsl(var(--info))]",
-	violet: "bg-[hsl(var(--accent-purple))]",
-	rose: "bg-[hsl(var(--destructive))]",
+	sky: "bg-info",
+	violet: "bg-accent-purple",
+	rose: "bg-destructive",
 	ink: "bg-foreground",
 };
 
 const TONE_TEXT: Record<Tone, string> = {
 	muted: "text-muted-foreground",
-	sky: "text-[hsl(var(--info))]",
-	violet: "text-[hsl(var(--accent-purple))]",
-	rose: "text-[hsl(var(--destructive))]",
+	sky: "text-info",
+	violet: "text-accent-purple",
+	rose: "text-destructive",
 	ink: "text-foreground",
 };
 
@@ -377,7 +377,7 @@ function ToolResultRow({ event }: { event: RunEventFunctionCallOutput }) {
 				{event.is_error && (
 					<Badge
 						variant="outline"
-						className="text-xxs-600 text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] shrink-0"
+						className="text-xxs-600 text-destructive border-destructive-border shrink-0"
 					>
 						error
 					</Badge>
@@ -386,7 +386,7 @@ function ToolResultRow({ event }: { event: RunEventFunctionCallOutput }) {
 					className={cn(
 						"font-mono text-xxs-400 truncate",
 						event.is_error
-							? "text-[hsl(var(--destructive))]"
+							? "text-destructive"
 							: "text-muted-foreground",
 					)}
 				></span>
@@ -418,7 +418,7 @@ function HandoffRow({ event }: { event: RunEventAgentHandoff }) {
 				<span className="font-mono text-xs-600 text-foreground">
 					{event.from_agent ?? "?"}
 				</span>
-				<span className="font-mono text-xs-600 text-[hsl(var(--info))]">
+				<span className="font-mono text-xs-600 text-info">
 					→
 				</span>
 				<span className="font-mono text-xs-600 text-foreground">
