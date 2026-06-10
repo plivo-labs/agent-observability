@@ -37,95 +37,6 @@
   --text-xl-700:  700 32px/40px var(--font-sans);
 }
 
-/* Neo surface tokens + semantic color extensions.
- * Wrapped in :where() so specificity is 0 — any :root declaration in the
- * consumer's own theme wins, letting the components adopt their design system.
- * Components never reference hex literals; they only read HSL-triplet vars.
- *
- * Monochrome (shadcn "zinc") palette: all status / capability / accent
- * extensions collapse to a single neutral scale. Emphasis comes from weight,
- * border, and position — not hue. Mirror of theme-dev.css from the handoff. */
-:where(html) {
-  /* Surface tiers — zinc-50 → zinc-300 in HSL triplet form */
-  --bg1: hsl(210 20% 97%);
-  --bg2: hsl(210 25% 98%);
-  --bg3: hsl(210 20% 94%);
-  --hv1: hsl(240 5% 96%);
-  --hv2: hsl(240 6% 90%);
-  --hv3: hsl(240 5% 84%);
-  --st1: hsl(240 6% 90%);
-  --st2: hsl(240 5% 84%);
-  --tertiary: hsl(240 5% 40%);
-  /* Agent bubble picks up a pale blue tint so it reads distinct from the
-   * user bubble (neutral grey). Same color family as `--info-bg` so the
-   * agent avatar and bubble stay cohesive. */
-  --bubble-agent: hsl(210 90% 96%);
-  --bubble-user: hsl(240 5% 97%);
-
-  /* Semantic extensions — muted shadcn-style tints.
-   * Each `-bg` / `-border` pair gives the chip/badge a subtle hue
-   * (so Pass/Fail/STT/LLM/TTS read distinct at a glance) without
-   * breaking the overall zinc-scale aesthetic. Text uses the bold
-   * `-foreground` so the label pops against the pale tint. */
-  --success-bg: hsl(142 76% 96%);
-  --success-border: hsl(142 45% 85%);
-  --success-fg: hsl(142 70% 28%);
-  --info: hsl(210 90% 42%);
-  --info-foreground: hsl(0 0% 100%);
-  --info-bg: hsl(210 90% 96%);
-  --info-border: hsl(210 70% 85%);
-  --accent-purple: hsl(270 60% 44%);
-  --accent-purple-foreground: hsl(0 0% 100%);
-  --accent-purple-bg: hsl(270 80% 96%);
-  --accent-purple-border: hsl(270 50% 88%);
-  --warning-bg: hsl(38 96% 94%);
-  --warning-border: hsl(38 80% 82%);
-  --warning-fg: hsl(28 80% 34%);
-  --destructive-bg: hsl(0 85% 97%);
-  --destructive-border: hsl(0 70% 90%);
-
-  /* JSON syntax highlighting — single neutral ink with subtle weight
-   * differentiation (same monochrome discipline as the rest). */
-  --code-key: hsl(240 10% 10%);
-  --code-string: hsl(240 4% 46%);
-  --code-number: hsl(240 4% 46%);
-  --code-bool: hsl(240 4% 46%);
-}
-
-:where(.dark) {
-  --bg1: hsl(240 6% 7%);
-  --bg2: hsl(240 10% 4%);
-  --bg3: hsl(240 5% 11%);
-  --hv1: hsl(240 5% 11%);
-  --hv2: hsl(240 4% 16%);
-  --hv3: hsl(240 4% 20%);
-  --st1: hsl(240 4% 16%);
-  --st2: hsl(240 4% 20%);
-  --tertiary: hsl(240 5% 65%);
-  --bubble-agent: hsl(210 40% 13%);
-  --bubble-user: hsl(240 5% 11%);
-
-  --success-bg: hsl(142 45% 10%);
-  --success-border: hsl(142 30% 22%);
-  --success-fg: hsl(142 65% 70%);
-  --info: hsl(210 80% 75%);
-  --info-bg: hsl(210 60% 12%);
-  --info-border: hsl(210 40% 25%);
-  --accent-purple: hsl(270 70% 80%);
-  --accent-purple-bg: hsl(270 45% 14%);
-  --accent-purple-border: hsl(270 35% 28%);
-  --warning-bg: hsl(38 55% 11%);
-  --warning-border: hsl(38 35% 24%);
-  --warning-fg: hsl(38 85% 72%);
-  --destructive-bg: hsl(0 55% 12%);
-  --destructive-border: hsl(0 40% 26%);
-
-  --code-key: hsl(240 5% 96%);
-  --code-string: hsl(240 5% 54%);
-  --code-number: hsl(240 5% 54%);
-  --code-bool: hsl(240 5% 54%);
-}
-
 :root {
   /* Page surface stays very light (bg2 ≈ 98% lightness, cool tint).
    * Card elevation comes from the soft shadow below and the pale blue
@@ -661,7 +572,7 @@ body {
 }
 .cap-stt { background: var(--info-bg); color: var(--info); border-color: var(--info-border); }
 .cap-llm { background: var(--accent-purple-bg); color: var(--accent-purple); border-color: var(--accent-purple-border); }
-.cap-tts { background: var(--success-bg); color: var(--success-fg, var(--success)); border-color: var(--success-border); }
+.cap-tts { background: var(--success-bg); color: var(--success-fg); border-color: var(--success-border); }
 .cap-off { background: var(--bg2); color: var(--tertiary); border-color: var(--border); }
 
 /* ───── Transport pill ────────────────────────────────────── */
@@ -857,10 +768,10 @@ body {
 /* Latency-style tones: numbers pick up semantic color so good/okay/bad
  * latencies read at a glance. Everything else (label, sub, tile bg,
  * border) stays monochrome so the color is reserved for the signal. */
-.metric-tile.good .val { color: var(--success-fg, var(--success)); }
-.metric-tile.warn { border-color: var(--warning-border); }
-.metric-tile.warn .val { color: var(--warning-fg, var(--warning)); font-weight: 700; }
-.metric-tile.bad { border-color: var(--destructive-border); }
+.metric-tile.good .val { color: var(--success-fg); }
+.metric-tile.warn { border-color: var(--warning); }
+.metric-tile.warn .val { color: var(--warning-fg); font-weight: 700; }
+.metric-tile.bad { border-color: var(--destructive); }
 .metric-tile.bad .val { color: var(--destructive); font-weight: 700; }
 
 /* ───── Secondary tabs ───────────────────────────────────── */
@@ -1056,9 +967,9 @@ body {
 /* Pass-rate variants — subtle semantic tints keep all three readable
  * on the same zinc table while still giving good / warn / bad a
  * distinct visual signal. */
-.passrate.good .label { color: var(--success, var(--foreground)); }
-.passrate.good .meter > i { background: var(--success, var(--foreground)); }
-.passrate.warn .label { color: var(--warning-fg, var(--warning)); font-weight: 600; }
+.passrate.good .label { color: var(--success); }
+.passrate.good .meter > i { background: var(--success); }
+.passrate.warn .label { color: var(--warning-fg); font-weight: 600; }
 .passrate.warn .meter > i { background: var(--warning); }
 .passrate.bad .label { color: var(--destructive); font-weight: 700; }
 .passrate.bad .meter > i { background: var(--destructive); }
@@ -1164,9 +1075,9 @@ body {
 /* Status chips share the OutcomeCell badge tokens (soft tinted bg + dark
  * text + matching border) so the verdict/outcome language reads
  * consistently across the dashboard. */
-.status-chip.passed { background: var(--success-bg); color: var(--success-fg, var(--success)); border: 1px solid var(--success-border); }
+.status-chip.passed { background: var(--success-bg); color: var(--success-fg); border: 1px solid var(--success-border); }
 .status-chip.failed { background: var(--destructive-bg); color: var(--destructive); border: 1px solid var(--destructive-border); }
-.status-chip.errored { background: var(--warning-bg); color: var(--warning-fg, var(--warning)); border: 1px solid var(--warning-border); }
+.status-chip.errored { background: var(--warning-bg); color: var(--warning-fg); border: 1px solid var(--warning-border); }
 .status-chip.skipped { background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); }
 
 .judg-pass {
@@ -1503,9 +1414,9 @@ body {
   white-space: nowrap;
 }
 .ev-tag-conv    { background: var(--info-bg); color: var(--info); border-color: var(--info-border); }
-.ev-tag-speech  { background: var(--warning-bg); color: var(--warning-fg, var(--warning)); border-color: var(--warning-border); }
+.ev-tag-speech  { background: var(--warning-bg); color: var(--warning-fg); border-color: var(--warning-border); }
 .ev-tag-agent   { background: var(--accent-purple-bg); color: var(--accent-purple); border-color: var(--accent-purple-border); }
-.ev-tag-user    { background: var(--success-bg); color: var(--success-fg, var(--success)); border-color: var(--success-border); }
+.ev-tag-user    { background: var(--success-bg); color: var(--success-fg); border-color: var(--success-border); }
 .ev-row .msg {
   min-width: 0;
   font: var(--text-s-400);
@@ -1839,12 +1750,12 @@ body {
   word-wrap: break-word;
 }
 .msg-row.user .msg-bubble {
-  background: var(--bubble-user, var(--bg2));
+  background: var(--bubble-user);
   border: 1px solid var(--border);
   border-top-left-radius: 4px;
 }
 .msg-row.agent .msg-bubble {
-  background: var(--bubble-agent, hsl(226 100% 97%));
+  background: var(--bubble-agent);
   border: 1px solid var(--info-border);
   border-top-right-radius: 4px;
 }
@@ -2101,8 +2012,8 @@ body {
 .eval-kpi__delta--up { color: var(--success); }
 .eval-kpi__delta--down { color: var(--destructive); }
 .eval-kpi__hint { font-size: 11.5px; color: var(--muted-foreground); margin-top: 6px; }
-.eval-kpi__hint--good { color: var(--success-fg, var(--success)); }
-.eval-kpi__hint--warn { color: var(--warning-fg, var(--warning)); }
+.eval-kpi__hint--good { color: var(--success-fg); }
+.eval-kpi__hint--warn { color: var(--warning-fg); }
 .eval-kpi__bar {
   position: absolute;
   inset: auto 0 0 0;
@@ -2115,10 +2026,10 @@ body {
   background: var(--primary);
   border-radius: 0;
 }
-.eval-kpi__bar--pass > span { background: var(--success-fg, hsl(142 70% 28%)); }
+.eval-kpi__bar--pass > span { background: var(--success-fg); }
 .eval-kpi__bar--fail > span { background: var(--destructive); }
-.eval-kpi__bar--warn > span { background: var(--warning-fg, hsl(38 80% 40%)); }
-.eval-kpi__bar--info > span { background: var(--info, hsl(210 90% 42%)); }
+.eval-kpi__bar--warn > span { background: var(--warning-fg); }
+.eval-kpi__bar--info > span { background: var(--info); }
 .eval-kpi__spark {
   position: absolute;
   right: 12px;
@@ -2141,7 +2052,7 @@ body {
   flex-shrink: 0;
   tabular-nums: 1;
 }
-.eval-passrate__value--good { color: var(--success-fg, hsl(142 70% 28%)); }
+.eval-passrate__value--good { color: var(--success-fg); }
 .eval-passrate__value--warn { color: var(--warning-fg); }
 .eval-passrate__value--bad  { color: var(--destructive); }
 .eval-passrate__track {
@@ -2158,7 +2069,7 @@ body {
   border-radius: 999px;
   background: var(--primary);
 }
-.eval-passrate__bar--good { background: var(--success-fg, hsl(142 70% 28%)); }
+.eval-passrate__bar--good { background: var(--success-fg); }
 .eval-passrate__bar--warn { background: var(--warning-fg); }
 .eval-passrate__bar--bad  { background: var(--destructive); }
 
@@ -2170,7 +2081,7 @@ body {
   background: var(--muted);
   border: 1px solid var(--border);
 }
-.eval-trend-dots .dot--pass { background: var(--success-fg, hsl(142 70% 28%)); border-color: transparent; }
+.eval-trend-dots .dot--pass { background: var(--success-fg); border-color: transparent; }
 .eval-trend-dots .dot--fail { background: var(--destructive); border-color: transparent; }
 .eval-trend-dots .dot--warn { background: var(--warning-fg); border-color: transparent; }
 
@@ -2182,7 +2093,7 @@ body {
   opacity: 0.85;
 }
 .eval-trend-bars .bar--fail { background: var(--destructive); }
-.eval-trend-bars .bar--pass { background: var(--success-fg, hsl(142 70% 28%)); }
+.eval-trend-bars .bar--pass { background: var(--success-fg); }
 .eval-trend-bars .bar--warn { background: var(--warning-fg); }
 
 /* ── Revamp: Action buttons ─────────────────────────────── */
@@ -2243,7 +2154,7 @@ body {
   white-space: nowrap;
 }
 .eval-status-pill .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
-.eval-status-pill--pass { color: var(--success-fg, hsl(142 70% 28%)); background: var(--success-bg); }
+.eval-status-pill--pass { color: var(--success-fg); background: var(--success-bg); }
 .eval-status-pill--fail { color: var(--destructive); background: var(--destructive-bg); }
 .eval-status-pill--warn { color: var(--warning-fg); background: var(--warning-bg); }
 .dark .eval-status-pill--pass { background: var(--success-bg); color: var(--success-fg); }
@@ -2317,7 +2228,7 @@ body {
   margin-right: 4px;
   flex-shrink: 0;
 }
-.eval-activity-row.pass .verdict-bar { background: var(--success-fg, hsl(142 70% 28%)); }
+.eval-activity-row.pass .verdict-bar { background: var(--success-fg); }
 .eval-activity-row.fail .verdict-bar { background: var(--destructive); }
 .eval-activity-row.warn .verdict-bar { background: var(--warning-fg); }
 
@@ -2449,7 +2360,7 @@ body {
   font-size: 11.5px;
   color: var(--muted-foreground);
 }
-.eval-compare-kpi-tile .delta--up { color: var(--success-fg, hsl(142 70% 28%)); }
+.eval-compare-kpi-tile .delta--up { color: var(--success-fg); }
 .eval-compare-kpi-tile .delta--down { color: var(--destructive); }
 .eval-compare-kpi-tile .bars {
   display: flex;
@@ -2480,7 +2391,7 @@ body {
   font-weight: 600;
 }
 .eval-diff-section__head.regress { color: var(--destructive); }
-.eval-diff-section__head.fixed { color: var(--success-fg, hsl(142 70% 28%)); }
+.eval-diff-section__head.fixed { color: var(--success-fg); }
 .eval-diff-section__head.failing { color: var(--warning-fg); }
 .eval-diff-section__head .count {
   font-family: var(--font-mono);
@@ -2518,7 +2429,7 @@ body {
   color: var(--primary-foreground);
 }
 .eval-diff-row .marker--regress { background: var(--destructive); }
-.eval-diff-row .marker--fixed { background: var(--success-fg, hsl(142 70% 28%)); }
+.eval-diff-row .marker--fixed { background: var(--success-fg); }
 .eval-diff-row .marker--failing { background: var(--warning-fg); }
 .eval-diff-row .name {
   font-family: var(--font-mono);
@@ -2539,7 +2450,7 @@ body {
   font-size: 11px;
   color: var(--muted-foreground);
 }
-.eval-diff-row .ttft-delta--up { color: var(--success-fg, hsl(142 70% 28%)); }
+.eval-diff-row .ttft-delta--up { color: var(--success-fg); }
 .eval-diff-row .ttft-delta--down { color: var(--destructive); }
 
 /* ── Revamp: Segment controls ───────────────────────────── */
@@ -3353,11 +3264,6 @@ body {
   border-top-style: dashed;
   border-top-color: var(--border);
 }
-
-/* ── Hero metric coloring — warn/bad pick up status hues ─────────────── */
-.metric-tile.warn { border-color: var(--warning); }
-.metric-tile.bad  { border-color: var(--destructive); }
-.metric-tile.bad .val { color: var(--destructive); }
 
 /* Session header ID chip — mono stamp */
 .obs-session-head .top .id {

@@ -52,8 +52,8 @@ export function Sparkline({
  *  call site keeps its pass / latency / ASR coloring. Applied inline (not via a
  *  utility class) so it wins over the `.eval-kpi__value` rule in observability.css. */
 const KPI_TONE_COLOR: Record<Exclude<ValueTone, 'default'>, string> = {
-  good: 'var(--success-fg, var(--success))',
-  warn: 'var(--warning-fg, var(--warning))',
+  good: 'var(--success-fg)',
+  warn: 'var(--warning-fg)',
   bad: 'var(--destructive)',
   mute: 'var(--muted-foreground)',
 }

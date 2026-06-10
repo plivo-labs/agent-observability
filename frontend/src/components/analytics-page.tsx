@@ -174,21 +174,21 @@ const FleetStatsBody = ({
           value={numberFmt.format(stats.total_sessions)}
           sub={`${numberFmt.format(stats.active_agents)} active agents`}
           sparkValues={sessionSeries}
-          sparkColor="var(--accent-purple)"
+          sparkColor="var(--chart-3)"
         />
         <KpiTile
           label="Total LLM cost"
           value={formatCost(stats.total_estimated_cost_usd)}
           sub={`priced on token usage · ${range}`}
           sparkValues={costSeries}
-          sparkColor="var(--warning)"
+          sparkColor="var(--chart-4)"
         />
         <KpiTile
           label="p95 perceived latency"
           value={formatMsExact(stats.p95_user_perceived_ms)}
           sub={`p50 ${formatMsExact(stats.p50_user_perceived_ms)} · p99 ${formatMsExact(stats.p99_user_perceived_ms)}`}
           sparkValues={p95Series}
-          sparkColor={p95Bad ? 'var(--destructive)' : 'var(--info)'}
+          sparkColor={p95Bad ? 'var(--destructive)' : 'var(--chart-2)'}
         />
         <KpiTile
           label="Interruption rate"

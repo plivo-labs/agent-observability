@@ -103,14 +103,14 @@ export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
           value={numberFmt.format(stats.total_sessions)}
           sub={`avg ${stats.avg_turn_count?.toFixed(1) ?? '—'} turns`}
           sparkValues={sessionSeries}
-          sparkColor="var(--accent-purple)"
+          sparkColor="var(--chart-3)"
         />
         <KpiTile
           label="Total LLM cost"
           value={formatCost(stats.total_estimated_cost_usd)}
           sub={`priced on token usage · ${range}`}
           sparkValues={costSeries}
-          sparkColor="var(--warning)"
+          sparkColor="var(--chart-4)"
         />
         <KpiTile
           label="p95 perceived latency"
@@ -119,7 +119,7 @@ export const AgentOverviewTab = ({ agentId, range }: AgentOverviewTabProps) => {
             stats.p99_user_perceived_ms,
           )}`}
           sparkValues={p95Series}
-          sparkColor={p95Bad ? 'var(--destructive)' : 'var(--info)'}
+          sparkColor={p95Bad ? 'var(--destructive)' : 'var(--chart-2)'}
         />
         <KpiTile
           label="LiveKit judge pass rate"

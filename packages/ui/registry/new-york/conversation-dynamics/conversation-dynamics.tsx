@@ -12,8 +12,8 @@ import { ChartLegendItem } from '@/components/observability-chart-shared'
 
 // Lane hues match the registry's talk-time-chart so user/agent colors stay
 // consistent anywhere both components render.
-const USER_COLOR = 'var(--info)'
-const AGENT_COLOR = 'var(--success)'
+const USER_COLOR = 'var(--chart-2)'
+const AGENT_COLOR = 'var(--chart-5)'
 
 // Silence-share severity. Practitioner data (Canonical AI) links >30%
 // silence to early hang-ups; tone at 50/70 to flag only clear problems.
@@ -184,7 +184,7 @@ export const ConversationDynamics = ({
               <div
                 key={g.key}
                 title={g.title}
-                className="absolute top-1/2 -translate-y-1/2 border-t-2 border-dotted border-warning"
+                className="absolute top-1/2 -translate-y-1/2 border-t-2 border-dotted border-chart-4"
                 style={{ left: `${g.leftPct}%`, width: `${g.widthPct}%` }}
               />
             ))}
@@ -301,7 +301,7 @@ export const ConversationDynamics = ({
         <ChartLegendItem color={USER_COLOR} label="User" />
         <ChartLegendItem color={AGENT_COLOR} label="Agent" />
         {strip && strip.gaps.length > 0 && (
-          <ChartLegendItem color="var(--warning)" label="Dead air" />
+          <ChartLegendItem color="var(--chart-4)" label="Dead air" />
         )}
       </div>
     </div>

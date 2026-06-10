@@ -51,8 +51,8 @@ export const TalkTimeChart = ({ metrics: metricsProp }: { metrics?: SessionMetri
       title="Talk Time"
       subtitle="User vs agent speaking duration per turn"
       legend={[
-        { color: 'var(--info)', label: 'User' },
-        { color: 'var(--success)', label: 'Agent' },
+        { color: 'var(--chart-2)', label: 'User' },
+        { color: 'var(--chart-5)', label: 'Agent' },
       ]}
     >
       <BarChart data={chartData} barCategoryGap="20%">
@@ -68,8 +68,8 @@ export const TalkTimeChart = ({ metrics: metricsProp }: { metrics?: SessionMetri
           stroke="var(--st2)"
         />
         <Tooltip content={<TalkTimeTooltip />} cursor={{ fill: 'color-mix(in oklab, var(--muted) 40%, transparent)' }} />
-        <Bar dataKey="user" name="User" stackId="a" fill="var(--info)" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="agent" name="Agent" stackId="a" fill="var(--success)" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="user" name="User" stackId="a" fill="var(--chart-2)" radius={[0, 0, 0, 0]} />
+        <Bar dataKey="agent" name="Agent" stackId="a" fill="var(--chart-5)" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ChartCard>
   )

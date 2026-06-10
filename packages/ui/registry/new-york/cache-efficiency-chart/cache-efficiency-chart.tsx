@@ -47,7 +47,7 @@ export const CacheEfficiencyChart = ({ metrics: metricsProp }: { metrics?: Sessi
     <ChartCard
       title="Cache Efficiency"
       subtitle="Prompt cache hit ratio over turns"
-      legend={[{ color: 'var(--success)', label: 'Cache Hit %' }]}
+      legend={[{ color: 'var(--chart-3)', label: 'Cache Hit %' }]}
     >
       <AreaChart data={chartData}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--st1)" />
@@ -67,8 +67,8 @@ export const CacheEfficiencyChart = ({ metrics: metricsProp }: { metrics?: Sessi
           type="monotone"
           dataKey="ratio"
           name="Cache Hit %"
-          stroke="var(--success)"
-          fill="color-mix(in oklab, var(--success) 15%, transparent)"
+          stroke="var(--chart-3)"
+          fill="color-mix(in oklab, var(--chart-3) 15%, transparent)"
           strokeWidth={2}
           connectNulls
         />

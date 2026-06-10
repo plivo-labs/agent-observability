@@ -73,7 +73,7 @@ import { AgentScopeHeader } from '@/components/agent-scope-header'
 // back both these KPIs and the per-session metric summary.
 
 const COLOR_TTFT = 'var(--accent-purple)'
-const COLOR_TTFB = 'var(--success-fg, var(--success))'
+const COLOR_TTFB = 'var(--success-fg)'
 
 // ── Metrics view model ──────────────────────────────────────────────────────
 
