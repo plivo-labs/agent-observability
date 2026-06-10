@@ -105,10 +105,10 @@ export const AgentsPage = ({
           return (
             <div className="flex items-start gap-2">
               <Bot size={14} className="text-muted-foreground mt-0.5 shrink-0" />
-              <div className="flex flex-col leading-tight">
-                <span className="text-xs-500">{name || id}</span>
+              <div className="flex flex-col gap-0.5 leading-snug">
+                <span className="text-s-500">{name || id}</span>
                 {name && id && (
-                  <span className="text-[10px] text-muted-foreground font-mono">
+                  <span className="text-[11px] text-muted-foreground font-mono">
                     {id}
                   </span>
                 )}
