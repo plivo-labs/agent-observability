@@ -100,7 +100,8 @@ d("alert triggers against real Postgres", () => {
     await sql`DELETE FROM session_external_evals WHERE source = ${RUN}`;
     await sql`DELETE FROM session_outcomes WHERE source = ${RUN}`;
     await sql`DELETE FROM agent_transport_sessions WHERE account_id LIKE ${RUN + "%"}`;
-    await (sql as any).close?.();
+    // NOTE: never close the shared sql pool here — both integration files
+    // run in one bun process and the second file still needs it.
   });
 
   test("evaluation_count fires on matching verdicts and dedups within the window", async () => {
