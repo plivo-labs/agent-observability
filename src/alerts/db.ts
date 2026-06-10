@@ -8,10 +8,11 @@ export interface AlertRuleRow {
   account_id: string | null;
   agent_id: string | null;
   trigger_type: string;
+  metric: string | null;
   judge_name: string | null;
   verdicts: string[];
   threshold_count: number | null;
-  threshold_pass_rate: number | null;
+  threshold_value: number | null;
   min_samples: number;
   window_minutes: number;
   webhook_url: string;
@@ -80,14 +81,14 @@ export async function getAlertRule(id: string): Promise<AlertRuleRow | null> {
 export async function insertAlertRule(input: AlertRuleCreate): Promise<AlertRuleRow> {
   const rows = await sql`
     INSERT INTO alert_rules (
-      name, enabled, account_id, agent_id, trigger_type, judge_name,
-      verdicts, threshold_count, threshold_pass_rate, min_samples,
+      name, enabled, account_id, agent_id, trigger_type, metric, judge_name,
+      verdicts, threshold_count, threshold_value, min_samples,
       window_minutes, webhook_url, http_method, secret, headers
     ) VALUES (
       ${input.name}, ${input.enabled}, ${input.account_id ?? null}, ${input.agent_id ?? null},
-      ${input.trigger_type}, ${input.judge_name ?? null},
+      ${input.trigger_type}, ${input.metric ?? null}, ${input.judge_name ?? null},
       ${input.verdicts}::jsonb,
-      ${input.threshold_count ?? null}, ${input.threshold_pass_rate ?? null}, ${input.min_samples},
+      ${input.threshold_count ?? null}, ${input.threshold_value ?? null}, ${input.min_samples},
       ${input.window_minutes}, ${input.webhook_url}, ${input.http_method},
       ${input.secret ?? null},
       ${input.headers ?? null}::jsonb
@@ -111,10 +112,11 @@ export async function updateAlertRule(id: string, patch: AlertRulePatch): Promis
     UPDATE alert_rules SET
       name = ${merged.name}, enabled = ${merged.enabled},
       account_id = ${merged.account_id}, agent_id = ${merged.agent_id},
-      trigger_type = ${merged.trigger_type}, judge_name = ${merged.judge_name},
+      trigger_type = ${merged.trigger_type}, metric = ${merged.metric},
+      judge_name = ${merged.judge_name},
       verdicts = ${merged.verdicts}::jsonb,
       threshold_count = ${merged.threshold_count},
-      threshold_pass_rate = ${merged.threshold_pass_rate},
+      threshold_value = ${merged.threshold_value},
       min_samples = ${merged.min_samples}, window_minutes = ${merged.window_minutes},
       webhook_url = ${merged.webhook_url}, http_method = ${merged.http_method},
       secret = ${merged.secret},
@@ -140,7 +142,7 @@ export interface AlertFiringRow {
   window_end: string;
   matched_count: number;
   total_count: number | null;
-  pass_rate: number | null;
+  observed_value: number | null;
   sample_session_ids: string[];
   status: string;
   attempt_count: number;
@@ -176,10 +178,11 @@ export async function listFirings(
 export interface DueDelivery extends AlertFiringRow {
   rule_name: string;
   trigger_type: string;
+  metric: string | null;
   judge_name: string | null;
   verdicts: string[];
   threshold_count: number | null;
-  threshold_pass_rate: number | null;
+  threshold_value: number | null;
   window_minutes: number;
   agent_id: string | null;
   account_id: string | null;
@@ -212,8 +215,8 @@ export async function claimDueFirings(limit = 50): Promise<DueDelivery[]> {
     FROM due, alert_rules r
     WHERE f.id = due.id AND r.id = f.rule_id
     RETURNING f.*,
-              r.name AS rule_name, r.trigger_type, r.judge_name, r.verdicts,
-              r.threshold_count, r.threshold_pass_rate, r.window_minutes,
+              r.name AS rule_name, r.trigger_type, r.metric, r.judge_name, r.verdicts,
+              r.threshold_count, r.threshold_value, r.window_minutes,
               r.agent_id, r.account_id,
               r.webhook_url, r.http_method, r.secret, r.headers
   `;

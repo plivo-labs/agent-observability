@@ -2,7 +2,25 @@
 // packages/ui registry twins (precedent: not-found-page.tsx). Keeps the
 // published observability-api surface untouched.
 
-export type AlertTriggerType = 'evaluation_count' | 'outcome_count' | 'pass_rate'
+export type AlertTriggerType = 'evaluation_count' | 'outcome_count' | 'metric_threshold'
+
+export type AlertMetric =
+  | 'eval_fail_rate'
+  | 'outcome_fail_rate'
+  | 'latency_perceived_p95'
+  | 'latency_llm_ttft_p95'
+  | 'latency_tts_ttfb_p95'
+  | 'latency_stt_p95'
+  | 'interruption_rate'
+  | 'session_volume'
+
+/** Rate metrics store thresholds as 0..1 fractions; latency in ms;
+ *  session_volume as a session count (and fires BELOW the floor). */
+export const RATE_METRICS: ReadonlySet<AlertMetric> = new Set([
+  'eval_fail_rate',
+  'outcome_fail_rate',
+  'interruption_rate',
+])
 export type AlertHttpMethod = 'POST' | 'PUT' | 'PATCH'
 
 export interface AlertRule {
@@ -12,10 +30,11 @@ export interface AlertRule {
   account_id: string | null
   agent_id: string | null
   trigger_type: AlertTriggerType
+  metric: AlertMetric | null
   judge_name: string | null
   verdicts: string[]
   threshold_count: number | null
-  threshold_pass_rate: number | null
+  threshold_value: number | null
   min_samples: number
   window_minutes: number
   webhook_url: string
@@ -33,10 +52,11 @@ export interface AlertRuleCreate {
   name: string
   enabled: boolean
   trigger_type: AlertTriggerType
+  metric: AlertMetric | null
   judge_name: string | null
   verdicts: string[]
   threshold_count: number | null
-  threshold_pass_rate: number | null
+  threshold_value: number | null
   min_samples: number
   window_minutes: number
   agent_id: string | null
@@ -56,7 +76,7 @@ export interface AlertFiring {
   window_end: string
   matched_count: number
   total_count: number | null
-  pass_rate: number | null
+  observed_value: number | null
   sample_session_ids: string[]
   status: 'pending' | 'delivered' | 'failed'
   attempt_count: number

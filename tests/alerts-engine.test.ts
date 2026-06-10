@@ -23,27 +23,45 @@ const { evaluateRules } = await import("../src/alerts/engine.js");
 const countRule = {
   id: "r1",
   trigger_type: "evaluation_count",
+  metric: null,
   judge_name: "task_completion",
   verdicts: ["fail"],
   threshold_count: 5,
-  threshold_pass_rate: null,
+  threshold_value: null,
   min_samples: 1,
   window_minutes: 15,
   agent_id: null,
   account_id: null,
 };
 
-const passRateRule = {
+const failRateRule = {
   id: "r2",
-  trigger_type: "pass_rate",
+  trigger_type: "metric_threshold",
+  metric: "eval_fail_rate",
   judge_name: null,
   verdicts: ["fail"],
   threshold_count: null,
-  threshold_pass_rate: 0.8,
+  threshold_value: 0.2,
   min_samples: 5,
   window_minutes: 60,
   agent_id: null,
   account_id: null,
+};
+
+const latencyRule = {
+  ...failRateRule,
+  id: "r4",
+  metric: "latency_perceived_p95",
+  threshold_value: 2000,
+  min_samples: 10,
+};
+
+const volumeRule = {
+  ...failRateRule,
+  id: "r5",
+  metric: "session_volume",
+  threshold_value: 5,
+  min_samples: 1,
 };
 
 describe("alerts/engine evaluateRules", () => {
@@ -79,29 +97,63 @@ describe("alerts/engine evaluateRules", () => {
     expect(mockSql.begin).not.toHaveBeenCalled();
   });
 
-  test("pass_rate rule fires when rate is below threshold with enough samples", async () => {
-    mockSql.mockResolvedValueOnce([passRateRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, passed: 6, session_ids: ["s-9"] }]);
+  test("eval_fail_rate fires when the rate exceeds the threshold with enough samples", async () => {
+    mockSql.mockResolvedValueOnce([failRateRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 4, session_ids: ["s-9"] }]);
     mockSql.mockResolvedValueOnce([{ id: "r2" }]); // suppression claim
 
     const fired = await evaluateRules();
-    expect(fired).toBe(1); // 0.6 < 0.8 with 10 ≥ 5 samples
+    expect(fired).toBe(1); // 0.4 > 0.2 with 10 ≥ 5 samples
   });
 
-  test("pass_rate rule stays quiet under min_samples", async () => {
-    mockSql.mockResolvedValueOnce([passRateRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 3, passed: 0, session_ids: [] }]);
+  test("eval_fail_rate stays quiet under min_samples", async () => {
+    mockSql.mockResolvedValueOnce([failRateRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ total: 3, matched: 3, session_ids: [] }]);
 
     const fired = await evaluateRules();
-    expect(fired).toBe(0); // 0% pass but only 3 of 5 required samples
+    expect(fired).toBe(0); // 100% fail but only 3 of 5 required samples
   });
 
-  test("pass_rate rule stays quiet at or above the threshold", async () => {
-    mockSql.mockResolvedValueOnce([passRateRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, passed: 9, session_ids: [] }]);
+  test("eval_fail_rate stays quiet at or below the threshold", async () => {
+    mockSql.mockResolvedValueOnce([failRateRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 2, session_ids: [] }]);
 
     const fired = await evaluateRules();
-    expect(fired).toBe(0); // 0.9 ≥ 0.8
+    expect(fired).toBe(0); // 0.2 is not > 0.2
+  });
+
+  test("latency p95 fires above the ms threshold", async () => {
+    mockSql.mockResolvedValueOnce([latencyRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ samples: 40, p95: 2600, session_ids: ["s-1"] }]);
+    mockSql.mockResolvedValueOnce([{ id: "r4" }]); // suppression claim
+
+    const fired = await evaluateRules();
+    expect(fired).toBe(1); // 2600ms > 2000ms with 40 ≥ 10 samples
+  });
+
+  test("latency p95 stays quiet under min_samples", async () => {
+    mockSql.mockResolvedValueOnce([latencyRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ samples: 4, p95: 9000, session_ids: [] }]);
+
+    const fired = await evaluateRules();
+    expect(fired).toBe(0);
+  });
+
+  test("session_volume fires when the count falls BELOW the floor", async () => {
+    mockSql.mockResolvedValueOnce([volumeRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ total: 2 }]);
+    mockSql.mockResolvedValueOnce([{ id: "r5" }]); // suppression claim
+
+    const fired = await evaluateRules();
+    expect(fired).toBe(1); // 2 < 5 — the inverted, agent-down metric
+  });
+
+  test("session_volume stays quiet at or above the floor", async () => {
+    mockSql.mockResolvedValueOnce([volumeRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ total: 5 }]);
+
+    const fired = await evaluateRules();
+    expect(fired).toBe(0);
   });
 
   test("a failing rule does not block the others", async () => {

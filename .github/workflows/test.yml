@@ -13,6 +13,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: observability
+          POSTGRES_PASSWORD: observability
+          POSTGRES_DB: agent_observability
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U observability -d agent_observability"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +40,14 @@ jobs:
 
       - name: Run server tests
         run: bun test ./tests/
+
+      # Separate bun process on purpose: tests/ mocks ../src/db.js and bun
+      # shares one module registry per process — the integration suite
+      # needs the real client. Applies migrations itself.
+      - name: Run alert-trigger integration tests
+        env:
+          DATABASE_URL: postgres://observability:observability@localhost:5432/agent_observability
+        run: bun run test:integration
 
       - name: Install UI dependencies
         working-directory: packages/ui

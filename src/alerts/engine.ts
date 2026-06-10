@@ -1,10 +1,20 @@
 import { sql } from "../db.js";
+import {
+  ASSISTANT_MSG_WHERE,
+  CHAT_HISTORY_ELEMS,
+  INTERRUPTED_WHERE,
+  PER_TURN_ELEMS,
+  PERCEIVED_MS_SQL,
+  PERCEIVED_MS_WHERE,
+} from "../stats-sql.js";
+import type { AlertMetric } from "./schema.js";
 
 // ── Windowed rule evaluation ────────────────────────────────────────────────
 //
 // Time-driven: the sweeper calls evaluateRules() every tick. Each enabled,
 // non-suppressed rule runs one aggregate query over its trailing window.
-// Suppression = one firing per window length per rule (last_fired_at).
+// Suppression = one firing per window length per rule (last_fired_at),
+// claimed atomically inside the firing transaction.
 //
 // Events are scoped to a rule's agent/account via a LEFT JOIN to
 // agent_transport_sessions — evals/outcomes don't carry agent_id
@@ -15,10 +25,11 @@ import { sql } from "../db.js";
 interface RuleToEvaluate {
   id: string;
   trigger_type: string;
+  metric: AlertMetric | null;
   judge_name: string | null;
   verdicts: unknown;
   threshold_count: number | null;
-  threshold_pass_rate: number | null;
+  threshold_value: number | null;
   min_samples: number;
   window_minutes: number;
   agent_id: string | null;
@@ -28,7 +39,7 @@ interface RuleToEvaluate {
 interface WindowResult {
   matched_count: number;
   total_count: number | null;
-  pass_rate: number | null;
+  observed_value: number | null;
   sample_session_ids: string[];
   fired: boolean;
 }
@@ -45,12 +56,10 @@ function verdictsList(rule: RuleToEvaluate): string[] {
   return Array.isArray(list) ? list : [];
 }
 
+const WINDOW_SQL = `($1 || ' minutes')::interval`;
+
 async function evaluateCountRule(rule: RuleToEvaluate): Promise<WindowResult> {
   const isOutcome = rule.trigger_type === "outcome_count";
-  // Verdict containment uses jsonb_exists($x, val) — the function form of
-  // the jsonb `?` operator. The operator spelling can't be used here:
-  // bun:sql rewrites a literal `?` in query text as a parameter
-  // placeholder, silently corrupting the match.
   // Outcomes match against the lk.-prefix-stripped value so rules store
   // normalized success|fail and match both lk.fail and fail.
   const rows = isOutcome
@@ -59,7 +68,7 @@ async function evaluateCountRule(rule: RuleToEvaluate): Promise<WindowResult> {
                 (array_agg(DISTINCT o.session_id))[1:20] AS session_ids
          FROM session_outcomes o
          LEFT JOIN agent_transport_sessions s ON s.session_id = o.session_id
-         WHERE o.updated_at > NOW() - ($1 || ' minutes')::interval
+         WHERE o.updated_at > NOW() - ${WINDOW_SQL}
            AND jsonb_exists($2::jsonb, regexp_replace(LOWER(o.outcome), '^lk\\.', ''))
            AND ($3::text IS NULL OR s.agent_id = $3)
            AND ($4::text IS NULL OR s.account_id = $4)`,
@@ -70,7 +79,7 @@ async function evaluateCountRule(rule: RuleToEvaluate): Promise<WindowResult> {
                 (array_agg(DISTINCT e.session_id))[1:20] AS session_ids
          FROM session_external_evals e
          LEFT JOIN agent_transport_sessions s ON s.session_id = e.session_id
-         WHERE e.created_at > NOW() - ($1 || ' minutes')::interval
+         WHERE e.created_at > NOW() - ${WINDOW_SQL}
            AND jsonb_exists($2::jsonb, LOWER(COALESCE(e.verdict, '')))
            AND ($3::text IS NULL OR e.judge_name = $3)
            AND ($4::text IS NULL OR s.agent_id = $4)
@@ -87,40 +96,183 @@ async function evaluateCountRule(rule: RuleToEvaluate): Promise<WindowResult> {
   return {
     matched_count: matched,
     total_count: null,
-    pass_rate: null,
+    observed_value: matched,
     sample_session_ids: rows[0]?.session_ids ?? [],
     fired: rule.threshold_count != null && matched >= rule.threshold_count,
   };
 }
 
-async function evaluatePassRateRule(rule: RuleToEvaluate): Promise<WindowResult> {
+/** Rate over events: numerator/denominator with the failing sessions sampled. */
+function rateResult(
+  rule: RuleToEvaluate,
+  total: number,
+  matched: number,
+  sampleIds: string[],
+): WindowResult {
+  const rate = total > 0 ? matched / total : null;
+  return {
+    matched_count: matched,
+    total_count: total,
+    observed_value: rate,
+    sample_session_ids: sampleIds,
+    fired:
+      rule.threshold_value != null &&
+      total >= rule.min_samples &&
+      rate != null &&
+      rate > rule.threshold_value,
+  };
+}
+
+async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult> {
   const rows = await sql.unsafe(
     `SELECT COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'pass')::int AS passed,
+            COUNT(*) FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'fail')::int AS matched,
             (array_agg(DISTINCT e.session_id)
-               FILTER (WHERE LOWER(COALESCE(e.verdict, '')) <> 'pass'))[1:20] AS session_ids
+               FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'fail'))[1:20] AS session_ids
      FROM session_external_evals e
      LEFT JOIN agent_transport_sessions s ON s.session_id = e.session_id
-     WHERE e.created_at > NOW() - ($1 || ' minutes')::interval
+     WHERE e.created_at > NOW() - ${WINDOW_SQL}
        AND ($2::text IS NULL OR e.judge_name = $2)
        AND ($3::text IS NULL OR s.agent_id = $3)
        AND ($4::text IS NULL OR s.account_id = $4)`,
     [String(rule.window_minutes), rule.judge_name, rule.agent_id, rule.account_id],
   );
-  const total = rows[0]?.total ?? 0;
-  const passed = rows[0]?.passed ?? 0;
-  const rate = total > 0 ? passed / total : null;
+  const r = rows[0] ?? {};
+  return rateResult(rule, r.total ?? 0, r.matched ?? 0, r.session_ids ?? []);
+}
+
+async function evaluateOutcomeFailRate(rule: RuleToEvaluate): Promise<WindowResult> {
+  const rows = await sql.unsafe(
+    `SELECT COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE regexp_replace(LOWER(o.outcome), '^lk\\.', '') IN ('fail', 'failure'))::int AS matched,
+            (array_agg(DISTINCT o.session_id)
+               FILTER (WHERE regexp_replace(LOWER(o.outcome), '^lk\\.', '') IN ('fail', 'failure')))[1:20] AS session_ids
+     FROM session_outcomes o
+     LEFT JOIN agent_transport_sessions s ON s.session_id = o.session_id
+     WHERE o.updated_at > NOW() - ${WINDOW_SQL}
+       AND ($2::text IS NULL OR s.agent_id = $2)
+       AND ($3::text IS NULL OR s.account_id = $3)`,
+    [String(rule.window_minutes), rule.agent_id, rule.account_id],
+  );
+  const r = rows[0] ?? {};
+  return rateResult(rule, r.total ?? 0, r.matched ?? 0, r.session_ids ?? []);
+}
+
+async function evaluateInterruptionRate(rule: RuleToEvaluate): Promise<WindowResult> {
+  const rows = await sql.unsafe(
+    `WITH win AS (
+       SELECT session_id, chat_history
+       FROM agent_transport_sessions
+       WHERE ended_at > NOW() - ${WINDOW_SQL}
+         AND ($2::text IS NULL OR agent_id = $2)
+         AND ($3::text IS NULL OR account_id = $3)
+     )
+     SELECT COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE})::int AS total,
+            COUNT(*) FILTER (WHERE ${ASSISTANT_MSG_WHERE} AND ${INTERRUPTED_WHERE})::int AS matched,
+            (array_agg(DISTINCT win.session_id)
+               FILTER (WHERE ${ASSISTANT_MSG_WHERE} AND ${INTERRUPTED_WHERE}))[1:20] AS session_ids
+     FROM win, ${CHAT_HISTORY_ELEMS("win.chat_history")} AS item`,
+    [String(rule.window_minutes), rule.agent_id, rule.account_id],
+  );
+  const r = rows[0] ?? {};
+  return rateResult(rule, r.total ?? 0, r.matched ?? 0, r.session_ids ?? []);
+}
+
+// Per-turn millisecond expressions for the latency metrics. `m` is the
+// per-turn element alias produced by PER_TURN_ELEMS; raw values are in
+// seconds and convert to ms, mirroring src/stats-sql.ts conventions.
+const LATENCY_SQL: Record<string, { value: string; where: string }> = {
+  latency_perceived_p95: { value: PERCEIVED_MS_SQL, where: PERCEIVED_MS_WHERE },
+  latency_llm_ttft_p95: {
+    value: `NULLIF(m->>'llm_node_ttft', '')::float * 1000`,
+    where: `(m->>'llm_node_ttft') ~ '^[0-9.]+$'`,
+  },
+  latency_tts_ttfb_p95: {
+    value: `NULLIF(m->>'tts_node_ttfb', '')::float * 1000`,
+    where: `(m->>'tts_node_ttfb') ~ '^[0-9.]+$'`,
+  },
+  latency_stt_p95: {
+    value: `NULLIF(m->>'transcription_delay', '')::float * 1000`,
+    where: `(m->>'transcription_delay') ~ '^[0-9.]+$'`,
+  },
+};
+
+async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
+  const expr = LATENCY_SQL[rule.metric!];
+  const rows = await sql.unsafe(
+    `WITH win AS (
+       SELECT session_id, session_metrics
+       FROM agent_transport_sessions
+       WHERE ended_at > NOW() - ${WINDOW_SQL}
+         AND ($2::text IS NULL OR agent_id = $2)
+         AND ($3::text IS NULL OR account_id = $3)
+     ),
+     turns AS (
+       SELECT win.session_id, ${expr.value} AS value_ms
+       FROM win, ${PER_TURN_ELEMS("win.session_metrics")} AS m
+       WHERE ${expr.where}
+     )
+     SELECT COUNT(*)::int AS samples,
+            percentile_disc(0.95) WITHIN GROUP (ORDER BY value_ms)::float AS p95,
+            (array_agg(DISTINCT session_id) FILTER (WHERE value_ms > $4))[1:20] AS session_ids
+     FROM turns`,
+    [String(rule.window_minutes), rule.agent_id, rule.account_id, rule.threshold_value],
+  );
+  const r = rows[0] ?? {};
+  const samples = r.samples ?? 0;
+  const p95 = r.p95 != null ? Number(r.p95) : null;
   return {
-    matched_count: total - passed,
-    total_count: total,
-    pass_rate: rate,
-    sample_session_ids: rows[0]?.session_ids ?? [],
+    matched_count: samples,
+    total_count: samples,
+    observed_value: p95,
+    sample_session_ids: r.session_ids ?? [],
     fired:
-      rule.threshold_pass_rate != null &&
-      total >= rule.min_samples &&
-      rate != null &&
-      rate < rule.threshold_pass_rate,
+      rule.threshold_value != null &&
+      samples >= rule.min_samples &&
+      p95 != null &&
+      p95 > rule.threshold_value,
   };
+}
+
+async function evaluateSessionVolume(rule: RuleToEvaluate): Promise<WindowResult> {
+  const rows = await sql.unsafe(
+    `SELECT COUNT(*)::int AS total
+     FROM agent_transport_sessions
+     WHERE ended_at > NOW() - ${WINDOW_SQL}
+       AND ($2::text IS NULL OR agent_id = $2)
+       AND ($3::text IS NULL OR account_id = $3)`,
+    [String(rule.window_minutes), rule.agent_id, rule.account_id],
+  );
+  const total = rows[0]?.total ?? 0;
+  return {
+    matched_count: total,
+    total_count: total,
+    observed_value: total,
+    sample_session_ids: [],
+    // The inverted metric: silence is the failure. No min_samples gate —
+    // zero sessions is exactly the condition this exists to catch.
+    fired: rule.threshold_value != null && total < rule.threshold_value,
+  };
+}
+
+function evaluateMetricRule(rule: RuleToEvaluate): Promise<WindowResult> {
+  switch (rule.metric) {
+    case "eval_fail_rate":
+      return evaluateEvalFailRate(rule);
+    case "outcome_fail_rate":
+      return evaluateOutcomeFailRate(rule);
+    case "interruption_rate":
+      return evaluateInterruptionRate(rule);
+    case "session_volume":
+      return evaluateSessionVolume(rule);
+    case "latency_perceived_p95":
+    case "latency_llm_ttft_p95":
+    case "latency_tts_ttfb_p95":
+    case "latency_stt_p95":
+      return evaluateLatencyP95(rule);
+    default:
+      return Promise.reject(new Error(`unknown metric: ${rule.metric}`));
+  }
 }
 
 /**
@@ -131,8 +283,8 @@ async function evaluatePassRateRule(rule: RuleToEvaluate): Promise<WindowResult>
  */
 export async function evaluateRules(): Promise<number> {
   const rules: RuleToEvaluate[] = await sql`
-    SELECT id, trigger_type, judge_name, verdicts, threshold_count,
-           threshold_pass_rate, min_samples, window_minutes, agent_id, account_id
+    SELECT id, trigger_type, metric, judge_name, verdicts, threshold_count,
+           threshold_value, min_samples, window_minutes, agent_id, account_id
     FROM alert_rules
     WHERE enabled
       AND (last_fired_at IS NULL
@@ -143,8 +295,8 @@ export async function evaluateRules(): Promise<number> {
   for (const rule of rules) {
     try {
       const result =
-        rule.trigger_type === "pass_rate"
-          ? await evaluatePassRateRule(rule)
+        rule.trigger_type === "metric_threshold"
+          ? await evaluateMetricRule(rule)
           : await evaluateCountRule(rule);
       if (!result.fired) continue;
 
@@ -167,10 +319,10 @@ export async function evaluateRules(): Promise<number> {
         await tx`
           INSERT INTO alert_firings (
             rule_id, window_start, window_end, matched_count, total_count,
-            pass_rate, sample_session_ids
+            observed_value, sample_session_ids
           ) VALUES (
             ${rule.id}, ${windowStart}, ${now}, ${result.matched_count},
-            ${result.total_count}, ${result.pass_rate},
+            ${result.total_count}, ${result.observed_value},
             ${result.sample_session_ids ?? []}::jsonb
           )
         `;
@@ -178,8 +330,9 @@ export async function evaluateRules(): Promise<number> {
       if (!claimed) continue;
       fired++;
       console.log(
-        `[alerts] rule fired id=${rule.id} type=${rule.trigger_type} matched=${result.matched_count}` +
-          (result.pass_rate != null ? ` pass_rate=${result.pass_rate.toFixed(3)}` : ""),
+        `[alerts] rule fired id=${rule.id} type=${rule.trigger_type}` +
+          (rule.metric ? ` metric=${rule.metric}` : "") +
+          ` observed=${result.observed_value ?? result.matched_count}`,
       );
     } catch (e) {
       console.error(`[alerts] rule evaluation failed id=${rule.id}: ${(e as Error).message}`);

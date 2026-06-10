@@ -137,7 +137,10 @@ describe("alert rule routes", () => {
     ["window below 15", { ...validRule, window_minutes: 5 }],
     ["threshold below 1", { ...validRule, threshold_count: 0 }],
     ["missing threshold for count rule", { ...validRule, threshold_count: undefined }],
-    ["missing pass-rate threshold", { ...validRule, trigger_type: "pass_rate", threshold_pass_rate: undefined }],
+    ["missing metric for metric rule", { ...validRule, judge_name: undefined, trigger_type: "metric_threshold", threshold_value: 0.5 }],
+    ["missing threshold_value for metric rule", { ...validRule, trigger_type: "metric_threshold", metric: "eval_fail_rate" }],
+    ["rate threshold above 1", { ...validRule, trigger_type: "metric_threshold", metric: "eval_fail_rate", threshold_value: 30 }],
+    ["metric on a count rule", { ...validRule, metric: "eval_fail_rate" }],
     ["bad trigger type", { ...validRule, trigger_type: "latency" }],
     ["judge on outcome rule", { ...validRule, trigger_type: "outcome_count", verdicts: ["fail"] }],
     ["non-http webhook", { ...validRule, webhook_url: "ftp://example.com/x" }],
@@ -151,20 +154,52 @@ describe("alert rule routes", () => {
     expect(body.error.code).toBe("invalid_payload");
   });
 
-  test("pass_rate rule with threshold_pass_rate is accepted", async () => {
+  test("metric_threshold rule with metric + threshold_value is accepted", async () => {
     const res = await server.fetch(
       authed("/api/alert-rules", {
         method: "POST",
         body: JSON.stringify({
           ...validRule,
-          trigger_type: "pass_rate",
+          trigger_type: "metric_threshold",
+          metric: "eval_fail_rate",
           threshold_count: undefined,
-          threshold_pass_rate: 0.8,
-          min_samples: 5,
+          threshold_value: 0.3,
+          min_samples: 10,
         }),
       }),
     );
     expect(res.status).toBe(201);
+  });
+
+  test("latency metric rule rejects judge_name and accepts ms thresholds", async () => {
+    const rejected = await server.fetch(
+      authed("/api/alert-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          ...validRule,
+          trigger_type: "metric_threshold",
+          metric: "latency_tts_ttfb_p95",
+          threshold_count: undefined,
+          threshold_value: 800,
+        }),
+      }),
+    );
+    expect(rejected.status).toBe(400); // judge_name from validRule doesn't apply
+
+    const accepted = await server.fetch(
+      authed("/api/alert-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          ...validRule,
+          trigger_type: "metric_threshold",
+          metric: "latency_tts_ttfb_p95",
+          judge_name: undefined,
+          threshold_count: undefined,
+          threshold_value: 800,
+        }),
+      }),
+    );
+    expect(accepted.status).toBe(201);
   });
 
   test("lists rules with pagination meta", async () => {

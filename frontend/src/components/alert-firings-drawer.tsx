@@ -10,7 +10,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDate } from '@/lib/observability-format'
 import { alertsApi, type AlertFiring, type AlertRule, type WebhookAttempt } from '@/lib/alerts-api'
-import { triggerSummary } from '@/lib/alerts-format'
+import { metricValue, triggerSummary } from '@/lib/alerts-format'
 
 type BadgeVariant = React.ComponentProps<typeof Badge>['variant']
 
@@ -91,8 +91,9 @@ export const AlertFiringsDrawer = ({
                       </span>
                     </div>
                     <div className="mt-1.5 text-muted-foreground">
-                      {f.pass_rate != null
-                        ? `pass rate ${Math.round(f.pass_rate * 100)}% (${f.matched_count}/${f.total_count})`
+                      {rule?.metric && f.observed_value != null
+                        ? `${metricValue(rule.metric, f.observed_value)} observed` +
+                          (f.total_count != null ? ` (${f.matched_count}/${f.total_count})` : '')
                         : `${f.matched_count} matching event${f.matched_count === 1 ? '' : 's'}`}
                       {' · '}
                       {f.attempt_count} attempt{f.attempt_count === 1 ? '' : 's'}
