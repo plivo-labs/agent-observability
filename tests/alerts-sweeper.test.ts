@@ -115,6 +115,26 @@ describe("alerts/sweeper runSweepOnce", () => {
     expect(delta).toBeLessThanOrEqual(35_000);
   });
 
+  test("backoff escalates per attempt and clamps at the last step", async () => {
+    const { RETRY_BACKOFF_MS } = await import("../src/alerts/deliver.js");
+    mockFetchStatus(500);
+    // attempt_count=1 → second backoff (2m); attempt_count=3 → fourth (30m).
+    for (const [attemptCount, expected] of [
+      [1, RETRY_BACKOFF_MS[1]],
+      [3, RETRY_BACKOFF_MS[3]],
+      [4, RETRY_BACKOFF_MS[4]], // last step before exhaustion — clamp boundary
+    ] as const) {
+      mockMarkRetry.mockClear();
+      mockClaimDueFirings.mockResolvedValueOnce([firing({ attempt_count: attemptCount })] as any);
+      const before = Date.now();
+      await runSweepOnce();
+      const [, nextAttemptAt] = (mockMarkRetry.mock.calls[0] as any[]);
+      const delta = (nextAttemptAt as Date).getTime() - before;
+      expect(delta).toBeGreaterThanOrEqual(expected - 1_000);
+      expect(delta).toBeLessThanOrEqual(expected + 5_000);
+    }
+  });
+
   test("marks failed once attempts are exhausted", async () => {
     mockFetchStatus(502);
     mockClaimDueFirings.mockResolvedValueOnce([firing({ attempt_count: MAX_ATTEMPTS - 1 })] as any);
@@ -137,6 +157,25 @@ describe("alerts/sweeper runSweepOnce", () => {
     // First firing retries, second delivers.
     expect(mockMarkRetry).toHaveBeenCalledTimes(1);
     expect(mockMarkDelivered).toHaveBeenCalledWith("f-2", 200);
+  });
+
+  test("runSweepOnce never throws — a rules-query explosion is contained", async () => {
+    mockSql.mockRejectedValueOnce(new Error("connection reset"));
+    await runSweepOnce(); // resolves despite evaluateRules blowing up
+    expect(mockClaimDueFirings).not.toHaveBeenCalled(); // sweep aborted cleanly
+    await runSweepOnce(); // and the guard is released — next sweep runs
+    expect(mockClaimDueFirings).toHaveBeenCalledTimes(1);
+  });
+
+  test("a batch larger than the concurrency bound is fully delivered", async () => {
+    mockFetchStatus(200);
+    const batch = Array.from({ length: 7 }, (_, i) => firing({ id: `f-${i}` }));
+    mockClaimDueFirings.mockResolvedValueOnce(batch as any);
+
+    await runSweepOnce();
+    expect(mockMarkDelivered).toHaveBeenCalledTimes(7);
+    const delivered = mockMarkDelivered.mock.calls.map((c: any[]) => c[0]).sort();
+    expect(delivered).toEqual(batch.map((f) => f.id).sort());
   });
 
   test("re-entrancy guard: concurrent sweeps collapse into one", async () => {

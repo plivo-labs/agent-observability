@@ -21,6 +21,18 @@ describe("envSchema", () => {
     }
   });
 
+  test("ALERT_SWEEPER defaults to inline, accepts off, rejects unknown modes", () => {
+    const def = envSchema.safeParse(validEnv);
+    expect(def.success).toBe(true);
+    if (def.success) expect(def.data.ALERT_SWEEPER).toBe("inline");
+
+    const off = envSchema.safeParse({ ...validEnv, ALERT_SWEEPER: "off" });
+    expect(off.success).toBe(true);
+    if (off.success) expect(off.data.ALERT_SWEEPER).toBe("off");
+
+    expect(envSchema.safeParse({ ...validEnv, ALERT_SWEEPER: "worker" }).success).toBe(false);
+  });
+
   test("accepts config with basic auth credentials", () => {
     const result = envSchema.safeParse({
       ...validEnv,

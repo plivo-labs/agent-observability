@@ -38,14 +38,26 @@ const RULE_DEFAULTS: AlertRuleCreate = {
 export interface TestRun {
   run: string;
   uid: (tag: string) => string;
+  seedAgent: (agentId: string, accountId?: string) => Promise<void>;
   seedSession: (opts: {
     accountId: string;
-    chatHistory?: unknown[];
+    agentId?: string;
+    chatHistory?: unknown[] | null;
     perTurn?: Array<Record<string, unknown>>;
+    /** When the per_turn array itself must be malformed (null, scalar…). */
+    sessionMetrics?: unknown;
+    endedMinutesAgo?: number;
   }) => Promise<string>;
-  seedEval: (sessionId: string, verdict: string, judge?: string) => Promise<void>;
-  seedOutcome: (sessionId: string, outcome: string) => Promise<void>;
+  seedEval: (
+    sessionId: string,
+    verdict: string,
+    judge?: string,
+    createdMinutesAgo?: number,
+  ) => Promise<void>;
+  seedOutcome: (sessionId: string, outcome: string, updatedMinutesAgo?: number) => Promise<void>;
   createRule: (over: Partial<AlertRuleCreate>) => Promise<AlertRuleRow>;
+  /** null clears the suppression stamp; a number back-dates it N minutes. */
+  setLastFired: (ruleId: string, minutesAgo: number | null) => Promise<void>;
   firingsFor: (ruleId: string) => Promise<any[]>;
   cleanup: () => Promise<void>;
 }
@@ -60,30 +72,55 @@ export function testRun(prefix: string): TestRun {
   return {
     run,
     uid,
+    async seedAgent(agentId, accountId) {
+      await sql`
+        INSERT INTO agents (agent_id, account_id)
+        VALUES (${agentId}, ${accountId ?? null})
+        ON CONFLICT (agent_id) DO NOTHING
+      `;
+    },
     async seedSession(opts) {
       const sessionId = uid("sess");
+      const endedAgo = String(opts.endedMinutesAgo ?? 0);
+      const metrics =
+        opts.sessionMetrics !== undefined ? opts.sessionMetrics : { per_turn: opts.perTurn ?? [] };
       await sql`
         INSERT INTO agent_transport_sessions (
-          session_id, account_id, started_at, ended_at, duration_ms, turn_count,
+          session_id, account_id, agent_id, started_at, ended_at, duration_ms, turn_count,
           chat_history, session_metrics
         ) VALUES (
-          ${sessionId}, ${opts.accountId}, NOW() - interval '2 minutes', NOW(), 120000, 1,
-          ${opts.chatHistory ?? []}::jsonb,
-          ${{ per_turn: opts.perTurn ?? [] }}::jsonb
+          ${sessionId}, ${opts.accountId}, ${opts.agentId ?? null},
+          NOW() - (${endedAgo} || ' minutes')::interval - interval '2 minutes',
+          NOW() - (${endedAgo} || ' minutes')::interval, 120000, 1,
+          ${opts.chatHistory === undefined ? [] : opts.chatHistory}::jsonb,
+          ${metrics}::jsonb
         )
       `;
       return sessionId;
     },
-    async seedEval(sessionId, verdict, judge = "it_judge") {
+    async seedEval(sessionId, verdict, judge = "it_judge", createdMinutesAgo = 0) {
       await sql`
-        INSERT INTO session_external_evals (session_id, source, judge_name, verdict)
-        VALUES (${sessionId}, ${run}, ${judge}, ${verdict})
+        INSERT INTO session_external_evals (session_id, source, judge_name, verdict, created_at)
+        VALUES (${sessionId}, ${run}, ${judge}, ${verdict},
+                NOW() - (${String(createdMinutesAgo)} || ' minutes')::interval)
       `;
     },
-    async seedOutcome(sessionId, outcome) {
+    async seedOutcome(sessionId, outcome, updatedMinutesAgo = 0) {
       await sql`
-        INSERT INTO session_outcomes (session_id, source, outcome)
-        VALUES (${sessionId}, ${run}, ${outcome})
+        INSERT INTO session_outcomes (session_id, source, outcome, updated_at)
+        VALUES (${sessionId}, ${run}, ${outcome},
+                NOW() - (${String(updatedMinutesAgo)} || ' minutes')::interval)
+      `;
+    },
+    async setLastFired(ruleId, minutesAgo) {
+      if (minutesAgo == null) {
+        await sql`UPDATE alert_rules SET last_fired_at = NULL WHERE id = ${ruleId}`;
+        return;
+      }
+      await sql`
+        UPDATE alert_rules
+        SET last_fired_at = NOW() - (${String(minutesAgo)} || ' minutes')::interval
+        WHERE id = ${ruleId}
       `;
     },
     createRule(over) {
@@ -101,6 +138,7 @@ export function testRun(prefix: string): TestRun {
       await sql`DELETE FROM session_external_evals WHERE source = ${run}`;
       await sql`DELETE FROM session_outcomes WHERE source = ${run}`;
       await sql`DELETE FROM agent_transport_sessions WHERE account_id LIKE ${run + "%"}`;
+      await sql`DELETE FROM agents WHERE agent_id LIKE ${run + "%"}`;
     },
   };
 }

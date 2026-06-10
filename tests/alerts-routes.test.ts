@@ -142,6 +142,11 @@ describe("alert rule routes", () => {
     ["judge on a non-eval metric", { ...validRule, metric: "interruption_rate" }],
     ["non-http webhook", { ...validRule, webhook_url: "ftp://example.com/x" }],
     ["bad method", { ...validRule, http_method: "DELETE" }],
+    ["zero threshold", { ...validRule, threshold_value: 0 }],
+    ["negative threshold", { ...validRule, threshold_value: -1 }],
+    ["min_samples below 1", { ...validRule, min_samples: 0 }],
+    ["fractional window", { ...validRule, window_minutes: 15.5 }],
+    ["empty name", { ...validRule, name: "" }],
   ])("rejects invalid payload: %s", async (_label, payload) => {
     const res = await server.fetch(
       authed("/api/alert-rules", { method: "POST", body: JSON.stringify(payload) }),
@@ -149,6 +154,23 @@ describe("alert rule routes", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error.code).toBe("invalid_payload");
+  });
+
+  test("malformed JSON body → invalid_json on create and patch", async () => {
+    for (const [path, method] of [
+      ["/api/alert-rules", "POST"],
+      [`/api/alert-rules/${RULE_ID}`, "PATCH"],
+    ] as const) {
+      const res = await server.fetch(authed(path, { method, body: "{not json" }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe("invalid_json");
+    }
+  });
+
+  test("webhook-attempts rejects a malformed rule_id filter", async () => {
+    const res = await server.fetch(authed("/api/alerts/webhook-attempts?rule_id=not-a-uuid"));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_payload");
   });
 
   test("latency metric rule rejects judge_name and accepts ms thresholds", async () => {
@@ -230,6 +252,31 @@ describe("alert rule routes", () => {
     const patch = (mockUpdateAlertRule.mock.calls[0] as any[])[1];
     expect(patch.name).toBe("renamed");
     expect(patch.enabled).toBe(false);
+  });
+
+  test("rejects a metric change that conflicts with the stored judge_name", async () => {
+    // Stored rule watches a judge; switching the metric to one where
+    // judge_name is meaningless must fail merged validation even though
+    // the patch itself looks innocent.
+    mockGetAlertRule.mockResolvedValueOnce({
+      ...storedRule,
+      judge_name: "task_completion",
+    } as any);
+    const res = await server.fetch(
+      authed(`/api/alert-rules/${RULE_ID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ metric: "interruption_rate" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toContain("judge_name");
+  });
+
+  test("list limit clamps to the maximum", async () => {
+    await server.fetch(authed("/api/alert-rules?limit=5000&enabled=false"));
+    const [limit, , filters] = mockListAlertRules.mock.calls[0] as any[];
+    expect(limit).toBe(100);
+    expect(filters.enabled).toBe(false);
   });
 
   test("rejects a partial patch that breaks cross-field rules on the merged rule", async () => {

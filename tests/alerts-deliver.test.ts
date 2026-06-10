@@ -143,6 +143,48 @@ describe("alerts/deliver", () => {
     expect(attempt.firingId).toBeNull();
   });
 
+  test("custom headers cannot override the identifying headers", async () => {
+    mockFetch(200);
+    await deliverFiring({
+      ...baseDue,
+      headers: { "x-alert-firing-id": "spoofed", "x-alert-rule-id": "spoofed" },
+    });
+    const headers = fetchCalls[0].init.headers as Record<string, string>;
+    expect(headers["x-alert-firing-id"]).toBe(baseDue.id);
+    expect(headers["x-alert-rule-id"]).toBe(baseDue.rule_id);
+  });
+
+  test("a failed audit insert does not break the delivery", async () => {
+    mockFetch(200);
+    mockInsertWebhookAttempt.mockRejectedValueOnce(new Error("db down"));
+    const result = await deliverFiring(baseDue);
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(200);
+  });
+
+  test("every request carries an abort signal for the delivery timeout", async () => {
+    mockFetch(200);
+    await deliverFiring(baseDue);
+    expect(fetchCalls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("test sends are signed too when the rule has a secret", async () => {
+    mockFetch(200);
+    await deliverTest({
+      id: baseDue.rule_id,
+      name: "r",
+      metric: "eval_fail_rate",
+      webhook_url: "https://hooks.example.com/alert",
+      http_method: "POST",
+      secret: "s3cret",
+      headers: null,
+    } as any);
+    const headers = fetchCalls[0].init.headers as Record<string, string>;
+    const body = String(fetchCalls[0].init.body);
+    const expected = `sha256=${createHmac("sha256", "s3cret").update(body).digest("hex")}`;
+    expect(headers["x-alert-signature"]).toBe(expected);
+  });
+
   test("retry schedule constants are consistent", () => {
     expect(MAX_ATTEMPTS).toBe(RETRY_BACKOFF_MS.length + 1);
     expect(RETRY_BACKOFF_MS[0]).toBe(30_000);

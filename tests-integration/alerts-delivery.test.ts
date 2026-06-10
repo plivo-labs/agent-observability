@@ -9,7 +9,7 @@ import { createHmac } from "node:crypto";
 import { sql } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { runSweepOnce } from "../src/alerts/sweeper.js";
-import { RETRY_BACKOFF_MS } from "../src/alerts/deliver.js";
+import { MAX_ATTEMPTS, RETRY_BACKOFF_MS } from "../src/alerts/deliver.js";
 import { describeDb, testRun } from "./helpers.js";
 
 const t = testRun("itd");
@@ -135,6 +135,72 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     expect(attempts[0].response_status).toBe(503);
     expect(attempts[1].ok).toBe(true);
     expect(attempts[1].attempt_number).toBe(2);
+  });
+
+  test("exhausted firings go terminally failed and are never redelivered", async () => {
+    const acct = t.uid("acct");
+    await seedFailingEval(acct);
+    const rule = await t.createRule({ account_id: acct, webhook_url: receiverUrl });
+
+    respondWith = 503;
+    await runSweepOnce(); // creates the firing, attempt 1 fails
+    const [{ id: firingId }] = await t.firingsFor(rule.id);
+    for (let attempt = 2; attempt <= MAX_ATTEMPTS; attempt++) {
+      await sql`UPDATE alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firingId}`;
+      await runSweepOnce();
+    }
+
+    let [firing] = await t.firingsFor(rule.id);
+    expect(firing.status).toBe("failed");
+    expect(firing.attempt_count).toBe(MAX_ATTEMPTS);
+    expect(firing.last_error).toBe("HTTP 503");
+
+    // Recovery after exhaustion must NOT resurrect the firing.
+    respondWith = 200;
+    received.length = 0;
+    await sql`UPDATE alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firingId}`;
+    await runSweepOnce();
+    [firing] = await t.firingsFor(rule.id);
+    expect(firing.status).toBe("failed");
+    expect(firing.attempt_count).toBe(MAX_ATTEMPTS);
+    expect(received.filter((r) => r.headers["x-alert-firing-id"] === firingId)).toHaveLength(0);
+
+    const attempts = await sql`
+      SELECT COUNT(*)::int AS n FROM alert_webhook_attempts WHERE firing_id = ${firingId}
+    `;
+    expect(attempts[0].n).toBe(MAX_ATTEMPTS); // exactly 6 audited attempts, no more
+  });
+
+  test("claims deliver oldest-due first and respect the batch limit", async () => {
+    const acct = t.uid("acct");
+    const rule = await t.createRule({ account_id: acct, webhook_url: receiverUrl });
+    const mkFiring = async (dueMinutesAgo: number, status = "pending") => {
+      const rows = await sql`
+        INSERT INTO alert_firings (
+          rule_id, window_start, window_end, matched_count, total_count,
+          observed_value, sample_session_ids, status, next_attempt_at
+        ) VALUES (
+          ${rule.id}, NOW() - interval '15 minutes', NOW(), 1, 1, 1, ${[]}::jsonb,
+          ${status}, NOW() - (${String(dueMinutesAgo)} || ' minutes')::interval
+        ) RETURNING id
+      `;
+      return rows[0].id as string;
+    };
+    const oldest = await mkFiring(3);
+    const middle = await mkFiring(2);
+    const newest = await mkFiring(1);
+    const failedPast = await mkFiring(5, "failed"); // terminal — never claimable
+    const future = await mkFiring(-10); // not yet due
+
+    const { claimDueFirings } = await import("../src/alerts/db.js");
+    // The dev DB is shared, so claim wide and assert on our own rows only.
+    const limited = await claimDueFirings(2);
+    expect(limited.length).toBeLessThanOrEqual(2); // batch limit honored
+    const rest = await claimDueFirings(50);
+    const mine = [...limited, ...rest].filter((d) => d.rule_id === rule.id).map((d) => d.id);
+    expect(mine).toEqual([oldest, middle, newest]); // oldest-due first
+    expect(mine).not.toContain(failedPast); // terminal state is unclaimable
+    expect(mine).not.toContain(future); // not yet due
   });
 
   test("the claim lease prevents a second sweep from double-delivering", async () => {
