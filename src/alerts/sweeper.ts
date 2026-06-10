@@ -34,6 +34,9 @@ export async function runSweepOnce(): Promise<void> {
             const result = await deliverFiring(d);
             if (result.ok) {
               await markDelivered(d.id, result.status);
+              console.log(
+                `[alerts] delivered firing=${d.id} rule=${d.rule_id} status=${result.status} attempt=${d.attempt_count + 1}`,
+              );
               return;
             }
             const attempts = d.attempt_count + 1;
@@ -45,6 +48,9 @@ export async function runSweepOnce(): Promise<void> {
             } else {
               const backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)];
               await markRetry(d.id, new Date(Date.now() + backoff), result.error, result.status);
+              console.log(
+                `[alerts] delivery retry scheduled firing=${d.id} rule=${d.rule_id} attempt=${attempts}/${MAX_ATTEMPTS} backoff=${backoff / 1000}s status=${result.status ?? "n/a"} error=${result.error}`,
+              );
             }
           } catch (e) {
             console.error(`[alerts] delivery error firing=${d.id}: ${(e as Error).message}`);
