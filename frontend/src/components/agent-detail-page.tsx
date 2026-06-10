@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import { parseAsStringEnum, useQueryState } from 'nuqs'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { AgentOverviewTab } from '@/components/agent-overview-tab'
 import { ConversationEvalsTab } from '@/components/conversation-evals-tab'
 import { SessionsPage } from '@/components/sessions-page'
 import { AgentRunsPage } from '@/components/agent-runs-page'
@@ -15,7 +14,7 @@ interface AgentDetailPageProps {
   onCompare?: (runIdA: string, runIdB: string) => void
 }
 
-const TAB_VALUES = ['overview', 'sessions', 'simulation-evals', 'conversation-evals'] as const
+const TAB_VALUES = ['sessions', 'simulation-evals', 'conversation-evals'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 const RANGE_VALUES = ['24h', '7d', '30d'] as const
@@ -31,22 +30,22 @@ export const AgentDetailPage = ({
   // value lingers from an older deploy.
   const [tabRaw, setTab] = useQueryState(
     'tab',
-    parseAsStringEnum([...TAB_VALUES]).withDefault('overview'),
+    parseAsStringEnum([...TAB_VALUES]).withDefault('sessions'),
   )
   const [rangeRaw, setRange] = useQueryState(
     'range',
     // 7d is the sensible default — most agents have sparse activity at
     // any single 24h window, so opening the dashboard on 24h almost
-    // always shows an empty Overview. Users can drill into 24h
-    // explicitly when they care about the last day.
+    // always shows an empty list. Users can drill into 24h explicitly
+    // when they care about the last day.
     parseAsStringEnum([...RANGE_VALUES]).withDefault('7d'),
   )
   const tab = useMemo<TabValue>(() => tabRaw as TabValue, [tabRaw])
   const range = useMemo<AgentStatsRange>(() => rangeRaw as AgentStatsRange, [rangeRaw])
 
-  // Range picker only matters on the Overview / Sessions tabs, but keep
-  // the slot reserved so the header doesn't reflow as you switch.
-  const rangePicker = (tab === 'overview' || tab === 'sessions') ? (
+  // Range picker only matters on the Sessions tab, but keep the slot
+  // reserved so the header doesn't reflow as you switch.
+  const rangePicker = tab === 'sessions' ? (
     <div className="flex items-center gap-1 rounded-lg border bg-card p-1 text-xs">
       {RANGE_VALUES.map((r) => (
         <button
@@ -72,22 +71,16 @@ export const AgentDetailPage = ({
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
         <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="simulation-evals">Simulation Evals</TabsTrigger>
           <TabsTrigger value="conversation-evals">Conversation Evals</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-4">
-          {/* No accountId passed — stats span all accounts for this id. */}
-          <AgentOverviewTab agentId={agentId} range={range} />
-        </TabsContent>
-
         <TabsContent value="sessions" className="mt-4">
           {/* SessionsPage / EvalsPage carry their own padding when used
               standalone; embedded here we let the tab content's padding
               govern instead of nudging back with -mx-6 (which made these
-              tabs render slightly wider than Overview / Conversation
+              tabs render slightly wider than Conversation
               Evals — visible misalignment when switching tabs). */}
           <SessionsPage
             onSessionClick={onSessionClick}

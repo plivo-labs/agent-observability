@@ -20,17 +20,17 @@ const numberFmt = new Intl.NumberFormat()
 // Same palette as agent-overview-tab so fleet and per-agent views read
 // as one product.
 const COLORS = {
-  accent: '#60a5fa',
-  warn: '#fbbf24',
-  bad: '#f87171',
-  pie: ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#fb923c', '#22d3ee', '#94a3b8'],
+  accent: 'var(--chart-2)',
+  warn: 'var(--chart-4)',
+  bad: 'var(--destructive)',
+  pie: ['var(--chart-2)', 'var(--chart-5)', 'var(--chart-1)', 'var(--chart-3)', 'var(--chart-4)'],
 }
 
 const RANGES: AgentStatsRange[] = ['24h', '7d', '30d']
 
 const chartTooltipStyle = {
-  background: 'hsl(var(--background))',
-  border: '1px solid hsl(var(--border))',
+  background: 'var(--background)',
+  border: '1px solid var(--border)',
   borderRadius: 8,
   fontSize: 12,
 }
@@ -174,21 +174,21 @@ const FleetStatsBody = ({
           value={numberFmt.format(stats.total_sessions)}
           sub={`${numberFmt.format(stats.active_agents)} active agents`}
           sparkValues={sessionSeries}
-          sparkColor="hsl(270 60% 55%)"
+          sparkColor="var(--chart-3)"
         />
         <KpiTile
           label="Total LLM cost"
           value={formatCost(stats.total_estimated_cost_usd)}
           sub={`priced on token usage · ${range}`}
           sparkValues={costSeries}
-          sparkColor="hsl(35 90% 45%)"
+          sparkColor="var(--chart-4)"
         />
         <KpiTile
           label="p95 perceived latency"
           value={formatMsExact(stats.p95_user_perceived_ms)}
           sub={`p50 ${formatMsExact(stats.p50_user_perceived_ms)} · p99 ${formatMsExact(stats.p99_user_perceived_ms)}`}
           sparkValues={p95Series}
-          sparkColor={p95Bad ? 'hsl(0 70% 50%)' : 'hsl(210 90% 42%)'}
+          sparkColor={p95Bad ? 'var(--destructive)' : 'var(--chart-2)'}
         />
         <KpiTile
           label="Interruption rate"

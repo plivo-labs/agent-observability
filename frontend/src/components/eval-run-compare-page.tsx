@@ -273,7 +273,7 @@ export function EvalRunComparePage({
           <div className="eval-diff-section__head regress">
             <span>✗ Regressed</span>
             <span className="count">{regressions.length}</span>
-            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>passed in A, failed in B</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'var(--muted-foreground)' }}>passed in A, failed in B</span>
           </div>
           {regressions.map(d => <DiffRow key={d.key} d={d} />)}
         </div>
@@ -284,7 +284,7 @@ export function EvalRunComparePage({
           <div className="eval-diff-section__head fixed">
             <span>✓ Fixed</span>
             <span className="count">{fixes.length}</span>
-            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>failed in A, passed in B</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'var(--muted-foreground)' }}>failed in A, passed in B</span>
           </div>
           {fixes.map(d => <DiffRow key={d.key} d={d} />)}
         </div>
@@ -295,7 +295,7 @@ export function EvalRunComparePage({
           <div className="eval-diff-section__head failing">
             <span>! Still failing</span>
             <span className="count">{stillFailing.length}</span>
-            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>failed in both runs</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'var(--muted-foreground)' }}>failed in both runs</span>
           </div>
           {stillFailing.map(d => <DiffRow key={d.key} d={d} />)}
         </div>
@@ -314,10 +314,10 @@ export function EvalRunComparePage({
 
       {newCases.length > 0 && (
         <div className="eval-diff-section" style={{ marginTop: 8 }}>
-          <div className="eval-diff-section__head" style={{ borderColor: 'hsl(var(--muted-foreground) / 0.3)' }}>
+          <div className="eval-diff-section__head" style={{ borderColor: 'color-mix(in oklab, var(--muted-foreground) 30%, transparent)' }}>
             <span>+ New cases</span>
             <span className="count">{newCases.length}</span>
-            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>only in run B</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'var(--muted-foreground)' }}>only in run B</span>
           </div>
           {newCases.map(d => <DiffRow key={d.key} d={d} />)}
         </div>
@@ -325,17 +325,17 @@ export function EvalRunComparePage({
 
       {removedCases.length > 0 && (
         <div className="eval-diff-section" style={{ marginTop: 8 }}>
-          <div className="eval-diff-section__head" style={{ borderColor: 'hsl(var(--muted-foreground) / 0.3)' }}>
+          <div className="eval-diff-section__head" style={{ borderColor: 'color-mix(in oklab, var(--muted-foreground) 30%, transparent)' }}>
             <span>− Removed cases</span>
             <span className="count">{removedCases.length}</span>
-            <span style={{ fontWeight: 400, marginLeft: 8, color: 'hsl(var(--muted-foreground))' }}>only in run A</span>
+            <span style={{ fontWeight: 400, marginLeft: 8, color: 'var(--muted-foreground)' }}>only in run A</span>
           </div>
           {removedCases.map(d => <DiffRow key={d.key} d={d} />)}
         </div>
       )}
 
       {diffs.length === 0 && (
-        <div style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--muted-foreground))' }}>
+        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--muted-foreground)' }}>
           No cases to compare.
         </div>
       )}

@@ -275,7 +275,7 @@ export const EvalRunDetailPage = ({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 text-[hsl(var(--destructive))] [&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+                className="h-8 text-destructive [&_svg]:text-current border-destructive-border hover:bg-destructive-bg"
                 onClick={() => setConfirmOpen(true)}
               >
                 <Trash2 /> Delete {selectedCount}

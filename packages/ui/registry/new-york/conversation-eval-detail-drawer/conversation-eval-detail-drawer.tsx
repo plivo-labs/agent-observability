@@ -151,10 +151,10 @@ export function ConversationEvalDetailDrawer({
                   const pct = Math.round((row.pass_count / total) * 100)
                   const tone =
                     pct >= 90
-                      ? 'text-[hsl(var(--success-fg,var(--success)))]'
+                      ? 'text-success-fg'
                       : pct >= 60
-                        ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
-                        : 'text-[hsl(var(--destructive))]'
+                        ? 'text-warning-fg'
+                        : 'text-destructive'
                   return (
                     <span className={`tabular-nums font-mono text-base ${tone}`}>
                       {pct}
@@ -168,7 +168,7 @@ export function ConversationEvalDetailDrawer({
                     <span className="inline-flex items-center gap-1" title="pass">
                       <CheckCircle2
                         size={12}
-                        className="shrink-0 text-[hsl(var(--success-fg,var(--success)))]"
+                        className="shrink-0 text-success-fg"
                       />
                       <span className="tabular-nums leading-none">
                         {row.pass_count}
@@ -179,7 +179,7 @@ export function ConversationEvalDetailDrawer({
                     <span className="inline-flex items-center gap-1" title="fail">
                       <XCircle
                         size={12}
-                        className="shrink-0 text-[hsl(var(--destructive))]"
+                        className="shrink-0 text-destructive"
                       />
                       <span className="tabular-nums leading-none">
                         {row.fail_count}
@@ -190,7 +190,7 @@ export function ConversationEvalDetailDrawer({
                     <span className="inline-flex items-center gap-1" title="maybe">
                       <CircleAlert
                         size={12}
-                        className="shrink-0 text-[hsl(var(--warning-fg,var(--warning)))]"
+                        className="shrink-0 text-warning-fg"
                       />
                       <span className="tabular-nums leading-none">
                         {row.maybe_count}

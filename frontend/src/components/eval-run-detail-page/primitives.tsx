@@ -14,16 +14,16 @@ import { type StatusFilter } from './model'
 
 const STATUS_DOT: Record<CaseStatus, { dot: string; text: string }> = {
   passed: {
-    dot: 'bg-[hsl(var(--success-fg,var(--success)))]',
-    text: 'text-[hsl(var(--success-fg,var(--success)))]',
+    dot: 'bg-success-fg',
+    text: 'text-success-fg',
   },
   failed: {
-    dot: 'bg-[hsl(var(--destructive))]',
-    text: 'text-[hsl(var(--destructive))]',
+    dot: 'bg-destructive',
+    text: 'text-destructive',
   },
   errored: {
-    dot: 'bg-[hsl(var(--warning-fg,var(--warning)))]',
-    text: 'text-[hsl(var(--warning-fg,var(--warning)))]',
+    dot: 'bg-warning-fg',
+    text: 'text-warning-fg',
   },
   skipped: { dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
 }

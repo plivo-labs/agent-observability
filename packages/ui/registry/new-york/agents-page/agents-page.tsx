@@ -15,9 +15,9 @@ const numberFmt = new Intl.NumberFormat()
 
 function passRateToneClass(rate: number | null): string {
   if (rate == null) return ''
-  if (rate >= 0.9) return 'text-[hsl(var(--success-fg,var(--success)))]'
-  if (rate >= 0.6) return 'text-[hsl(var(--warning-fg,var(--warning)))]'
-  return 'text-[hsl(var(--destructive))]'
+  if (rate >= 0.9) return 'text-success-fg'
+  if (rate >= 0.6) return 'text-warning-fg'
+  return 'text-destructive'
 }
 
 /** Inline horizontal bar showing pass-rate fill. Reused styling from the
@@ -105,10 +105,10 @@ export const AgentsPage = ({
           return (
             <div className="flex items-start gap-2">
               <Bot size={14} className="text-muted-foreground mt-0.5 shrink-0" />
-              <div className="flex flex-col leading-tight">
-                <span className="text-xs-500">{name || id}</span>
+              <div className="flex flex-col gap-0.5 leading-snug">
+                <span className="text-s-500">{name || id}</span>
                 {name && id && (
-                  <span className="text-[10px] text-muted-foreground font-mono">
+                  <span className="text-[11px] text-muted-foreground font-mono">
                     {id}
                   </span>
                 )}

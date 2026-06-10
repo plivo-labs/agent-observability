@@ -34,10 +34,10 @@ const ConfidencePill = ({ value }: { value: number | undefined }) => {
   if (value == null) return null
   const tone =
     value >= 0.9
-      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]'
+      ? 'text-success-fg border-success-border'
       : value >= 0.7
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]'
-        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] font-semibold'
+        ? 'text-warning-fg border-warning-border'
+        : 'text-destructive border-destructive-border font-semibold'
   const pct = Math.round(value * 100)
   return (
     <Badge
@@ -57,10 +57,10 @@ const LatencyPill = ({ label, ms }: { label: string; ms: number | undefined }) =
   const th = LATENCY_THRESHOLDS[label] ?? { good: 500, warn: 1500 }
   const tone =
     ms <= th.good
-      ? 'text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]'
+      ? 'text-success-fg border-success-border'
       : ms <= th.warn
-        ? 'text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]'
-        : 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] font-semibold'
+        ? 'text-warning-fg border-warning-border'
+        : 'text-destructive border-destructive-border font-semibold'
   return (
     <Badge
       variant="outline"
@@ -132,10 +132,10 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
           {turn.user_text && (
             <div className="flex flex-col gap-1 max-w-[85%]">
               <div className="flex items-start gap-2">
-                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--bubble-user))] border border-border mt-0.5">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-bubble-user border border-border mt-0.5">
                   <User size={11} className="text-muted-foreground" />
                 </div>
-                <div className="rounded-lg rounded-tl-sm bg-[hsl(var(--bubble-user))] border border-border px-3 py-2">
+                <div className="rounded-lg rounded-tl-sm bg-bubble-user border border-border px-3 py-2">
                   <span className="text-xs">{turn.user_text}</span>
                 </div>
               </div>
@@ -196,10 +196,10 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
 
           {turn.agent_text && (
             <div className={`flex items-start gap-2 max-w-[85%] ${isChat ? 'self-end flex-row-reverse' : ''}`}>
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--bubble-agent))] border border-[hsl(var(--info-border))] mt-0.5">
-                <Bot size={11} className="text-[hsl(var(--info))]" />
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-bubble-agent border border-info-border mt-0.5">
+                <Bot size={11} className="text-info" />
               </div>
-              <div className={`rounded-lg px-3 py-2 bg-[hsl(var(--bubble-agent))] border border-[hsl(var(--info-border))] ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
+              <div className={`rounded-lg px-3 py-2 bg-bubble-agent border border-info-border ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
                 <span className="text-xs">{turn.agent_text}</span>
               </div>
             </div>
@@ -239,10 +239,10 @@ const ChatMessageCard = ({ item }: { item: ChatItem }) => {
     <div className="flex gap-3 py-2">
       <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full mt-0.5 border ${
         isUser
-          ? 'bg-[hsl(var(--bubble-user))] border-border'
-          : 'bg-[hsl(var(--bubble-agent))] border-[hsl(var(--info-border))]'
+          ? 'bg-bubble-user border-border'
+          : 'bg-bubble-agent border-info-border'
       }`}>
-        {isUser ? <User size={11} className="text-muted-foreground" /> : <Bot size={11} className="text-[hsl(var(--info))]" />}
+        {isUser ? <User size={11} className="text-muted-foreground" /> : <Bot size={11} className="text-info" />}
       </div>
       <div>
         <span className="text-xxs-400 text-muted-foreground capitalize">{role}</span>

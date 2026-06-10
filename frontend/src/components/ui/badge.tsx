@@ -20,17 +20,17 @@ const badgeVariants = cva(
         /** Soft on paper — the most common chip on the dashboard. */
         secondary: "border-border bg-muted text-tertiary [a&]:hover:text-foreground",
         /** Brand red — reserved as a verb (errors, hot states). */
-        destructive: "border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-accent",
+        destructive: "border-destructive-border bg-destructive-bg text-destructive",
         /** Outline ghost — paper bg, ink border. */
         outline: "border-foreground bg-background text-foreground [a&]:hover:bg-foreground [a&]:hover:text-background",
         ghost: "border-transparent text-tertiary [a&]:hover:text-foreground",
-        link: "border-transparent text-foreground underline-offset-4 [a&]:hover:underline [a&]:hover:text-accent",
+        link: "border-transparent text-foreground underline-offset-4 [a&]:hover:underline [a&]:hover:text-ink-2",
         /** Semantic duos — `(soft bg + base fg + soft border)`. */
-        ok: "border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg))]",
-        warn: "border-[hsl(var(--warning-border))] bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg))]",
-        err: "border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]",
-        info: "border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] text-[hsl(var(--info))]",
-        agent: "border-[hsl(var(--accent-purple-border))] bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))]",
+        ok: "border-success-border bg-success-bg text-success-fg",
+        warn: "border-warning-border bg-warning-bg text-warning-fg",
+        err: "border-destructive-border bg-destructive-bg text-destructive",
+        info: "border-info-border bg-info-bg text-info",
+        agent: "border-accent-purple-border bg-accent-purple-bg text-accent-purple",
         neutral: "border-border bg-muted text-tertiary",
       },
     },
