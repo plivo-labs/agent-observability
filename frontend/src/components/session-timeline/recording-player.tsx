@@ -40,27 +40,39 @@ type Speed = (typeof SPEEDS)[number]
 
 /* WaveSurfer assigns wave/progress colors directly to canvas fillStyle.
  * Canvas does NOT resolve CSS `var()` — that only works in stylesheet /
- * inline-style contexts. So we read the raw `H S% L%` triple via
- * getComputedStyle and build literal `hsl(...)` strings ourselves. We
- * also re-resolve on theme change (the .dark class is toggled on
- * <html>) and call setOptions, since wavesurfer caches the parsed
- * color and won't repaint on its own. */
-function readVar(name: string): string {
+ * inline-style contexts. So we read the token's complete color value
+ * (oklch/hsl) via getComputedStyle and pass it through a scratch canvas,
+ * which normalizes any CSS color to `#rrggbb` — alpha variants append a
+ * hex alpha byte. We also re-resolve on theme change (the .dark class is
+ * toggled on <html>) and call setOptions, since wavesurfer caches the
+ * parsed color and won't repaint on its own. */
+let scratchCtx: CanvasRenderingContext2D | null = null
+function readColor(name: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
   // Fallback if the var isn't defined yet (rare initial paint).
-  return v || '0 0% 50%'
+  if (!v) return '#808080'
+  scratchCtx ??= document.createElement('canvas').getContext('2d')
+  if (!scratchCtx) return v
+  scratchCtx.fillStyle = '#808080'
+  scratchCtx.fillStyle = v
+  return scratchCtx.fillStyle
+}
+
+function withAlpha(color: string, alpha: number): string {
+  if (!color.startsWith('#') || color.length !== 7) return color
+  return color + Math.round(alpha * 255).toString(16).padStart(2, '0')
 }
 
 function resolveColors() {
-  const fg = readVar('--foreground')
-  const accent = readVar('--accent-purple')
-  const primary = readVar('--primary')
+  const fg = readColor('--foreground')
+  const accent = readColor('--accent-purple')
+  const primary = readColor('--primary')
   return {
-    userWave: `hsl(${fg} / 0.45)`,
-    userProgress: `hsl(${fg} / 0.85)`,
-    agentWave: `hsl(${accent} / 0.65)`,
-    agentProgress: `hsl(${accent})`,
-    cursor: `hsl(${primary})`,
+    userWave: withAlpha(fg, 0.45),
+    userProgress: withAlpha(fg, 0.85),
+    agentWave: withAlpha(accent, 0.65),
+    agentProgress: accent,
+    cursor: primary,
   }
 }
 
@@ -386,14 +398,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor="hsl(var(--foreground) / 0.85)"
+        labelColor="color-mix(in oklab, var(--foreground) 85%, transparent)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor="hsl(var(--accent-purple))"
+        labelColor="var(--accent-purple)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />

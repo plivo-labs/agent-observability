@@ -15,9 +15,9 @@ const numberFmt = new Intl.NumberFormat()
 
 function passRateToneClass(rate: number | null): string {
   if (rate == null) return ''
-  if (rate >= 0.9) return 'text-[hsl(var(--success-fg,var(--success)))]'
-  if (rate >= 0.6) return 'text-[hsl(var(--warning-fg,var(--warning)))]'
-  return 'text-[hsl(var(--destructive))]'
+  if (rate >= 0.9) return 'text-success-fg'
+  if (rate >= 0.6) return 'text-warning-fg'
+  return 'text-destructive'
 }
 
 /** Inline horizontal bar showing pass-rate fill. Reused styling from the

@@ -6,11 +6,11 @@ import { usePerformance } from '@/lib/observability-hooks'
 import { ChartCard } from '@/components/observability-chart-shared'
 
 const COLORS = {
-  eou: 'hsl(var(--warning))',
-  stt: 'hsl(var(--info))',
-  llm: 'hsl(var(--accent-purple))',
-  tts: 'hsl(var(--success))',
-  unaccounted: 'hsl(var(--tertiary))',
+  eou: 'var(--warning)',
+  stt: 'var(--info)',
+  llm: 'var(--accent-purple)',
+  tts: 'var(--success)',
+  unaccounted: 'var(--tertiary)',
 }
 
 interface BreakdownRow {
@@ -141,14 +141,14 @@ export const PipelineBreakdownChart = ({ metrics: metricsProp }: { metrics?: Ses
         <XAxis
           type="number"
           tickFormatter={(v: number) => formatMs(v)}
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <YAxis
           type="category"
           dataKey="label"
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
           width={40}
         />
         <Tooltip
@@ -160,7 +160,7 @@ export const PipelineBreakdownChart = ({ metrics: metricsProp }: { metrics?: Ses
               hasOther={chart.hasOther}
             />
           }
-          cursor={{ fill: 'hsl(var(--muted) / 0.4)' }}
+          cursor={{ fill: 'color-mix(in oklab, var(--muted) 40%, transparent)' }}
         />
         <Legend formatter={(value: string) => <span className="text-xs">{value}</span>} />
         {chart.hasEou && <Bar dataKey="eou" name="EOU" stackId="stack" fill={COLORS.eou} />}

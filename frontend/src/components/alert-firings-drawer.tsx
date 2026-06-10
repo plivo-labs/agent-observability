@@ -146,7 +146,7 @@ export const AlertFiringsDrawer = ({
                       <td
                         className={
                           'py-1 pr-2 text-right font-mono text-[11px] tabular-nums ' +
-                          (a.ok ? 'text-[hsl(var(--success-fg))]' : 'text-destructive')
+                          (a.ok ? 'text-success-fg' : 'text-destructive')
                         }
                       >
                         {a.response_status ?? a.error?.slice(0, 18) ?? '—'}

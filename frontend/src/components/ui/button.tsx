@@ -25,9 +25,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-foreground text-background border border-foreground hover:bg-accent hover:border-accent",
+          "bg-foreground text-background border border-foreground hover:bg-ink-2 hover:border-ink-2",
         destructive:
-          "bg-accent text-accent-foreground border border-accent hover:bg-foreground hover:border-foreground",
+          "bg-destructive text-destructive-foreground border border-destructive hover:bg-foreground hover:border-foreground hover:text-background",
         outline:
           "border border-foreground bg-background text-foreground hover:bg-foreground hover:text-background [&_svg]:text-tertiary hover:[&_svg]:text-background",
         /** Dashed-border filter pill — becomes solid when filter is applied. */
@@ -38,7 +38,7 @@ const buttonVariants = cva(
         ghost:
           "text-tertiary border border-transparent hover:bg-muted hover:text-foreground",
         link:
-          "text-foreground underline-offset-4 hover:underline hover:text-accent",
+          "text-foreground underline-offset-4 hover:underline hover:text-ink-2",
       },
       size: {
         /** 32px tall — mono-uppercase tracked label. */

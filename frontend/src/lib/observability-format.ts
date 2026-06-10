@@ -104,9 +104,9 @@ export type ValueTone = 'default' | 'good' | 'warn' | 'bad' | 'mute'
 
 export const valueToneClass: Record<ValueTone, string> = {
   default: 'text-foreground',
-  good: 'text-[hsl(var(--success-fg,var(--success)))]',
-  warn: 'text-[hsl(var(--warning-fg,var(--warning)))]',
-  bad: 'text-[hsl(var(--destructive))]',
+  good: 'text-success-fg',
+  warn: 'text-warning-fg',
+  bad: 'text-destructive',
   mute: 'text-muted-foreground',
 }
 

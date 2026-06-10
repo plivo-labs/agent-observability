@@ -144,7 +144,7 @@ export const SessionsPage = ({
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="tnum" style={{ color: 'var(--ink-2)' }}>
             {formatDate(row.original.started_at)}
           </span>
         ),
@@ -157,7 +157,7 @@ export const SessionsPage = ({
         accessorKey: 'ended_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Ended" />,
         cell: ({ row }) => (
-          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="tnum" style={{ color: 'var(--ink-2)' }}>
             {formatDate(row.original.ended_at)}
           </span>
         ),
@@ -267,7 +267,7 @@ export const SessionsPage = ({
           value={(agentStats?.total_sessions ?? 0).toLocaleString()}
           sub={`${range} window · ${totalCount.toLocaleString()} all-time`}
           sparkValues={kpiSeries.sessions}
-          sparkColor="hsl(270 60% 55%)"
+          sparkColor="var(--accent-purple)"
         />
         <KpiTile
           label="p95 perceived latency"
@@ -278,7 +278,7 @@ export const SessionsPage = ({
           }
           sub={`user perceived · ${range}`}
           sparkValues={kpiSeries.p95Latency}
-          sparkColor="hsl(210 90% 42%)"
+          sparkColor="var(--info)"
         />
         <KpiTile
           label="Avg duration"
@@ -294,14 +294,14 @@ export const SessionsPage = ({
           }
           sub={`per session · ${range}`}
           sparkValues={kpiSeries.avgDuration}
-          sparkColor="hsl(35 90% 45%)"
+          sparkColor="var(--warning)"
         />
         <KpiTile
           label="Total LLM cost"
           value={formatCost(agentStats?.total_estimated_cost_usd ?? null)}
           sub={`priced on token usage · ${range}`}
           sparkValues={kpiSeries.cost}
-          sparkColor="hsl(0 70% 50%)"
+          sparkColor="var(--destructive)"
         />
       </div>
 
@@ -309,9 +309,9 @@ export const SessionsPage = ({
         <div
           role="alert"
           style={{
-            border: '1px solid hsl(var(--destructive-border))',
-            background: 'hsl(var(--destructive-bg))',
-            color: 'hsl(var(--destructive))',
+            border: '1px solid var(--destructive-border)',
+            background: 'var(--destructive-bg)',
+            color: 'var(--destructive)',
             padding: '10px 14px',
             borderRadius: 8,
             marginBottom: 12,
@@ -338,7 +338,7 @@ export const SessionsPage = ({
             <Button
               variant="outline"
               size="sm"
-              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              className="text-destructive [&_svg]:text-current hover:[&_svg]:text-current border-destructive-border hover:bg-destructive-bg"
               onClick={() => setConfirmOpen(true)}
             >
               <Trash2 /> Delete
@@ -365,7 +365,7 @@ export const SessionsPage = ({
             </DialogDescription>
           </DialogHeader>
           {deleteError && (
-            <div className="text-s-400 text-[hsl(var(--destructive))]">
+            <div className="text-s-400 text-destructive">
               Failed to delete: {deleteError}
             </div>
           )}
@@ -375,7 +375,7 @@ export const SessionsPage = ({
             </Button>
             <Button
               variant="outline"
-              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              className="text-destructive border-destructive-border hover:bg-destructive-bg"
               onClick={handleDelete}
               disabled={deleting}
             >

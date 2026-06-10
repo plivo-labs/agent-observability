@@ -47,28 +47,28 @@ export const CacheEfficiencyChart = ({ metrics: metricsProp }: { metrics?: Sessi
     <ChartCard
       title="Cache Efficiency"
       subtitle="Prompt cache hit ratio over turns"
-      legend={[{ color: 'hsl(150 60% 45%)', label: 'Cache Hit %' }]}
+      legend={[{ color: 'var(--success)', label: 'Cache Hit %' }]}
     >
       <AreaChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--st1)" />
         <XAxis
           dataKey="turn"
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <YAxis
           domain={[0, 100]}
           tickFormatter={(v: number) => `${v}%`}
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <Tooltip content={<CacheTooltip />} />
         <Area
           type="monotone"
           dataKey="ratio"
           name="Cache Hit %"
-          stroke="hsl(150 60% 45%)"
-          fill="hsl(150 60% 45% / 0.15)"
+          stroke="var(--success)"
+          fill="color-mix(in oklab, var(--success) 15%, transparent)"
           strokeWidth={2}
           connectNulls
         />

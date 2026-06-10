@@ -29,8 +29,8 @@ const COLORS = {
 const RANGES: AgentStatsRange[] = ['24h', '7d', '30d']
 
 const chartTooltipStyle = {
-  background: 'hsl(var(--background))',
-  border: '1px solid hsl(var(--border))',
+  background: 'var(--background)',
+  border: '1px solid var(--border)',
   borderRadius: 8,
   fontSize: 12,
 }
@@ -174,21 +174,21 @@ const FleetStatsBody = ({
           value={numberFmt.format(stats.total_sessions)}
           sub={`${numberFmt.format(stats.active_agents)} active agents`}
           sparkValues={sessionSeries}
-          sparkColor="hsl(270 60% 55%)"
+          sparkColor="var(--accent-purple)"
         />
         <KpiTile
           label="Total LLM cost"
           value={formatCost(stats.total_estimated_cost_usd)}
           sub={`priced on token usage · ${range}`}
           sparkValues={costSeries}
-          sparkColor="hsl(35 90% 45%)"
+          sparkColor="var(--warning)"
         />
         <KpiTile
           label="p95 perceived latency"
           value={formatMsExact(stats.p95_user_perceived_ms)}
           sub={`p50 ${formatMsExact(stats.p50_user_perceived_ms)} · p99 ${formatMsExact(stats.p99_user_perceived_ms)}`}
           sparkValues={p95Series}
-          sparkColor={p95Bad ? 'hsl(0 70% 50%)' : 'hsl(210 90% 42%)'}
+          sparkColor={p95Bad ? 'var(--destructive)' : 'var(--info)'}
         />
         <KpiTile
           label="Interruption rate"

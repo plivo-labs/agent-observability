@@ -17,7 +17,7 @@ interface SparklineProps {
 
 export function Sparkline({
   values,
-  color = 'hsl(var(--accent-purple))',
+  color = 'var(--accent-purple)',
   width = 80,
   height = 26,
 }: SparklineProps) {
@@ -52,10 +52,10 @@ export function Sparkline({
  *  call site keeps its pass / latency / ASR coloring. Applied inline (not via a
  *  utility class) so it wins over the `.eval-kpi__value` rule in observability.css. */
 const KPI_TONE_COLOR: Record<Exclude<ValueTone, 'default'>, string> = {
-  good: 'hsl(var(--success-fg, var(--success)))',
-  warn: 'hsl(var(--warning-fg, var(--warning)))',
-  bad: 'hsl(var(--destructive))',
-  mute: 'hsl(var(--muted-foreground))',
+  good: 'var(--success-fg, var(--success))',
+  warn: 'var(--warning-fg, var(--warning))',
+  bad: 'var(--destructive)',
+  mute: 'var(--muted-foreground)',
 }
 
 interface KpiTileProps {
@@ -111,7 +111,7 @@ export function KpiTile({
         <div className="eval-kpi__spark">
           <Sparkline
             values={sparkValues}
-            color={sparkColor || 'hsl(var(--accent-purple))'}
+            color={sparkColor || 'var(--accent-purple)'}
             width={80}
             height={26}
           />

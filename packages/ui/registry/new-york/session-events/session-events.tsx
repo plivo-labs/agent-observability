@@ -10,20 +10,20 @@ import type { SessionEvent } from '@/lib/observability-types'
  * info / accent-purple) so each event type reads at a glance. */
 const EV_BADGE_TONE: Record<string, string> = {
   conversation_item_added:
-    'bg-[hsl(var(--info-bg))] text-[hsl(var(--info))] border-[hsl(var(--info-border))]',
+    'bg-info-bg text-info border-info-border',
   speech_created:
-    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
+    'bg-warning-bg text-warning-fg border-warning-border',
   agent_state_changed:
-    'bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))] border-[hsl(var(--accent-purple-border))]',
+    'bg-accent-purple-bg text-accent-purple border-accent-purple-border',
   user_state_changed:
-    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
+    'bg-success-bg text-success-fg border-success-border',
   user_input_transcribed:
-    'bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))] border-[hsl(var(--success-border))]',
+    'bg-success-bg text-success-fg border-success-border',
   close:
-    'bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border-[hsl(var(--warning-border))]',
+    'bg-warning-bg text-warning-fg border-warning-border',
 }
 const EV_BADGE_FALLBACK =
-  'bg-[hsl(var(--accent-purple-bg))] text-[hsl(var(--accent-purple))] border-[hsl(var(--accent-purple-border))]'
+  'bg-accent-purple-bg text-accent-purple border-accent-purple-border'
 
 type TimeMode = 'relative' | 'absolute'
 
@@ -107,10 +107,10 @@ function getAgentHandoff(item: Record<string, unknown> | null): Record<string, u
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1">
-      <div className="text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--tertiary))]">
+      <div className="text-xxs-600 uppercase tracking-[0.08em] text-tertiary">
         {label}
       </div>
-      <div className="min-w-0 text-[13px] text-[hsl(var(--foreground))]">
+      <div className="min-w-0 text-[13px] text-foreground">
         {children}
       </div>
     </div>
@@ -119,7 +119,7 @@ function DetailField({ label, children }: { label: string; children: React.React
 
 function CodeBlock({ value }: { value: unknown }) {
   return (
-    <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 font-mono text-[12px] leading-relaxed text-[hsl(var(--secondary))]">
+    <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-card p-3 font-mono text-[12px] leading-relaxed text-ink-2">
       {prettyJson(value)}
     </pre>
   )
@@ -132,17 +132,17 @@ function EventDetail({ event }: { event: SessionEvent }) {
     return (
       <div className="ev-detail">
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className="rounded border border-[hsl(var(--info-border))] bg-[hsl(var(--info-bg))] px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] text-[hsl(var(--info))]">
+          <span className="rounded border border-info-border bg-info-bg px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] text-info">
             Tool call
           </span>
-          <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
+          <span className="truncate text-[14px] font-semibold text-foreground">
             {String(functionCall.name ?? 'unknown')}
           </span>
         </div>
         <div className="grid gap-3">
           {functionCall.call_id != null && (
             <DetailField label="Call ID">
-              <code className="break-all rounded bg-[hsl(var(--bg2))] px-1.5 py-0.5 font-mono text-[12px]">
+              <code className="break-all rounded bg-bg2 px-1.5 py-0.5 font-mono text-[12px]">
                 {String(functionCall.call_id)}
               </code>
             </DetailField>
@@ -164,19 +164,19 @@ function EventDetail({ event }: { event: SessionEvent }) {
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
           <span className={`rounded border px-2 py-0.5 text-xxs-600 uppercase tracking-[0.08em] ${
             isError
-              ? 'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]'
-              : 'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]'
+              ? 'border-destructive-border bg-destructive-bg text-destructive'
+              : 'border-success-border bg-success-bg text-success-fg'
           }`}>
             Tool result
           </span>
-          <span className="truncate text-[14px] font-semibold text-[hsl(var(--foreground))]">
+          <span className="truncate text-[14px] font-semibold text-foreground">
             {String(functionCallOutput.name ?? functionCallOutput.call_id ?? 'unknown')}
           </span>
         </div>
         <div className="grid gap-3">
           {functionCallOutput.call_id != null && (
             <DetailField label="Call ID">
-              <code className="break-all rounded bg-[hsl(var(--bg2))] px-1.5 py-0.5 font-mono text-[12px]">
+              <code className="break-all rounded bg-bg2 px-1.5 py-0.5 font-mono text-[12px]">
                 {String(functionCallOutput.call_id)}
               </code>
             </DetailField>
@@ -411,7 +411,7 @@ export const SessionEvents = () => {
   if (!events || events.length === 0) {
     return (
       <div className="events-card">
-        <div style={{ padding: 48, textAlign: 'center', color: 'hsl(var(--tertiary))', font: 'var(--text-s-400)' }}>
+        <div style={{ padding: 48, textAlign: 'center', color: 'var(--tertiary)', font: 'var(--text-s-400)' }}>
           No events captured for this session.
         </div>
       </div>

@@ -76,14 +76,14 @@ export const SessionDetailPage = () => {
         <TabsList className="max-w-full overflow-x-auto">
           <TabsTrigger value="session">
             <AudioLines size={14} /> Session
-            {turnCount > 0 && <span style={{ marginLeft: 4, color: 'hsl(var(--tertiary))', font: 'var(--text-xxs-600)' }}>({turnCount})</span>}
+            {turnCount > 0 && <span style={{ marginLeft: 4, color: 'var(--tertiary)', font: 'var(--text-xxs-600)' }}>({turnCount})</span>}
           </TabsTrigger>
           <TabsTrigger value="metrics">
             <BarChart3 size={14} /> Performance
           </TabsTrigger>
           <TabsTrigger value="events">
             <Activity size={14} /> Events
-            {eventCount > 0 && <span style={{ marginLeft: 4, color: 'hsl(var(--tertiary))', font: 'var(--text-xxs-600)' }}>({eventCount})</span>}
+            {eventCount > 0 && <span style={{ marginLeft: 4, color: 'var(--tertiary)', font: 'var(--text-xxs-600)' }}>({eventCount})</span>}
           </TabsTrigger>
           <TabsTrigger value="config">
             <Settings2 size={14} /> Config

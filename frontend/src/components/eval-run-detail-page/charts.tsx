@@ -26,13 +26,13 @@ import {
 // `<CartesianGrid + axes + Tooltip>` block has to live inside each chart;
 // the styling tokens are pulled out so they can't drift.
 const CHART_TOOLTIP_STYLE = {
-  background: 'hsl(var(--popover))',
-  border: '1px solid hsl(var(--border))',
+  background: 'var(--popover)',
+  border: '1px solid var(--border)',
   borderRadius: 6,
   fontSize: 11,
 } as const
 
-const AXIS_TICK = { fill: 'hsl(var(--muted-foreground))', fontSize: 10 } as const
+const AXIS_TICK = { fill: 'var(--muted-foreground)', fontSize: 10 } as const
 
 // ── Latency over cases (line) ──────────────────────────────────────────────
 
@@ -53,12 +53,12 @@ export function LatencyOverCasesChart({
     >
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
-          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="hsl(var(--border))" tickLine={false} />
+          <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="var(--border)" tickLine={false} />
           <YAxis
             tickFormatter={(v: number) => formatMs(v)}
             tick={AXIS_TICK}
-            stroke="hsl(var(--border))"
+            stroke="var(--border)"
             tickLine={false}
             width={42}
           />
@@ -125,12 +125,12 @@ export function PipelineOrDurationChart({
           margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
           barCategoryGap={3}
         >
-          <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
-          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="hsl(var(--border))" tickLine={false} />
+          <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="var(--border)" tickLine={false} />
           <YAxis
             tickFormatter={(v: number) => yFormatter(v)}
             tick={AXIS_TICK}
-            stroke="hsl(var(--border))"
+            stroke="var(--border)"
             tickLine={false}
             width={isVoice ? 42 : 48}
           />
@@ -192,7 +192,7 @@ export function TokenCostPanel({ run }: { run: EvalRunDetail }) {
                 endAngle={-270}
               >
                 <Cell fill={COLOR_TTFT} />
-                <Cell fill="hsl(var(--muted))" />
+                <Cell fill="var(--muted)" />
               </Pie>
             </PieChart>
           </ResponsiveContainer>

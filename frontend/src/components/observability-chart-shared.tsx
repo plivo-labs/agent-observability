@@ -72,8 +72,8 @@ interface LegendEntry {
 // new stats pages don't re-copy ~40 lines of recharts boilerplate per chart.
 
 const TS_TOOLTIP_STYLE = {
-  background: 'hsl(var(--background))',
-  border: '1px solid hsl(var(--border))',
+  background: 'var(--background)',
+  border: '1px solid var(--border)',
   borderRadius: 8,
   fontSize: 12,
 } as const
@@ -115,18 +115,18 @@ export const TimeSeriesCard = ({
 
   const axes = (
     <>
-      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
       <XAxis
         dataKey="bucket_start"
         tickFormatter={xTickFormatter}
-        stroke="hsl(var(--muted-foreground))"
+        stroke="var(--muted-foreground)"
         fontSize={11}
       />
       <YAxis
         allowDecimals={allowDecimals}
         tickFormatter={yTickFormatter}
         unit={yUnit}
-        stroke="hsl(var(--muted-foreground))"
+        stroke="var(--muted-foreground)"
         fontSize={11}
       />
       <Tooltip

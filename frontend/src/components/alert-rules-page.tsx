@@ -106,7 +106,7 @@ export const AlertRulesPage = () => {
           value={stats ? String(stats.total_attempts) : '—'}
           sub={stats ? `${stats.accepted} accepted` : undefined}
           sparkValues={stats?.buckets.map((b) => b.attempts)}
-          sparkColor="hsl(270 60% 55%)"
+          sparkColor="var(--accent-purple)"
         />
         <KpiTile
           label="Acceptance rate"
@@ -199,7 +199,7 @@ export const AlertRulesPage = () => {
                       <div
                         className={
                           'mt-0.5 font-mono text-[11px] ' +
-                          (testResult.ok ? 'text-[hsl(var(--success-fg))]' : 'text-destructive')
+                          (testResult.ok ? 'text-success-fg' : 'text-destructive')
                         }
                       >
                         {testResult.text}

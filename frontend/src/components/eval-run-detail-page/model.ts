@@ -20,8 +20,8 @@ export type { ValueTone } from '@/lib/observability-format'
 
 // ── Chart colors ────────────────────────────────────────────────────────────
 
-export const COLOR_TTFT = 'hsl(var(--accent-purple))'
-export const COLOR_TTFB = 'hsl(var(--success-fg,var(--success)))'
+export const COLOR_TTFT = 'var(--accent-purple)'
+export const COLOR_TTFB = 'var(--success-fg, var(--success))'
 
 // ── Metrics view model ──────────────────────────────────────────────────────
 

@@ -72,8 +72,8 @@ import { AgentScopeHeader } from '@/components/agent-scope-header'
 // passRateTone / fmtMsParts) live in observability-format so the same values
 // back both these KPIs and the per-session metric summary.
 
-const COLOR_TTFT = 'hsl(var(--accent-purple))'
-const COLOR_TTFB = 'hsl(var(--success-fg,var(--success)))'
+const COLOR_TTFT = 'var(--accent-purple)'
+const COLOR_TTFB = 'var(--success-fg, var(--success))'
 
 // ── Metrics view model ──────────────────────────────────────────────────────
 
@@ -124,16 +124,16 @@ function caseAsrConfidence(events: RunEvent[]): number | null {
 
 const STATUS_DOT: Record<CaseStatus, { dot: string; text: string }> = {
   passed: {
-    dot: 'bg-[hsl(var(--success-fg,var(--success)))]',
-    text: 'text-[hsl(var(--success-fg,var(--success)))]',
+    dot: 'bg-success-fg',
+    text: 'text-success-fg',
   },
   failed: {
-    dot: 'bg-[hsl(var(--destructive))]',
-    text: 'text-[hsl(var(--destructive))]',
+    dot: 'bg-destructive',
+    text: 'text-destructive',
   },
   errored: {
-    dot: 'bg-[hsl(var(--warning-fg,var(--warning)))]',
-    text: 'text-[hsl(var(--warning-fg,var(--warning)))]',
+    dot: 'bg-warning-fg',
+    text: 'text-warning-fg',
   },
   skipped: { dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
 }
@@ -418,13 +418,13 @@ interface OverCasesDatum {
 }
 
 const CHART_TOOLTIP_STYLE = {
-  background: 'hsl(var(--popover))',
-  border: '1px solid hsl(var(--border))',
+  background: 'var(--popover)',
+  border: '1px solid var(--border)',
   borderRadius: 6,
   fontSize: 11,
 } as const
 
-const AXIS_TICK = { fill: 'hsl(var(--muted-foreground))', fontSize: 10 } as const
+const AXIS_TICK = { fill: 'var(--muted-foreground)', fontSize: 10 } as const
 
 function LatencyOverCasesChart({
   data,
@@ -443,12 +443,12 @@ function LatencyOverCasesChart({
     >
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
-          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="hsl(var(--border))" tickLine={false} />
+          <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="var(--border)" tickLine={false} />
           <YAxis
             tickFormatter={(v: number) => formatMs(v)}
             tick={AXIS_TICK}
-            stroke="hsl(var(--border))"
+            stroke="var(--border)"
             tickLine={false}
             width={42}
           />
@@ -515,12 +515,12 @@ function PipelineOrDurationChart({
           margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
           barCategoryGap={3}
         >
-          <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" vertical={false} />
-          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="hsl(var(--border))" tickLine={false} />
+          <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="idx" tick={AXIS_TICK} stroke="var(--border)" tickLine={false} />
           <YAxis
             tickFormatter={(v: number) => yFormatter(v)}
             tick={AXIS_TICK}
-            stroke="hsl(var(--border))"
+            stroke="var(--border)"
             tickLine={false}
             width={isVoice ? 42 : 48}
           />
@@ -580,7 +580,7 @@ function TokenCostPanel({ run }: { run: EvalRunDetail }) {
                 endAngle={-270}
               >
                 <Cell fill={COLOR_TTFT} />
-                <Cell fill="hsl(var(--muted))" />
+                <Cell fill="var(--muted)" />
               </Pie>
             </PieChart>
           </ResponsiveContainer>
@@ -752,7 +752,7 @@ function CaseRow({
       <td
         className={cn(
           'h-10 px-3.5 border-b border-border font-mono tabular-nums',
-          ttftBad ? 'text-[hsl(var(--destructive))]' : 'text-foreground/85',
+          ttftBad ? 'text-destructive' : 'text-foreground/85',
         )}
       >
         {c.ttft_avg_ms != null ? formatMs(c.ttft_avg_ms) : '—'}
@@ -761,7 +761,7 @@ function CaseRow({
         <td
           className={cn(
             'h-10 px-3.5 border-b border-border font-mono tabular-nums',
-            ttfbBad ? 'text-[hsl(var(--destructive))]' : 'text-foreground/85',
+            ttfbBad ? 'text-destructive' : 'text-foreground/85',
           )}
         >
           {c.ttfb_avg_ms != null ? formatMs(c.ttfb_avg_ms) : '—'}
@@ -790,16 +790,16 @@ function CaseRow({
               className={cn(
                 'font-mono tabular-nums',
                 asrBad
-                  ? 'text-[hsl(var(--destructive))]'
+                  ? 'text-destructive'
                   : asrWarn
-                    ? 'text-[hsl(var(--warning-fg,var(--warning)))]'
-                    : 'text-[hsl(var(--success-fg,var(--success)))]',
+                    ? 'text-warning-fg'
+                    : 'text-success-fg',
               )}
             >
               {(c.asr * 100).toFixed(1)}%
             </span>
             {hasInterrupt && (
-              <span className="inline-flex items-center px-1.5 h-[18px] rounded bg-[hsl(var(--warning-bg))] text-[hsl(var(--warning-fg,var(--warning)))] border border-[hsl(var(--warning-border))] text-[10px] font-medium tracking-wide">
+              <span className="inline-flex items-center px-1.5 h-[18px] rounded bg-warning-bg text-warning-fg border border-warning-border text-[10px] font-medium tracking-wide">
                 intr
               </span>
             )}
@@ -845,7 +845,7 @@ function DeleteCasesDialog({
           </DialogDescription>
         </DialogHeader>
         {error && (
-          <div className="text-s-400 text-[hsl(var(--destructive))]">
+          <div className="text-s-400 text-destructive">
             Failed to delete: {error}
           </div>
         )}
@@ -855,7 +855,7 @@ function DeleteCasesDialog({
           </Button>
           <Button
             variant="outline"
-            className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+            className="text-destructive border-destructive-border hover:bg-destructive-bg"
             onClick={onConfirm}
             disabled={deleting}
           >
@@ -1103,7 +1103,7 @@ export const EvalRunDetailPage = ({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 text-[hsl(var(--destructive))] [&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+                className="h-8 text-destructive [&_svg]:text-current border-destructive-border hover:bg-destructive-bg"
                 onClick={() => setConfirmOpen(true)}
               >
                 <Trash2 /> Delete {selectedCount}
