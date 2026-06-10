@@ -82,8 +82,9 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     const payload = JSON.parse(req.rawBody);
     expect(payload.type).toBe("alert.triggered");
     expect(payload.rule.id).toBe(rule.id);
-    expect(payload.matched_count).toBe(1);
-    expect(payload.observed_value).toBeNull(); // count rules carry no scalar metric
+    expect(payload.matched_count).toBe(1); // one failing eval in the window
+    expect(payload.observed_value).toBe(1); // eval_fail_rate = 100%
+    expect(payload.rule.metric).toBe("eval_fail_rate");
     expect(payload.sample_session_ids).toContain(sessionId);
     expect(payload.account_id).toBe(acct);
 

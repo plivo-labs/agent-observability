@@ -25,60 +25,8 @@ describeDb("alert triggers against real Postgres", () => {
     await t.cleanup();
   });
 
-  test("evaluation_count fires on matching verdicts and dedups within the window", async () => {
-    const acct = t.uid("acct");
-    const s1 = await t.seedSession({ accountId: acct });
-    await t.seedEval(s1, "fail");
-    await t.seedEval(s1, "fail");
-    const rule = await t.createRule({
-      trigger_type: "evaluation_count",
-      account_id: acct,
-      threshold_count: 2,
-    });
 
-    await evaluateRules();
-    let firings = await t.firingsFor(rule.id);
-    expect(firings).toHaveLength(1);
-    expect(firings[0].matched_count).toBe(2);
-    expect(firings[0].observed_value).toBeNull(); // counts carry no scalar metric
-    expect(firings[0].sample_session_ids).toContain(s1);
 
-    // Suppressed: same window, no second firing.
-    await evaluateRules();
-    firings = await t.firingsFor(rule.id);
-    expect(firings).toHaveLength(1);
-  });
-
-  test("evaluation_count respects the judge filter", async () => {
-    const acct = t.uid("acct");
-    const s1 = await t.seedSession({ accountId: acct });
-    await t.seedEval(s1, "fail", "other_judge");
-    const rule = await t.createRule({
-      trigger_type: "evaluation_count",
-      account_id: acct,
-      threshold_count: 1,
-      judge_name: "it_judge",
-    });
-
-    await evaluateRules();
-    expect(await t.firingsFor(rule.id)).toHaveLength(0);
-  });
-
-  test("outcome_count matches lk.-prefixed outcomes", async () => {
-    const acct = t.uid("acct");
-    const s1 = await t.seedSession({ accountId: acct });
-    await t.seedOutcome(s1, "lk.fail");
-    const rule = await t.createRule({
-      trigger_type: "outcome_count",
-      account_id: acct,
-      threshold_count: 1,
-    });
-
-    await evaluateRules();
-    const firings = await t.firingsFor(rule.id);
-    expect(firings).toHaveLength(1);
-    expect(firings[0].matched_count).toBe(1);
-  });
 
   test("eval_fail_rate fires above the threshold and gates on min_samples", async () => {
     const acct = t.uid("acct");
@@ -89,10 +37,8 @@ describeDb("alert triggers against real Postgres", () => {
     await t.seedEval(s1, "pass"); // 50% fail over 4 samples
 
     const gated = await t.createRule({
-      trigger_type: "metric_threshold",
       metric: "eval_fail_rate",
       account_id: acct,
-      threshold_count: null,
       threshold_value: 0.3,
       min_samples: 10,
     });
@@ -100,10 +46,8 @@ describeDb("alert triggers against real Postgres", () => {
     expect(await t.firingsFor(gated.id)).toHaveLength(0); // 4 < 10 samples
 
     const armed = await t.createRule({
-      trigger_type: "metric_threshold",
       metric: "eval_fail_rate",
       account_id: acct,
-      threshold_count: null,
       threshold_value: 0.3,
       min_samples: 4,
     });
@@ -123,10 +67,8 @@ describeDb("alert triggers against real Postgres", () => {
     await t.seedOutcome(s2, "success");
 
     const rule = await t.createRule({
-      trigger_type: "metric_threshold",
       metric: "outcome_fail_rate",
       account_id: acct,
-      threshold_count: null,
       threshold_value: 0.4,
       min_samples: 2,
     });
@@ -152,10 +94,8 @@ describeDb("alert triggers against real Postgres", () => {
     });
 
     const rule = await t.createRule({
-      trigger_type: "metric_threshold",
       metric,
       account_id: acct,
-      threshold_count: null,
       threshold_value: 2000, // 3.2s observed > 2000ms
       min_samples: 2,
     });
@@ -175,10 +115,8 @@ describeDb("alert triggers against real Postgres", () => {
     await t.seedSession({ accountId: acct, chatHistory: chat });
 
     const rule = await t.createRule({
-      trigger_type: "metric_threshold",
       metric: "interruption_rate",
       account_id: acct,
-      threshold_count: null,
       threshold_value: 0.25,
       min_samples: 2,
     });

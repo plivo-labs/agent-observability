@@ -20,27 +20,10 @@ mock.module("../src/db.js", () => ({
 
 const { evaluateRules } = await import("../src/alerts/engine.js");
 
-const countRule = {
-  id: "r1",
-  trigger_type: "evaluation_count",
-  metric: null,
-  judge_name: "task_completion",
-  verdicts: ["fail"],
-  threshold_count: 5,
-  threshold_value: null,
-  min_samples: 1,
-  window_minutes: 15,
-  agent_id: null,
-  account_id: null,
-};
-
 const failRateRule = {
   id: "r2",
-  trigger_type: "metric_threshold",
   metric: "eval_fail_rate",
-  judge_name: null,
-  verdicts: ["fail"],
-  threshold_count: null,
+  judge_name: "task_completion",
   threshold_value: 0.2,
   min_samples: 5,
   window_minutes: 60,
@@ -66,37 +49,18 @@ describe("alerts/engine evaluateRules", () => {
     mockSql.unsafe.mockImplementation((..._args: any[]) => Promise.resolve([]));
   });
 
-  test("count rule fires at the threshold and stamps last_fired_at in a transaction", async () => {
-    mockSql.mockResolvedValueOnce([countRule]); // rules list
-    mockSql.unsafe.mockResolvedValueOnce([{ matched: 5, session_ids: ["s-1", "s-2"] }]);
-    mockSql.mockResolvedValueOnce([{ id: "r1" }]); // suppression claim succeeds
-
-    const fired = await evaluateRules();
-    expect(fired).toBe(1);
-    expect(mockSql.begin).toHaveBeenCalledTimes(1);
-    // Window query received the verdicts as a JSONB string + judge filter.
-    const params = mockSql.unsafe.mock.calls[0][1];
-    expect(params[0]).toBe("15");
-    expect(params[1]).toEqual(["fail"]);
-    expect(params[2]).toBe("task_completion");
-  });
-
-  test("count rule below threshold does not fire", async () => {
-    mockSql.mockResolvedValueOnce([countRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ matched: 4, session_ids: [] }]);
-
-    const fired = await evaluateRules();
-    expect(fired).toBe(0);
-    expect(mockSql.begin).not.toHaveBeenCalled();
-  });
-
-  test("eval_fail_rate fires when the rate exceeds the threshold with enough samples", async () => {
-    mockSql.mockResolvedValueOnce([failRateRule]);
+  test("eval_fail_rate fires above the threshold and stamps last_fired_at in a transaction", async () => {
+    mockSql.mockResolvedValueOnce([failRateRule]); // rules list
     mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 4, session_ids: ["s-9"] }]);
-    mockSql.mockResolvedValueOnce([{ id: "r2" }]); // suppression claim
+    mockSql.mockResolvedValueOnce([{ id: "r2" }]); // suppression claim succeeds
 
     const fired = await evaluateRules();
     expect(fired).toBe(1); // 0.4 > 0.2 with 10 ≥ 5 samples
+    expect(mockSql.begin).toHaveBeenCalledTimes(1);
+    // Window query received the interval + judge filter.
+    const params = mockSql.unsafe.mock.calls[0][1];
+    expect(params[0]).toBe("60");
+    expect(params[1]).toBe("task_completion");
   });
 
   test("eval_fail_rate stays quiet under min_samples", async () => {
@@ -135,10 +99,10 @@ describe("alerts/engine evaluateRules", () => {
 
 
   test("a failing rule does not block the others", async () => {
-    mockSql.mockResolvedValueOnce([countRule, { ...countRule, id: "r3" }]);
+    mockSql.mockResolvedValueOnce([failRateRule, { ...failRateRule, id: "r3" }]);
     mockSql.unsafe
       .mockRejectedValueOnce(new Error("boom"))
-      .mockResolvedValueOnce([{ matched: 9, session_ids: [] }]);
+      .mockResolvedValueOnce([{ total: 10, matched: 9, session_ids: [] }]);
     mockSql.mockResolvedValueOnce([{ id: "r3" }]); // suppression claim for r3
 
     const fired = await evaluateRules();
@@ -146,8 +110,8 @@ describe("alerts/engine evaluateRules", () => {
   });
 
   test("a lost suppression claim does not count as a firing", async () => {
-    mockSql.mockResolvedValueOnce([countRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ matched: 9, session_ids: [] }]);
+    mockSql.mockResolvedValueOnce([failRateRule]);
+    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 9, session_ids: [] }]);
     // Claim UPDATE returns no rows — another evaluator already stamped
     // last_fired_at inside this window.
     mockSql.mockResolvedValueOnce([]);

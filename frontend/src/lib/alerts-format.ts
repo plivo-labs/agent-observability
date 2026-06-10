@@ -3,12 +3,6 @@
 
 import { RATE_METRICS, type AlertMetric, type AlertRule } from '@/lib/alerts-api'
 
-export const TRIGGER_LABEL: Record<AlertRule['trigger_type'], string> = {
-  evaluation_count: 'Eval verdicts',
-  outcome_count: 'Outcomes',
-  metric_threshold: 'Metric',
-}
-
 export const METRIC_LABEL: Record<AlertMetric, string> = {
   eval_fail_rate: 'Eval fail rate',
   outcome_fail_rate: 'Outcome failure rate',
@@ -45,16 +39,11 @@ export function metricValue(metric: AlertMetric, value: number | null | undefine
     : `${Math.round(value).toLocaleString()} ms`
 }
 
-/** Human summary of the trigger condition — the table's load-bearing cell. */
+/** Human summary of the rule condition — the table's load-bearing cell. */
 export function triggerSummary(rule: AlertRule): string {
   const win = windowLabel(rule.window_minutes)
-  if (rule.trigger_type === 'metric_threshold' && rule.metric) {
-    const value = metricValue(rule.metric, rule.threshold_value)
-    const judge = rule.judge_name ? ` · ${rule.judge_name}` : ''
-    const samples = rule.min_samples > 1 ? ` (min ${rule.min_samples})` : ''
-    return `> ${value} over ${win}${samples}${judge}`
-  }
-  const what = rule.verdicts.join('/')
-  const judge = rule.trigger_type === 'evaluation_count' && rule.judge_name ? ` · ${rule.judge_name}` : ''
-  return `≥ ${rule.threshold_count ?? '?'} ${what} in ${win}${judge}`
+  const value = metricValue(rule.metric, rule.threshold_value)
+  const judge = rule.judge_name ? ` · ${rule.judge_name}` : ''
+  const samples = rule.min_samples > 1 ? ` (min ${rule.min_samples})` : ''
+  return `> ${value} over ${win}${samples}${judge}`
 }

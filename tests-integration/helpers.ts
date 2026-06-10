@@ -24,12 +24,9 @@ const RULE_DEFAULTS: AlertRuleCreate = {
   enabled: true,
   account_id: null,
   agent_id: null,
-  trigger_type: "evaluation_count",
-  metric: null,
+  metric: "eval_fail_rate",
   judge_name: null,
-  verdicts: ["fail"],
-  threshold_count: 1,
-  threshold_value: null,
+  threshold_value: 0.5,
   min_samples: 1,
   window_minutes: 15,
   webhook_url: "http://localhost:1/never-delivered",
@@ -93,7 +90,7 @@ export function testRun(prefix: string): TestRun {
       return insertAlertRule({
         ...RULE_DEFAULTS,
         ...over,
-        name: `${run} ${over.metric ?? over.trigger_type ?? "rule"}`,
+        name: `${run} ${over.metric ?? "rule"}`,
       });
     },
     async firingsFor(ruleId) {

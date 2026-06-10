@@ -22,7 +22,6 @@ import {
   type AlertMetric,
   type AlertRule,
   type AlertRuleCreate,
-  type AlertTriggerType,
 } from '@/lib/alerts-api'
 import { METRIC_LABEL, metricKind, WINDOW_OPTIONS } from '@/lib/alerts-format'
 
@@ -31,13 +30,8 @@ import { METRIC_LABEL, metricKind, WINDOW_OPTIONS } from '@/lib/alerts-format'
 // milliseconds for latency.
 const EMPTY_FORM = {
   name: '',
-  // Metric threshold is the headline trigger — open with the full metric
-  // dropdown visible instead of hiding it behind a trigger switch.
-  trigger_type: 'metric_threshold' as AlertTriggerType,
   metric: 'eval_fail_rate' as AlertMetric,
   judge_name: '',
-  verdicts: ['fail'] as string[],
-  threshold_count: 5,
   threshold_input: 30,
   min_samples: 5,
   window_minutes: 15,
@@ -53,20 +47,16 @@ const EMPTY_FORM = {
 type FormState = typeof EMPTY_FORM
 
 function thresholdToInput(metric: AlertMetric, value: number | null): number {
-  if (value == null) return 30
+  if (value == null) return metricKind(metric) === 'rate' ? 30 : 2000
   return metricKind(metric) === 'rate' ? Math.round(value * 100) : value
 }
 
 function formFromRule(rule: AlertRule): FormState {
-  const metric = rule.metric ?? 'eval_fail_rate'
   return {
     name: rule.name,
-    trigger_type: rule.trigger_type,
-    metric,
+    metric: rule.metric,
     judge_name: rule.judge_name ?? '',
-    verdicts: rule.verdicts,
-    threshold_count: rule.threshold_count ?? 5,
-    threshold_input: thresholdToInput(metric, rule.threshold_value),
+    threshold_input: thresholdToInput(rule.metric, rule.threshold_value),
     min_samples: rule.min_samples,
     window_minutes: rule.window_minutes,
     agent_id: rule.agent_id ?? '',
@@ -79,30 +69,22 @@ function formFromRule(rule: AlertRule): FormState {
   }
 }
 
-/** Where judge_name is a meaningful filter — mirrors the server schema. */
-function judgeApplies(form: FormState): boolean {
-  if (form.trigger_type === 'evaluation_count') return true
-  return form.trigger_type === 'metric_threshold' && form.metric === 'eval_fail_rate'
+/** judge_name only filters the eval_fail_rate metric — mirrors the server. */
+function judgeApplies(metric: AlertMetric): boolean {
+  return metric === 'eval_fail_rate'
 }
 
 function inputFromForm(form: FormState): AlertRuleCreate {
   const headers = Object.fromEntries(
     form.headerRows.filter((r) => r.key.trim()).map((r) => [r.key.trim(), r.value]),
   )
-  const isMetric = form.trigger_type === 'metric_threshold'
   return {
     name: form.name.trim(),
     enabled: form.enabled,
-    trigger_type: form.trigger_type,
-    metric: isMetric ? form.metric : null,
-    judge_name: judgeApplies(form) && form.judge_name.trim() ? form.judge_name.trim() : null,
-    verdicts: form.verdicts,
-    threshold_count: isMetric ? null : form.threshold_count,
-    threshold_value: isMetric
-      ? metricKind(form.metric) === 'rate'
-        ? form.threshold_input / 100
-        : form.threshold_input
-      : null,
+    metric: form.metric,
+    judge_name: judgeApplies(form.metric) && form.judge_name.trim() ? form.judge_name.trim() : null,
+    threshold_value:
+      metricKind(form.metric) === 'rate' ? form.threshold_input / 100 : form.threshold_input,
     min_samples: form.min_samples,
     window_minutes: form.window_minutes,
     agent_id: form.agent_id.trim() || null,
@@ -112,12 +94,6 @@ function inputFromForm(form: FormState): AlertRuleCreate {
     secret: form.secret.trim() || null,
     headers: Object.keys(headers).length ? headers : null,
   }
-}
-
-const VERDICT_CHOICES: Record<AlertTriggerType, string[]> = {
-  evaluation_count: ['pass', 'fail', 'maybe'],
-  outcome_count: ['success', 'fail'],
-  metric_threshold: [],
 }
 
 const FieldLabel = ({ children }: { children: React.ReactNode }) => (
@@ -151,9 +127,7 @@ export const AlertRuleDialog = ({
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
 
-  const isMetric = form.trigger_type === 'metric_threshold'
   const kind = metricKind(form.metric)
-  const verdictChoices = VERDICT_CHOICES[form.trigger_type]
 
   const submit = async () => {
     setSaving(true)
@@ -171,11 +145,7 @@ export const AlertRuleDialog = ({
     }
   }
 
-  const submitDisabled =
-    saving ||
-    !form.name.trim() ||
-    !form.webhook_url.trim() ||
-    (!isMetric && form.verdicts.length === 0)
+  const submitDisabled = saving || !form.name.trim() || !form.webhook_url.trim()
 
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && !o && onClose()}>
@@ -194,43 +164,6 @@ export const AlertRuleDialog = ({
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <FieldLabel>Trigger</FieldLabel>
-              <Select
-                value={form.trigger_type}
-                onValueChange={(v) => {
-                  const t = v as AlertTriggerType
-                  set('trigger_type', t)
-                  if (t !== 'metric_threshold') set('verdicts', ['fail'])
-                }}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="metric_threshold">Metric threshold</SelectItem>
-                  <SelectItem value="evaluation_count">Eval verdict count</SelectItem>
-                  <SelectItem value="outcome_count">Outcome count</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <FieldLabel>Window</FieldLabel>
-              <Select
-                value={String(form.window_minutes)}
-                onValueChange={(v) => set('window_minutes', Number(v))}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {WINDOW_OPTIONS.map((w) => (
-                    <SelectItem key={w.minutes} value={String(w.minutes)}>
-                      {w.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {isMetric && (
             <div>
               <FieldLabel>Metric</FieldLabel>
               <Select
@@ -252,9 +185,25 @@ export const AlertRuleDialog = ({
                 </SelectContent>
               </Select>
             </div>
-          )}
+            <div>
+              <FieldLabel>Window</FieldLabel>
+              <Select
+                value={String(form.window_minutes)}
+                onValueChange={(v) => set('window_minutes', Number(v))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {WINDOW_OPTIONS.map((w) => (
+                    <SelectItem key={w.minutes} value={String(w.minutes)}>
+                      {w.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-          {judgeApplies(form) && (
+          {judgeApplies(form.metric) && (
             <div>
               <FieldLabel>Judge name (blank = any judge)</FieldLabel>
               <Input
@@ -265,76 +214,30 @@ export const AlertRuleDialog = ({
             </div>
           )}
 
-          {!isMetric && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <FieldLabel>Threshold (count ≥)</FieldLabel>
-                <Input
-                  type="number"
-                  min={1}
-                  value={form.threshold_count}
-                  onChange={(e) => set('threshold_count', Math.max(1, Number(e.target.value) || 1))}
-                />
-              </div>
-              <div>
-                <FieldLabel>Match verdicts</FieldLabel>
-                <div className="flex h-9 items-center gap-2">
-                  {verdictChoices.map((v) => {
-                    const active = form.verdicts.includes(v)
-                    return (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => {
-                          const next = active
-                            ? form.verdicts.filter((x) => x !== v)
-                            : [...form.verdicts, v]
-                          // A rule must match at least one verdict — keep
-                          // the last chip selected.
-                          if (next.length > 0) set('verdicts', next)
-                        }}
-                        className={
-                          'border px-2 py-0.5 font-mono text-[11px] transition-colors ' +
-                          (active
-                            ? 'border-foreground bg-foreground text-background'
-                            : 'border-border text-muted-foreground hover:text-foreground')
-                        }
-                      >
-                        {v}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <FieldLabel>{kind === 'rate' ? 'Fire when above (%)' : 'Fire when above (ms)'}</FieldLabel>
+              <Input
+                type="number"
+                min={1}
+                max={kind === 'rate' ? 100 : undefined}
+                value={form.threshold_input}
+                onChange={(e) => {
+                  const n = Math.max(1, Number(e.target.value) || 1)
+                  set('threshold_input', kind === 'rate' ? Math.min(100, n) : n)
+                }}
+              />
             </div>
-          )}
-
-          {isMetric && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <FieldLabel>{kind === 'rate' ? 'Fire when above (%)' : 'Fire when above (ms)'}</FieldLabel>
-                <Input
-                  type="number"
-                  min={1}
-                  max={kind === 'rate' ? 100 : undefined}
-                  value={form.threshold_input}
-                  onChange={(e) => {
-                    const n = Math.max(1, Number(e.target.value) || 1)
-                    set('threshold_input', kind === 'rate' ? Math.min(100, n) : n)
-                  }}
-                />
-              </div>
-              <div>
-                <FieldLabel>Minimum samples in window</FieldLabel>
-                <Input
-                  type="number"
-                  min={1}
-                  value={form.min_samples}
-                  onChange={(e) => set('min_samples', Math.max(1, Number(e.target.value) || 1))}
-                />
-              </div>
+            <div>
+              <FieldLabel>Minimum samples in window</FieldLabel>
+              <Input
+                type="number"
+                min={1}
+                value={form.min_samples}
+                onChange={(e) => set('min_samples', Math.max(1, Number(e.target.value) || 1))}
+              />
             </div>
-          )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

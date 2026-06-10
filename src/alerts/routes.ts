@@ -91,7 +91,7 @@ export function registerAlertRoutes(app: Hono) {
     }
     try {
       // Field-level checks above can't see cross-field rules when the
-      // patch omits trigger_type (e.g. a bare {threshold_value: 30} on a
+      // patch omits the metric (e.g. a bare {threshold_value: 30} on a
       // rate rule). Validate the MERGED rule with the create schema so
       // the unit refinements apply to every patch, not just full ones.
       const existing = await getAlertRule(id);

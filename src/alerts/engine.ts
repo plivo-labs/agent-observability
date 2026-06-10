@@ -10,12 +10,13 @@ import {
 } from "../stats-sql.js";
 import type { AlertMetric } from "./schema.js";
 
-// ── Windowed rule evaluation ────────────────────────────────────────────────
+// ── Windowed metric evaluation ──────────────────────────────────────────────
 //
 // Time-driven: the sweeper calls evaluateRules() every tick. Each enabled,
-// non-suppressed rule runs one aggregate query over its trailing window.
-// Suppression = one firing per window length per rule (last_fired_at),
-// claimed atomically inside the firing transaction.
+// non-suppressed rule measures one metric over its trailing window and
+// fires when the value exceeds threshold_value. Suppression = one firing
+// per window length per rule (last_fired_at), claimed atomically inside
+// the firing transaction.
 //
 // Events are scoped to a rule's agent/account via a LEFT JOIN to
 // agent_transport_sessions — evals/outcomes don't carry agent_id
@@ -25,12 +26,9 @@ import type { AlertMetric } from "./schema.js";
 
 interface RuleToEvaluate {
   id: string;
-  trigger_type: string;
-  metric: AlertMetric | null;
+  metric: AlertMetric;
   judge_name: string | null;
-  verdicts: unknown;
-  threshold_count: number | null;
-  threshold_value: number | null;
+  threshold_value: number;
   min_samples: number;
   window_minutes: number;
   agent_id: string | null;
@@ -39,73 +37,16 @@ interface RuleToEvaluate {
 
 interface WindowResult {
   matched_count: number;
-  total_count: number | null;
+  total_count: number;
   observed_value: number | null;
   sample_session_ids: string[];
   fired: boolean;
 }
 
-// IMPORTANT bun:sql JSONB binding rules (verified empirically):
-//   - Pass JS arrays/objects RAW — bun serializes them to proper jsonb.
-//   - Never pre-JSON.stringify: the string lands as a jsonb *string*
-//     scalar ("[\"fail\"]"), and containment checks silently match nothing.
-//   - Never use the jsonb `?` operator in query text — bun rewrites the
-//     literal `?` as a parameter placeholder. Use jsonb_exists() instead.
-function verdictsList(rule: RuleToEvaluate): string[] {
-  // Tolerate legacy rows where verdicts was stored as a jsonb string.
-  const list = typeof rule.verdicts === "string" ? JSON.parse(rule.verdicts) : rule.verdicts;
-  return Array.isArray(list) ? list : [];
-}
-
 const WINDOW_SQL = `($1 || ' minutes')::interval`;
 
-async function evaluateCountRule(rule: RuleToEvaluate): Promise<WindowResult> {
-  const isOutcome = rule.trigger_type === "outcome_count";
-  // Outcomes match against the lk.-prefix-stripped value so rules store
-  // normalized success|fail and match both lk.fail and fail.
-  const rows = isOutcome
-    ? await sql.unsafe(
-        `SELECT COUNT(*)::int AS matched,
-                (array_agg(DISTINCT o.session_id))[1:20] AS session_ids
-         FROM session_outcomes o
-         LEFT JOIN agent_transport_sessions s ON s.session_id = o.session_id
-         WHERE o.updated_at > NOW() - ${WINDOW_SQL}
-           AND jsonb_exists($2::jsonb, regexp_replace(LOWER(o.outcome), '^lk\\.', ''))
-           AND ($3::text IS NULL OR s.agent_id = $3)
-           AND ($4::text IS NULL OR s.account_id = $4)`,
-        [String(rule.window_minutes), verdictsList(rule), rule.agent_id, rule.account_id],
-      )
-    : await sql.unsafe(
-        `SELECT COUNT(*)::int AS matched,
-                (array_agg(DISTINCT e.session_id))[1:20] AS session_ids
-         FROM session_external_evals e
-         LEFT JOIN agent_transport_sessions s ON s.session_id = e.session_id
-         WHERE e.created_at > NOW() - ${WINDOW_SQL}
-           AND jsonb_exists($2::jsonb, LOWER(COALESCE(e.verdict, '')))
-           AND ($3::text IS NULL OR e.judge_name = $3)
-           AND ($4::text IS NULL OR s.agent_id = $4)
-           AND ($5::text IS NULL OR s.account_id = $5)`,
-        [
-          String(rule.window_minutes),
-          verdictsList(rule),
-          rule.judge_name,
-          rule.agent_id,
-          rule.account_id,
-        ],
-      );
-  const matched = rows[0]?.matched ?? 0;
-  return {
-    matched_count: matched,
-    total_count: null,
-    // Count rules have no scalar metric — matched_count IS the signal;
-    // a duplicated observed_value would just be payload noise.
-    observed_value: null,
-    sample_session_ids: rows[0]?.session_ids ?? [],
-    fired: rule.threshold_count != null && matched >= rule.threshold_count,
-  };
-}
-
-/** Rate over events: numerator/denominator with the failing sessions sampled. */
+/** Rate over events: fires when matched/total exceeds the threshold, once
+ *  the window holds at least min_samples observations. */
 function rateResult(
   rule: RuleToEvaluate,
   total: number,
@@ -118,11 +59,7 @@ function rateResult(
     total_count: total,
     observed_value: rate,
     sample_session_ids: sampleIds,
-    fired:
-      rule.threshold_value != null &&
-      total >= rule.min_samples &&
-      rate != null &&
-      rate > rule.threshold_value,
+    fired: total >= rule.min_samples && rate != null && rate > rule.threshold_value,
   };
 }
 
@@ -145,6 +82,8 @@ async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult>
 }
 
 async function evaluateOutcomeFailRate(rule: RuleToEvaluate): Promise<WindowResult> {
+  // Outcomes match against the lk.-prefix-stripped value so 'fail' and
+  // 'lk.fail' both count.
   const rows = await sql.unsafe(
     `SELECT COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE regexp_replace(LOWER(o.outcome), '^lk\\.', '') IN ('fail', 'failure'))::int AS matched,
@@ -192,7 +131,7 @@ const LATENCY_SQL: Record<string, { value: string; where: string }> = {
 };
 
 async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
-  const expr = LATENCY_SQL[rule.metric!];
+  const expr = LATENCY_SQL[rule.metric];
   const rows = await sql.unsafe(
     `WITH win AS (
        SELECT session_id, session_metrics
@@ -220,16 +159,11 @@ async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
     total_count: samples,
     observed_value: p95,
     sample_session_ids: r.session_ids ?? [],
-    fired:
-      rule.threshold_value != null &&
-      samples >= rule.min_samples &&
-      p95 != null &&
-      p95 > rule.threshold_value,
+    fired: samples >= rule.min_samples && p95 != null && p95 > rule.threshold_value,
   };
 }
 
-
-function evaluateMetricRule(rule: RuleToEvaluate): Promise<WindowResult> {
+function evaluateMetric(rule: RuleToEvaluate): Promise<WindowResult> {
   switch (rule.metric) {
     case "eval_fail_rate":
       return evaluateEvalFailRate(rule);
@@ -249,14 +183,14 @@ function evaluateMetricRule(rule: RuleToEvaluate): Promise<WindowResult> {
 
 /**
  * Evaluate every enabled, non-suppressed rule; insert an alert_firings row
- * (and stamp last_fired_at) for each rule whose condition is met. Returns
- * the number of new firings. Per-rule failures are isolated — one bad rule
- * never blocks the rest.
+ * (and stamp last_fired_at) for each rule whose metric exceeds its
+ * threshold. Returns the number of new firings. Per-rule failures are
+ * isolated — one bad rule never blocks the rest.
  */
 export async function evaluateRules(): Promise<number> {
   const rules: RuleToEvaluate[] = await sql`
-    SELECT id, trigger_type, metric, judge_name, verdicts, threshold_count,
-           threshold_value, min_samples, window_minutes, agent_id, account_id
+    SELECT id, metric, judge_name, threshold_value, min_samples,
+           window_minutes, agent_id, account_id
     FROM alert_rules
     WHERE enabled
       AND (last_fired_at IS NULL
@@ -266,10 +200,7 @@ export async function evaluateRules(): Promise<number> {
   let fired = 0;
   for (const rule of rules) {
     try {
-      const result =
-        rule.trigger_type === "metric_threshold"
-          ? await evaluateMetricRule(rule)
-          : await evaluateCountRule(rule);
+      const result = await evaluateMetric(rule);
       if (!result.fired) continue;
 
       const now = new Date();
@@ -302,9 +233,7 @@ export async function evaluateRules(): Promise<number> {
       if (!claimed) continue;
       fired++;
       console.log(
-        `[alerts] rule fired id=${rule.id} type=${rule.trigger_type}` +
-          (rule.metric ? ` metric=${rule.metric}` : "") +
-          ` observed=${result.observed_value ?? result.matched_count}`,
+        `[alerts] rule fired id=${rule.id} metric=${rule.metric} observed=${result.observed_value}`,
       );
     } catch (e) {
       console.error(`[alerts] rule evaluation failed id=${rule.id}: ${(e as Error).message}`);

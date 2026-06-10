@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { KpiTile } from '@/components/kpi'
 import { formatDate, formatPercent } from '@/lib/observability-format'
 import { alertsApi, type AlertRule, type WebhookStats } from '@/lib/alerts-api'
-import { TRIGGER_LABEL, triggerSummary } from '@/lib/alerts-format'
+import { METRIC_LABEL, triggerSummary } from '@/lib/alerts-format'
 import { AlertRuleDialog } from '@/components/alert-rule-dialog'
 import { AlertFiringsDrawer } from '@/components/alert-firings-drawer'
 
@@ -143,8 +143,8 @@ export const AlertRulesPage = () => {
           <BellRing className="mx-auto mb-3 text-muted-foreground" size={22} strokeWidth={1.5} />
           <div className="text-sm font-medium">No alert rules yet</div>
           <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-            Watch conversation evals for verdict spikes or pass-rate drops and get a webhook when a
-            threshold trips.
+            Watch fail rates, latency, and interruptions over a window and get a webhook when a
+            metric crosses its threshold.
           </p>
         </div>
       ) : (
@@ -180,7 +180,7 @@ export const AlertRulesPage = () => {
                     </div>
                   </td>
                   <td className="px-2 py-3">
-                    <Badge variant="secondary">{TRIGGER_LABEL[rule.trigger_type]}</Badge>
+                    <Badge variant="secondary">{METRIC_LABEL[rule.metric]}</Badge>
                     <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                       {triggerSummary(rule)}
                     </div>

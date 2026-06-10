@@ -2,8 +2,6 @@
 // packages/ui registry twins (precedent: not-found-page.tsx). Keeps the
 // published observability-api surface untouched.
 
-export type AlertTriggerType = 'evaluation_count' | 'outcome_count' | 'metric_threshold'
-
 export type AlertMetric =
   | 'eval_fail_rate'
   | 'outcome_fail_rate'
@@ -27,12 +25,9 @@ export interface AlertRule {
   enabled: boolean
   account_id: string | null
   agent_id: string | null
-  trigger_type: AlertTriggerType
-  metric: AlertMetric | null
+  metric: AlertMetric
   judge_name: string | null
-  verdicts: string[]
-  threshold_count: number | null
-  threshold_value: number | null
+  threshold_value: number
   min_samples: number
   window_minutes: number
   webhook_url: string
@@ -49,12 +44,9 @@ export interface AlertRule {
 export interface AlertRuleCreate {
   name: string
   enabled: boolean
-  trigger_type: AlertTriggerType
-  metric: AlertMetric | null
+  metric: AlertMetric
   judge_name: string | null
-  verdicts: string[]
-  threshold_count: number | null
-  threshold_value: number | null
+  threshold_value: number
   min_samples: number
   window_minutes: number
   agent_id: string | null

@@ -97,10 +97,10 @@ function authed(path: string, init: RequestInit = {}): Request {
 
 const validRule = {
   name: "fail spike",
-  trigger_type: "evaluation_count",
+  metric: "eval_fail_rate",
   judge_name: "task_completion",
-  verdicts: ["FAIL"],
-  threshold_count: 5,
+  threshold_value: 0.3,
+  min_samples: 10,
   window_minutes: 15,
   webhook_url: "https://hooks.example.com/alert",
   http_method: "PUT",
@@ -121,28 +121,25 @@ describe("alert rule routes", () => {
     expect(res.status).toBe(401);
   });
 
-  test("creates a rule, lowercasing verdicts and keeping method/headers", async () => {
+  test("creates a rule, keeping method/headers/threshold", async () => {
     const res = await server.fetch(
       authed("/api/alert-rules", { method: "POST", body: JSON.stringify(validRule) }),
     );
     expect(res.status).toBe(201);
     const input = (mockInsertAlertRule.mock.calls[0] as any[])[0];
-    expect(input.verdicts).toEqual(["fail"]);
+    expect(input.metric).toBe("eval_fail_rate");
+    expect(input.threshold_value).toBe(0.3);
     expect(input.http_method).toBe("PUT");
     expect(input.headers).toEqual({ "x-team": "voice" });
-    expect(input.min_samples).toBe(1);
   });
 
   test.each([
     ["window below 15", { ...validRule, window_minutes: 5 }],
-    ["threshold below 1", { ...validRule, threshold_count: 0 }],
-    ["missing threshold for count rule", { ...validRule, threshold_count: undefined }],
-    ["missing metric for metric rule", { ...validRule, judge_name: undefined, trigger_type: "metric_threshold", threshold_value: 0.5 }],
-    ["missing threshold_value for metric rule", { ...validRule, trigger_type: "metric_threshold", metric: "eval_fail_rate" }],
-    ["rate threshold above 1", { ...validRule, trigger_type: "metric_threshold", metric: "eval_fail_rate", threshold_value: 30 }],
-    ["metric on a count rule", { ...validRule, metric: "eval_fail_rate" }],
-    ["bad trigger type", { ...validRule, trigger_type: "latency" }],
-    ["judge on outcome rule", { ...validRule, trigger_type: "outcome_count", verdicts: ["fail"] }],
+    ["missing metric", { ...validRule, metric: undefined }],
+    ["unknown metric", { ...validRule, metric: "latency_unknown" }],
+    ["missing threshold_value", { ...validRule, threshold_value: undefined }],
+    ["rate threshold above 1", { ...validRule, threshold_value: 30 }],
+    ["judge on a non-eval metric", { ...validRule, metric: "interruption_rate" }],
     ["non-http webhook", { ...validRule, webhook_url: "ftp://example.com/x" }],
     ["bad method", { ...validRule, http_method: "DELETE" }],
   ])("rejects invalid payload: %s", async (_label, payload) => {
@@ -154,32 +151,13 @@ describe("alert rule routes", () => {
     expect(body.error.code).toBe("invalid_payload");
   });
 
-  test("metric_threshold rule with metric + threshold_value is accepted", async () => {
-    const res = await server.fetch(
-      authed("/api/alert-rules", {
-        method: "POST",
-        body: JSON.stringify({
-          ...validRule,
-          trigger_type: "metric_threshold",
-          metric: "eval_fail_rate",
-          threshold_count: undefined,
-          threshold_value: 0.3,
-          min_samples: 10,
-        }),
-      }),
-    );
-    expect(res.status).toBe(201);
-  });
-
   test("latency metric rule rejects judge_name and accepts ms thresholds", async () => {
     const rejected = await server.fetch(
       authed("/api/alert-rules", {
         method: "POST",
         body: JSON.stringify({
           ...validRule,
-          trigger_type: "metric_threshold",
           metric: "latency_tts_ttfb_p95",
-          threshold_count: undefined,
           threshold_value: 800,
         }),
       }),
@@ -191,10 +169,8 @@ describe("alert rule routes", () => {
         method: "POST",
         body: JSON.stringify({
           ...validRule,
-          trigger_type: "metric_threshold",
           metric: "latency_tts_ttfb_p95",
           judge_name: undefined,
-          threshold_count: undefined,
           threshold_value: 800,
         }),
       }),
@@ -230,12 +206,9 @@ describe("alert rule routes", () => {
     enabled: true,
     account_id: null,
     agent_id: null,
-    trigger_type: "evaluation_count",
-    metric: null,
+    metric: "eval_fail_rate",
     judge_name: null,
-    verdicts: ["fail"],
-    threshold_count: 5,
-    threshold_value: null,
+    threshold_value: 0.3,
     min_samples: 1,
     window_minutes: 15,
     webhook_url: "https://hooks.example.com/alert",
@@ -261,14 +234,8 @@ describe("alert rule routes", () => {
 
   test("rejects a partial patch that breaks cross-field rules on the merged rule", async () => {
     // Stored rule is a rate metric; patching a bare fraction > 1 must fail
-    // the merged validation even though trigger_type isn't in the patch.
-    mockGetAlertRule.mockResolvedValueOnce({
-      ...storedRule,
-      trigger_type: "metric_threshold",
-      metric: "eval_fail_rate",
-      threshold_count: null,
-      threshold_value: 0.3,
-    } as any);
+    // the merged validation even though the metric isn't in the patch.
+    mockGetAlertRule.mockResolvedValueOnce({ ...storedRule, metric: "eval_fail_rate" } as any);
     const res = await server.fetch(
       authed(`/api/alert-rules/${RULE_ID}`, {
         method: "PATCH",
@@ -309,7 +276,7 @@ describe("alert rule routes", () => {
     mockGetAlertRule.mockResolvedValueOnce({
       id: RULE_ID,
       name: "r",
-      trigger_type: "evaluation_count",
+      metric: "eval_fail_rate",
       webhook_url: "https://hooks.example.com/test",
       http_method: "POST",
       secret: null,

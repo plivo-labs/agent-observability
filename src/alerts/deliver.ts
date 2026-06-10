@@ -77,11 +77,8 @@ export function buildFiringPayload(d: DueDelivery): string {
     rule: {
       id: d.rule_id,
       name: d.rule_name,
-      trigger_type: d.trigger_type,
       metric: d.metric,
       judge_name: d.judge_name,
-      verdicts: d.verdicts,
-      threshold_count: d.threshold_count,
       threshold_value: d.threshold_value,
       window_minutes: d.window_minutes,
     },
@@ -125,7 +122,7 @@ export async function deliverFiring(d: DueDelivery): Promise<DeliveryResult> {
 export async function deliverTest(rule: AlertRuleRow): Promise<DeliveryResult> {
   const body = JSON.stringify({
     type: "alert.test",
-    rule: { id: rule.id, name: rule.name, trigger_type: rule.trigger_type },
+    rule: { id: rule.id, name: rule.name, metric: rule.metric },
     fired_at: new Date().toISOString(),
   });
   const result = await sendWebhook({
