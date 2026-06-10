@@ -28,7 +28,8 @@ if (config.AUTO_MIGRATE) {
   await migrate(sql);
 }
 
-// Alert sweeper: windowed conversation-eval rules + webhook delivery
+// Alert sweeper: windowed alert rules (metric thresholds + verdict/
+// outcome counts) + webhook delivery
 // retries. Runs inline by default so single-container deploys work with
 // zero config; set ALERT_SWEEPER=off when running the dedicated worker
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
@@ -76,7 +77,7 @@ registerAgentRoutes(app);
 
 registerAnalyticsRoutes(app);
 
-// ── Alert rules (windowed conversation-eval triggers + webhooks) ────────────
+// ── Alert rules (windowed metric/count triggers + webhooks) ─────────────────
 
 registerAlertRoutes(app);
 

@@ -4,6 +4,7 @@ import {
   CHAT_HISTORY_ELEMS,
   INTERRUPTED_WHERE,
   PER_TURN_ELEMS,
+  PER_TURN_MS,
   PERCEIVED_MS_SQL,
   PERCEIVED_MS_WHERE,
 } from "../stats-sql.js";
@@ -96,7 +97,9 @@ async function evaluateCountRule(rule: RuleToEvaluate): Promise<WindowResult> {
   return {
     matched_count: matched,
     total_count: null,
-    observed_value: matched,
+    // Count rules have no scalar metric — matched_count IS the signal;
+    // a duplicated observed_value would just be payload noise.
+    observed_value: null,
     sample_session_ids: rows[0]?.session_ids ?? [],
     fired: rule.threshold_count != null && matched >= rule.threshold_count,
   };
@@ -178,23 +181,14 @@ async function evaluateInterruptionRate(rule: RuleToEvaluate): Promise<WindowRes
   return rateResult(rule, r.total ?? 0, r.matched ?? 0, r.session_ids ?? []);
 }
 
-// Per-turn millisecond expressions for the latency metrics. `m` is the
-// per-turn element alias produced by PER_TURN_ELEMS; raw values are in
-// seconds and convert to ms, mirroring src/stats-sql.ts conventions.
+// Metric → per-turn SQL expression. Perceived keeps its canonical
+// fallback definition; the single-field metrics come from the shared
+// PER_TURN_MS fragment so dashboards and alerts can't drift.
 const LATENCY_SQL: Record<string, { value: string; where: string }> = {
   latency_perceived_p95: { value: PERCEIVED_MS_SQL, where: PERCEIVED_MS_WHERE },
-  latency_llm_ttft_p95: {
-    value: `NULLIF(m->>'llm_node_ttft', '')::float * 1000`,
-    where: `(m->>'llm_node_ttft') ~ '^[0-9.]+$'`,
-  },
-  latency_tts_ttfb_p95: {
-    value: `NULLIF(m->>'tts_node_ttfb', '')::float * 1000`,
-    where: `(m->>'tts_node_ttfb') ~ '^[0-9.]+$'`,
-  },
-  latency_stt_p95: {
-    value: `NULLIF(m->>'transcription_delay', '')::float * 1000`,
-    where: `(m->>'transcription_delay') ~ '^[0-9.]+$'`,
-  },
+  latency_llm_ttft_p95: PER_TURN_MS("llm_node_ttft"),
+  latency_tts_ttfb_p95: PER_TURN_MS("tts_node_ttfb"),
+  latency_stt_p95: PER_TURN_MS("transcription_delay"),
 };
 
 async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
@@ -303,7 +297,7 @@ export async function evaluateRules(): Promise<number> {
       const now = new Date();
       const windowStart = new Date(now.getTime() - rule.window_minutes * 60_000);
       let claimed = false;
-      await sql.begin(async (tx: any) => {
+      await sql.begin(async (tx: typeof sql) => {
         // Stamping last_fired_at doubles as the atomic suppression claim:
         // the conditional UPDATE succeeds for exactly one evaluator per
         // window, so concurrent sweepers can't double-fire a rule.

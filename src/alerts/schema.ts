@@ -63,6 +63,8 @@ const baseRuleShape = {
   verdicts: verdictsSchema.default(["fail"]),
   threshold_count: z.number().int().min(1).nullable().optional(),
   threshold_value: z.number().gt(0).nullable().optional(),
+  // Gates rate and latency metrics. Deliberately IGNORED by
+  // session_volume — zero traffic is exactly what that metric detects.
   min_samples: z.number().int().min(1).default(1),
   window_minutes: z.number().int().min(15),
   webhook_url: webhookUrlSchema,

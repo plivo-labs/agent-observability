@@ -90,6 +90,19 @@ export function registerAlertRoutes(app: Hono) {
       return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
     }
     try {
+      // Field-level checks above can't see cross-field rules when the
+      // patch omits trigger_type (e.g. a bare {threshold_value: 30} on a
+      // rate rule). Validate the MERGED rule with the create schema so
+      // the unit refinements apply to every patch, not just full ones.
+      const existing = await getAlertRule(id);
+      if (!existing) return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);
+      const merged = alertRuleCreateSchema.safeParse({
+        ...existing,
+        ...Object.fromEntries(Object.entries(parsed.data).filter(([, v]) => v !== undefined)),
+      });
+      if (!merged.success) {
+        return c.json(buildErrorResponse("invalid_payload", formatZodError(merged.error)), 400);
+      }
       const rule = await updateAlertRule(id, parsed.data);
       if (!rule) return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);
       return c.json({ api_id: newApiId(), ...rule });

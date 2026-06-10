@@ -222,7 +222,30 @@ describe("alert rule routes", () => {
     expect(missing.status).toBe(404);
   });
 
+  // PATCH merge-validates against the stored rule, so getAlertRule must
+  // return a create-schema-valid row.
+  const storedRule = {
+    id: RULE_ID,
+    name: "existing",
+    enabled: true,
+    account_id: null,
+    agent_id: null,
+    trigger_type: "evaluation_count",
+    metric: null,
+    judge_name: null,
+    verdicts: ["fail"],
+    threshold_count: 5,
+    threshold_value: null,
+    min_samples: 1,
+    window_minutes: 15,
+    webhook_url: "https://hooks.example.com/alert",
+    http_method: "POST",
+    secret: null,
+    headers: null,
+  };
+
   test("patches a rule", async () => {
+    mockGetAlertRule.mockResolvedValueOnce(storedRule as any);
     mockUpdateAlertRule.mockResolvedValueOnce({ id: RULE_ID, name: "renamed" } as any);
     const res = await server.fetch(
       authed(`/api/alert-rules/${RULE_ID}`, {
@@ -234,6 +257,27 @@ describe("alert rule routes", () => {
     const patch = (mockUpdateAlertRule.mock.calls[0] as any[])[1];
     expect(patch.name).toBe("renamed");
     expect(patch.enabled).toBe(false);
+  });
+
+  test("rejects a partial patch that breaks cross-field rules on the merged rule", async () => {
+    // Stored rule is a rate metric; patching a bare fraction > 1 must fail
+    // the merged validation even though trigger_type isn't in the patch.
+    mockGetAlertRule.mockResolvedValueOnce({
+      ...storedRule,
+      trigger_type: "metric_threshold",
+      metric: "eval_fail_rate",
+      threshold_count: null,
+      threshold_value: 0.3,
+    } as any);
+    const res = await server.fetch(
+      authed(`/api/alert-rules/${RULE_ID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ threshold_value: 30 }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.message).toContain("fractions");
   });
 
   test("deletes a rule", async () => {

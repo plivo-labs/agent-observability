@@ -21,7 +21,13 @@ docker compose up postgres -d  # Postgres only for local dev
 
 Two entrypoints share the codebase: `src/index.ts` (REST API) and
 `src/worker.ts` (background job loop — alert sweeper + webhook delivery
-retries; no ports). The API runs the sweeper inline by default
+retries; no ports). Alert rules are windowed triggers: count rules
+(≥ N matching verdicts/outcomes) and metric thresholds (eval/outcome
+fail rates, latency p95s, interruption rate — fire above X; session
+volume fires below X). Integration suites in `tests-integration/` run
+every trigger and the delivery pipeline against real Postgres
+(`bun run test:integration`; separate process because `tests/` mocks
+the db module). The API runs the sweeper inline by default
 (`ALERT_SWEEPER=inline`) for zero-config single-container deploys; set
 `ALERT_SWEEPER=off` on the API when the worker runs so exactly one
 sweeper is active. Both handle SIGTERM/SIGINT gracefully. bun:sql
