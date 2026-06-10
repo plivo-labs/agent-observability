@@ -162,7 +162,7 @@ export const AlertRulesPage = () => {
             </thead>
             <tbody>
               {rules.map((rule) => (
-                <tr key={rule.id} className="border-b align-top last:border-0 hover:bg-muted/40">
+                <tr key={rule.id} className="border-b align-middle last:border-0 hover:bg-muted/40">
                   <td className="px-4 py-3">
                     <button
                       type="button"

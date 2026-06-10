@@ -14,11 +14,9 @@ const baseDue: any = {
   id: "f1f1f1f1-0000-0000-0000-000000000001",
   rule_id: "r1r1r1r1-0000-0000-0000-000000000001",
   rule_name: "fail spike",
-  trigger_type: "evaluation_count",
+  metric: "eval_fail_rate",
   judge_name: "task_completion",
-  verdicts: ["fail"],
-  threshold_count: 5,
-  threshold_pass_rate: null,
+  threshold_value: 0.2,
   window_minutes: 15,
   agent_id: "agent-a",
   account_id: "acct-1",
@@ -28,9 +26,9 @@ const baseDue: any = {
   headers: null,
   window_start: "2026-06-10T10:00:00Z",
   window_end: "2026-06-10T10:15:00Z",
-  matched_count: 6,
-  total_count: null,
-  pass_rate: null,
+  matched_count: 4,
+  total_count: 10,
+  observed_value: 0.4,
   sample_session_ids: ["s-1", "s-2"],
   status: "pending",
   attempt_count: 0,
@@ -70,7 +68,8 @@ describe("alerts/deliver", () => {
 
     const body = JSON.parse(String(fetchCalls[0].init.body));
     expect(body.type).toBe("alert.triggered");
-    expect(body.matched_count).toBe(6);
+    expect(body.matched_count).toBe(4);
+    expect(body.observed_value).toBe(0.4);
     expect(body.rule.window_minutes).toBe(15);
     expect(body.sample_session_ids).toEqual(["s-1", "s-2"]);
 
@@ -129,7 +128,7 @@ describe("alerts/deliver", () => {
     const rule: any = {
       id: baseDue.rule_id,
       name: "fail spike",
-      trigger_type: "evaluation_count",
+      metric: "eval_fail_rate",
       webhook_url: "https://hooks.example.com/alert",
       http_method: "POST",
       secret: null,

@@ -21,6 +21,9 @@ export interface AlertRuleRow {
   updated_at: string;
 }
 
+// Guards the headers / sample_session_ids JSONB columns: bun:sql returns
+// JSONB as a parsed value, but some driver versions hand back a raw string
+// — normalize both, and never throw on a malformed cell.
 function parseJsonb<T>(value: unknown, fallback: T): T {
   if (value == null) return fallback;
   if (typeof value === "string") {

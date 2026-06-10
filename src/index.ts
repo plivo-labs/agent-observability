@@ -28,8 +28,7 @@ if (config.AUTO_MIGRATE) {
   await migrate(sql);
 }
 
-// Alert sweeper: windowed alert rules (metric thresholds + verdict/
-// outcome counts) + webhook delivery
+// Alert sweeper: windowed metric-threshold alert rules + webhook delivery
 // retries. Runs inline by default so single-container deploys work with
 // zero config; set ALERT_SWEEPER=off when running the dedicated worker
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.

@@ -155,8 +155,9 @@ async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
   const samples = r.samples ?? 0;
   const p95 = r.p95 != null ? Number(r.p95) : null;
   return {
+    // p95 has no numerator/denominator — samples is the gate, not a ratio.
     matched_count: samples,
-    total_count: samples,
+    total_count: null,
     observed_value: p95,
     sample_session_ids: r.session_ids ?? [],
     fired: samples >= rule.min_samples && p95 != null && p95 > rule.threshold_value,
