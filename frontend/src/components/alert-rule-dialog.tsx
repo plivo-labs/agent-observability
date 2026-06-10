@@ -31,7 +31,9 @@ import { METRIC_LABEL, metricKind, WINDOW_OPTIONS } from '@/lib/alerts-format'
 // milliseconds for latency, session count for the volume floor.
 const EMPTY_FORM = {
   name: '',
-  trigger_type: 'evaluation_count' as AlertTriggerType,
+  // Metric threshold is the headline trigger — open with the full metric
+  // dropdown visible instead of hiding it behind a trigger switch.
+  trigger_type: 'metric_threshold' as AlertTriggerType,
   metric: 'eval_fail_rate' as AlertMetric,
   judge_name: '',
   verdicts: ['fail'] as string[],
