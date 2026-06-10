@@ -2570,3 +2570,11 @@ body {
 .not-prose {
   --font-mono: var(--font-sans);
 }
+
+/* Config tab is literal JSON — real monospace even inside demos, where
+ * the retired mono voice otherwise renders Inter (see .not-prose above). */
+.not-prose .cfg-body,
+.cfg-body {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace !important;
+}
