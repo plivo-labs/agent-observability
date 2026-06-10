@@ -8,8 +8,9 @@
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                "Helvetica Neue", Arial, sans-serif;
   --font-display: var(--font-sans);
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-               "Liberation Mono", monospace;
+  /* Mono voice retired (June 2026): identifiers/labels render in Inter.
+   * The token stays so existing font-mono usages resolve without churn. */
+  --font-mono: var(--font-sans);
 
   --text-h1-600: 700 28px/36px var(--font-sans);
   --text-h1-400: 400 28px/36px var(--font-sans);

@@ -7,7 +7,7 @@
   "cssVars": {
     "theme": {
       "font-sans": "Inter, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
-      "font-mono": "ui-monospace, \"SF Mono\", \"JetBrains Mono\", Menlo, Consolas, monospace",
+      "font-mono": "Inter, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
       "font-size-h1-600": "26px",
       "line-height-h1-600": "32px",
       "font-size-h1-400": "26px",

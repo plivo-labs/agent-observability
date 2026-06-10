@@ -12,10 +12,10 @@
  * verb. Letter-spacing carries hierarchy. Tabular numerals everywhere
  * numeric.
  *
- * Fonts retained from the prior system: Inter (body) + Sora (display
- * headings) + ui-monospace (labels, numbers, codes). The mono voice is
- * provided by `ui-monospace` and a tight letter-spacing ladder rather
- * than IBM Plex Mono.
+ * Fonts: Inter everywhere (body, labels, numbers, codes) + Sora for
+ * display headings. The former ui-monospace voice was retired June 2026;
+ * the label signature now comes from the tight letter-spacing ladder +
+ * uppercase, with tabular-nums keeping digits aligned.
  * ======================================================================== */
 
 @theme inline {
@@ -353,11 +353,11 @@
     letter-spacing: -0.005em;
   }
 
-  /* Section / eyebrow / panel-title — uppercase mono labels carry the
-   * instrument-panel signature even when the font is sans. */
+  /* Section / eyebrow / panel-title — uppercase tracked labels carry the
+   * instrument-panel signature. */
   .eyebrow,
   [data-eyebrow] {
-    font: 600 10px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font: 600 10px/1.2 var(--font-sans);
     letter-spacing: 0.18em;
     text-transform: uppercase;
     color: hsl(var(--tertiary));
