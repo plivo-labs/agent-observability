@@ -186,29 +186,17 @@ body {
   color: var(--ink-2);
 }
 
-/* ───── App sidebar (instrument rail) ─────────────────────────
- * Flat chassis: nav items are full-bleed rows; the active item carries a
- * 2px brand-red index-mark on the left edge — a meter-needle, not a pill. */
+/* ───── App sidebar ───────────────────────────────────────────
+ * Flat chassis: nav items are full-bleed rows; the active item reads
+ * through the wash + weight alone. */
 .app-sidebar [data-sidebar="menu-button"] {
-  position: relative;
   border-radius: 0;
   font: var(--text-s-500);
   height: 34px;
 }
-.app-sidebar [data-sidebar="menu-button"]::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 5px; bottom: 5px;
-  width: 2px;
-  background: transparent;
-  transition: background .12s;
-}
 .app-sidebar [data-sidebar="menu-button"][data-active="true"] {
   font: var(--text-s-600);
   background: var(--hv1);
-}
-.app-sidebar [data-sidebar="menu-button"][data-active="true"]::before {
-  background: var(--instrument-accent);
 }
 .app-sidebar [data-sidebar="group-label"] {
   font-family: var(--font-mono);
