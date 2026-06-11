@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { basicAuth } from "hono/basic-auth";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
@@ -51,6 +53,21 @@ if (basicAuthEnabled) {
   app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
 }
+
+// Cap ingest body sizes so a giant (or malicious) upload can't be buffered
+// whole into memory. Recordings carry an audio OGG so they get a larger
+// allowance than the OTLP log/trace/metric channels. bodyLimit returns 413
+// once the limit is crossed.
+const MB = 1024 * 1024;
+const RECORDING_BODY_LIMIT = 100 * MB;
+const OTLP_BODY_LIMIT = 16 * MB;
+const tooLarge = (c: Context) =>
+  c.json(buildErrorResponse("payload_too_large", "Request body exceeds the allowed size"), 413);
+
+app.use("/observability/recordings/v0", bodyLimit({ maxSize: RECORDING_BODY_LIMIT, onError: tooLarge }));
+app.use("/observability/logs/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+app.use("/observability/traces/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+app.use("/observability/metrics/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
 
 app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
 app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);

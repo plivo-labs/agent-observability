@@ -266,6 +266,20 @@ describe("POST /observability/recordings/v0", () => {
     expect(res.status).toBe(401);
   });
 
+  test("rejects an oversized body with 413 before reading it", async () => {
+    // 17 MiB exceeds the 16 MiB OTLP cap. bodyLimit is mounted ahead of
+    // auth, so the request is refused with no credentials and the body is
+    // never buffered whole into memory.
+    const oversized = Buffer.alloc(17 * 1024 * 1024, 0x41);
+    const res = await server.fetch(
+      makeRequest("/observability/logs/otlp/v0", {
+        method: "POST",
+        body: oversized,
+      })
+    );
+    expect(res.status).toBe(413);
+  });
+
   test("rejects request with wrong credentials", async () => {
     const form = new FormData();
     const res = await server.fetch(
