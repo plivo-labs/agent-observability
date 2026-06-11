@@ -110,8 +110,11 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
   `;
 }
 
-export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput): Promise<void> {
-  await sql`
+/** `db` lets callers run the insert inside a transaction handle from
+ *  `sql.begin` (the goal analyzer writes verdicts + its tracking row
+ *  atomically); default is the global client. */
+export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db: SQL = sql): Promise<void> {
+  await db`
     INSERT INTO session_external_evals (
       session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw
     ) VALUES (

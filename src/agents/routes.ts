@@ -4,6 +4,7 @@ import {
   getAgentStats,
   listAgents,
   listConversationEvals,
+  listGoalResults,
 } from "./db.js";
 import { buildErrorResponse, buildListResponse, newApiId } from "../response.js";
 
@@ -134,6 +135,50 @@ export function registerAgentRoutes(app: Hono) {
           "conversation_evals_failed",
           `Failed to load conversation evals: ${err.message}`,
         ),
+        500,
+      );
+    }
+  });
+
+  // ── Conversation goals ───────────────────────────────────────────────────
+  //
+  // Sessions of this agent carrying goal verdicts (session_external_evals,
+  // source='goal'), grouped per session, plus an agent-wide summary the tab
+  // header uses for the completion-rate stat.
+  app.get("/api/agents/:agent_id/goal-results", async (c) => {
+    const agentId = c.req.param("agent_id");
+    const accountId = c.req.query("account_id") || null;
+    const limit = Math.min(200, Math.max(1, Number(c.req.query("limit")) || 50));
+    const offset = Math.max(0, Number(c.req.query("offset")) || 0);
+
+    const extraParams: Record<string, string> = {};
+    if (accountId) extraParams.account_id = accountId;
+
+    try {
+      const { rows, total, summary } = await listGoalResults({
+        agentId,
+        accountId,
+        limit,
+        offset,
+      });
+      return c.json({
+        ...buildListResponse(
+          rows,
+          limit,
+          offset,
+          total,
+          `/api/agents/${encodeURIComponent(agentId)}/goal-results`,
+          extraParams,
+        ),
+        summary,
+      });
+    } catch (e) {
+      const err = e as Error;
+      console.error(
+        `[agents] goal-results failed agent_id=${agentId} account_id=${accountId ?? "(any)"}: ${err.message}\n${err.stack ?? ""}`,
+      );
+      return c.json(
+        buildErrorResponse("goal_results_failed", `Failed to load goal results: ${err.message}`),
         500,
       );
     }

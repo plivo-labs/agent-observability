@@ -482,3 +482,120 @@ export async function listConversationEvals(
 
   return { rows, total };
 }
+
+// ── Conversation goals ───────────────────────────────────────────────────────
+
+export interface GoalVerdictRow {
+  goal: string;
+  verdict: string;
+  reasoning: string | null;
+  what_went_wrong: string | null;
+  observed_at: string | null;
+}
+
+export interface GoalSessionResult {
+  session_id: string;
+  account_id: string | null;
+  ended_at: string;
+  duration_ms: number | null;
+  met_count: number;
+  unmet_count: number;
+  goals: GoalVerdictRow[];
+}
+
+export interface GoalResultsSummary {
+  sessions_total: number;
+  met_total: number;
+  unmet_total: number;
+}
+
+export interface ListGoalResultsOpts {
+  agentId: string;
+  accountId?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Sessions of an agent that carry goal verdicts (session_external_evals,
+ * source='goal'), grouped per session and paginated ended_at DESC, plus
+ * an agent-wide verdict summary for the tab's completion-rate header.
+ * Mirrors listConversationEvals' base/paged/ev CTE shape.
+ */
+export async function listGoalResults(
+  opts: ListGoalResultsOpts,
+): Promise<{ rows: GoalSessionResult[]; total: number; summary: GoalResultsSummary }> {
+  const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
+  const offset = Math.max(0, opts.offset ?? 0);
+  const accountId = opts.accountId ?? null;
+
+  const result = await sql.unsafe(
+    `WITH base AS (
+       SELECT s.session_id, s.account_id, s.ended_at, s.duration_ms
+       FROM agent_transport_sessions s
+       WHERE s.agent_id = $1
+         AND ($2::text IS NULL OR s.account_id = $2)
+         AND EXISTS (SELECT 1 FROM session_external_evals e
+                     WHERE e.session_id = s.session_id AND e.source = 'goal')
+     ),
+     paged AS (
+       SELECT * FROM base
+       ORDER BY ended_at DESC
+       LIMIT $3 OFFSET $4
+     ),
+     ev AS (
+       SELECT session_id,
+              COUNT(*) FILTER (WHERE verdict = 'met')::int   AS met_count,
+              COUNT(*) FILTER (WHERE verdict = 'unmet')::int AS unmet_count,
+              jsonb_agg(jsonb_build_object(
+                'goal',            instructions,
+                'verdict',         verdict,
+                'reasoning',       reasoning,
+                'what_went_wrong', raw->>'what_went_wrong',
+                'observed_at',     observed_at
+              ) ORDER BY id) AS goals
+       FROM session_external_evals
+       WHERE source = 'goal' AND session_id IN (SELECT session_id FROM paged)
+       GROUP BY session_id
+     ),
+     summary AS (
+       SELECT COUNT(*) FILTER (WHERE e.verdict = 'met')::int   AS met_total,
+              COUNT(*) FILTER (WHERE e.verdict = 'unmet')::int AS unmet_total
+       FROM session_external_evals e
+       WHERE e.source = 'goal'
+         AND e.session_id IN (SELECT session_id FROM base)
+     )
+     SELECT p.session_id,
+            p.account_id,
+            p.ended_at,
+            p.duration_ms,
+            COALESCE(ev.met_count, 0)        AS met_count,
+            COALESCE(ev.unmet_count, 0)      AS unmet_count,
+            COALESCE(ev.goals, '[]'::jsonb)  AS goals,
+            (SELECT COUNT(*) FROM base)::int AS total_count,
+            (SELECT met_total FROM summary)   AS met_total,
+            (SELECT unmet_total FROM summary) AS unmet_total
+     FROM paged p
+     LEFT JOIN ev USING (session_id)
+     ORDER BY p.ended_at DESC`,
+    [opts.agentId, accountId, limit, offset],
+  );
+
+  const total = result.length > 0 ? Number(result[0].total_count) : 0;
+  const summary: GoalResultsSummary = {
+    sessions_total: total,
+    met_total: result.length > 0 ? Number(result[0].met_total) : 0,
+    unmet_total: result.length > 0 ? Number(result[0].unmet_total) : 0,
+  };
+  const rows: GoalSessionResult[] = result.map((row: any) => ({
+    session_id: row.session_id,
+    account_id: row.account_id ?? null,
+    ended_at: new Date(row.ended_at).toISOString(),
+    duration_ms: row.duration_ms,
+    met_count: row.met_count,
+    unmet_count: row.unmet_count,
+    goals: typeof row.goals === "string" ? JSON.parse(row.goals) : (row.goals ?? []),
+  }));
+
+  return { rows, total, summary };
+}

@@ -22,6 +22,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
+import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -34,6 +35,13 @@ if (config.AUTO_MIGRATE) {
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
   startAlertSweeper();
+}
+
+// Goal analyzer: post-session LLM judging of goal:<text> tags. Same
+// placement model as the alert sweeper; additionally a no-op (with one
+// startup log) unless OPENAI_API_KEY is set.
+if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline") {
+  startGoalAnalyzer();
 }
 
 const app = new Hono();
@@ -568,6 +576,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
+    stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);
