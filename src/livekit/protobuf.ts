@@ -40,8 +40,16 @@ class ProtoReader {
   readVarint(): bigint {
     let shift = 0n;
     let result = 0n;
+    // A 64-bit varint is at most 10 bytes. Without this cap, a crafted body
+    // of all-continuation bytes (0xff…) makes the loop run over the whole
+    // buffer doing growing BigInt math — CPU burn on malformed input.
+    let bytesRead = 0;
     while (!this.done) {
+      if (bytesRead >= 10) {
+        throw new Error("varint overflow");
+      }
       const byte = BigInt(this.bytes[this.pos++]);
+      bytesRead++;
       result |= (byte & 0x7fn) << shift;
       if ((byte & 0x80n) === 0n) {
         return result;

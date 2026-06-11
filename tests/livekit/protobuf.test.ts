@@ -241,6 +241,13 @@ describe("decodeOtlpLogsRequest", () => {
     ).toThrow();
   });
 
+  test("throws on a malformed varint instead of scanning the whole buffer", () => {
+    // All-continuation bytes (MSB set) never terminate the varint. The
+    // 10-byte cap must abort rather than chew through the buffer.
+    const allContinuation = new Uint8Array(64).fill(0xff);
+    expect(() => decodeOtlpLogsRequest(allContinuation, null, null)).toThrow();
+  });
+
   test("returns empty array for an empty resourceLogs envelope", () => {
     const json = { resourceLogs: [] };
     const bytes = new TextEncoder().encode(JSON.stringify(json));
