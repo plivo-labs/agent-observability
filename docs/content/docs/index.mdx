@@ -10,35 +10,38 @@ reports from the agent-transport SDKs, stores them in Postgres, and serves a
 dashboard UI you can run as-is or rebuild from the published component
 registry.
 
-These docs cover four areas:
+## Where do you want to start?
 
-## Server setup
+<Cards>
+  <Card title="I'm deploying the server" href="/server/quickstart">
+    Bring up Postgres and the ingest server with Docker Compose, configure
+    auth and S3, wire up alert webhooks, and read sessions back through the
+    dashboard API.
+  </Card>
+  <Card title="I'm instrumenting an agent" href="/sdks">
+    Ship session reports from your Python or Node agent — automatic on
+    agent-transport workers, one helper call on raw LiveKit workers.
+  </Card>
+  <Card title="I'm running evals from my test suite" href="/eval-plugins/pytest">
+    Stream LiveKit-agents eval results into the dashboard straight from
+    pytest or Vitest. Each run lands as an eval run with per-case verdicts.
+  </Card>
+  <Card title="I'm building a dashboard UI" href="/ui/provider">
+    Install the shadcn-style registry into your own React app: mount the
+    provider once, then compose the hooks, pages, components, and charts.
+  </Card>
+</Cards>
 
-The Bun/Hono server is the ingest endpoint and the dashboard host. Bring it up
-with Docker Compose, point your SDKs at it, and read back captured sessions
-through the dashboard API. See the [Quickstart](/server-quickstart),
-[Environment](/server-env) configuration reference, and the full
-[API routes](/server-api) surface.
+## How the pieces fit
 
-## Eval plugins
-
-Stream LiveKit-agents eval results into the dashboard straight from your test
-runner. Each run lands as one `eval_run`; every test becomes an `eval_case`
-with its events, judge verdicts, and failure detail. Available for
-[pytest](/pytest-plugin) and [Vitest](/vitest-plugin).
-
-## Client setup
-
-Instrument your agent to ship session reports and eval results to the server.
-Observability is automatic on agent-transport workers; raw LiveKit workers wire
-it with one helper call. Start with the [overview](/client-overview), then the
-[Python](/python-quickstart) or [Node](/node-quickstart) SDK guide.
-
-## UI components
-
-The dashboard is built from a shadcn-style component registry you can install
-into your own React app. Mount the
-[Agent Observability Provider](/observability-provider) once, then compose the
-[hooks](/use-sessions), [pages](/sessions-page),
-[components](/metric-summary-cards), and [charts](/latency-percentiles) to build
-exactly the views you need.
+The [server](/server/quickstart) is the ingest endpoint and the dashboard
+host. The [Python](/sdks/python/quickstart) and
+[Node](/sdks/node/quickstart) SDKs instrument your agents to send it session
+reports; the [pytest](/eval-plugins/pytest) and
+[Vitest](/eval-plugins/vitest) plugins stream eval results from your test
+runs. Everything you see in the dashboard is built from the published
+[UI component registry](/ui/provider) — mount the provider, then compose the
+[hooks](/ui/hooks/use-sessions), [pages](/ui/pages/sessions-page),
+[components](/ui/components/metric-summary-cards), and
+[charts](/ui/charts/latency-percentiles) to build exactly the views you
+need.

@@ -1,5 +1,5 @@
 ---
-title: Node — Quickstart
+title: Quickstart
 description: Install agent-observability-sdk (Node) and point your agent at the dashboard. Covers the agent-transport path (observability auto-emits) and where to go for raw LiveKit workers.
 ---
 
@@ -10,7 +10,7 @@ npm install -D agent-observability-sdk
 ```
 
 Vitest is an optional peer dependency — only required if you use the
-[reporter](/node-vitest). Node ≥ 18.
+[reporter](/sdks/node/vitest). Node ≥ 18.
 
 ## Point it at the dashboard
 
@@ -19,7 +19,7 @@ export AGENT_OBSERVABILITY_URL=https://obs.example.com
 export AGENT_OBSERVABILITY_AGENT_ID=9c2f7e3d-…
 ```
 
-See the full variable list in the [Client setup overview](/client-overview#environment).
+See the full variable list in the [Client setup overview](/sdks#environment).
 
 ## agent-transport workers
 
@@ -34,5 +34,5 @@ The Python SDK ships nine LiveKit-compatible judges, but LiveKit Node Agents
 
 ## Next steps
 
-- Driving LiveKit Agents directly? See [Raw LiveKit](/node-raw-livekit).
-- Running evals from a test suite? See the [Vitest reporter](/node-vitest).
+- Driving LiveKit Agents directly? See [Raw LiveKit](/sdks/node/raw-livekit).
+- Running evals from a test suite? See the [Vitest reporter](/sdks/node/vitest).

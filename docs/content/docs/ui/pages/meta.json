@@ -1,0 +1,11 @@
+{
+  "title": "Pages",
+  "pages": [
+    "sessions-page",
+    "session-detail-page",
+    "evals-page",
+    "eval-run-detail-page",
+    "eval-case-detail-page",
+    "..."
+  ]
+}

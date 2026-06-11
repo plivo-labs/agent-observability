@@ -1,0 +1,11 @@
+{
+  "title": "Charts",
+  "pages": [
+    "latency-percentiles",
+    "pipeline-breakdown",
+    "latency-over-turns",
+    "token-usage",
+    "shared",
+    "..."
+  ]
+}
