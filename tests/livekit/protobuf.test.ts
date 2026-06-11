@@ -230,6 +230,17 @@ describe("decodeOtlpLogsRequest", () => {
     expect(logs[0].attributes.room_id).toBe("room-gzip");
   });
 
+  test("rejects a gzip bomb instead of allocating the full output", () => {
+    // 128 MiB of zeros compresses to a tiny payload but blows past the
+    // 64 MiB decompression cap — the decoder must throw rather than
+    // materialize the whole buffer (zip-bomb DoS).
+    const bomb = gzipSync(Buffer.alloc(128 * 1024 * 1024, 0));
+    expect(bomb.length).toBeLessThan(200 * 1024); // genuinely small on the wire
+    expect(() =>
+      decodeOtlpLogsRequest(new Uint8Array(bomb), "gzip", "application/json"),
+    ).toThrow();
+  });
+
   test("returns empty array for an empty resourceLogs envelope", () => {
     const json = { resourceLogs: [] };
     const bytes = new TextEncoder().encode(JSON.stringify(json));
