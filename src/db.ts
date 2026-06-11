@@ -111,10 +111,17 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
 }
 
 export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput): Promise<void> {
+  // Idempotent against at-least-once OTLP redelivery: a redelivered batch
+  // carries a byte-identical evaluation payload, so skip the insert when an
+  // identical row (same session/source/judge + exact raw payload) already
+  // exists. Guarding on `raw` equality never drops a genuinely different
+  // evaluation, and needs no unique constraint (so no migration that could
+  // fail on pre-existing duplicates).
   await sql`
     INSERT INTO session_external_evals (
       session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw
-    ) VALUES (
+    )
+    SELECT
       ${input.sessionId},
       ${input.source},
       ${input.judgeName},
@@ -124,6 +131,12 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput): Pr
       ${input.instructions},
       ${input.observedAt},
       ${input.raw}::jsonb
+    WHERE NOT EXISTS (
+      SELECT 1 FROM session_external_evals
+      WHERE session_id = ${input.sessionId}
+        AND source = ${input.source}
+        AND judge_name = ${input.judgeName}
+        AND raw = ${input.raw}::jsonb
     )
   `;
 }
@@ -267,6 +280,10 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     }
 
     if (events) {
+      // Dedup against at-least-once OTLP redelivery: only append incoming
+      // events whose item.id isn't already stored (id-less events are kept
+      // as-is, since they can't be matched). Without this, a redelivered
+      // chat-item batch would duplicate transcript lines.
       await tx`
         UPDATE agent_transport_sessions
         SET raw_report = (
@@ -285,7 +302,26 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
                 END
               )->'events',
               '[]'::jsonb
-            ) || ${events}::jsonb
+            ) || COALESCE((
+              SELECT jsonb_agg(incoming)
+              FROM jsonb_array_elements(${events}::jsonb) AS incoming
+              WHERE incoming->'item'->>'id' IS NULL
+                 OR incoming->'item'->>'id' NOT IN (
+                   SELECT existing->'item'->>'id'
+                   FROM jsonb_array_elements(
+                     COALESCE(
+                       (
+                         CASE
+                           WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
+                           ELSE '{}'::jsonb
+                         END
+                       )->'events',
+                       '[]'::jsonb
+                     )
+                   ) AS existing
+                   WHERE existing->'item'->>'id' IS NOT NULL
+                 )
+            ), '[]'::jsonb)
           )
         )
         WHERE session_id = ${input.sessionId}
