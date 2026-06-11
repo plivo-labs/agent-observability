@@ -171,7 +171,25 @@ export async function listAgents(
   );
 
   const total = result.length > 0 ? Number(result[0].total_count) : 0;
-  const rows: AgentRow[] = result.map((row: any) => ({
+  // Explicit row shape (the SELECT's column aliases) so a field-name drift
+  // in the mapper is a compile error rather than a silent `undefined` →
+  // "Invalid Date". The query returns snake_case columns verbatim.
+  interface AgentStatsRow {
+    agent_id: string;
+    account_id: string | null;
+    agent_name: string | null;
+    modality: string | null;
+    transports: string[] | null;
+    session_count: number;
+    session_count_24h: number;
+    last_session_at: string | null;
+    p95_duration_ms: number | null;
+    eval_run_count: number;
+    last_eval_run_at: string | null;
+    eval_pass_rate: number | null;
+    total_count: number;
+  }
+  const rows: AgentRow[] = (result as AgentStatsRow[]).map((row) => ({
     agent_id: row.agent_id,
     account_id: row.account_id ?? null,
     agent_name: row.agent_name,
