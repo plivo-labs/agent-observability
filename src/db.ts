@@ -155,22 +155,21 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     return;
   }
 
-  // Detect the OTLP-before-recording race. Every write below is an UPDATE
+  // Handle the OTLP-before-recording race. Every write below is an UPDATE
   // keyed on session_id; if the recording multipart hasn't created the row
-  // yet, the usage/cost/events carried in this patch are silently dropped
-  // (only session_tags are durable + replayed on insert via
-  // applyStoredSessionTags). Log it so the gap is visible in prod — if this
-  // never fires, the recording-first ordering holds and the heavier
-  // insert→upsert fix isn't warranted.
+  // yet, those UPDATEs match nothing and the usage/cost/events are lost.
+  // Park the patch in session_raw_report_patches instead and return — it
+  // gets replayed (in arrival order) by drainStagedRawReportPatches once
+  // insertSession creates the row, mirroring the session_tags replay.
   const [sessionRow] = await sql`
     SELECT 1 AS present FROM agent_transport_sessions WHERE session_id = ${input.sessionId} LIMIT 1
   `;
   if (!sessionRow) {
-    console.warn(
-      `[otlp] raw_report patch for session=${input.sessionId} arrived before its ` +
-        `recording row; usage/cost/events in this patch will be dropped ` +
-        `(keys=${Object.keys(patch).join(",")})`,
-    );
+    await sql`
+      INSERT INTO session_raw_report_patches (session_id, patch)
+      VALUES (${input.sessionId}, ${input.patch}::jsonb)
+    `;
+    return;
   }
 
   // Promote agent_id and agent_name from the patch into their indexed
@@ -305,6 +304,34 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
       WHERE session_id = ${input.sessionId}
     `;
   });
+}
+
+/**
+ * Replay any raw_report patches that were parked because they arrived
+ * before this session's recording row existed. Called by the recordings
+ * handler right after insertSession (alongside applyStoredSessionTags).
+ * Patches are replayed in arrival order through mergeSessionRawReport —
+ * which now finds the row present — then deleted. Best-effort per patch:
+ * one malformed parked patch can't block the rest.
+ */
+export async function drainStagedRawReportPatches(sessionId: string): Promise<void> {
+  const rows = await sql`
+    SELECT id, patch FROM session_raw_report_patches
+    WHERE session_id = ${sessionId}
+    ORDER BY id ASC
+  `;
+  for (const row of rows as Array<{ id: string; patch: Record<string, unknown> }>) {
+    try {
+      const patch = typeof row.patch === "string" ? JSON.parse(row.patch) : row.patch;
+      await mergeSessionRawReport({ sessionId, patch });
+      await sql`DELETE FROM session_raw_report_patches WHERE id = ${row.id}`;
+    } catch (e) {
+      console.error(
+        `[otlp] failed to replay staged raw_report patch id=${row.id} ` +
+          `session=${sessionId}: ${(e as Error).message}`,
+      );
+    }
+  }
 }
 
 function stringFromMetadata(metadata: Record<string, unknown> | null, key: string): string | null {

@@ -8,7 +8,7 @@ import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
 import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
 import { uploadRecording } from "./s3.js";
-import { sql, insertSession, applyStoredSessionTags } from "./db.js";
+import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
@@ -320,6 +320,8 @@ app.post("/observability/recordings/v0", async (c) => {
     });
     if (sessionId) {
       await applyStoredSessionTags(sessionId);
+      // Replay any OTLP raw_report patches that beat this recording row.
+      await drainStagedRawReportPatches(sessionId);
     }
     console.log(`Session saved: room_id=${sessionId} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
   } catch (e) {

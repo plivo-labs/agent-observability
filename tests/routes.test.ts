@@ -5,6 +5,7 @@ import { createHmac } from "node:crypto";
 
 const mockInsertSession = mock(() => Promise.resolve());
 const mockApplyStoredSessionTags = mock(() => Promise.resolve());
+const mockDrainStagedRawReportPatches = mock(() => Promise.resolve());
 const mockUpsertSessionTag = mock(() => Promise.resolve());
 const mockInsertLiveKitEvaluation = mock(() => Promise.resolve());
 const mockUpsertSessionOutcome = mock(() => Promise.resolve());
@@ -46,6 +47,7 @@ mock.module("../src/db.js", () => ({
   sql: mockSql,
   insertSession: mockInsertSession,
   applyStoredSessionTags: mockApplyStoredSessionTags,
+  drainStagedRawReportPatches: mockDrainStagedRawReportPatches,
   upsertSessionTag: mockUpsertSessionTag,
   insertLiveKitEvaluation: mockInsertLiveKitEvaluation,
   upsertSessionOutcome: mockUpsertSessionOutcome,

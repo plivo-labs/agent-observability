@@ -11,6 +11,7 @@ mock.module("../src/db.js", () => ({
   sql: mockSql,
   insertSession: mock(() => Promise.resolve()),
   applyStoredSessionTags: mock(() => Promise.resolve()),
+  drainStagedRawReportPatches: mock(() => Promise.resolve()),
   upsertSessionTag: mock(() => Promise.resolve()),
   insertLiveKitEvaluation: mock(() => Promise.resolve()),
   upsertSessionOutcome: mock(() => Promise.resolve()),
