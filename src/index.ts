@@ -341,8 +341,10 @@ app.get("/api/sessions", async (c) => {
   const transports = transportRaw
     ? transportRaw.split(",").map((s) => s.trim()).filter(Boolean)
     : null;
+  const q = (c.req.query("q") || "").trim();
 
   const extraParams: Record<string, string> = {};
+  if (q) extraParams.q = q;
   if (accountId) extraParams.account_id = accountId;
   if (agentId) extraParams.agent_id = agentId;
   if (agentName) extraParams.agent_name = agentName;
@@ -352,6 +354,18 @@ app.get("/api/sessions", async (c) => {
 
   const predicates: string[] = [];
   const params: unknown[] = [];
+  if (q) {
+    // Full-text word search over the flattened transcript (migration 018).
+    // The expression must stay textually identical to the GIN index
+    // expression or the planner falls back to a sequential scan. The raw
+    // user string binds directly: websearch_to_tsquery never throws on
+    // malformed input, and its web-search syntax ("phrase", -exclude, or)
+    // is intentionally exposed to users.
+    predicates.push(
+      `to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $${params.length + 1})`,
+    );
+    params.push(q);
+  }
   if (accountId) {
     // Case-insensitive substring match. The user-typed value is escaped
     // for LIKE metacharacters and lower-cased once in JS so the SQL can

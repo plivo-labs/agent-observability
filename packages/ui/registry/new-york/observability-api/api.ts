@@ -24,6 +24,7 @@ export function createObservabilityApi(baseUrl: string) {
   return {
     listSessions: (limit = 20, offset = 0, filters?: SessionsFilters) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (filters?.q) params.set('q', filters.q)
       if (filters?.accountId) params.set('account_id', filters.accountId)
       if (filters?.agentId) params.set('agent_id', filters.agentId)
       if (filters?.agentName) params.set('agent_name', filters.agentName)
