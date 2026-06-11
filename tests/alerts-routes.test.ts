@@ -133,6 +133,33 @@ describe("alert rule routes", () => {
     expect(input.headers).toEqual({ "x-team": "voice" });
   });
 
+  test("never returns the webhook secret over the API", async () => {
+    mockInsertAlertRule.mockResolvedValueOnce({
+      id: RULE_ID,
+      ...validRule,
+      secret: "super-secret-signing-key",
+    } as any);
+    const created = await server.fetch(
+      authed("/api/alert-rules", {
+        method: "POST",
+        body: JSON.stringify({ ...validRule, secret: "super-secret-signing-key" }),
+      }),
+    );
+    const createdBody = await created.json();
+    expect(createdBody.secret).toBeUndefined();
+    expect(createdBody.has_secret).toBe(true);
+
+    mockGetAlertRule.mockResolvedValueOnce({
+      id: RULE_ID,
+      ...validRule,
+      secret: "super-secret-signing-key",
+    } as any);
+    const fetched = await server.fetch(authed(`/api/alert-rules/${RULE_ID}`));
+    const fetchedBody = await fetched.json();
+    expect(fetchedBody.secret).toBeUndefined();
+    expect(fetchedBody.has_secret).toBe(true);
+  });
+
   test.each([
     ["window below 15", { ...validRule, window_minutes: 5 }],
     ["missing metric", { ...validRule, metric: undefined }],
