@@ -12,7 +12,9 @@ index, role-labeled text for the LLM analyzer).
 
 Data shapes below were verified against real stored rows (42 sessions
 in local Postgres, 2026-06-11): `chat_history` is a top-level JSONB
-array of items typed `message` (role + `content: string[]`),
+array of items typed `message` (role + `content`, which arrives in TWO
+shapes — `string[]` fragments AND a plain string; 154 of 190 sampled
+message items were plain strings, so extraction must handle both),
 `function_call` (name, stringified-JSON arguments),
 `function_call_output` (output, is_error), `agent_handoff`,
 `agent_config_update`. All local sessions carry `chat_history`;

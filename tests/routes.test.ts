@@ -1151,6 +1151,66 @@ describe("GET /api/sessions", () => {
     expect(countParams).toEqual(["%50\\% off\\_lab%"]);
   });
 
+  test("passes q as a websearch transcript predicate on count and rows", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?q=" + encodeURIComponent("cancel my subscription"), {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    expect(mockSql).toHaveBeenCalledTimes(2);
+    const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    // Must match the migration's index expression verbatim, bound raw (no
+    // LIKE escaping — websearch_to_tsquery tolerates any input).
+    expect(countQuery).toContain(
+      "to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $1)"
+    );
+    expect(countParams).toEqual(["cancel my subscription"]);
+    const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
+    expect(rowsQuery).toContain(
+      "to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $1)"
+    );
+    expect(rowsParams).toEqual(["cancel my subscription", 20, 0]);
+  });
+
+  test("ignores blank q", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?q=" + encodeURIComponent("   "), {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const [countQuery, countParams] = mockSql.mock.calls[0] as [string, unknown[]];
+    expect(countQuery).not.toContain("websearch_to_tsquery");
+    expect(countParams).toEqual([]);
+  });
+
+  test("carries q through pagination links", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 30 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?limit=10&offset=10&q=refund", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.next).toContain("q=refund");
+    expect(body.meta.previous).toContain("q=refund");
+  });
+
   test("passes started_from/started_to filters as timestamp predicates", async () => {
     mockSql
       .mockResolvedValueOnce([{ total: 0 }])

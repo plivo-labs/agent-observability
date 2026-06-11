@@ -213,11 +213,20 @@ export function useDataTable<TData>(props: UseDataTableProps<TData>) {
     return Object.entries(filterValues).reduce<ColumnFiltersState>(
       (filters, [key, value]) => {
         if (value !== null) {
-          const processedValue = Array.isArray(value)
-            ? value
-            : typeof value === "string" && /[^a-zA-Z0-9]/.test(value)
-              ? value.split(/[^a-zA-Z0-9]+/).filter(Boolean)
-              : [value];
+          // Free-text filters keep the raw string: splitting
+          // "cancel my subscription" on non-alphanumerics would mangle the
+          // toolbar input after a reload. The array coercion below is for
+          // option/date filters, whose components expect array values.
+          const variant = filterableColumns.find((column) => column.id === key)
+            ?.meta?.variant;
+          const processedValue =
+            variant === "text"
+              ? value
+              : Array.isArray(value)
+                ? value
+                : typeof value === "string" && /[^a-zA-Z0-9]/.test(value)
+                  ? value.split(/[^a-zA-Z0-9]+/).filter(Boolean)
+                  : [value];
 
           filters.push({
             id: key,
@@ -228,7 +237,7 @@ export function useDataTable<TData>(props: UseDataTableProps<TData>) {
       },
       [],
     );
-  }, [filterValues, enableAdvancedFilter]);
+  }, [filterValues, filterableColumns, enableAdvancedFilter]);
 
   const [columnFilters, setColumnFilters] =
     React.useState<ColumnFiltersState>(initialColumnFilters);

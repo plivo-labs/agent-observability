@@ -146,6 +146,9 @@ export interface SessionMetrics {
 export type Transport = 'sip' | 'audio_stream' | 'text' | 'terminal_text' | string
 
 export interface SessionsFilters {
+  /** Full-text transcript search — Postgres websearch syntax ("phrase",
+   * -exclude, or) over the spoken transcript. */
+  q?: string
   accountId?: string
   /** Exact-match — comes from the agent dashboard URL param, not free-text. */
   agentId?: string
