@@ -55,7 +55,13 @@ const app = new Hono();
 
 app.use("*", requestId());
 app.use("*", logger());
-app.use("/api/*", cors());
+// Restrict cross-origin access to the dashboard API. Wildcard by default
+// (zero-config local dev); set CORS_ALLOWED_ORIGINS to a comma-separated
+// allow-list to lock it down. A wildcard already blocks credentialed
+// cross-origin reads, but an explicit list is tighter when the dashboard
+// is hosted on a known origin.
+const corsOrigins = (config.CORS_ALLOWED_ORIGINS ?? "*").split(",").map((o) => o.trim()).filter(Boolean);
+app.use("/api/*", cors({ origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins }));
 
 // Basic auth (all routes except /health, only when configured)
 if (basicAuthEnabled) {
