@@ -87,7 +87,10 @@ describe("runGoalSweepOnce", () => {
   test("judges each claimed session and writes one verdict per goal", async () => {
     mockClaim.mockResolvedValueOnce(["s1"] as never);
     mockLoad.mockResolvedValueOnce({
-      goals: ["Resolve the issue", "Confirm identity"],
+      goals: [
+        { name: "resolution", description: "Resolve the issue" },
+        { name: "identity", description: "Confirm identity" },
+      ],
       chatHistory: CHAT,
     } as never);
 
@@ -104,9 +107,16 @@ describe("runGoalSweepOnce", () => {
     const [sessionId, verdicts] = mockComplete.mock.calls[0] as unknown as [string, unknown[]];
     expect(sessionId).toBe("s1");
     expect(verdicts).toEqual([
-      { goal: "Resolve the issue", met: true, reasoning: "Issue was resolved.", whatWentWrong: null },
       {
-        goal: "Confirm identity",
+        name: "resolution",
+        description: "Resolve the issue",
+        met: true,
+        reasoning: "Issue was resolved.",
+        whatWentWrong: null,
+      },
+      {
+        name: "identity",
+        description: "Confirm identity",
         met: false,
         reasoning: "Never asked.",
         whatWentWrong: "No identity check",
@@ -117,7 +127,13 @@ describe("runGoalSweepOnce", () => {
 
   test("verdict-count mismatch marks an error and writes nothing", async () => {
     mockClaim.mockResolvedValueOnce(["s1"] as never);
-    mockLoad.mockResolvedValueOnce({ goals: ["A", "B"], chatHistory: CHAT } as never);
+    mockLoad.mockResolvedValueOnce({
+      goals: [
+        { name: "a", description: "A" },
+        { name: "b", description: "B" },
+      ],
+      chatHistory: CHAT,
+    } as never);
 
     await runGoalSweepOnce({
       model: modelReturning({
@@ -134,8 +150,8 @@ describe("runGoalSweepOnce", () => {
   test("a model failure marks that session and continues with the next", async () => {
     mockClaim.mockResolvedValueOnce(["s1", "s2"] as never);
     mockLoad
-      .mockResolvedValueOnce({ goals: ["A"], chatHistory: CHAT } as never)
-      .mockResolvedValueOnce({ goals: ["B"], chatHistory: CHAT } as never);
+      .mockResolvedValueOnce({ goals: [{ name: "a", description: "A" }], chatHistory: CHAT } as never)
+      .mockResolvedValueOnce({ goals: [{ name: "b", description: "B" }], chatHistory: CHAT } as never);
 
     await runGoalSweepOnce({
       model: modelReturning(new Error("rate limited"), {

@@ -7,42 +7,63 @@ import { describe, test, expect } from "bun:test";
 import { parseGoalTags, renderTranscript } from "../src/goals/extract.js";
 
 describe("parseGoalTags", () => {
-  test("strips the goal: prefix and trims whitespace", () => {
-    expect(parseGoalTags(["goal: Resolve the order issue "])).toEqual([
-      "Resolve the order issue",
+  test("splits goal:<name>:<description> at the first colon after the prefix", () => {
+    expect(
+      parseGoalTags(["goal:order-resolution:Resolve the caller's order issue or open a ticket"]),
+    ).toEqual([
+      { name: "order-resolution", description: "Resolve the caller's order issue or open a ticket" },
+    ]);
+  });
+
+  test("name-only goals self-describe (description = name)", () => {
+    expect(parseGoalTags(["goal:identity-check"])).toEqual([
+      { name: "identity-check", description: "identity-check" },
+    ]);
+  });
+
+  test("description keeps colons after the name separator", () => {
+    expect(parseGoalTags(["goal:escalation:Escalate: only after two failed attempts"])).toEqual([
+      { name: "escalation", description: "Escalate: only after two failed attempts" },
+    ]);
+  });
+
+  test("trims both parts", () => {
+    expect(parseGoalTags(["goal: refund : Issue a refund when asked "])).toEqual([
+      { name: "refund", description: "Issue a refund when asked" },
     ]);
   });
 
   test("ignores non-goal tags", () => {
     expect(
-      parseGoalTags(["account_id:acct-1", "agent_id:a-1", "goal:Confirm identity", "lk.success"]),
-    ).toEqual(["Confirm identity"]);
+      parseGoalTags(["account_id:acct-1", "agent_id:a-1", "goal:identity:Confirm identity", "lk.success"]),
+    ).toEqual([{ name: "identity", description: "Confirm identity" }]);
   });
 
-  test("preserves colons inside the goal text", () => {
-    expect(parseGoalTags(["goal:Escalate: only after two failed attempts"])).toEqual([
-      "Escalate: only after two failed attempts",
+  test("dedupes by name preserving first-occurrence order", () => {
+    expect(parseGoalTags(["goal:b:first b", "goal:a:the a", "goal:b:second b"])).toEqual([
+      { name: "b", description: "first b" },
+      { name: "a", description: "the a" },
     ]);
   });
 
-  test("dedupes preserving first-occurrence order", () => {
-    expect(parseGoalTags(["goal:b", "goal:a", "goal:b"])).toEqual(["b", "a"]);
+  test("drops goals whose name is empty after trimming", () => {
+    expect(parseGoalTags(["goal:", "goal:   ", "goal::only description", "goal:real:desc"])).toEqual([
+      { name: "real", description: "desc" },
+    ]);
   });
 
-  test("drops goals that are empty after trimming", () => {
-    expect(parseGoalTags(["goal:", "goal:   ", "goal:real"])).toEqual(["real"]);
-  });
-
-  test("caps each goal at 500 characters", () => {
-    const long = "x".repeat(600);
-    const [parsed] = parseGoalTags([`goal:${long}`]);
-    expect(parsed).toHaveLength(500);
+  test("caps name at 100 and description at 500 characters", () => {
+    const longName = "n".repeat(150);
+    const longDesc = "d".repeat(600);
+    const [parsed] = parseGoalTags([`goal:${longName}:${longDesc}`]);
+    expect(parsed.name).toHaveLength(100);
+    expect(parsed.description).toHaveLength(500);
   });
 
   test("tolerates non-string entries", () => {
-    expect(parseGoalTags([42 as unknown as string, null as unknown as string, "goal:ok"])).toEqual([
-      "ok",
-    ]);
+    expect(
+      parseGoalTags([42 as unknown as string, null as unknown as string, "goal:ok:fine"]),
+    ).toEqual([{ name: "ok", description: "fine" }]);
   });
 });
 

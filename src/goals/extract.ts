@@ -9,21 +9,42 @@
  */
 
 const GOAL_PREFIX = "goal:";
-const GOAL_MAX_CHARS = 500;
+const NAME_MAX_CHARS = 100;
+const DESCRIPTION_MAX_CHARS = 500;
 
 /** Default transcript budget. Tail-keeping: sessions resolve at the end,
  *  so when over budget the START of the call is dropped. */
 export const TRANSCRIPT_MAX_CHARS = 48_000;
 
-export function parseGoalTags(tags: unknown[]): string[] {
+/** A goal as defined in agent code. `name` is the stable identifier
+ *  (filterable; stored in session_external_evals.tag), `description` is
+ *  what the judge evaluates (stored in instructions). */
+export interface GoalSpec {
+  name: string;
+  description: string;
+}
+
+/**
+ * Parse `goal:<name>:<description>` tag strings. The split is at the
+ * FIRST colon after the prefix — names cannot contain colons,
+ * descriptions can. `goal:<name>` alone self-describes (description =
+ * name). Deduped by name, first occurrence wins.
+ */
+export function parseGoalTags(tags: unknown[]): GoalSpec[] {
   const seen = new Set<string>();
-  const goals: string[] = [];
+  const goals: GoalSpec[] = [];
   for (const tag of tags) {
     if (typeof tag !== "string" || !tag.startsWith(GOAL_PREFIX)) continue;
-    const text = tag.slice(GOAL_PREFIX.length).trim().slice(0, GOAL_MAX_CHARS);
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    goals.push(text);
+    const body = tag.slice(GOAL_PREFIX.length);
+    const sep = body.indexOf(":");
+    const rawName = sep === -1 ? body : body.slice(0, sep);
+    const rawDescription = sep === -1 ? body : body.slice(sep + 1);
+    const name = rawName.trim().slice(0, NAME_MAX_CHARS);
+    if (!name || seen.has(name)) continue;
+    const description =
+      rawDescription.trim().slice(0, DESCRIPTION_MAX_CHARS) || name;
+    seen.add(name);
+    goals.push({ name, description });
   }
   return goals;
 }

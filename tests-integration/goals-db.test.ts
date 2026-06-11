@@ -42,7 +42,7 @@ describeDb("goal analysis db layer", () => {
 
   test("claims sessions with OTLP-path goal tags; skips sessions without goals", async () => {
     const withGoal = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
-    await t.seedTag(withGoal, "goal:Resolve the order issue");
+    await t.seedTag(withGoal, "goal:order-issue:Resolve the order issue");
     const withoutGoal = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
 
     const claimed = await claimOurs();
@@ -54,7 +54,7 @@ describeDb("goal analysis db layer", () => {
     const s = await t.seedSession({
       accountId: t.uid("acct"),
       chatHistory: CHAT,
-      rawReport: { tags: ["goal:Confirm identity", "account_id:acct-x"] },
+      rawReport: { tags: ["goal:identity:Confirm identity", "account_id:acct-x"] },
     });
     const claimed = await claimOurs();
     expect(claimed).toContain(s);
@@ -62,9 +62,9 @@ describeDb("goal analysis db layer", () => {
 
   test("skips goal sessions without a transcript", async () => {
     const empty = await t.seedSession({ accountId: t.uid("acct"), chatHistory: [] });
-    await t.seedTag(empty, "goal:Anything");
+    await t.seedTag(empty, "goal:anything");
     const nul = await t.seedSession({ accountId: t.uid("acct"), chatHistory: null });
-    await t.seedTag(nul, "goal:Anything");
+    await t.seedTag(nul, "goal:anything");
 
     const claimed = await claimOurs();
     expect(claimed).not.toContain(empty);
@@ -73,7 +73,7 @@ describeDb("goal analysis db layer", () => {
 
   test("a fresh claim blocks re-claiming; a stale claim is reclaimable", async () => {
     const s = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
-    await t.seedTag(s, "goal:Stay claimed");
+    await t.seedTag(s, "goal:stay-claimed");
     const first = await claimOurs();
     expect(first).toContain(s);
 
@@ -92,7 +92,7 @@ describeDb("goal analysis db layer", () => {
   test("respects the batch limit", async () => {
     for (let i = 0; i < 3; i++) {
       const s = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
-      await t.seedTag(s, "goal:Batchy");
+      await t.seedTag(s, "goal:batchy");
     }
     const claimed = await claimGoalSessions(2);
     expect(claimed.length).toBeLessThanOrEqual(2);
@@ -102,38 +102,42 @@ describeDb("goal analysis db layer", () => {
     const s = await t.seedSession({
       accountId: t.uid("acct"),
       chatHistory: CHAT,
-      rawReport: { tags: ["goal:From recording", "goal:Shared"] },
+      rawReport: { tags: ["goal:from-recording:Recording goal", "goal:shared:Recording wording"] },
     });
-    await t.seedTag(s, "goal:From otlp");
-    await t.seedTag(s, "goal:Shared");
+    await t.seedTag(s, "goal:from-otlp:Otlp goal");
+    await t.seedTag(s, "goal:shared:Otlp wording");
 
     const { goals, chatHistory } = await loadGoalSession(s);
-    expect(goals.sort()).toEqual(["From otlp", "From recording", "Shared"].sort());
-    expect(goals.filter((g) => g === "Shared")).toHaveLength(1);
+    expect(goals.map((g) => g.name).sort()).toEqual(["from-otlp", "from-recording", "shared"].sort());
+    // Dedupe is by NAME; the first-seen description wins (otlp source is read first).
+    expect(goals.find((g) => g.name === "shared")?.description).toBe("Otlp wording");
+    expect(goals.find((g) => g.name === "from-recording")?.description).toBe("Recording goal");
     expect(Array.isArray(chatHistory)).toBe(true);
   });
 
   test("completeGoalAnalysis writes one verdict row per goal and stops re-claims", async () => {
     const s = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
-    await t.seedTag(s, "goal:Met goal");
-    await t.seedTag(s, "goal:Unmet goal");
+    await t.seedTag(s, "goal:met-goal:The met goal");
+    await t.seedTag(s, "goal:unmet-goal:The unmet goal");
     expect(await claimOurs()).toContain(s);
 
     await completeGoalAnalysis(s, [
-      { goal: "Met goal", met: true, reasoning: "Did it", whatWentWrong: null },
-      { goal: "Unmet goal", met: false, reasoning: "Did not", whatWentWrong: "Caller hung up" },
+      { name: "met-goal", description: "The met goal", met: true, reasoning: "Did it", whatWentWrong: null },
+      { name: "unmet-goal", description: "The unmet goal", met: false, reasoning: "Did not", whatWentWrong: "Caller hung up" },
     ]);
 
     const rows = await sql`
-      SELECT judge_name, instructions, verdict, reasoning, raw
+      SELECT judge_name, tag, instructions, verdict, reasoning, raw
       FROM session_external_evals
       WHERE session_id = ${s} AND source = 'goal'
       ORDER BY id
     `;
     expect(rows).toHaveLength(2);
     expect(rows[0].judge_name).toBe("goal");
-    expect(rows[0].instructions).toBe("Met goal");
+    expect(rows[0].tag).toBe("met-goal");
+    expect(rows[0].instructions).toBe("The met goal");
     expect(rows[0].verdict).toBe("met");
+    expect(rows[1].tag).toBe("unmet-goal");
     expect(rows[1].verdict).toBe("unmet");
     expect(rows[1].raw.what_went_wrong).toBe("Caller hung up");
 
@@ -153,8 +157,8 @@ describeDb("goal analysis db layer", () => {
 
     const s1 = await t.seedSession({ accountId: acct, agentId, chatHistory: CHAT });
     await completeGoalAnalysis(s1, [
-      { goal: "G1", met: true, reasoning: "yes", whatWentWrong: null },
-      { goal: "G2", met: false, reasoning: "no", whatWentWrong: "hangup" },
+      { name: "g1", description: "G1 desc", met: true, reasoning: "yes", whatWentWrong: null },
+      { name: "g2", description: "G2 desc", met: false, reasoning: "no", whatWentWrong: "hangup" },
     ]);
     const s2 = await t.seedSession({
       accountId: acct,
@@ -163,7 +167,7 @@ describeDb("goal analysis db layer", () => {
       endedMinutesAgo: 5,
     });
     await completeGoalAnalysis(s2, [
-      { goal: "G1", met: true, reasoning: "also yes", whatWentWrong: null },
+      { name: "g1", description: "G1 desc", met: true, reasoning: "also yes", whatWentWrong: null },
     ]);
     // A session of the same agent WITHOUT goal verdicts must not appear.
     await t.seedSession({ accountId: acct, agentId, chatHistory: CHAT });
@@ -177,7 +181,8 @@ describeDb("goal analysis db layer", () => {
     expect(rows[0].unmet_count).toBe(1);
     expect(rows[0].goals).toHaveLength(2);
     expect(rows[0].goals[0]).toMatchObject({
-      goal: "G1",
+      name: "g1",
+      description: "G1 desc",
       verdict: "met",
       reasoning: "yes",
       what_went_wrong: null,
@@ -198,7 +203,7 @@ describeDb("goal analysis db layer", () => {
 
   test("errors increment attempts, allow retry, and cap at 3", async () => {
     const s = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
-    await t.seedTag(s, "goal:Flaky");
+    await t.seedTag(s, "goal:flaky");
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       const claimed = await claimOurs();

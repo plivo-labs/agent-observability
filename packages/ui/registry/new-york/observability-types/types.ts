@@ -219,7 +219,11 @@ export interface ConversationEvalSummary {
 
 /** One judged goal of a session (session_external_evals, source='goal'). */
 export interface GoalVerdictRow {
-  goal: string
+  /** Stable goal identifier — the future "sessions where goal X was met"
+   * filter keys on this. */
+  name: string
+  /** What the judge evaluated. */
+  description: string
   verdict: 'met' | 'unmet' | string
   reasoning: string | null
   what_went_wrong: string | null

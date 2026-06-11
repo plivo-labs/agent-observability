@@ -10,79 +10,75 @@
  * params.
  */
 import { sql, insertLiveKitEvaluation } from "../db.js";
-import { parseGoalTags } from "./extract.js";
+import { parseGoalTags, type GoalSpec } from "./extract.js";
 
 const STALE_CLAIM = "10 minutes";
 export const MAX_ATTEMPTS = 3;
 
 export interface GoalVerdictInput {
-  goal: string;
+  name: string;
+  description: string;
   met: boolean;
   reasoning: string;
   whatWentWrong: string | null;
 }
 
 /**
- * Find eligible sessions and atomically claim up to `limit` of them.
- * Returns the claimed session ids. Safe to call concurrently from the
- * API-inline analyzer and the worker: the ON CONFLICT claim only
- * succeeds for new, retryable-error, or stale-claimed rows.
+ * Find eligible sessions and atomically claim up to `limit` of them in a
+ * single statement (candidates feed the INSERT directly, so discovery
+ * and claim share one snapshot). Safe to call concurrently from the
+ * API-inline analyzer and the worker: the ON CONFLICT branch only
+ * succeeds for retryable-error or stale-claimed rows, and done /
+ * attempt-capped / freshly-claimed sessions are filtered out before the
+ * insert and return no row from it.
  */
 export async function claimGoalSessions(limit: number): Promise<string[]> {
-  const candidates = await sql.unsafe(
-    `SELECT s.session_id
-     FROM agent_transport_sessions s
-     WHERE s.transcript_text IS NOT NULL
-       AND (
-         EXISTS (
-           SELECT 1 FROM session_tags st
-           WHERE st.session_id = s.session_id AND st.name LIKE 'goal:%'
-         )
-         OR (
-           jsonb_typeof(s.raw_report->'tags') = 'array'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements_text(s.raw_report->'tags') tag(v)
-             WHERE tag.v LIKE 'goal:%'
+  const claimed = await sql.unsafe(
+    `INSERT INTO session_goal_analyses (session_id, status, claimed_at)
+     SELECT c.session_id, 'claimed', NOW() FROM (
+       SELECT s.session_id
+       FROM agent_transport_sessions s
+       WHERE s.transcript_text IS NOT NULL
+         AND (
+           EXISTS (
+             SELECT 1 FROM session_tags st
+             WHERE st.session_id = s.session_id AND st.name LIKE 'goal:%'
+           )
+           OR (
+             jsonb_typeof(s.raw_report->'tags') = 'array'
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements_text(s.raw_report->'tags') tag(v)
+               WHERE tag.v LIKE 'goal:%'
+             )
            )
          )
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM session_goal_analyses g
-         WHERE g.session_id = s.session_id
-           AND (
-             g.status = 'done'
-             OR g.attempts >= ${MAX_ATTEMPTS}
-             OR (g.status = 'claimed' AND g.claimed_at > NOW() - interval '${STALE_CLAIM}')
-           )
-       )
-     ORDER BY s.ended_at DESC
-     LIMIT $1`,
+         AND NOT EXISTS (
+           SELECT 1 FROM session_goal_analyses g
+           WHERE g.session_id = s.session_id
+             AND (
+               g.status = 'done'
+               OR g.attempts >= ${MAX_ATTEMPTS}
+               OR (g.status = 'claimed' AND g.claimed_at > NOW() - interval '${STALE_CLAIM}')
+             )
+         )
+       ORDER BY s.ended_at DESC
+       LIMIT $1
+     ) c
+     ON CONFLICT (session_id) DO UPDATE
+     SET status = 'claimed', claimed_at = NOW()
+     WHERE (session_goal_analyses.status = 'error' AND session_goal_analyses.attempts < ${MAX_ATTEMPTS})
+        OR (session_goal_analyses.status = 'claimed'
+            AND session_goal_analyses.claimed_at < NOW() - interval '${STALE_CLAIM}')
+     RETURNING session_id`,
     [limit],
   );
-
-  const claimed: string[] = [];
-  for (const row of candidates) {
-    const got = await sql.unsafe(
-      `INSERT INTO session_goal_analyses (session_id, status, claimed_at)
-       VALUES ($1, 'claimed', NOW())
-       ON CONFLICT (session_id) DO UPDATE
-       SET status = 'claimed', claimed_at = NOW()
-       WHERE (session_goal_analyses.status = 'error' AND session_goal_analyses.attempts < ${MAX_ATTEMPTS})
-          OR (session_goal_analyses.status = 'claimed'
-              AND session_goal_analyses.claimed_at < NOW() - interval '${STALE_CLAIM}')
-       RETURNING session_id`,
-      [row.session_id],
-    );
-    if (got.length > 0) claimed.push(got[0].session_id);
-    if (claimed.length >= limit) break;
-  }
-  return claimed;
+  return claimed.map((row: { session_id: string }) => row.session_id);
 }
 
 /** Goals (merged from both tag sources, parsed) + the raw chat history. */
 export async function loadGoalSession(
   sessionId: string,
-): Promise<{ goals: string[]; chatHistory: unknown }> {
+): Promise<{ goals: GoalSpec[]; chatHistory: unknown }> {
   const [row] = await sql`
     SELECT chat_history, raw_report->'tags' AS rr_tags
     FROM agent_transport_sessions
@@ -114,13 +110,16 @@ export async function completeGoalAnalysis(
           sessionId,
           source: "goal",
           judgeName: "goal",
-          tag: null,
+          // The goal NAME is the stable, filterable identity ("sessions
+          // where goal X was met" queries key on this column).
+          tag: v.name,
           verdict: v.met ? "met" : "unmet",
           reasoning: v.reasoning,
-          instructions: v.goal,
+          instructions: v.description,
           observedAt,
           raw: {
-            goal: v.goal,
+            name: v.name,
+            description: v.description,
             met: v.met,
             reasoning: v.reasoning,
             what_went_wrong: v.whatWentWrong,

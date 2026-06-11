@@ -486,7 +486,10 @@ export async function listConversationEvals(
 // ── Conversation goals ───────────────────────────────────────────────────────
 
 export interface GoalVerdictRow {
-  goal: string;
+  /** Stable goal identifier (session_external_evals.tag). */
+  name: string;
+  /** What the judge evaluated (session_external_evals.instructions). */
+  description: string;
   verdict: string;
   reasoning: string | null;
   what_went_wrong: string | null;
@@ -548,7 +551,8 @@ export async function listGoalResults(
               COUNT(*) FILTER (WHERE verdict = 'met')::int   AS met_count,
               COUNT(*) FILTER (WHERE verdict = 'unmet')::int AS unmet_count,
               jsonb_agg(jsonb_build_object(
-                'goal',            instructions,
+                'name',            COALESCE(tag, instructions),
+                'description',     instructions,
                 'verdict',         verdict,
                 'reasoning',       reasoning,
                 'what_went_wrong', raw->>'what_went_wrong',

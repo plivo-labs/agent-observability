@@ -5,6 +5,7 @@
  * analyzer additionally enforces verdicts.length === goals.length.
  */
 import { z } from "zod";
+import type { GoalSpec } from "./extract.js";
 
 export const goalVerdictSchema = z.object({
   goals: z.array(
@@ -26,16 +27,23 @@ export const goalVerdictSchema = z.object({
  * judge errs toward unmet.
  *
  * @param transcript role-labeled lines ("caller: …" / "agent: …")
- * @param goals      plain-text goals, in order; verdicts must come back
- *                   in the SAME order, one per goal
+ * @param goals      named goals, in order; verdicts must come back in
+ *                   the SAME order, one per goal. The description is
+ *                   what gets judged; the name only labels it.
  * @param truncated  true when the transcript start was cut for length
  */
 export function buildGoalJudgePrompt(
   transcript: string,
-  goals: string[],
+  goals: GoalSpec[],
   truncated: boolean,
 ): string {
-  const goalLines = goals.map((g, i) => `${i + 1}. ${g}`).join("\n");
+  const goalLines = goals
+    .map((g, i) =>
+      g.description === g.name
+        ? `${i + 1}. ${g.name}`
+        : `${i + 1}. ${g.name}: ${g.description}`,
+    )
+    .join("\n");
   return [
     "You are a strict QA judge for voice-agent calls. For each goal below, decide whether the transcript PROVES the goal was met.",
     "",

@@ -25,6 +25,10 @@ import {
 
 export const GOAL_SWEEP_INTERVAL_MS = 30_000;
 const BATCH_LIMIT = 10;
+// Sessions are judged in small parallel chunks (same shape as the alert
+// sweeper's DELIVERY_CONCURRENCY) — kept low deliberately to stay gentle
+// on the LLM provider's rate limits.
+const ANALYZE_CONCURRENCY = 3;
 
 /** Same contract as the Python SDK judge helper. */
 export function resolveJudgeModel(): string {
@@ -60,7 +64,8 @@ async function analyzeSession(sessionId: string, model: LanguageModel): Promise<
   await completeGoalAnalysis(
     sessionId,
     goals.map((goal, i) => ({
-      goal,
+      name: goal.name,
+      description: goal.description,
       met: object.goals[i].met,
       reasoning: object.goals[i].reasoning,
       whatWentWrong: object.goals[i].what_went_wrong,
@@ -77,14 +82,19 @@ export async function runGoalSweepOnce(deps?: { model?: LanguageModel }): Promis
   sweeping = true;
   try {
     const sessions = await claimGoalSessions(BATCH_LIMIT);
-    for (const sessionId of sessions) {
-      try {
-        await analyzeSession(sessionId, model);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[goals] analysis failed session_id=${sessionId}: ${message}`);
-        await markGoalAnalysisError(sessionId, message.slice(0, 2000));
-      }
+    for (let i = 0; i < sessions.length; i += ANALYZE_CONCURRENCY) {
+      const chunk = sessions.slice(i, i + ANALYZE_CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (sessionId) => {
+          try {
+            await analyzeSession(sessionId, model);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[goals] analysis failed session_id=${sessionId}: ${message}`);
+            await markGoalAnalysisError(sessionId, message.slice(0, 2000));
+          }
+        }),
+      );
     }
   } catch (err) {
     console.error(`[goals] sweep failed: ${err instanceof Error ? err.message : String(err)}`);

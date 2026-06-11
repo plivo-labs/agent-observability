@@ -64,12 +64,13 @@ function MetBadge({ verdict }: { verdict: string }) {
   )
 }
 
-/** Compact chip per goal: verdict icon + truncated goal text. */
+/** Compact chip per goal: verdict icon + the goal's short name (the
+ *  description lives in the title tooltip and the drawer). */
 function GoalChip({ row }: { row: GoalVerdictRow }) {
   const met = row.verdict === 'met'
   return (
     <span
-      title={row.goal}
+      title={row.description}
       className={cn(
         'inline-flex items-center gap-1 px-1.5 py-[1px] rounded text-[10px] whitespace-nowrap max-w-[180px]',
         met ? 'bg-success-bg text-success-fg' : 'bg-destructive-bg text-destructive',
@@ -80,7 +81,7 @@ function GoalChip({ row }: { row: GoalVerdictRow }) {
       ) : (
         <XCircle size={10} className="shrink-0" />
       )}
-      <span className="truncate">{row.goal}</span>
+      <span className="truncate font-mono">{row.name}</span>
     </span>
   )
 }
@@ -93,7 +94,7 @@ function GoalChipsCell({ items }: { items: GoalVerdictRow[] }) {
   return (
     <div className="flex items-center gap-1.5 max-w-[320px]">
       {visible.map((g, i) => (
-        <GoalChip key={`${g.goal}-${i}`} row={g} />
+        <GoalChip key={`${g.name}-${i}`} row={g} />
       ))}
       {rest.length > 0 && (
         <HoverCard openDelay={120} closeDelay={80}>
@@ -116,7 +117,7 @@ function GoalChipsCell({ items }: { items: GoalVerdictRow[] }) {
             </div>
             <div className="flex flex-wrap gap-1">
               {items.map((g, i) => (
-                <GoalChip key={`${g.goal}-${i}`} row={g} />
+                <GoalChip key={`${g.name}-${i}`} row={g} />
               ))}
             </div>
           </HoverCardContent>
@@ -163,15 +164,23 @@ function GoalDetailDrawer({
         {row && (
           <Accordion type="multiple" className="px-4 pb-6">
             {row.goals.map((g, i) => (
-              <AccordionItem key={`${g.goal}-${i}`} value={`goal-${i}`}>
+              <AccordionItem key={`${g.name}-${i}`} value={`goal-${i}`}>
                 <AccordionTrigger className="gap-2">
                   <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                    <span className="min-w-0 flex-1 truncate text-sm">{g.goal}</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-sm">{g.name}</span>
                     <MetBadge verdict={g.verdict} />
                   </span>
                 </AccordionTrigger>
                 <AccordionContent>
                   <div className="flex flex-col gap-3">
+                    {g.description !== g.name && (
+                      <div>
+                        <div className="text-xxs-600 uppercase tracking-[0.08em] text-muted-foreground mb-1">
+                          Goal
+                        </div>
+                        <p className="text-sm leading-relaxed">{g.description}</p>
+                      </div>
+                    )}
                     {g.reasoning && (
                       <div>
                         <div className="text-xxs-600 uppercase tracking-[0.08em] text-muted-foreground mb-1">
