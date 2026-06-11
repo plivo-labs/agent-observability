@@ -142,7 +142,7 @@ export const SessionsPage = ({
         enableColumnFilter: true,
         enableSorting: false,
         enableHiding: false,
-        meta: { label: 'Transcript', placeholder: 'Search transcript', variant: 'text' },
+        meta: { label: 'Transcript', placeholder: 'Search transcripts', variant: 'text' },
       },
       {
         id: 'transport',
