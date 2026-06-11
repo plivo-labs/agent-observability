@@ -13,7 +13,7 @@ import { upsertAgentTx } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
-import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
+import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern, sanitizeForLog } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { registerAgentRoutes } from "./agents/routes.js";
 import { registerAnalyticsRoutes } from "./analytics/routes.js";
@@ -149,7 +149,7 @@ app.post("/observability/recordings/v0", async (c) => {
     }
   }
 
-  console.log(`Session report received: room_id=${sessionId} account_id=${accountId}`);
+  console.log(`Session report received: room_id=${sanitizeForLog(sessionId)} account_id=${sanitizeForLog(accountId)}`);
 
   // Parse chat history
   let parsed = { chatItems: [] as any[], turnCount: 0, hasStt: false, hasLlm: false, hasTts: false, metrics: [] as any[] };
@@ -323,7 +323,7 @@ app.post("/observability/recordings/v0", async (c) => {
       // Replay any OTLP raw_report patches that beat this recording row.
       await drainStagedRawReportPatches(sessionId);
     }
-    console.log(`Session saved: room_id=${sessionId} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
+    console.log(`Session saved: room_id=${sanitizeForLog(sessionId)} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
   } catch (e) {
     // Return a non-2xx so the SDK's at-least-once delivery retries. A 200
     // here would make the SDK treat the report as durably stored and drop
