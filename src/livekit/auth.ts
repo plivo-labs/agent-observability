@@ -44,6 +44,10 @@ async function liveKitBearerValid(header: string): Promise<boolean> {
     const { payload } = await jwtVerify(token, secret, {
       issuer: config.LIVEKIT_API_KEY,
       algorithms: ["HS256"],
+      // jose only enforces `exp` when it is present, so a token minted
+      // without one would never expire. Require it so every accepted token
+      // has a bounded lifetime (jose still validates the exp value itself).
+      requiredClaims: ["exp"],
     });
     const observability = payload.observability;
     return typeof observability === "object" &&

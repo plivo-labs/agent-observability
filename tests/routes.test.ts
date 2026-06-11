@@ -345,6 +345,21 @@ describe("POST /observability/recordings/v0", () => {
     expect(res.status).toBe(401);
   });
 
+  test("rejects a LiveKit Bearer token that has no exp claim", async () => {
+    // exp: undefined is dropped by JSON.stringify, so the token never
+    // expires. requiredClaims must reject it even though signature, issuer
+    // and the write grant are all valid.
+    const form = new FormData();
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: liveKitBearerHeader({ exp: undefined }) },
+        body: form,
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
   test("rejects LiveKit Bearer auth when observability claim is missing entirely", async () => {
     // `observability: undefined` causes JSON.stringify to drop the field,
     // so the JWT carries no observability claim at all. Defence-in-depth
