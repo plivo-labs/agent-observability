@@ -1,8 +1,28 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 
 const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
-mockSql.unsafe = mock((..._args: any[]) => Promise.resolve([]));
+// Metric queries now run via runMetricQuery, which issues a transparent
+// `SET LOCAL statement_timeout` before the real query (COR-04). The mock
+// short-circuits that statement and pulls the actual metric response from
+// a FIFO queue the tests control, so the timeout plumbing doesn't perturb
+// the response sequencing.
+let metricQueue: Array<any[] | Error> = [];
+mockSql.unsafe = mock((q: any, ..._rest: any[]) => {
+  if (typeof q === "string" && q.trimStart().startsWith("SET LOCAL")) {
+    return Promise.resolve([]);
+  }
+  const next = metricQueue.shift();
+  if (next instanceof Error) return Promise.reject(next);
+  return Promise.resolve(next ?? []);
+});
 mockSql.begin = mock((fn: (tx: any) => Promise<unknown>) => fn(mockSql));
+
+/** The real (non-SET-LOCAL) metric queries issued this test, in order. */
+function metricCalls(): any[][] {
+  return mockSql.unsafe.mock.calls.filter(
+    (c: any[]) => !(typeof c[0] === "string" && c[0].trimStart().startsWith("SET LOCAL")),
+  );
+}
 
 // Full export surface: the first mock of a module fixes its export shape
 // for the rest of the bun test run, and routes tests import names beyond
@@ -46,27 +66,27 @@ describe("alerts/engine evaluateRules", () => {
     mockSql.mockClear();
     mockSql.unsafe.mockClear();
     mockSql.begin.mockClear();
+    metricQueue = [];
     mockSql.mockImplementation((..._args: any[]) => Promise.resolve([]));
-    mockSql.unsafe.mockImplementation((..._args: any[]) => Promise.resolve([]));
   });
 
   test("eval_fail_rate fires above the threshold and stamps last_fired_at in a transaction", async () => {
     mockSql.mockResolvedValueOnce([failRateRule]); // rules list
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 4, session_ids: ["s-9"] }]);
+    metricQueue.push([{ total: 10, matched: 4, session_ids: ["s-9"] }]);
     mockSql.mockResolvedValueOnce([{ id: "r2" }]); // suppression claim succeeds
 
     const fired = await evaluateRules();
     expect(fired).toBe(1); // 0.4 > 0.2 with 10 ≥ 5 samples
-    expect(mockSql.begin).toHaveBeenCalledTimes(1);
+    expect(mockSql.begin).toHaveBeenCalledTimes(2); // timeout tx + firing tx
     // Window query received the interval + judge filter.
-    const params = mockSql.unsafe.mock.calls[0][1];
+    const params = metricCalls()[0][1];
     expect(params[0]).toBe("60");
     expect(params[1]).toBe("task_completion");
   });
 
   test("eval_fail_rate stays quiet under min_samples", async () => {
     mockSql.mockResolvedValueOnce([failRateRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 3, matched: 3, session_ids: [] }]);
+    metricQueue.push([{ total: 3, matched: 3, session_ids: [] }]);
 
     const fired = await evaluateRules();
     expect(fired).toBe(0); // 100% fail but only 3 of 5 required samples
@@ -74,7 +94,7 @@ describe("alerts/engine evaluateRules", () => {
 
   test("eval_fail_rate stays quiet at or below the threshold", async () => {
     mockSql.mockResolvedValueOnce([failRateRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 2, session_ids: [] }]);
+    metricQueue.push([{ total: 10, matched: 2, session_ids: [] }]);
 
     const fired = await evaluateRules();
     expect(fired).toBe(0); // 0.2 is not > 0.2
@@ -82,7 +102,7 @@ describe("alerts/engine evaluateRules", () => {
 
   test("latency p95 fires above the ms threshold", async () => {
     mockSql.mockResolvedValueOnce([latencyRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ samples: 40, p95: 2600, session_ids: ["s-1"] }]);
+    metricQueue.push([{ samples: 40, p95: 2600, session_ids: ["s-1"] }]);
     mockSql.mockResolvedValueOnce([{ id: "r4" }]); // suppression claim
 
     const fired = await evaluateRules();
@@ -91,7 +111,7 @@ describe("alerts/engine evaluateRules", () => {
 
   test("latency p95 stays quiet under min_samples", async () => {
     mockSql.mockResolvedValueOnce([latencyRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ samples: 4, p95: 9000, session_ids: [] }]);
+    metricQueue.push([{ samples: 4, p95: 9000, session_ids: [] }]);
 
     const fired = await evaluateRules();
     expect(fired).toBe(0);
@@ -101,9 +121,7 @@ describe("alerts/engine evaluateRules", () => {
 
   test("a failing rule does not block the others", async () => {
     mockSql.mockResolvedValueOnce([failRateRule, { ...failRateRule, id: "r3" }]);
-    mockSql.unsafe
-      .mockRejectedValueOnce(new Error("boom"))
-      .mockResolvedValueOnce([{ total: 10, matched: 9, session_ids: [] }]);
+    metricQueue.push(new Error("boom"), [{ total: 10, matched: 9, session_ids: [] }]);
     mockSql.mockResolvedValueOnce([{ id: "r3" }]); // suppression claim for r3
 
     const fired = await evaluateRules();
@@ -112,7 +130,7 @@ describe("alerts/engine evaluateRules", () => {
 
   test("a lost suppression claim does not count as a firing", async () => {
     mockSql.mockResolvedValueOnce([failRateRule]);
-    mockSql.unsafe.mockResolvedValueOnce([{ total: 10, matched: 9, session_ids: [] }]);
+    metricQueue.push([{ total: 10, matched: 9, session_ids: [] }]);
     // Claim UPDATE returns no rows — another evaluator already stamped
     // last_fired_at inside this window.
     mockSql.mockResolvedValueOnce([]);
