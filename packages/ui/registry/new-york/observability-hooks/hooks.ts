@@ -50,6 +50,7 @@ export function useSessions(
   const [refetchTick, setRefetchTick] = useState(0)
   const refetch = useMemo(() => () => setRefetchTick((v) => v + 1), [])
 
+  const q = filters?.q
   const accountId = filters?.accountId
   const agentId = filters?.agentId
   const agentName = filters?.agentName
@@ -63,7 +64,7 @@ export function useSessions(
     setLoading(true)
     setError(null)
     api
-      .listSessions(limit, offset, { accountId, agentId, agentName, startedFrom, startedTo, transport })
+      .listSessions(limit, offset, { q, accountId, agentId, agentName, startedFrom, startedTo, transport })
       .then((res) => {
         if (cancelled) return
         setSessions(res.objects)
@@ -79,7 +80,7 @@ export function useSessions(
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, limit, offset, accountId, agentId, agentName, startedFrom, startedTo, transportKey, refetchTick])
+  }, [api, limit, offset, q, accountId, agentId, agentName, startedFrom, startedTo, transportKey, refetchTick])
 
   return { sessions, meta, loading, error, refetch }
 }

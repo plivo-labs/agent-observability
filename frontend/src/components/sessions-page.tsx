@@ -54,6 +54,10 @@ export const SessionsPage = ({
     'transport',
     parseAsArrayOf(parseAsString, ',').withDefault([]),
   )
+  // Free-text transcript search — written by the toolbar's text filter
+  // (virtual column id `q` below), debounced by useDataTable before it
+  // lands in the URL. The server does the matching (websearch syntax).
+  const [q] = useQueryState('q', parseAsString.withDefault(''))
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
   // string. We expand it server-side into a 00:00 → next-midnight window so
   // the query returns every session that started during that calendar day.
@@ -79,6 +83,7 @@ export const SessionsPage = ({
     perPage,
     (page - 1) * perPage,
     {
+      q: q.trim() || undefined,
       agentId,
       startedFrom: startedFromIso,
       startedTo: startedToIso,
@@ -125,6 +130,19 @@ export const SessionsPage = ({
         ),
         enableSorting: false,
         meta: { label: 'Session ID' },
+      },
+      {
+        // Virtual column: exists only so the toolbar renders a transcript
+        // search input and syncs it to ?q=. Hidden from the table body and
+        // the view-options menu; the server does the actual filtering. The
+        // dummy accessor is required — getCanFilter() is false for
+        // accessor-less display columns, which suppresses the toolbar input.
+        id: 'q',
+        accessorFn: () => '',
+        enableColumnFilter: true,
+        enableSorting: false,
+        enableHiding: false,
+        meta: { label: 'Transcript', placeholder: 'Search transcripts', variant: 'text' },
       },
       {
         id: 'transport',
@@ -214,7 +232,10 @@ export const SessionsPage = ({
     data: sessions,
     columns,
     pageCount,
-    initialState: { pagination: { pageIndex: 0, pageSize: 10 } },
+    initialState: {
+      pagination: { pageIndex: 0, pageSize: 10 },
+      columnVisibility: { q: false },
+    },
     getRowId: (row) => row.session_id,
   })
 

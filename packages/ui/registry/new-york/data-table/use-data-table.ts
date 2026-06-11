@@ -1,4 +1,5 @@
 import {
+  type ColumnDef,
   type ColumnFiltersState,
   getCoreRowModel,
   getFacetedMinMaxValues,
@@ -30,6 +31,21 @@ import * as React from "react";
 import { useDebouncedCallback } from "./use-debounced-callback";
 import { getSortingStateParser } from "./parsers";
 import type { ExtendedColumnSort, QueryKeys } from "./types";
+
+/** Columns whose filter value is a list: option pickers (select /
+ * multiSelect) and date/range filters, whose components read and write
+ * value arrays. Everything else (text, number) holds the raw string.
+ * The URL parser shape and the writer coercion in onColumnFiltersChange
+ * both derive from this one predicate, so the two stay in sync. */
+function isArrayValuedFilter<TData>(column: ColumnDef<TData>): boolean {
+  const meta = column.meta;
+  return (
+    Boolean(meta?.options) ||
+    meta?.variant === "date" ||
+    meta?.variant === "dateRange" ||
+    meta?.variant === "range"
+  );
+}
 
 const PAGE_KEY = "page";
 const PER_PAGE_KEY = "perPage";
@@ -185,14 +201,11 @@ export function useDataTable<TData>(props: UseDataTableProps<TData>) {
     return filterableColumns.reduce<
       Record<string, SingleParser<string> | SingleParser<string[]>>
     >((acc, column) => {
-      if (column.meta?.options) {
-        acc[column.id ?? ""] = parseAsArrayOf(
-          parseAsString,
-          ARRAY_SEPARATOR,
-        ).withOptions(queryStateOptions);
-      } else {
-        acc[column.id ?? ""] = parseAsString.withOptions(queryStateOptions);
-      }
+      acc[column.id ?? ""] = isArrayValuedFilter(column)
+        ? parseAsArrayOf(parseAsString, ARRAY_SEPARATOR).withOptions(
+            queryStateOptions,
+          )
+        : parseAsString.withOptions(queryStateOptions);
       return acc;
     }, {});
   }, [filterableColumns, queryStateOptions, enableAdvancedFilter]);
@@ -210,19 +223,13 @@ export function useDataTable<TData>(props: UseDataTableProps<TData>) {
   const initialColumnFilters: ColumnFiltersState = React.useMemo(() => {
     if (enableAdvancedFilter) return [];
 
+    // Values arrive already in their canonical shape: the parsers above
+    // derive from isArrayValuedFilter, so array filters parse to string
+    // arrays and text filters keep the raw string.
     return Object.entries(filterValues).reduce<ColumnFiltersState>(
       (filters, [key, value]) => {
         if (value !== null) {
-          const processedValue = Array.isArray(value)
-            ? value
-            : typeof value === "string" && /[^a-zA-Z0-9]/.test(value)
-              ? value.split(/[^a-zA-Z0-9]+/).filter(Boolean)
-              : [value];
-
-          filters.push({
-            id: key,
-            value: processedValue,
-          });
+          filters.push({ id: key, value });
         }
         return filters;
       },
@@ -246,15 +253,19 @@ export function useDataTable<TData>(props: UseDataTableProps<TData>) {
         const filterUpdates = next.reduce<
           Record<string, string | string[] | null>
         >((acc, filter) => {
-          if (filterableColumns.find((column) => column.id === filter.id)) {
-            // Coerce to the shapes nuqs parsers accept. Single-date filters
-            // set a raw number (epoch ms); nuqs parseAsString serializes
-            // unpredictably for non-string inputs so stringify here.
+          const column = filterableColumns.find((c) => c.id === filter.id);
+          if (column) {
+            // Coerce to the parser's shape (see isArrayValuedFilter), and
+            // stringify items: filter components set raw numbers (the
+            // single-date filter sets an epoch-ms number) which nuqs
+            // serializes unpredictably.
             const v = filter.value;
-            if (Array.isArray(v)) {
-              acc[filter.id] = v.map((item) => String(item ?? ""));
-            } else if (v == null) {
+            if (v == null) {
               acc[filter.id] = null;
+            } else if (isArrayValuedFilter(column)) {
+              acc[filter.id] = (Array.isArray(v) ? v : [v]).map((item) =>
+                String(item ?? ""),
+              );
             } else {
               acc[filter.id] = String(v);
             }
