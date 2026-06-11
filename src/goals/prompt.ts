@@ -19,10 +19,11 @@ export const goalVerdictSchema = z.object({
 /**
  * Build the judge prompt for one session.
  *
- * TODO(amal): this prompt is a product decision — strictness, how to
- * treat partially-met goals, what counts as evidence. The placeholder
- * below is functional but deliberately unopinionated; replace it with
- * the policy you want the judge to apply.
+ * Policy: STRICT, evidence-only. A goal is met only when the transcript
+ * proves it — promises, intentions, and partial progress are unmet, and
+ * ties break to unmet. Rationale: a false "met" hides a real production
+ * failure, while a false "unmet" just earns a human glance, so the
+ * judge errs toward unmet.
  *
  * @param transcript role-labeled lines ("caller: …" / "agent: …")
  * @param goals      plain-text goals, in order; verdicts must come back
@@ -36,13 +37,17 @@ export function buildGoalJudgePrompt(
 ): string {
   const goalLines = goals.map((g, i) => `${i + 1}. ${g}`).join("\n");
   return [
-    "You evaluate a recorded conversation between a caller and a voice agent.",
-    "For each goal listed below, decide whether the conversation shows the goal was met.",
-    "Return one verdict per goal, in the same order as listed.",
-    'For each: "met" (boolean), "reasoning" (one or two sentences citing what happened),',
-    'and "what_went_wrong" (null when met; otherwise a short description of what prevented it).',
+    "You are a strict QA judge for voice-agent calls. For each goal below, decide whether the transcript PROVES the goal was met.",
+    "",
+    "Rules:",
+    "- Judge only from the transcript. Nothing off-call may be assumed.",
+    "- A goal is met only when the transcript shows it happening or being explicitly confirmed. Promises, intentions, and partial progress are unmet.",
+    "- When in doubt, unmet.",
+    '- "reasoning": one or two sentences citing the decisive moment of the call.',
+    '- "what_went_wrong": null when met; otherwise one short sentence naming the missing or failed step.',
+    "- Return exactly one verdict per goal, in the order listed.",
     truncated
-      ? "Note: the transcript was truncated for length — only the latter part of the call is shown."
+      ? "- The start of the transcript was truncated for length; judge only what is shown."
       : "",
     "",
     "Goals:",
