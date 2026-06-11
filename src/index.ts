@@ -293,7 +293,14 @@ app.post("/observability/recordings/v0", async (c) => {
     }
     console.log(`Session saved: room_id=${sessionId} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
   } catch (e) {
+    // Return a non-2xx so the SDK's at-least-once delivery retries. A 200
+    // here would make the SDK treat the report as durably stored and drop
+    // it — permanent data loss on any transient DB error.
     console.error(`Failed to save session room_id=${sessionId}: ${(e as Error).message}`);
+    return c.json(
+      buildErrorResponse("session_save_failed", "Failed to persist session report"),
+      503,
+    );
   }
 
   return c.json({ api_id: newApiId(), message: "session report received" });

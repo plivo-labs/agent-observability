@@ -617,7 +617,7 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.chatHistory).toEqual([]);
   });
 
-  test("still returns ok when insertSession fails", async () => {
+  test("returns 503 when insertSession fails so the SDK retries", async () => {
     mockInsertSession.mockImplementationOnce(() => Promise.reject(new Error("db down")));
 
     const form = new FormData();
@@ -630,7 +630,11 @@ describe("POST /observability/recordings/v0", () => {
       })
     );
 
-    expect(res.status).toBe(200);
+    // A 200 here would make the SDK drop the report (permanent data loss);
+    // a 5xx triggers its at-least-once retry instead.
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error?.code ?? body.code).toBe("session_save_failed");
     expect(mockInsertSession).toHaveBeenCalledTimes(1);
   });
 
