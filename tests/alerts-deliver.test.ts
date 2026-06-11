@@ -80,12 +80,15 @@ describe("alerts/deliver", () => {
     expect(attempt.attemptNumber).toBe(1);
   });
 
-  test("signs the exact body with HMAC-SHA256 when a secret is set", async () => {
+  test("signs timestamp+body with HMAC-SHA256 when a secret is set", async () => {
     mockFetch(200);
     await deliverFiring({ ...baseDue, secret: "s3cret" });
     const headers = fetchCalls[0].init.headers as Record<string, string>;
     const body = String(fetchCalls[0].init.body);
-    const expected = `sha256=${createHmac("sha256", "s3cret").update(body).digest("hex")}`;
+    const ts = headers["x-alert-timestamp"];
+    expect(ts).toMatch(/^\d+$/);
+    // Signature must cover the timestamp so a replayed capture is detectable.
+    const expected = `sha256=${createHmac("sha256", "s3cret").update(`${ts}.${body}`).digest("hex")}`;
     expect(headers["x-alert-signature"]).toBe(expected);
   });
 
@@ -181,7 +184,8 @@ describe("alerts/deliver", () => {
     } as any);
     const headers = fetchCalls[0].init.headers as Record<string, string>;
     const body = String(fetchCalls[0].init.body);
-    const expected = `sha256=${createHmac("sha256", "s3cret").update(body).digest("hex")}`;
+    const ts = headers["x-alert-timestamp"];
+    const expected = `sha256=${createHmac("sha256", "s3cret").update(`${ts}.${body}`).digest("hex")}`;
     expect(headers["x-alert-signature"]).toBe(expected);
   });
 

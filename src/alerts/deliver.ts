@@ -43,8 +43,14 @@ async function sendWebhook(req: WebhookRequest): Promise<DeliveryResult> {
     ...req.idHeaders,
   };
   if (req.secret) {
+    // Bind the signature to a timestamp so a captured webhook can't be
+    // replayed indefinitely. Receivers should reject deliveries whose
+    // x-alert-timestamp is more than a few minutes old, then verify the
+    // signature over `${timestamp}.${body}`.
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    headers["x-alert-timestamp"] = timestamp;
     headers["x-alert-signature"] =
-      `sha256=${createHmac("sha256", req.secret).update(req.body).digest("hex")}`;
+      `sha256=${createHmac("sha256", req.secret).update(`${timestamp}.${req.body}`).digest("hex")}`;
   }
   const started = performance.now();
   try {
