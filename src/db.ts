@@ -1,7 +1,7 @@
 import { SQL } from "bun";
 import { config } from "./config.js";
 import { normalizeRawReportPatch } from "./raw-report.js";
-import { upsertAgent, upsertAgentTx } from "./agents/upsert.js";
+import { upsertAgentTx } from "./agents/upsert.js";
 import { costFromSessionUsage } from "./evals/metrics.js";
 import { ensurePricesLoaded } from "./evals/pricing.js";
 
@@ -375,12 +375,6 @@ export async function applySessionTagMetadata(
     return;
   }
 
-  // Ensure the agent row exists before the session UPDATE sets the
-  // FK columns. Skipped when no agent_id was extracted from any tag.
-  if (agentId) {
-    await upsertAgent({ agentId, accountId, agentName });
-  }
-
   const assignments: string[] = [];
   const params: unknown[] = [];
   if (accountId) {
@@ -388,12 +382,15 @@ export async function applySessionTagMetadata(
     assignments.push(`account_id = $${params.length}`);
   }
   if (agentId) {
+    // COALESCE so a later tag can't clobber an agent_id already promoted by
+    // an earlier path — only fills when the column is still NULL, matching
+    // the defensive pattern in mergeSessionRawReport.
     params.push(agentId);
-    assignments.push(`agent_id = $${params.length}`);
+    assignments.push(`agent_id = COALESCE(agent_id, $${params.length})`);
   }
   if (agentName) {
     params.push(agentName);
-    assignments.push(`agent_name = $${params.length}`);
+    assignments.push(`agent_name = COALESCE(agent_name, $${params.length})`);
   }
   if (transport) {
     params.push(transport);
@@ -401,12 +398,21 @@ export async function applySessionTagMetadata(
   }
   params.push(sessionId);
 
-  await sql.unsafe(
-    `UPDATE agent_transport_sessions
-     SET ${assignments.join(", ")}
-     WHERE session_id = $${params.length}`,
-    params,
-  );
+  // upsertAgentTx (ensures the agent row exists for the FK) and the session
+  // UPDATE share one transaction so a concurrent insertSession can't
+  // interleave between them and leave the FK pointing at a not-yet-committed
+  // agent row.
+  await sql.begin(async (tx: any) => {
+    if (agentId) {
+      await upsertAgentTx(tx, { agentId, accountId, agentName });
+    }
+    await tx.unsafe(
+      `UPDATE agent_transport_sessions
+       SET ${assignments.join(", ")}
+       WHERE session_id = $${params.length}`,
+      params,
+    );
+  });
 }
 
 export async function applyStoredSessionTags(sessionId: string): Promise<void> {
