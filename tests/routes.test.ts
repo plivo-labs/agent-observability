@@ -244,6 +244,8 @@ describe("GET /health", () => {
     const body = await res.json();
     expect(body.status).toBe("ok");
     expect(body.s3Enabled).toBe(false);
+    // basic + LiveKit auth are both enabled in the test config mock.
+    expect(body.authEnabled).toBe(true);
   });
 });
 

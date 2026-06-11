@@ -6,7 +6,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
-import { config, s3Enabled, basicAuthEnabled } from "./config.js";
+import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
 import { uploadRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
@@ -36,6 +36,19 @@ if (config.AUTO_MIGRATE) {
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
   startAlertSweeper();
+}
+
+// When neither auth mode is configured, every ingest route AND the whole
+// dashboard API are open to anyone who can reach the port. That's a
+// supported zero-config mode, but it must never be silent — an env-loading
+// slip would otherwise expose all session data with no signal.
+const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
+if (!authEnabled) {
+  console.warn(
+    "[security] No authentication configured — ingest and /api are OPEN to " +
+      "anyone who can reach this port. Set AGENT_OBSERVABILITY_USER/_PASS or " +
+      "the LiveKit API key pair to require credentials.",
+  );
 }
 
 const app = new Hono();
@@ -77,7 +90,7 @@ app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
 // ── Health check ────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => {
-  return c.json({ status: "ok", s3Enabled });
+  return c.json({ status: "ok", s3Enabled, authEnabled });
 });
 
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
