@@ -162,6 +162,18 @@ export async function upsertSessionOutcome(input: SessionOutcomeInput): Promise<
   `;
 }
 
+/** The dedup key for a stored/incoming event: its chat item id, or null
+ *  when the event carries none (those can't be matched, so we keep them). */
+function eventItemId(event: unknown): string | null {
+  const item = (event as { item?: { id?: unknown } } | null)?.item;
+  return typeof item?.id === "string" && item.id.length > 0 ? item.id : null;
+}
+
+function asEventArray(value: unknown): unknown[] {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  return Array.isArray(parsed) ? parsed : [];
+}
+
 export async function mergeSessionRawReport(input: SessionRawReportPatchInput): Promise<void> {
   const patch = normalizeRawReportPatch(input.patch);
   if (Object.keys(patch).length === 0) {
@@ -280,50 +292,32 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     }
 
     if (events) {
-      // Dedup against at-least-once OTLP redelivery: only append incoming
-      // events whose item.id isn't already stored (id-less events are kept
-      // as-is, since they can't be matched). Without this, a redelivered
-      // chat-item batch would duplicate transcript lines.
+      // Dedup against at-least-once OTLP redelivery: append only the events
+      // whose item.id isn't already stored (id-less events can't be matched,
+      // so they're kept). The dedup is done here in JS — readable and
+      // unit-testable — and the SQL stays an atomic `|| fresh` concat so a
+      // concurrent append for the same session isn't lost.
+      const [cur] = await tx`
+        SELECT raw_report->'events' AS events
+        FROM agent_transport_sessions WHERE session_id = ${input.sessionId}
+      `;
+      const storedIds = new Set(
+        asEventArray(cur?.events).map(eventItemId).filter((id): id is string => id != null),
+      );
+      const fresh = events.filter((e) => {
+        const id = eventItemId(e);
+        return id == null || !storedIds.has(id);
+      });
+
       await tx`
         UPDATE agent_transport_sessions
-        SET raw_report = (
-          (
-            CASE
-              WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-              ELSE '{}'::jsonb
-            END
-          ) || ${restWithoutEvents}::jsonb || jsonb_build_object(
+        SET raw_report =
+          (CASE WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report ELSE '{}'::jsonb END)
+          || ${restWithoutEvents}::jsonb
+          || jsonb_build_object(
             'events',
-            COALESCE(
-              (
-                CASE
-                  WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-                  ELSE '{}'::jsonb
-                END
-              )->'events',
-              '[]'::jsonb
-            ) || COALESCE((
-              SELECT jsonb_agg(incoming)
-              FROM jsonb_array_elements(${events}::jsonb) AS incoming
-              WHERE incoming->'item'->>'id' IS NULL
-                 OR incoming->'item'->>'id' NOT IN (
-                   SELECT existing->'item'->>'id'
-                   FROM jsonb_array_elements(
-                     COALESCE(
-                       (
-                         CASE
-                           WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-                           ELSE '{}'::jsonb
-                         END
-                       )->'events',
-                       '[]'::jsonb
-                     )
-                   ) AS existing
-                   WHERE existing->'item'->>'id' IS NOT NULL
-                 )
-            ), '[]'::jsonb)
+            COALESCE(raw_report->'events', '[]'::jsonb) || ${fresh}::jsonb
           )
-        )
         WHERE session_id = ${input.sessionId}
       `;
       return;

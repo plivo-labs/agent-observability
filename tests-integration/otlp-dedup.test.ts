@@ -73,6 +73,14 @@ describeDb("OTLP redelivery dedup", () => {
     expect(after[0].n).toBe(2);
   });
 
+  const readRawReport = async () => {
+    const [row] = await sql`
+      SELECT raw_report FROM agent_transport_sessions WHERE session_id = ${SESSION_ID}
+    `;
+    return typeof row.raw_report === "string" ? JSON.parse(row.raw_report) : row.raw_report;
+  };
+  const eventIds = (rr: any) => (rr.events ?? []).map((e: any) => e?.item?.id);
+
   test("a redelivered chat-item event is appended only once", async () => {
     const event = {
       type: "conversation_item_added",
@@ -82,13 +90,41 @@ describeDb("OTLP redelivery dedup", () => {
     await mergeSessionRawReport({ sessionId: SESSION_ID, patch: { events: [event] } });
     await mergeSessionRawReport({ sessionId: SESSION_ID, patch: { events: [event] } }); // redelivery
 
-    const [row] = await sql`
-      SELECT raw_report FROM agent_transport_sessions WHERE session_id = ${SESSION_ID}
-    `;
-    const rawReport = typeof row.raw_report === "string" ? JSON.parse(row.raw_report) : row.raw_report;
-    const matching = (rawReport.events ?? []).filter(
-      (e: any) => e?.item?.id === "item-xyz",
-    );
-    expect(matching).toHaveLength(1);
+    const ids = eventIds(await readRawReport());
+    expect(ids.filter((id: string) => id === "item-xyz")).toHaveLength(1);
+  });
+
+  test("a distinct event is appended alongside existing ones", async () => {
+    // item-xyz already stored by the previous test.
+    await mergeSessionRawReport({
+      sessionId: SESSION_ID,
+      patch: { events: [{ type: "conversation_item_added", item: { id: "item-new", text: "next" } }] },
+    });
+    const ids = eventIds(await readRawReport());
+    expect(ids).toContain("item-xyz");
+    expect(ids.filter((id: string) => id === "item-new")).toHaveLength(1);
+  });
+
+  test("id-less events are always kept (can't be matched)", async () => {
+    const before = (await readRawReport()).events?.length ?? 0;
+    const idless = { type: "metric", item: { text: "no id here" } };
+    await mergeSessionRawReport({ sessionId: SESSION_ID, patch: { events: [idless] } });
+    await mergeSessionRawReport({ sessionId: SESSION_ID, patch: { events: [idless] } });
+    const after = (await readRawReport()).events ?? [];
+    // Both id-less appends are kept — two new entries, nothing deduped.
+    expect(after.length).toBe(before + 2);
+  });
+
+  test("non-event keys in the same patch are merged when events are present", async () => {
+    await mergeSessionRawReport({
+      sessionId: SESSION_ID,
+      patch: {
+        sdk_version: "9.9.9",
+        events: [{ type: "conversation_item_added", item: { id: "item-merge" } }],
+      },
+    });
+    const rr = await readRawReport();
+    expect(rr.sdk_version).toBe("9.9.9"); // restWithoutEvents merged
+    expect(eventIds(rr)).toContain("item-merge"); // event appended in the same write
   });
 });
