@@ -80,7 +80,9 @@ export function registerAgentRoutes(app: Hono) {
         `[agents] stats failed agent_id=${id} account_id=${accountId ?? "(any)"} range=${range}: ${err.message}\n${err.stack ?? ""}`,
       );
       return c.json(
-        buildErrorResponse("stats_failed", `Failed to compute stats: ${err.message}`),
+        // err.message can carry Postgres schema details — log it (above),
+        // don't return it.
+        buildErrorResponse("stats_failed", "Failed to compute stats"),
         500,
       );
     }
@@ -132,7 +134,7 @@ export function registerAgentRoutes(app: Hono) {
       return c.json(
         buildErrorResponse(
           "conversation_evals_failed",
-          `Failed to load conversation evals: ${err.message}`,
+          "Failed to load conversation evals",
         ),
         500,
       );

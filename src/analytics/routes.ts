@@ -22,7 +22,9 @@ export function registerAnalyticsRoutes(app: Hono) {
         `[analytics] stats failed account_id=${accountId ?? "(any)"} range=${range}: ${err.message}\n${err.stack ?? ""}`,
       );
       return c.json(
-        buildErrorResponse("stats_failed", `Failed to compute stats: ${err.message}`),
+        // Don't leak err.message to the client — Postgres errors disclose
+        // table/column/constraint names. Full detail is logged above.
+        buildErrorResponse("stats_failed", "Failed to compute stats"),
         500,
       );
     }
