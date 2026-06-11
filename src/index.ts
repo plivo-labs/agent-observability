@@ -14,15 +14,26 @@ import { buildSessionMetrics } from "./metrics.js";
 import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { registerAgentRoutes } from "./agents/routes.js";
+import { registerAnalyticsRoutes } from "./analytics/routes.js";
 import { sortSessionEvents } from "./events.js";
 import { nativeLiveKitUploadAuth } from "./livekit/auth.js";
 import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/protobuf.js";
 import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
+import { registerAlertRoutes } from "./alerts/routes.js";
+import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
   await migrate(sql);
+}
+
+// Alert sweeper: windowed metric-threshold alert rules + webhook delivery
+// retries. Runs inline by default so single-container deploys work with
+// zero config; set ALERT_SWEEPER=off when running the dedicated worker
+// entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
+if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
+  startAlertSweeper();
 }
 
 const app = new Hono();
@@ -60,6 +71,14 @@ registerEvalRoutes(app);
 //    distinct agent_name across sessions + eval_runs) ─────────────────────────
 
 registerAgentRoutes(app);
+
+// ── Fleet analytics (cross-agent rollups for the /analytics page) ──────────
+
+registerAnalyticsRoutes(app);
+
+// ── Alert rules (windowed metric/count triggers + webhooks) ─────────────────
+
+registerAlertRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 
@@ -521,7 +540,29 @@ if (process.env.NODE_ENV === "production") {
   app.get("*", serveStatic({ root: "./frontend/dist", path: "index.html" }));
 }
 
-export default {
+const serveConfig = {
   port: config.PORT,
   fetch: app.fetch,
 };
+
+// Run as the entrypoint: serve explicitly so SIGTERM/SIGINT can stop
+// intake and drain in-flight requests before the process exits.
+if (import.meta.main) {
+  const server = Bun.serve(serveConfig);
+  console.log(`API listening on :${server.port}`);
+
+  const shutdown = async (signal: string) => {
+    console.log(`[api] ${signal} received — draining connections`);
+    stopAlertSweeper();
+    await server.stop(); // stop intake, wait for in-flight requests
+    await (sql as any).close?.();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+// Tests import this and call .fetch directly. When the file IS the
+// entrypoint the default export must not look like a server config —
+// Bun would auto-serve it and collide with the explicit Bun.serve above.
+export default import.meta.main ? undefined : serveConfig;

@@ -51,26 +51,26 @@ export const LlmThroughputChart = ({ metrics: metricsProp }: { metrics?: Session
     <ChartCard
       title="LLM Throughput"
       subtitle="Token generation speed per turn"
-      legend={[{ color: 'hsl(var(--primary))', label: 'Tokens/sec' }]}
+      legend={[{ color: 'var(--primary)', label: 'Tokens/sec' }]}
     >
       <LineChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--st1)" />
         <XAxis
           dataKey="turn"
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <YAxis
           tickFormatter={(v: number) => `${v} tok/s`}
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <Tooltip content={<ThroughputTooltip />} />
         <Line
           type="monotone"
           dataKey="tps"
           name="tok/s"
-          stroke="hsl(var(--primary))"
+          stroke="var(--primary)"
           dot={false}
           strokeWidth={2}
           connectNulls

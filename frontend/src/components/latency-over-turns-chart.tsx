@@ -65,9 +65,9 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
   if (!chart.data.length) return null
 
   const legend = [
-    chart.hasPerceived && { color: 'hsl(var(--primary))', label: 'User Perceived' },
-    chart.hasLlm && { color: 'hsl(var(--accent-purple))', label: 'LLM TTFT' },
-    chart.hasTts && { color: 'hsl(var(--success))', label: 'TTS TTFB' },
+    chart.hasPerceived && { color: 'var(--primary)', label: 'User Perceived' },
+    chart.hasLlm && { color: 'var(--chart-3)', label: 'LLM TTFT' },
+    chart.hasTts && { color: 'var(--chart-4)', label: 'TTS TTFB' },
   ].filter(Boolean) as Array<{ color: string; label: string }>
 
   return (
@@ -77,21 +77,21 @@ export const LatencyOverTurnsChart = ({ metrics: metricsProp }: { metrics?: Sess
       legend={legend}
     >
       <LineChart data={chart.data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--st1)" />
         <XAxis
           dataKey="turn"
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <YAxis
           tickFormatter={(v: number) => formatMs(v)}
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <Tooltip content={<LatencyTooltip />} />
-        {chart.hasPerceived && <Line type="monotone" dataKey="perceived" name="User Perceived" stroke="hsl(var(--primary))" dot={false} strokeWidth={2} connectNulls />}
-        {chart.hasLlm && <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="hsl(var(--accent-purple))" dot={false} strokeWidth={2} connectNulls />}
-        {chart.hasTts && <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="hsl(var(--success))" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasPerceived && <Line type="monotone" dataKey="perceived" name="User Perceived" stroke="var(--primary)" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasLlm && <Line type="monotone" dataKey="llm" name="LLM TTFT" stroke="var(--chart-3)" dot={false} strokeWidth={2} connectNulls />}
+        {chart.hasTts && <Line type="monotone" dataKey="tts" name="TTS TTFB" stroke="var(--chart-4)" dot={false} strokeWidth={2} connectNulls />}
       </LineChart>
     </ChartCard>
   )

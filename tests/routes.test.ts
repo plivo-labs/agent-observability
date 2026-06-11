@@ -1545,3 +1545,138 @@ describe("DELETE /api/sessions", () => {
     expect(body.api_id).toBeDefined();
   });
 });
+
+// ── Fleet analytics stats ────────────────────────────────────────────────────
+
+describe("GET /api/analytics/stats", () => {
+  beforeEach(() => {
+    mockSql.mockClear();
+    // mockResolvedValueOnce drops the base implementation once its queue
+    // drains — restore the resolve-empty default for unqueued queries.
+    mockSql.mockImplementation((..._args: any[]) => Promise.resolve([]));
+  });
+
+  test("requires auth", async () => {
+    const res = await server.fetch(makeRequest("/api/analytics/stats"));
+    expect(res.status).toBe(401);
+  });
+
+  test("returns fleet stats with computed rates", async () => {
+    // Queries start in call order: stats-core buckets, stats-core totals,
+    // fleet extras, interruption buckets, agent breakdown, account breakdown.
+    mockSql.mockResolvedValueOnce([
+      {
+        bucket_start: "2026-06-10T00:00:00Z",
+        session_count: 4,
+        avg_duration_ms: 30000,
+        estimated_cost_usd: "0.5",
+        p95_user_perceived_ms: 1200,
+      },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      {
+        total_sessions: 4,
+        total_estimated_cost_usd: "0.5",
+        avg_duration_ms: 30000,
+        avg_turn_count: "3.5",
+        p50_user_perceived_ms: 800,
+        p95_user_perceived_ms: 1200,
+        p99_user_perceived_ms: 1500,
+        llm_pass_rate: "0.75",
+        ci_pass_rate: null,
+      },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      {
+        active_agents: 2,
+        assistant_turns: 10,
+        interrupted_turns: 2,
+        outcome_success_rate: "0.5",
+      },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      { bucket_start: "2026-06-10T00:00:00Z", assistant_turns: 10, interrupted_turns: 2 },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      {
+        agent_id: "agent-a",
+        agent_name: "Support Bot",
+        session_count: 3,
+        avg_duration_ms: 20000,
+        estimated_cost_usd: "0.3",
+        p95_user_perceived_ms: 1000,
+        assistant_turns: 8,
+        interrupted_turns: 2,
+        outcome_total: 2,
+        outcome_success: 1,
+      },
+    ]);
+    mockSql.mockResolvedValueOnce([
+      { account_id: "acct-1", session_count: 4, estimated_cost_usd: "0.5" },
+    ]);
+
+    const res = await server.fetch(
+      makeRequest("/api/analytics/stats?range=7d", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.api_id).toBeDefined();
+    expect(body.range).toBe("7d");
+    expect(body.total_sessions).toBe(4);
+    expect(body.active_agents).toBe(2);
+    expect(body.interruption_rate).toBeCloseTo(0.2);
+    expect(body.llm_pass_rate).toBeCloseTo(0.75);
+    expect(body.outcome_success_rate).toBeCloseTo(0.5);
+    expect(body.ci_pass_rate).toBeNull();
+    expect(body.buckets).toHaveLength(1);
+    expect(body.buckets[0].interruption_rate).toBeCloseTo(0.2);
+    expect(body.buckets[0].estimated_cost_usd).toBeCloseTo(0.5);
+    expect(body.agent_breakdown).toHaveLength(1);
+    expect(body.agent_breakdown[0].interruption_rate).toBeCloseTo(0.25);
+    expect(body.agent_breakdown[0].outcome_success_rate).toBeCloseTo(0.5);
+    expect(body.account_breakdown[0].account_id).toBe("acct-1");
+  });
+
+  test("clamps unknown range to the default", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/analytics/stats?range=bogus", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.range).toBe("7d");
+    // Stats-core bucket query params: [agentId, interval, bucket, accountId].
+    const firstCallParams = mockSql.mock.calls[0][1];
+    expect(firstCallParams[0]).toBeNull(); // fleet-wide: no agent filter
+    expect(firstCallParams[1]).toBe("7 days");
+  });
+
+  test("passes account_id through to every query", async () => {
+    const res = await server.fetch(
+      makeRequest("/api/analytics/stats?range=24h&account_id=acct-9", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.account_id).toBe("acct-9");
+    for (const call of mockSql.mock.calls) {
+      expect(call[1]).toContain("acct-9");
+    }
+  });
+
+  test("returns structured 500 when a query fails", async () => {
+    mockSql.mockRejectedValueOnce(new Error("boom"));
+    const res = await server.fetch(
+      makeRequest("/api/analytics/stats", {
+        headers: { Authorization: basicAuthHeader() },
+      }),
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error.code).toBe("stats_failed");
+  });
+});

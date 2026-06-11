@@ -23,7 +23,7 @@ const buildTokenData = (metrics: SessionMetrics): TokenData => {
   return { prompt, completion, total, ttsChars, tokensPerTurn }
 }
 
-const COLORS = ['hsl(var(--success))', 'hsl(var(--accent-purple))']
+const COLORS = ['var(--chart-3)', 'var(--chart-1)']
 
 export const TokenUsageSection = ({ metrics: metricsProp }: { metrics?: SessionMetrics | null }) => {
   const { metrics: hookMetrics } = usePerformance()

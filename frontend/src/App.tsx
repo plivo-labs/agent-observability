@@ -1,7 +1,21 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { Moon, RefreshCw, Sun } from 'lucide-react'
+import { BarChart3, BellRing, Bot, Moon, RefreshCw, Sun } from 'lucide-react'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from '@/components/ui/sidebar'
 import { AgentObservabilityProvider } from './lib/observability-provider'
 import { SessionDetailPage } from '@/components/session-detail-page'
 import { EvalRunDetailPage } from '@/components/eval-run-detail-page'
@@ -9,6 +23,8 @@ import { EvalCaseDetailPage } from '@/components/eval-case-detail-page'
 import { EvalRunComparePage } from '@/components/eval-run-compare-page'
 import { AgentsPage } from '@/components/agents-page'
 import { AgentDetailPage } from '@/components/agent-detail-page'
+import { AnalyticsPage } from '@/components/analytics-page'
+import { AlertRulesPage } from '@/components/alert-rules-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -36,47 +52,86 @@ const useDarkMode = () => {
   return [dark, () => setDark((d) => !d)] as const
 }
 
+// Sidebar nav model. Alerts/settings entries join this list as their
+// pages land; the rail is the single navigation surface.
+const NAV_ITEMS = [
+  { to: '/', label: 'Agents', icon: Bot, isActive: (p: string) => p === '/' || p.startsWith('/agents') },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, isActive: (p: string) => p.startsWith('/analytics') },
+  { to: '/alerts', label: 'Alerts', icon: BellRing, isActive: (p: string) => p.startsWith('/alerts') },
+]
+
+const AppSidebar = () => {
+  const { pathname } = useLocation()
+
+  return (
+    <Sidebar collapsible="icon" className="app-sidebar">
+      <SidebarHeader>
+        <Link to="/" className="obs-nav-brand px-1 py-1.5">
+          <img src="/favicon.svg" className="dot" alt="" />
+          <span className="truncate group-data-[state=collapsed]:hidden">Agent Observability</span>
+        </Link>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Console</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV_ITEMS.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={item.isActive(pathname)}
+                    tooltip={item.label}
+                  >
+                    <Link to={item.to}>
+                      <item.icon strokeWidth={1.75} />
+                      <span>{item.label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  )
+}
+
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const [dark, toggleDark] = useDarkMode()
 
   return (
-    <div className="obs-app">
-      <nav className="obs-nav">
-        <Link to="/" className="obs-nav-brand">
-          <span className="dot" aria-hidden>Ω</span>
-          <span>Agent Observability</span>
-        </Link>
-        <span
-          aria-hidden
-          className="hidden md:inline-flex items-center text-[10px] uppercase ml-3 px-2 py-[3px] border border-border text-tertiary"
-          style={{ letterSpacing: '0.16em', fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace' }}
-        >
-          BUILD 04 · LIVE
-        </span>
-        <div className="obs-nav-spacer" />
-        <div className="obs-nav-right">
-          <button
-            type="button"
-            className="obs-iconbtn"
-            title="Refresh"
-            onClick={() => window.location.reload()}
-          >
-            <RefreshCw size={15} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            className="obs-iconbtn"
-            onClick={toggleDark}
-            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
-            {dark ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
-          </button>
-        </div>
-      </nav>
-      <main className="obs-main">
-        <div className="obs-page">{children}</div>
-      </main>
-    </div>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset className="obs-app min-w-0">
+        <nav className="obs-nav">
+          <SidebarTrigger className="obs-iconbtn -ml-1" />
+          <div className="obs-nav-spacer" />
+          <div className="obs-nav-right">
+            <button
+              type="button"
+              className="obs-iconbtn"
+              title="Refresh"
+              onClick={() => window.location.reload()}
+            >
+              <RefreshCw size={15} strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              className="obs-iconbtn"
+              onClick={toggleDark}
+              title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {dark ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
+            </button>
+          </div>
+        </nav>
+        <main className="obs-main">
+          <div className="obs-page">{children}</div>
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }
 
@@ -87,6 +142,11 @@ function AgentsRoute() {
       onAgentClick={(id) => navigate(`/agents/${encodeURIComponent(id)}`)}
     />
   )
+}
+
+function AnalyticsRoute() {
+  const navigate = useNavigate()
+  return <AnalyticsPage onAgentClick={(id) => navigate(`/agents/${encodeURIComponent(id)}`)} />
 }
 
 function AgentDetailRoute() {
@@ -169,6 +229,8 @@ export default function App() {
             <Routes>
               <Route path="/" element={<AgentsRoute />} />
               <Route path="/agents" element={<AgentsRoute />} />
+              <Route path="/analytics" element={<AnalyticsRoute />} />
+              <Route path="/alerts" element={<AlertRulesPage />} />
               <Route path="/agents/:agentId" element={<AgentDetailRoute />} />
               <Route path="/agents/:agentId/sessions/:sessionId" element={<SessionDetailRoute />} />
               <Route path="/agents/:agentId/simulation-evals/compare" element={<EvalRunCompareRoute />} />

@@ -9,6 +9,7 @@ import type {
   EvalRunDetail,
   EvalRunRow,
   EvalsFilters,
+  FleetStats,
   PlivoListResponse,
   SessionsFilters,
 } from '@/lib/observability-types'
@@ -62,6 +63,12 @@ export function createObservabilityApi(baseUrl: string) {
       return fetchJson<AgentStats>(
         `/agents/${encodeURIComponent(agentId)}/stats?${params}`,
       )
+    },
+
+    getFleetStats: (range: AgentStatsRange = '7d', accountId?: string | null) => {
+      const params = new URLSearchParams({ range })
+      if (accountId) params.set('account_id', accountId)
+      return fetchJson<FleetStats>(`/analytics/stats?${params}`)
     },
 
     listConversationEvals: (

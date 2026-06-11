@@ -1,5 +1,7 @@
 import { sql } from "../db.js";
 import { escapeLikePattern } from "../response.js";
+import { PER_TURN_ELEMS, RANGE_TO_INTERVAL } from "../stats-sql.js";
+import { getStatsCore } from "../stats-core.js";
 
 // ── List ────────────────────────────────────────────────────────────────────
 //
@@ -244,159 +246,20 @@ export interface AgentStats {
   provider_breakdown: Array<{ provider: string; model: string; count: number }>;
 }
 
-// `interval` feeds NOW() - $::interval and accepts the natural plural
-// form. `bucket` feeds date_trunc(), which takes the unit name only —
-// "hour"/"day" rather than "1 hour"/"1 day".
-const RANGE_TO_INTERVAL: Record<string, { interval: string; bucket: string }> = {
-  "24h": { interval: "24 hours", bucket: "hour" },
-  "7d":  { interval: "7 days",   bucket: "hour" },
-  "30d": { interval: "30 days",  bucket: "day" },
-};
+// The bucket/totals engine lives in src/stats-core.ts — one query path
+// shared with the fleet-wide /analytics view so the metrics that appear
+// on both surfaces can't drift. This function adds the agent-specific
+// extras (provider + transport breakdowns) on top.
 
 export async function getAgentStats(
   agentId: string,
   range = "24h",
   accountId: string | null = null,
 ): Promise<AgentStats> {
-  const { interval, bucket } = RANGE_TO_INTERVAL[range] ?? RANGE_TO_INTERVAL["24h"];
-  // Account-scope predicate is inlined per query (parameter slot varies).
-  // accountId === null bypasses the predicate so a single-account lookup
-  // and an all-accounts rollup share the same code path.
+  const { interval } = RANGE_TO_INTERVAL[range] ?? RANGE_TO_INTERVAL["24h"];
 
-  // Helper inline expression: jsonb_array_elements blows up on NULL or
-  // non-array values, so we guard with jsonb_typeof before unpacking. The
-  // pattern repeats across the bucket / totals / provider queries.
-  const PER_TURN_ELEMS = (col: string) => `
-    jsonb_array_elements(
-      CASE WHEN jsonb_typeof(${col}->'per_turn') = 'array'
-           THEN ${col}->'per_turn'
-           ELSE '[]'::jsonb
-      END
-    )
-  `;
-
-  // Perceived-latency definition, in ONE place, referenced by both the
-  // bucket query and the totals query below (they used to carry two
-  // copy-pasted copies that could drift). Canonical fallback:
-  //   e2e_latency ?? llm_node_ttft
-  // e2e_latency is the audio-pipeline measure (STT→LLM→TTS round trip);
-  // text-only sessions have no e2e_latency on their per-turn metrics —
-  // they only carry llm_node_ttft — so fall back to that. Same rule the
-  // read path uses (src/turn-rules.ts perceivedMs / metrics.ts); without
-  // it, text-mode agents show an empty p95 chart on the Overview tab.
-  // Result is multiplied by 1000 (seconds → ms). `m` must be the
-  // per-turn element alias produced by PER_TURN_ELEMS.
-  const PERCEIVED_MS_SQL = `
-    COALESCE(
-      NULLIF(m->>'e2e_latency', '')::float,
-      NULLIF(m->>'llm_node_ttft', '')::float
-    ) * 1000`;
-
-  // Companion WHERE filter: keep only per-turn rows carrying a numeric
-  // value for at least one of the two fields PERCEIVED_MS_SQL reads.
-  const PERCEIVED_MS_WHERE = `
-    (m->>'e2e_latency') ~ '^[0-9.]+$'
-       OR (m->>'llm_node_ttft') ~ '^[0-9.]+$'`;
-
-  const [bucketRows, totalsRow, providerRows, transportRows] = await Promise.all([
-    // Per-bucket aggregates.
-    //
-    // Three CTE layers so we don't have to push a correlated subquery
-    // through a GROUP BY:
-    //   1. `win`            — raw sessions in the window
-    //   2. `session_buckets`— per-bucket session counts + durations
-    //   3. `turn_buckets`   — per-bucket p95 perceived latency from per_turn[]
-    // LEFT JOIN the two bucket tables so a bucket with sessions but no
-    // numeric per-turn metrics still appears (p95 = NULL).
-    sql.unsafe(
-      `WITH win AS (
-         SELECT id, ended_at, duration_ms, session_metrics, estimated_cost_usd
-         FROM agent_transport_sessions
-         WHERE agent_id = $1
-           AND ended_at >= NOW() - $2::interval
-           AND ($4::text IS NULL OR account_id = $4)
-       ),
-       session_buckets AS (
-         SELECT
-           date_trunc($3, ended_at) AS bucket,
-           COUNT(*)::int                    AS session_count,
-           AVG(duration_ms)::int            AS avg_duration_ms,
-           SUM(estimated_cost_usd)::float   AS estimated_cost_usd
-         FROM win
-         GROUP BY date_trunc($3, ended_at)
-       ),
-       turns AS (
-         -- Perceived latency fallback shared via PERCEIVED_MS_SQL /
-         -- PERCEIVED_MS_WHERE (defined above; one definition, two queries).
-         SELECT
-           date_trunc($3, win.ended_at) AS bucket,
-           ${PERCEIVED_MS_SQL} AS perceived_ms
-         FROM win, ${PER_TURN_ELEMS('win.session_metrics')} AS m
-         WHERE ${PERCEIVED_MS_WHERE}
-       ),
-       turn_buckets AS (
-         SELECT
-           bucket,
-           percentile_disc(0.95) WITHIN GROUP (ORDER BY perceived_ms)::int
-             AS p95_user_perceived_ms
-         FROM turns
-         GROUP BY bucket
-       )
-       SELECT
-         sb.bucket           AS bucket_start,
-         sb.session_count,
-         sb.avg_duration_ms,
-         sb.estimated_cost_usd,
-         tb.p95_user_perceived_ms
-       FROM session_buckets sb
-       LEFT JOIN turn_buckets tb USING (bucket)
-       ORDER BY sb.bucket ASC`,
-      [agentId, interval, bucket, accountId],
-    ),
-    // Window totals — same pattern. The CTEs are referenced via scalar
-    // subqueries in a SELECT with no FROM clause; that's valid SQL.
-    sql.unsafe(
-      `WITH win AS (
-         SELECT id, session_id, session_metrics, turn_count, estimated_cost_usd
-         FROM agent_transport_sessions
-         WHERE agent_id = $1
-           AND ended_at >= NOW() - $2::interval
-           AND ($3::text IS NULL OR account_id = $3)
-       ),
-       turns AS (
-         -- Same PERCEIVED_MS_SQL / PERCEIVED_MS_WHERE fragments as the
-         -- bucket query above — one definition, referenced twice.
-         SELECT ${PERCEIVED_MS_SQL} AS perceived_ms
-         FROM win, ${PER_TURN_ELEMS('win.session_metrics')} AS m
-         WHERE ${PERCEIVED_MS_WHERE}
-       )
-       SELECT
-         (SELECT COUNT(*) FROM win)::int AS total_sessions,
-         (SELECT SUM(estimated_cost_usd) FROM win)::float AS total_estimated_cost_usd,
-         (SELECT AVG(turn_count) FROM win)::float AS avg_turn_count,
-         (SELECT percentile_disc(0.50) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p50_user_perceived_ms,
-         (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p95_user_perceived_ms,
-         (SELECT percentile_disc(0.99) WITHIN GROUP (ORDER BY perceived_ms) FROM turns)::int AS p99_user_perceived_ms,
-         (
-           SELECT CASE
-             WHEN COUNT(*) = 0 THEN NULL
-             ELSE SUM(CASE WHEN verdict = 'pass' THEN 1 ELSE 0 END)::float / COUNT(*)::float
-           END
-           FROM session_external_evals see
-           WHERE see.session_id IN (SELECT session_id FROM win)
-         ) AS llm_pass_rate,
-         (
-           SELECT CASE
-             WHEN SUM(total) = 0 THEN NULL
-             ELSE SUM(passed)::float / SUM(total)::float
-           END
-           FROM eval_runs
-           WHERE agent_id = $1
-             AND started_at >= NOW() - $2::interval
-             AND ($3::text IS NULL OR account_id = $3)
-         ) AS ci_pass_rate`,
-      [agentId, interval, accountId],
-    ),
+  const [core, providerRows, transportRows] = await Promise.all([
+    getStatsCore(agentId, range, accountId),
     // Provider breakdown — count turn occurrences per provider/model.
     sql.unsafe(
       `WITH win AS (
@@ -430,27 +293,19 @@ export async function getAgentStats(
     ),
   ]);
 
-  const totals = totalsRow[0] ?? {};
+  const { totals } = core;
 
   return {
     range,
-    total_sessions: totals.total_sessions ?? 0,
-    total_estimated_cost_usd: totals.total_estimated_cost_usd != null
-      ? Number(totals.total_estimated_cost_usd)
-      : null,
-    avg_turn_count: totals.avg_turn_count != null ? Number(totals.avg_turn_count) : null,
+    total_sessions: totals.total_sessions,
+    total_estimated_cost_usd: totals.total_estimated_cost_usd,
+    avg_turn_count: totals.avg_turn_count,
     p50_user_perceived_ms: totals.p50_user_perceived_ms,
     p95_user_perceived_ms: totals.p95_user_perceived_ms,
     p99_user_perceived_ms: totals.p99_user_perceived_ms,
-    llm_pass_rate: totals.llm_pass_rate != null ? Number(totals.llm_pass_rate) : null,
-    ci_pass_rate:  totals.ci_pass_rate  != null ? Number(totals.ci_pass_rate)  : null,
-    buckets: bucketRows.map((r: any) => ({
-      bucket_start: r.bucket_start,
-      session_count: r.session_count,
-      avg_duration_ms: r.avg_duration_ms,
-      p95_user_perceived_ms: r.p95_user_perceived_ms,
-      estimated_cost_usd: r.estimated_cost_usd != null ? Number(r.estimated_cost_usd) : null,
-    })),
+    llm_pass_rate: totals.llm_pass_rate,
+    ci_pass_rate: totals.ci_pass_rate,
+    buckets: core.buckets,
     transport_breakdown: transportRows.map((r: any) => ({
       transport: r.transport,
       count: r.count,

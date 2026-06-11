@@ -40,28 +40,40 @@ type Speed = (typeof SPEEDS)[number]
 
 /* WaveSurfer assigns wave/progress colors directly to canvas fillStyle,
  * which doesn't resolve CSS `var()` (vars are CSS-context only). So we
- * read the `H S% L%` triple via getComputedStyle and build literal
- * `hsl(...)` strings. Re-resolve on theme change since wavesurfer
- * caches the parsed color at paint time.
+ * read the token's complete color value (oklch/hsl) via getComputedStyle
+ * and pass it through a scratch canvas, which normalizes any CSS color
+ * to `#rrggbb` — alpha variants append a hex alpha byte. Re-resolve on
+ * theme change since wavesurfer caches the parsed color at paint time.
  *
  * Monochrome design: user voice is the lighter ink (muted-foreground),
  * agent voice is the darker ink (foreground). Differentiation by
  * weight, not hue. */
-function readVar(name: string): string {
+let scratchCtx: CanvasRenderingContext2D | null = null
+function readColor(name: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return v || '0 0% 50%'
+  if (!v) return '#808080'
+  scratchCtx ??= document.createElement('canvas').getContext('2d')
+  if (!scratchCtx) return v
+  scratchCtx.fillStyle = '#808080'
+  scratchCtx.fillStyle = v
+  return scratchCtx.fillStyle
+}
+
+function withAlpha(color: string, alpha: number): string {
+  if (!color.startsWith('#') || color.length !== 7) return color
+  return color + Math.round(alpha * 255).toString(16).padStart(2, '0')
 }
 
 function resolveColors() {
-  const muted = readVar('--muted-foreground')
-  const fg = readVar('--foreground')
-  const primary = readVar('--primary')
+  const muted = readColor('--muted-foreground')
+  const fg = readColor('--foreground')
+  const primary = readColor('--primary')
   return {
-    userWave: `hsl(${muted} / 0.55)`,
-    userProgress: `hsl(${muted})`,
-    agentWave: `hsl(${fg} / 0.45)`,
-    agentProgress: `hsl(${fg})`,
-    cursor: `hsl(${primary})`,
+    userWave: withAlpha(muted, 0.55),
+    userProgress: muted,
+    agentWave: withAlpha(fg, 0.45),
+    agentProgress: fg,
+    cursor: primary,
   }
 }
 
@@ -387,14 +399,14 @@ export function RecordingPlayer({
       <ChannelRow
         label="User"
         containerRef={userContainerRef}
-        labelColor="hsl(var(--muted-foreground))"
+        labelColor="var(--muted-foreground)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />
       <ChannelRow
         label="Agent"
         containerRef={agentContainerRef}
-        labelColor="hsl(var(--foreground))"
+        labelColor="var(--foreground)"
         labelWidth={labelWidth}
         waveformWidthPct={waveformWidthPct}
       />

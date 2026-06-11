@@ -35,9 +35,9 @@ function OutcomeCell({ row }: { row: ConversationEvalSummary }) {
       className={cn(
         'capitalize',
         isSuccess &&
-          'border-[hsl(var(--success-border))] bg-[hsl(var(--success-bg))] text-[hsl(var(--success-fg,var(--success)))]',
+          'border-success-border bg-success-bg text-success-fg',
         isFail &&
-          'border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]',
+          'border-destructive-border bg-destructive-bg text-destructive',
       )}
       title={row.outcome_reason ?? undefined}
     >
@@ -58,7 +58,7 @@ function VerdictsCell({ row }: { row: ConversationEvalSummary }) {
         <span className="inline-flex items-center gap-1" title="pass">
           <CheckCircle2
             size={12}
-            className="shrink-0 text-[hsl(var(--success-fg,var(--success)))]"
+            className="shrink-0 text-success-fg"
           />
           <span className="tabular-nums leading-none">{row.pass_count}</span>
         </span>
@@ -67,7 +67,7 @@ function VerdictsCell({ row }: { row: ConversationEvalSummary }) {
         <span className="inline-flex items-center gap-1" title="fail">
           <XCircle
             size={12}
-            className="shrink-0 text-[hsl(var(--destructive))]"
+            className="shrink-0 text-destructive"
           />
           <span className="tabular-nums leading-none">{row.fail_count}</span>
         </span>
@@ -76,7 +76,7 @@ function VerdictsCell({ row }: { row: ConversationEvalSummary }) {
         <span className="inline-flex items-center gap-1" title="maybe">
           <CircleAlert
             size={12}
-            className="shrink-0 text-[hsl(var(--warning-fg,var(--warning)))]"
+            className="shrink-0 text-warning-fg"
           />
           <span className="tabular-nums leading-none">{row.maybe_count}</span>
         </span>
@@ -259,7 +259,7 @@ export const ConversationEvalsTab = ({
           <DataTableColumnHeader column={column} label="Ended" />
         ),
         cell: ({ row }) => (
-          <span className="tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="tnum" style={{ color: 'var(--ink-2)' }}>
             {formatDate(row.original.ended_at)}
           </span>
         ),
@@ -366,7 +366,7 @@ export const ConversationEvalsTab = ({
               : 'no verdicts in view'
           }
           sparkValues={kpiStats.passRateSeries}
-          sparkColor="hsl(142 70% 28%)"
+          sparkColor="var(--success)"
         />
         <KpiTile
           label="Avg duration (in view)"
@@ -381,7 +381,7 @@ export const ConversationEvalsTab = ({
               : 'no data'
           }
           sparkValues={kpiStats.durationSeries}
-          sparkColor="hsl(35 90% 45%)"
+          sparkColor="var(--warning)"
         />
       </div>
 

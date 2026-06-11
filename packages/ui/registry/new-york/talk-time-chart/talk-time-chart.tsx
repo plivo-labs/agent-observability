@@ -51,25 +51,25 @@ export const TalkTimeChart = ({ metrics: metricsProp }: { metrics?: SessionMetri
       title="Talk Time"
       subtitle="User vs agent speaking duration per turn"
       legend={[
-        { color: 'hsl(210 80% 55%)', label: 'User' },
-        { color: 'hsl(150 60% 45%)', label: 'Agent' },
+        { color: 'var(--chart-2)', label: 'User' },
+        { color: 'var(--chart-5)', label: 'Agent' },
       ]}
     >
       <BarChart data={chartData} barCategoryGap="20%">
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--st1))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--st1)" />
         <XAxis
           dataKey="turn"
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
         <YAxis
           tickFormatter={(v: number) => formatMs(v)}
-          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-          stroke="hsl(var(--st2))"
+          tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+          stroke="var(--st2)"
         />
-        <Tooltip content={<TalkTimeTooltip />} cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />
-        <Bar dataKey="user" name="User" stackId="a" fill="hsl(210 80% 55%)" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="agent" name="Agent" stackId="a" fill="hsl(150 60% 45%)" radius={[4, 4, 0, 0]} />
+        <Tooltip content={<TalkTimeTooltip />} cursor={{ fill: 'color-mix(in oklab, var(--muted) 40%, transparent)' }} />
+        <Bar dataKey="user" name="User" stackId="a" fill="var(--chart-2)" radius={[0, 0, 0, 0]} />
+        <Bar dataKey="agent" name="Agent" stackId="a" fill="var(--chart-5)" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ChartCard>
   )

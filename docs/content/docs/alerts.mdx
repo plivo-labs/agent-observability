@@ -1,0 +1,158 @@
+---
+title: Alerts
+description: Windowed metric-threshold rules evaluated by a background sweeper. When a metric exceeds its threshold over the trailing window, the server fires a webhook — with HMAC signing, retries, and a full delivery audit trail.
+---
+
+Every alert rule is a **windowed metric threshold**: pick a metric, a
+threshold, and a window, and the rule fires when the metric measured over
+the trailing window exceeds the threshold. Rules are managed from the
+Alerts page in the dashboard or via the [API](#api-routes).
+
+## Metrics
+
+| Metric | Unit | Measures |
+| --- | --- | --- |
+| `eval_fail_rate` | fraction (0–1) | Share of external eval verdicts in the window that are `fail`. Optionally scoped to one judge via `judge_name`. |
+| `outcome_fail_rate` | fraction (0–1) | Share of session outcomes in the window that are `fail` / `failure` (the `lk.` prefix is stripped, so `lk.fail` counts too). |
+| `interruption_rate` | fraction (0–1) | Share of assistant turns in the window that were interrupted. |
+| `latency_perceived_p95` | ms | p95 of per-turn perceived latency (`e2e_latency`, falling back to `llm_node_ttft` for text-only sessions). |
+| `latency_llm_ttft_p95` | ms | p95 of per-turn LLM time-to-first-token. |
+| `latency_tts_ttfb_p95` | ms | p95 of per-turn TTS time-to-first-byte. |
+| `latency_stt_p95` | ms | p95 of per-turn transcription delay. |
+
+Rate thresholds are fractions, not percentages — use `0.3` to mean 30%.
+Latency thresholds are milliseconds. Latency rules window on the session's
+`ended_at`, so an in-progress call only enters evaluation once it ends.
+
+## How evaluation works
+
+A sweeper evaluates every enabled rule **every 30 seconds** over a
+**rolling window**: each tick re-computes the metric over the trailing
+`window_minutes` (minimum 15), so data continuously ages in and out.
+
+A rule fires when both hold:
+
+- the window contains at least `min_samples` observations, and
+- the measured value is **strictly greater than** `threshold_value`.
+
+`min_samples` is the noise gate. With one session in the window, a single
+failed outcome is a 100% fail rate and a p95 over one turn is just that
+turn — raise `min_samples` so a rule waits for meaningful volume before
+paging you.
+
+### Suppression
+
+Without a cooldown, a rolling window that crosses its threshold would
+re-fire on every 30-second tick until the offending data ages out — ~30
+duplicate webhooks for one incident. Instead, each firing stamps the rule,
+and the rule is **skipped from evaluation for one full window length**.
+
+Because the cooldown equals the window, the data behind a firing has aged
+out of the window by the time the rule is eligible again — a re-fire
+always reflects new bad data. A sustained incident therefore alerts once
+per window (e.g. every 15 minutes), not once total.
+
+Two consequences worth knowing:
+
+- **Editing a rule does not reset suppression.** A threshold change saved
+  mid-cooldown takes effect at the next evaluation, which is whenever the
+  cooldown expires.
+- The stamp is claimed atomically inside the firing transaction, so even
+  two sweepers racing produce one firing, never two.
+
+## Rule fields
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `name` | — | 1–200 characters. |
+| `enabled` | `true` | Disabled rules are never evaluated. |
+| `metric` | — | One of the metrics above. |
+| `threshold_value` | — | Must be > 0. Fraction for rates, ms for latencies. |
+| `window_minutes` | — | Trailing window length; minimum 15. Also the suppression length. |
+| `min_samples` | `1` | Observations the window must hold before the rule may fire. |
+| `agent_id` | `null` | Scope the rule to one agent. `null` = all agents. |
+| `account_id` | `null` | Scope the rule to one account. `null` = all accounts. |
+| `judge_name` | `null` | Only valid for `eval_fail_rate`; restricts counting to one judge. |
+| `webhook_url` | — | http(s) URL to notify. |
+| `http_method` | `POST` | `POST`, `PUT`, or `PATCH`. |
+| `secret` | `null` | When set, requests carry an HMAC signature (below). |
+| `headers` | `null` | Extra headers merged into every delivery (e.g. an auth token). |
+
+## Webhook delivery
+
+A firing produces one JSON request to `webhook_url`:
+
+```json
+{
+  "type": "alert.triggered",
+  "firing_id": "3fdc253e-…",
+  "rule": {
+    "id": "e4e4d9d1-…",
+    "name": "Poor call voice quality",
+    "metric": "latency_llm_ttft_p95",
+    "judge_name": null,
+    "threshold_value": 2000,
+    "window_minutes": 15
+  },
+  "window": { "start": "2026-06-10T14:04:01Z", "end": "2026-06-10T14:19:01Z" },
+  "matched_count": 5,
+  "total_count": null,
+  "observed_value": 2412.5,
+  "agent_id": null,
+  "account_id": null,
+  "sample_session_ids": ["ws-4b0f79854c3c5d3a"],
+  "fired_at": "2026-06-10T14:19:01.861Z"
+}
+```
+
+For rate metrics, `matched_count` / `total_count` are the fraction's
+numerator and denominator. For latency metrics, `total_count` is `null`
+and `matched_count` is the number of turns in the window;
+`sample_session_ids` lists up to 20 sessions containing over-threshold
+turns.
+
+Every request carries identifying headers, plus a signature when the rule
+has a `secret`:
+
+| Header | Value |
+| --- | --- |
+| `content-type` | `application/json` |
+| `x-alert-rule-id` | Rule UUID. |
+| `x-alert-firing-id` | Firing UUID — use it to deduplicate retried deliveries. |
+| `x-alert-signature` | `sha256=<hex>`: HMAC-SHA256 of the raw request body keyed with the rule's `secret`. Only present when `secret` is set. |
+
+### Retries
+
+Delivery is **at-least-once**. A response outside 2xx (or a 10-second
+timeout) schedules a retry; the backoff after the initial attempt is
+30s, 2m, 10m, 30m, 2h — 6 attempts total before the firing is marked
+failed. All delivery state lives in Postgres, so retries survive restarts.
+Every attempt — success or failure, including test sends — is recorded in
+the `alert_webhook_attempts` audit table, exposed via the API and on the
+dashboard's Alerts page.
+
+## API routes
+
+| Method / Path | Purpose |
+| --- | --- |
+| `GET /api/alert-rules` | List rules. |
+| `POST /api/alert-rules` | Create a rule. |
+| `GET /api/alert-rules/:id` | Fetch one rule. |
+| `PATCH /api/alert-rules/:id` | Partial update; the merged rule is re-validated. |
+| `DELETE /api/alert-rules/:id` | Delete a rule (cascades to its firings and attempts). |
+| `GET /api/alert-rules/:id/firings` | Firing history for a rule. |
+| `POST /api/alert-rules/:id/test` | Synchronous test send: posts an `alert.test` payload to the rule's webhook and returns the result. |
+| `GET /api/alerts/webhook-attempts` | Recent delivery attempts across all rules. |
+| `GET /api/alerts/webhook-stats` | Delivery success/failure aggregates. |
+
+## Running the sweeper
+
+The sweeper runs **inside the API process by default**
+(`ALERT_SWEEPER=inline`) — single-container deploys need zero extra
+configuration. For deployments with a dedicated background worker
+(`bun run start:worker`), set `ALERT_SWEEPER=off` on the API so exactly
+one sweeper is active; the worker always sweeps. Both processes drain
+gracefully on SIGTERM/SIGINT.
+
+A misconfigured second sweeper degrades to wasted work, not duplicate
+alerts — both the suppression stamp and the delivery claim are atomic.

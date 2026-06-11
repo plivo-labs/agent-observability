@@ -283,7 +283,7 @@ export const EvalsPage = ({
               {failed > 0 && (
                 <Badge
                   variant="outline"
-                  className="capitalize border-[hsl(var(--destructive-border))] bg-[hsl(var(--destructive-bg))] text-[hsl(var(--destructive))]"
+                  className="capitalize border-destructive-border bg-destructive-bg text-destructive"
                 >
                   {failed} fail
                 </Badge>
@@ -332,7 +332,7 @@ export const EvalsPage = ({
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-2 tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="inline-flex items-center gap-2 tnum" style={{ color: 'var(--ink-2)' }}>
             {row.original.status === 'running' && <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
             {formatDate(row.original.started_at)}
           </span>
@@ -390,7 +390,7 @@ export const EvalsPage = ({
             <Button
               variant="outline"
               size="sm"
-              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              className="text-destructive [&_svg]:text-current hover:[&_svg]:text-current border-destructive-border hover:bg-destructive-bg"
               onClick={() => setConfirmOpen(true)}
             >
               <Trash2 /> Delete
@@ -429,7 +429,7 @@ export const EvalsPage = ({
             </DialogDescription>
           </DialogHeader>
           {deleteError && (
-            <div className="text-s-400 text-[hsl(var(--destructive))]">
+            <div className="text-s-400 text-destructive">
               Failed to delete: {deleteError}
             </div>
           )}
@@ -439,7 +439,7 @@ export const EvalsPage = ({
             </Button>
             <Button
               variant="outline"
-              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              className="text-destructive border-destructive-border hover:bg-destructive-bg"
               onClick={handleDelete}
               disabled={deleting}
             >

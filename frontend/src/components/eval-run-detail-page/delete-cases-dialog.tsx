@@ -37,7 +37,7 @@ export function DeleteCasesDialog({
           </DialogDescription>
         </DialogHeader>
         {error && (
-          <div className="text-s-400 text-[hsl(var(--destructive))]">
+          <div className="text-s-400 text-destructive">
             Failed to delete: {error}
           </div>
         )}
@@ -47,7 +47,7 @@ export function DeleteCasesDialog({
           </Button>
           <Button
             variant="outline"
-            className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+            className="text-destructive border-destructive-border hover:bg-destructive-bg"
             onClick={onConfirm}
             disabled={deleting}
           >

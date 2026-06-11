@@ -19,6 +19,12 @@ export const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true" || v === "1"),
 
+  // Alert sweeper placement. 'inline' (default) runs it inside the API
+  // process — zero-config single-container deploys. Set 'off' when running
+  // the dedicated worker entrypoint (bun src/worker.ts) so exactly one
+  // sweeper is active.
+  ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
+
   // S3 configuration (optional — when set, recordings are uploaded to S3)
   S3_BUCKET: z.string().optional(),
   S3_REGION: z.string().default("us-east-1"),

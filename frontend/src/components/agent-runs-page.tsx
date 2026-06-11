@@ -211,7 +211,7 @@ export function AgentRunsPage({
         accessorKey: 'started_at',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Started" />,
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-2 tnum" style={{ color: 'hsl(var(--secondary))' }}>
+          <span className="inline-flex items-center gap-2 tnum" style={{ color: 'var(--ink-2)' }}>
             {row.original.status === 'running' && (
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
             )}
@@ -424,21 +424,21 @@ export function AgentRunsPage({
           unit="%"
           sub={`across ${validRuns.length} run${validRuns.length === 1 ? '' : 's'}`}
           sparkValues={stats.passSeries}
-          sparkColor="hsl(142 70% 28%)"
+          sparkColor="var(--success)"
         />
         <KpiTile
           label="Avg p95 TTFT"
           value={stats.avgP95 != null ? formatMs(stats.avgP95) : '—'}
           sub={`across ${stats.p95Series.length} run${stats.p95Series.length === 1 ? '' : 's'}`}
           sparkValues={stats.p95Series}
-          sparkColor="hsl(210 90% 42%)"
+          sparkColor="var(--info)"
         />
         <KpiTile
           label="Total LLM cost"
           value={formatCost(stats.totalCost)}
           sub={`across ${runs.length} run${runs.length === 1 ? '' : 's'}`}
           sparkValues={stats.costSeries}
-          sparkColor="hsl(35 90% 45%)"
+          sparkColor="var(--warning)"
         />
         <KpiTile
           label="Total runs"
@@ -481,7 +481,7 @@ export function AgentRunsPage({
             <Button
               variant="outline"
               size="sm"
-              className="text-[hsl(var(--destructive))] [&_svg]:text-current hover:[&_svg]:text-current border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              className="text-destructive [&_svg]:text-current hover:[&_svg]:text-current border-destructive-border hover:bg-destructive-bg"
               onClick={() => setConfirmOpen(true)}
             >
               <Trash2 /> Delete
@@ -508,7 +508,7 @@ export function AgentRunsPage({
             </DialogDescription>
           </DialogHeader>
           {deleteError && (
-            <div className="text-s-400 text-[hsl(var(--destructive))]">
+            <div className="text-s-400 text-destructive">
               Failed to delete: {deleteError}
             </div>
           )}
@@ -518,7 +518,7 @@ export function AgentRunsPage({
             </Button>
             <Button
               variant="outline"
-              className="text-[hsl(var(--destructive))] border-[hsl(var(--destructive-border))] hover:bg-[hsl(var(--destructive-bg))]"
+              className="text-destructive border-destructive-border hover:bg-destructive-bg"
               onClick={handleDelete}
               disabled={deleting}
             >

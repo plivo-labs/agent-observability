@@ -5,6 +5,7 @@
     "server-quickstart",
     "server-env",
     "server-api",
+    "alerts",
     "---Eval plugins---",
     "pytest-plugin",
     "vitest-plugin",
