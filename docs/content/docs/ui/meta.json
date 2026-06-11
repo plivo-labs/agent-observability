@@ -1,0 +1,5 @@
+{
+  "title": "UI components",
+  "defaultOpen": true,
+  "pages": ["provider", "hooks", "pages", "components", "charts", "..."]
+}

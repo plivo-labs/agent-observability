@@ -1,5 +1,5 @@
 ---
-title: Python — Quickstart
+title: Quickstart
 description: Install agent-observability-sdk and point your Python agent at the dashboard. Covers the agent-transport path (observability auto-emits) and where to go for raw LiveKit workers.
 ---
 
@@ -23,7 +23,7 @@ export AGENT_OBSERVABILITY_URL=https://obs.example.com
 export AGENT_OBSERVABILITY_AGENT_ID=9c2f7e3d-4b8a-4d2e-9f1b-…
 ```
 
-See the full variable list in the [Client setup overview](/client-overview#environment).
+See the full variable list in the [Client SDKs overview](/sdks#environment).
 
 ## agent-transport workers
 
@@ -53,9 +53,9 @@ ctx.evaluation = EvaluationConfig(
 )
 ```
 
-See the full [judge reference](/python-judges).
+See the full [judge reference](/sdks/python/judges).
 
 ## Next steps
 
-- Driving LiveKit Agents directly? See [Raw LiveKit](/python-raw-livekit).
-- Running evals from a test suite? See the [pytest plugin](/pytest-plugin).
+- Driving LiveKit Agents directly? See [Raw LiveKit](/sdks/python/raw-livekit).
+- Running evals from a test suite? See the [pytest plugin](/eval-plugins/pytest).

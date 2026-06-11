@@ -1,0 +1,12 @@
+{
+  "title": "Components",
+  "pages": [
+    "metric-summary-cards",
+    "session-header",
+    "session-timeline",
+    "turn-transcript",
+    "session-events",
+    "session-config",
+    "..."
+  ]
+}

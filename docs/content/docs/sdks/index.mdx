@@ -1,5 +1,5 @@
 ---
-title: Client setup
+title: Client SDKs
 description: Instrument your agent to ship session reports and eval results to the observability server. Covers the two integration modes — agent-transport (auto-emits) and raw LiveKit (you wire it) — and the env-var contract both share.
 ---
 
@@ -7,7 +7,7 @@ The server can only show you what your agent sends it. The client side is the
 SDK that lives next to your agent and uploads session reports — recordings,
 per-turn metrics, chat history, tool calls, and judge verdicts — to the
 observability server. One package per language: `agent-observability-sdk`
-([Python](/python-quickstart) and [Node](/node-quickstart)).
+([Python](/sdks/python/quickstart) and [Node](/sdks/node/quickstart)).
 
 ## Two integration modes
 
@@ -29,7 +29,7 @@ If you drive LiveKit Agents directly (`@server.rtc_session(...)` in Python,
 helpers replace the hand-rolled boilerplate: one `init_observability` /
 `initObservability` call emits the tags the server expects, and (Python only)
 `run_judges_on_report` runs judges at end-of-call. See the raw-LiveKit guides
-for [Python](/python-raw-livekit) and [Node](/node-raw-livekit).
+for [Python](/sdks/python/raw-livekit) and [Node](/sdks/node/raw-livekit).
 
 ## Environment
 
@@ -50,7 +50,7 @@ and an agent id matter for most setups.
 ## Matching the server's auth mode
 
 The server accepts either Basic credentials **or** a LiveKit Bearer JWT on its
-ingest routes (see [server Environment](/server-env)). The SDK speaks Basic auth
+ingest routes (see [server Environment](/server/environment)). The SDK speaks Basic auth
 via `AGENT_OBSERVABILITY_USER` / `_PASS`. When the server is gated with the
 LiveKit key pair instead, the LiveKit upload path mints the Bearer token itself
 from your `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` — no extra SDK config. Use

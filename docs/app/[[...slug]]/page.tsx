@@ -10,7 +10,7 @@ import { notFound } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
-import { baseOptions } from '@/lib/layout.shared';
+import { baseOptions, SidebarFooter } from '@/lib/layout.shared';
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
@@ -20,7 +20,12 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const MDX = page.data.body;
 
   return (
-    <DocsLayout tree={source.getPageTree()} {...baseOptions()}>
+    <DocsLayout
+      tree={source.getPageTree()}
+      {...baseOptions()}
+      themeSwitch={{ enabled: false }}
+      sidebar={{ footer: <SidebarFooter /> }}
+    >
       <DocsPage toc={page.data.toc} full={page.data.full}>
         <DocsTitle>{page.data.title}</DocsTitle>
         <DocsDescription>{page.data.description}</DocsDescription>

@@ -1,0 +1,5 @@
+{
+  "title": "Server",
+  "defaultOpen": true,
+  "pages": ["quickstart", "environment", "api", "alerts", "..."]
+}
