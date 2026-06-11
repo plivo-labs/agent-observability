@@ -2,20 +2,21 @@
    declares the HSL color tokens; these are additive so both the existing
    Tailwind-class pattern (text-h2-600) and the design's `font: var(--text-h2-600)`
    selectors work. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+/* Fonts come from next/font (docs/app/layout.tsx) as CSS variables:
+ * --font-inter (body), --font-sora (headings), --font-fragment-mono (code).
+ * NOTE: this file is a vendored snapshot of the dashboard theme
+ * (frontend/src/styles/observability.css) — mirror changes manually. */
 
 :root {
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-               "Helvetica Neue", Arial, sans-serif;
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
+               Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-display: var(--font-sans);
-  /* Real monospace stays at :root — Tailwind wires docs code blocks to
-   * --default-mono-font-family: var(--font-mono), resolved at runtime,
-   * and documentation code must stay mono. The dashboard's retired mono
-   * voice is mirrored only inside component demos (see .not-prose below).
-   * NOTE: this file is a vendored snapshot of the dashboard theme
-   * (frontend/src/styles/observability.css) — mirror changes manually. */
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-               "Liberation Mono", monospace;
+  /* Fragment Mono for documentation code blocks + usage examples (anything
+   * resolving var(--font-mono) outside a preview). Component demos override
+   * --font-mono back to Inter under .not-prose below, so Fragment Mono never
+   * appears inside a preview. */
+  --font-mono: var(--font-fragment-mono), ui-monospace, SFMono-Regular,
+               "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --text-h1-600: 700 28px/36px var(--font-sans);
   --text-h1-400: 400 28px/36px var(--font-sans);

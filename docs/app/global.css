@@ -309,3 +309,26 @@ html > body[data-scroll-locked] {
   --color-fd-warning: var(--warning);
   --color-fd-info: var(--info);
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Fonts (next/font vars set on <html> in app/layout.tsx)
+ *   body      → Inter        (className was dropped for the variable form)
+ *   headings  → Sora         — docs prose only, never component previews
+ *   code/pre  → Fragment Mono via --font-mono; previews keep Inter because
+ *               .not-prose overrides --font-mono back to --font-sans
+ * ──────────────────────────────────────────────────────────────────────── */
+body {
+  font-family: var(--font-sans);
+}
+
+/* Sora on documentation headings only. `:not(.not-prose *)` keeps component
+ * previews (and anything they render) on their own dashboard fonts. */
+:is(h1, h2, h3, h4, h5, h6):not(.not-prose *) {
+  font-family: var(--font-sora), var(--font-sans);
+}
+
+/* Code blocks + inline code + usage examples render in Fragment Mono.
+ * Scoped out of previews so demo identifiers stay in the dashboard font. */
+:is(pre, code, kbd):not(.not-prose *) {
+  font-family: var(--font-mono);
+}
