@@ -7,7 +7,7 @@ import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
 import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
-import { uploadRecording } from "./s3.js";
+import { uploadRecording, deleteRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
@@ -488,6 +488,24 @@ app.delete("/api/sessions", async (c) => {
      RETURNING session_id`,
     sessionIds,
   );
+
+  // Clean up each deleted session's audio so recordings don't outlive the
+  // row (orphaned objects = retention/privacy gap). Best-effort and
+  // post-commit: a failed S3 delete must not fail the API delete. The key
+  // is reconstructed deterministically from the session id (matching the
+  // upload key) so we don't need to parse the stored URL.
+  if (s3Enabled) {
+    await Promise.all(
+      (deleted as Array<{ session_id: string }>).map((row) =>
+        deleteRecording(`recording_${row.session_id}.ogg`).catch((e) =>
+          console.error(
+            `[s3] failed to delete recording for session=${sanitizeForLog(row.session_id)}: ${(e as Error).message}`,
+          ),
+        ),
+      ),
+    );
+  }
+
   return c.json({ api_id: newApiId(), deleted: deleted.length });
 });
 

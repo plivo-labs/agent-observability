@@ -37,7 +37,7 @@ mock.module("../src/db.js", () => ({
 }));
 
 mock.module("../src/migrate.js", () => ({ migrate: () => Promise.resolve() }));
-mock.module("../src/s3.js", () => ({ uploadRecording: () => Promise.resolve("") }));
+mock.module("../src/s3.js", () => ({ uploadRecording: () => Promise.resolve(""), deleteRecording: () => Promise.resolve() }));
 
 const mockListAlertRules = mock(() => Promise.resolve({ rules: [] as any[], totalCount: 0 }));
 const mockGetAlertRule = mock(() => Promise.resolve(null as any));

@@ -61,6 +61,7 @@ mock.module("../src/migrate.js", () => ({
 
 mock.module("../src/s3.js", () => ({
   uploadRecording: () => Promise.resolve("https://s3.example.com/recording.ogg"),
+  deleteRecording: () => Promise.resolve(),
 }));
 
 // Import app after mocks are set up
