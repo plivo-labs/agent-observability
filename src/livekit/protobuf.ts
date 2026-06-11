@@ -1,3 +1,11 @@
+import { gunzipSync } from "node:zlib";
+
+// Upper bound on a decompressed OTLP body. gzip can expand ~1000x, so an
+// uncapped gunzip turns a tiny upload into a multi-GB allocation that
+// blocks the event loop and OOM-kills the process (zip bomb). 64 MiB is
+// far above any legitimate OTLP log batch.
+const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
+
 export interface LiveKitRecordingHeader {
   roomId: string;
   startedAt: Date | null;
@@ -32,8 +40,16 @@ class ProtoReader {
   readVarint(): bigint {
     let shift = 0n;
     let result = 0n;
+    // A 64-bit varint is at most 10 bytes. Without this cap, a crafted body
+    // of all-continuation bytes (0xff…) makes the loop run over the whole
+    // buffer doing growing BigInt math — CPU burn on malformed input.
+    let bytesRead = 0;
     while (!this.done) {
+      if (bytesRead >= 10) {
+        throw new Error("varint overflow");
+      }
       const byte = BigInt(this.bytes[this.pos++]);
+      bytesRead++;
       result |= (byte & 0x7fn) << shift;
       if ((byte & 0x80n) === 0n) {
         return result;
@@ -372,7 +388,14 @@ function decodeResourceLogs(bytes: Uint8Array): DecodedOtlpLog[] {
 function maybeGunzip(bytes: Uint8Array, contentEncoding?: string | null): Uint8Array {
   const isGzip = contentEncoding?.toLowerCase().includes("gzip") ||
     (bytes[0] === 0x1f && bytes[1] === 0x8b);
-  return isGzip ? new Uint8Array(Bun.gunzipSync(Buffer.from(bytes))) : bytes;
+  if (!isGzip) {
+    return bytes;
+  }
+  // maxOutputLength makes zlib abort (and free the partial buffer) once the
+  // decompressed size crosses the cap, instead of allocating it all first.
+  return new Uint8Array(
+    gunzipSync(Buffer.from(bytes), { maxOutputLength: MAX_DECOMPRESSED_BYTES }),
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -28,6 +28,7 @@ mock.module("../src/db.js", () => ({
   sql: mockSql,
   insertSession: mock(() => Promise.resolve()),
   applyStoredSessionTags: mock(() => Promise.resolve()),
+  drainStagedRawReportPatches: mock(() => Promise.resolve()),
   upsertSessionTag: mock(() => Promise.resolve()),
   insertLiveKitEvaluation: mock(() => Promise.resolve()),
   upsertSessionOutcome: mock(() => Promise.resolve()),
@@ -36,7 +37,7 @@ mock.module("../src/db.js", () => ({
 }));
 
 mock.module("../src/migrate.js", () => ({ migrate: () => Promise.resolve() }));
-mock.module("../src/s3.js", () => ({ uploadRecording: () => Promise.resolve("") }));
+mock.module("../src/s3.js", () => ({ uploadRecording: () => Promise.resolve(""), deleteRecording: () => Promise.resolve() }));
 
 const mockListAlertRules = mock(() => Promise.resolve({ rules: [] as any[], totalCount: 0 }));
 const mockGetAlertRule = mock(() => Promise.resolve(null as any));
@@ -131,6 +132,33 @@ describe("alert rule routes", () => {
     expect(input.threshold_value).toBe(0.3);
     expect(input.http_method).toBe("PUT");
     expect(input.headers).toEqual({ "x-team": "voice" });
+  });
+
+  test("never returns the webhook secret over the API", async () => {
+    mockInsertAlertRule.mockResolvedValueOnce({
+      id: RULE_ID,
+      ...validRule,
+      secret: "super-secret-signing-key",
+    } as any);
+    const created = await server.fetch(
+      authed("/api/alert-rules", {
+        method: "POST",
+        body: JSON.stringify({ ...validRule, secret: "super-secret-signing-key" }),
+      }),
+    );
+    const createdBody = await created.json();
+    expect(createdBody.secret).toBeUndefined();
+    expect(createdBody.has_secret).toBe(true);
+
+    mockGetAlertRule.mockResolvedValueOnce({
+      id: RULE_ID,
+      ...validRule,
+      secret: "super-secret-signing-key",
+    } as any);
+    const fetched = await server.fetch(authed(`/api/alert-rules/${RULE_ID}`));
+    const fetchedBody = await fetched.json();
+    expect(fetchedBody.secret).toBeUndefined();
+    expect(fetchedBody.has_secret).toBe(true);
   });
 
   test.each([

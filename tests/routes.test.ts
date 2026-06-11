@@ -175,6 +175,8 @@ describe("GET /health", () => {
     const body = await res.json();
     expect(body.status).toBe("ok");
     expect(body.s3Enabled).toBe(false);
+    // basic + LiveKit auth are both enabled in the test config mock.
+    expect(body.authEnabled).toBe(true);
   });
 });
 
@@ -195,6 +197,20 @@ describe("POST /observability/recordings/v0", () => {
       })
     );
     expect(res.status).toBe(401);
+  });
+
+  test("rejects an oversized body with 413 before reading it", async () => {
+    // 17 MiB exceeds the 16 MiB OTLP cap. bodyLimit is mounted ahead of
+    // auth, so the request is refused with no credentials and the body is
+    // never buffered whole into memory.
+    const oversized = Buffer.alloc(17 * 1024 * 1024, 0x41);
+    const res = await server.fetch(
+      makeRequest("/observability/logs/otlp/v0", {
+        method: "POST",
+        body: oversized,
+      })
+    );
+    expect(res.status).toBe(413);
   });
 
   test("rejects request with wrong credentials", async () => {
@@ -255,6 +271,21 @@ describe("POST /observability/recordings/v0", () => {
       }),
     );
 
+    expect(res.status).toBe(401);
+  });
+
+  test("rejects a LiveKit Bearer token that has no exp claim", async () => {
+    // exp: undefined is dropped by JSON.stringify, so the token never
+    // expires. requiredClaims must reject it even though signature, issuer
+    // and the write grant are all valid.
+    const form = new FormData();
+    const res = await server.fetch(
+      makeRequest("/observability/recordings/v0", {
+        method: "POST",
+        headers: { Authorization: liveKitBearerHeader({ exp: undefined }) },
+        body: form,
+      }),
+    );
     expect(res.status).toBe(401);
   });
 
@@ -548,7 +579,7 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.chatHistory).toEqual([]);
   });
 
-  test("still returns ok when insertSession fails", async () => {
+  test("returns 503 when insertSession fails so the SDK retries", async () => {
     mockInsertSession.mockImplementationOnce(() => Promise.reject(new Error("db down")));
 
     const form = new FormData();
@@ -561,7 +592,11 @@ describe("POST /observability/recordings/v0", () => {
       })
     );
 
-    expect(res.status).toBe(200);
+    // A 200 here would make the SDK drop the report (permanent data loss);
+    // a 5xx triggers its at-least-once retry instead.
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error?.code ?? body.code).toBe("session_save_failed");
     expect(mockInsertSession).toHaveBeenCalledTimes(1);
   });
 

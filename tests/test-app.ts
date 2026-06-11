@@ -12,6 +12,7 @@ import { createHmac } from "node:crypto";
 
 export const mockInsertSession = mock(() => Promise.resolve());
 export const mockApplyStoredSessionTags = mock(() => Promise.resolve());
+export const mockDrainStagedRawReportPatches = mock(() => Promise.resolve());
 export const mockUpsertSessionTag = mock(() => Promise.resolve());
 export const mockInsertLiveKitEvaluation = mock(() => Promise.resolve());
 export const mockUpsertSessionOutcome = mock(() => Promise.resolve());
@@ -62,6 +63,7 @@ export function registerAppMocks(): void {
     sql: mockSql,
     insertSession: mockInsertSession,
     applyStoredSessionTags: mockApplyStoredSessionTags,
+    drainStagedRawReportPatches: mockDrainStagedRawReportPatches,
     upsertSessionTag: mockUpsertSessionTag,
     insertLiveKitEvaluation: mockInsertLiveKitEvaluation,
     upsertSessionOutcome: mockUpsertSessionOutcome,
@@ -75,6 +77,7 @@ export function registerAppMocks(): void {
 
   mock.module("../src/s3.js", () => ({
     uploadRecording: () => Promise.resolve("https://s3.example.com/recording.ogg"),
+    deleteRecording: () => Promise.resolve(),
   }));
 }
 

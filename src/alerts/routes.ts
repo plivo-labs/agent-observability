@@ -15,11 +15,21 @@ import {
   listFirings,
   listWebhookAttempts,
   updateAlertRule,
+  type AlertRuleRow,
 } from "./db.js";
 import { deliverTest } from "./deliver.js";
 import { alertRuleCreateSchema, alertRulePatchSchema } from "./schema.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Drop the webhook signing `secret` from any rule leaving over the API —
+ *  it's a credential and must never round-trip to the dashboard. Callers
+ *  that need to sign (deliverTest, the PATCH merge) read the full row
+ *  directly and bypass this. */
+function toPublicRule(rule: AlertRuleRow): Omit<AlertRuleRow, "secret"> & { has_secret: boolean } {
+  const { secret, ...rest } = rule;
+  return { ...rest, has_secret: secret != null && secret.length > 0 };
+}
 
 
 const LIMIT = { fallback: 20, max: 100 } as const;
@@ -37,7 +47,7 @@ export function registerAlertRoutes(app: Hono) {
         accountId: c.req.query("account_id") || null,
         enabled: enabledParam == null ? null : enabledParam === "true",
       });
-      return c.json(buildListResponse(rules, limit, offset, totalCount, "/api/alert-rules"));
+      return c.json(buildListResponse(rules.map(toPublicRule), limit, offset, totalCount, "/api/alert-rules"));
     } catch (e) {
       console.error(`[alerts] list failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("list_failed", "Failed to list alert rules"), 500);
@@ -57,7 +67,7 @@ export function registerAlertRoutes(app: Hono) {
     }
     try {
       const rule = await insertAlertRule(parsed.data);
-      return c.json({ api_id: newApiId(), ...rule }, 201);
+      return c.json({ api_id: newApiId(), ...toPublicRule(rule) }, 201);
     } catch (e) {
       console.error(`[alerts] create failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("create_failed", "Failed to create alert rule"), 500);
@@ -71,7 +81,7 @@ export function registerAlertRoutes(app: Hono) {
     }
     const rule = await getAlertRule(id);
     if (!rule) return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);
-    return c.json({ api_id: newApiId(), ...rule });
+    return c.json({ api_id: newApiId(), ...toPublicRule(rule) });
   });
 
   app.patch("/api/alert-rules/:id", async (c) => {
@@ -105,7 +115,7 @@ export function registerAlertRoutes(app: Hono) {
       }
       const rule = await updateAlertRule(id, parsed.data);
       if (!rule) return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);
-      return c.json({ api_id: newApiId(), ...rule });
+      return c.json({ api_id: newApiId(), ...toPublicRule(rule) });
     } catch (e) {
       console.error(`[alerts] update failed id=${id}: ${(e as Error).message}`);
       return c.json(buildErrorResponse("update_failed", "Failed to update alert rule"), 500);

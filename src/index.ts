@@ -1,17 +1,19 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { basicAuth } from "hono/basic-auth";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
-import { config, s3Enabled, basicAuthEnabled } from "./config.js";
-import { uploadRecording } from "./s3.js";
-import { sql, insertSession, applyStoredSessionTags } from "./db.js";
+import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
+import { uploadRecording, deleteRecording } from "./s3.js";
+import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
 import { buildSessionMetrics } from "./metrics.js";
-import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern } from "./response.js";
+import { newApiId, buildListResponse, buildErrorResponse, escapeLikePattern, sanitizeForLog } from "./response.js";
 import { registerEvalRoutes } from "./evals/routes.js";
 import { registerAgentRoutes } from "./agents/routes.js";
 import { registerAnalyticsRoutes } from "./analytics/routes.js";
@@ -36,11 +38,30 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
   startAlertSweeper();
 }
 
+// When neither auth mode is configured, every ingest route AND the whole
+// dashboard API are open to anyone who can reach the port. That's a
+// supported zero-config mode, but it must never be silent — an env-loading
+// slip would otherwise expose all session data with no signal.
+const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
+if (!authEnabled) {
+  console.warn(
+    "[security] No authentication configured — ingest and /api are OPEN to " +
+      "anyone who can reach this port. Set AGENT_OBSERVABILITY_USER/_PASS or " +
+      "the LiveKit API key pair to require credentials.",
+  );
+}
+
 const app = new Hono();
 
 app.use("*", requestId());
 app.use("*", logger());
-app.use("/api/*", cors());
+// Restrict cross-origin access to the dashboard API. Wildcard by default
+// (zero-config local dev); set CORS_ALLOWED_ORIGINS to a comma-separated
+// allow-list to lock it down. A wildcard already blocks credentialed
+// cross-origin reads, but an explicit list is tighter when the dashboard
+// is hosted on a known origin.
+const corsOrigins = (config.CORS_ALLOWED_ORIGINS ?? "*").split(",").map((o) => o.trim()).filter(Boolean);
+app.use("/api/*", cors({ origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins }));
 
 // Basic auth (all routes except /health, only when configured)
 if (basicAuthEnabled) {
@@ -52,6 +73,21 @@ if (basicAuthEnabled) {
   app.use("/api/*", auth);
 }
 
+// Cap ingest body sizes so a giant (or malicious) upload can't be buffered
+// whole into memory. Recordings carry an audio OGG so they get a larger
+// allowance than the OTLP log/trace/metric channels. bodyLimit returns 413
+// once the limit is crossed.
+const MB = 1024 * 1024;
+const RECORDING_BODY_LIMIT = 100 * MB;
+const OTLP_BODY_LIMIT = 16 * MB;
+const tooLarge = (c: Context) =>
+  c.json(buildErrorResponse("payload_too_large", "Request body exceeds the allowed size"), 413);
+
+app.use("/observability/recordings/v0", bodyLimit({ maxSize: RECORDING_BODY_LIMIT, onError: tooLarge }));
+app.use("/observability/logs/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+app.use("/observability/traces/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+app.use("/observability/metrics/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+
 app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
 app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);
 app.use("/observability/traces/otlp/v0", nativeLiveKitUploadAuth);
@@ -60,7 +96,7 @@ app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
 // ── Health check ────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => {
-  return c.json({ status: "ok", s3Enabled });
+  return c.json({ status: "ok", s3Enabled, authEnabled });
 });
 
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
@@ -119,7 +155,7 @@ app.post("/observability/recordings/v0", async (c) => {
     }
   }
 
-  console.log(`Session report received: room_id=${sessionId} account_id=${accountId}`);
+  console.log(`Session report received: room_id=${sanitizeForLog(sessionId)} account_id=${sanitizeForLog(accountId)}`);
 
   // Parse chat history
   let parsed = { chatItems: [] as any[], turnCount: 0, hasStt: false, hasLlm: false, hasTts: false, metrics: [] as any[] };
@@ -290,10 +326,19 @@ app.post("/observability/recordings/v0", async (c) => {
     });
     if (sessionId) {
       await applyStoredSessionTags(sessionId);
+      // Replay any OTLP raw_report patches that beat this recording row.
+      await drainStagedRawReportPatches(sessionId);
     }
-    console.log(`Session saved: room_id=${sessionId} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
+    console.log(`Session saved: room_id=${sanitizeForLog(sessionId)} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
   } catch (e) {
+    // Return a non-2xx so the SDK's at-least-once delivery retries. A 200
+    // here would make the SDK treat the report as durably stored and drop
+    // it — permanent data loss on any transient DB error.
     console.error(`Failed to save session room_id=${sessionId}: ${(e as Error).message}`);
+    return c.json(
+      buildErrorResponse("session_save_failed", "Failed to persist session report"),
+      503,
+    );
   }
 
   return c.json({ api_id: newApiId(), message: "session report received" });
@@ -457,6 +502,24 @@ app.delete("/api/sessions", async (c) => {
      RETURNING session_id`,
     sessionIds,
   );
+
+  // Clean up each deleted session's audio so recordings don't outlive the
+  // row (orphaned objects = retention/privacy gap). Best-effort and
+  // post-commit: a failed S3 delete must not fail the API delete. The key
+  // is reconstructed deterministically from the session id (matching the
+  // upload key) so we don't need to parse the stored URL.
+  if (s3Enabled) {
+    await Promise.all(
+      (deleted as Array<{ session_id: string }>).map((row) =>
+        deleteRecording(`recording_${row.session_id}.ogg`).catch((e) =>
+          console.error(
+            `[s3] failed to delete recording for session=${sanitizeForLog(row.session_id)}: ${(e as Error).message}`,
+          ),
+        ),
+      ),
+    );
+  }
+
   return c.json({ api_id: newApiId(), deleted: deleted.length });
 });
 

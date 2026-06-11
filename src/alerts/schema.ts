@@ -32,6 +32,7 @@ const httpMethodSchema = z.enum(["POST", "PUT", "PATCH"]);
 
 const webhookUrlSchema = z
   .string()
+  .max(2048)
   .url()
   .refine((u) => u.startsWith("http://") || u.startsWith("https://"), {
     message: "webhook_url must be http or https",
@@ -40,10 +41,10 @@ const webhookUrlSchema = z
 const baseRuleShape = {
   name: z.string().min(1).max(200),
   enabled: z.boolean().default(true),
-  account_id: z.string().min(1).nullable().optional(),
-  agent_id: z.string().min(1).nullable().optional(),
+  account_id: z.string().min(1).max(512).nullable().optional(),
+  agent_id: z.string().min(1).max(512).nullable().optional(),
   metric: alertMetricSchema,
-  judge_name: z.string().min(1).nullable().optional(),
+  judge_name: z.string().min(1).max(512).nullable().optional(),
   threshold_value: z.number().gt(0),
   // Gates the rule — fire only once the window holds this many samples,
   // so one bad observation can't trip a rate or percentile.
@@ -51,7 +52,7 @@ const baseRuleShape = {
   window_minutes: z.number().int().min(15),
   webhook_url: webhookUrlSchema,
   http_method: httpMethodSchema.default("POST"),
-  secret: z.string().min(1).nullable().optional(),
+  secret: z.string().min(1).max(1024).nullable().optional(),
   headers: z.record(z.string(), z.string()).nullable().optional(),
 };
 
