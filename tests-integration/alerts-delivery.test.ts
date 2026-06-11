@@ -76,7 +76,10 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     expect(req.method).toBe("PUT");
     expect(req.headers["x-team"]).toBe("voice");
     expect(req.headers["content-type"]).toBe("application/json");
-    const expectedSig = `sha256=${createHmac("sha256", "it-secret").update(req.rawBody).digest("hex")}`;
+    // Signature covers `${timestamp}.${body}` (SEC-08 replay protection).
+    const ts = req.headers["x-alert-timestamp"];
+    expect(ts).toMatch(/^\d+$/);
+    const expectedSig = `sha256=${createHmac("sha256", "it-secret").update(`${ts}.${req.rawBody}`).digest("hex")}`;
     expect(req.headers["x-alert-signature"]).toBe(expectedSig);
 
     const payload = JSON.parse(req.rawBody);
