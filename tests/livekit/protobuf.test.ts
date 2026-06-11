@@ -248,6 +248,31 @@ describe("decodeOtlpLogsRequest", () => {
     expect(() => decodeOtlpLogsRequest(allContinuation, null, null)).toThrow();
   });
 
+  test("decodes a binary-protobuf ExportLogsServiceRequest", () => {
+    // Exercises the hand-rolled binary decoder (the default LiveKit wire
+    // format) end-to-end — previously only the JSON path was covered.
+    // AnyValue{ stringValue } — field 1, length-delimited.
+    const anyValueString = (s: string) => lengthDelimited(1, Buffer.from(s, "utf8"));
+    // KeyValue{ key, value:AnyValue } — fields 1 and 2.
+    const keyValue = (key: string, value: string) =>
+      Buffer.concat([stringField(1, key), lengthDelimited(2, anyValueString(value))]);
+    // LogRecord{ body=field5:AnyValue, attributes=field6:KeyValue }.
+    const logRecord = Buffer.concat([
+      lengthDelimited(5, anyValueString("session report")),
+      lengthDelimited(6, keyValue("room_id", "room-binary")),
+    ]);
+    // ScopeLogs{ logRecords=field2 }, ResourceLogs{ scopeLogs=field2 },
+    // ExportLogsServiceRequest{ resourceLogs=field1 }.
+    const scopeLogs = lengthDelimited(2, logRecord);
+    const resourceLogs = lengthDelimited(2, scopeLogs);
+    const request = lengthDelimited(1, resourceLogs);
+
+    const logs = decodeOtlpLogsRequest(new Uint8Array(request), null, "application/x-protobuf");
+    expect(logs).toHaveLength(1);
+    expect(logs[0].body).toBe("session report");
+    expect(logs[0].attributes.room_id).toBe("room-binary");
+  });
+
   test("returns empty array for an empty resourceLogs envelope", () => {
     const json = { resourceLogs: [] };
     const bytes = new TextEncoder().encode(JSON.stringify(json));
