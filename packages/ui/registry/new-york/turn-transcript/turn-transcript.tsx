@@ -59,6 +59,9 @@ const parseSearchTerms = (q: string | undefined): string[] => {
     .filter((w) => w.length >= 2 && w !== 'or' && w !== 'and')
 }
 
+/** Stem equality, or a 3+-char stem-prefix relation in either direction —
+ * short terms can act as prefix wildcards ("can" lights "cancel"); accepted
+ * for an annotation aid. */
 const wordMatchesTerm = (word: string, term: string): boolean => {
   const a = crudeStem(word.toLowerCase())
   const b = crudeStem(term)
@@ -82,7 +85,7 @@ const HighlightedText = ({ text, terms }: { text: string; terms: string[] }) => 
     <>
       {text.split(WORD_TOKEN).map((tok, i) =>
         i % 2 === 1 && terms.some((t) => wordMatchesTerm(tok, t)) ? (
-          <mark key={i} className="rounded-[2px] bg-warning-bg px-0.5 text-warning-fg">
+          <mark key={i} className="rounded-[2px] bg-warning-bg px-0.5 font-medium text-warning-fg">
             {tok}
           </mark>
         ) : (
