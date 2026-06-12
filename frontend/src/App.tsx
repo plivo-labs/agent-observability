@@ -152,15 +152,20 @@ function AnalyticsRoute() {
 function AgentDetailRoute() {
   const { agentId } = useParams<{ agentId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   if (!agentId) return null
   // URL carries only the agent_id. When the same agent_id exists under
   // multiple accounts (rare; only when agent_ids are slugs rather than
   // UUIDs), the server returns the most-recently-active row.
   const encoded = encodeURIComponent(decodeURIComponent(agentId))
+  // Carry the active transcript search (?q=) into the session detail URL
+  // so the transcript can annotate matches.
+  const q = new URLSearchParams(location.search).get('q')
+  const qSuffix = q ? `?q=${encodeURIComponent(q)}` : ''
   return (
     <AgentDetailPage
       agentId={decodeURIComponent(agentId)}
-      onSessionClick={(id) => navigate(`/agents/${encoded}/sessions/${id}`)}
+      onSessionClick={(id) => navigate(`/agents/${encoded}/sessions/${id}${qSuffix}`)}
       onRunClick={(runId) => navigate(`/agents/${encoded}/simulation-evals/${runId}`)}
       onCompare={(runIdA, runIdB) =>
         navigate(`/agents/${encoded}/simulation-evals/compare?runA=${runIdA}&runB=${runIdB}`)
@@ -190,10 +195,12 @@ function EvalRunCompareRoute() {
 
 function SessionDetailRoute() {
   const { sessionId } = useParams<{ sessionId: string }>()
+  const params = new URLSearchParams(useLocation().search)
+  const searchQuery = params.get('q') ?? undefined
   const decoded = sessionId ? decodeURIComponent(sessionId) : undefined
   return (
     <AgentObservabilityProvider baseUrl="/api" sessionId={decoded}>
-      <SessionDetailPage />
+      <SessionDetailPage searchQuery={searchQuery} />
     </AgentObservabilityProvider>
   )
 }
