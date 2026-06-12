@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from agent_observability.livekit import (
+    add_goal_tags,
     init_observability,
     ensure_observability_url,
     run_judges_on_report,
@@ -158,6 +159,145 @@ class TestInitObservability:
         }
         # No atomic deployment: or region: tag — only the agent_id one.
         assert tagger.names() == ["agent.session", "agent_id:a1"]
+
+
+class TestInitObservabilityGoals:
+    """The ``goals`` parameter — conversation goals the server's analyzer
+    judges post-session. Wire format: ``goal:<name>:<description>``,
+    split server-side at the FIRST colon after the prefix (so names must
+    not contain colons; descriptions may)."""
+
+    def _init(
+        self,
+        tagger: FakeTagger,
+        goals: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        init_observability(tagger, agent_id="agent-uuid-1", goals=goals)
+
+    def test_emits_one_goal_tag_per_goal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tagger = FakeTagger()
+        self._init(
+            tagger,
+            [
+                ("identity-check", "Confirm the caller's identity"),
+                ("order-resolution", "Resolve the order issue or open a ticket"),
+            ],
+            monkeypatch,
+        )
+        assert "goal:identity-check:Confirm the caller's identity" in tagger.names()
+        assert "goal:order-resolution:Resolve the order issue or open a ticket" in tagger.names()
+
+    def test_bare_string_goal_emits_name_only_form(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, ["identity-check"], monkeypatch)
+        assert "goal:identity-check" in tagger.names()
+
+    def test_empty_description_collapses_to_name_only_form(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("identity-check", "  ")], monkeypatch)
+        assert "goal:identity-check" in tagger.names()
+
+    def test_goal_tag_metadata_carries_name_and_description(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("refund", "Issue a refund when asked")], monkeypatch)
+        goal_call = next(c for c in tagger.calls if c[0].startswith("goal:"))
+        assert goal_call[1] == {"name": "refund", "description": "Issue a refund when asked"}
+
+    def test_wrapper_metadata_includes_goals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("refund", "Issue a refund"), "identity-check"], monkeypatch)
+        wrapper = tagger.calls[0]
+        assert wrapper[0] == "agent.session"
+        assert wrapper[1] is not None
+        assert wrapper[1]["goals"] == [
+            {"name": "refund", "description": "Issue a refund"},
+            {"name": "identity-check"},
+        ]
+
+    def test_trims_name_and_description(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [(" refund ", "  Issue a refund  ")], monkeypatch)
+        assert "goal:refund:Issue a refund" in tagger.names()
+
+    def test_description_may_contain_colons(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("escalation", "Escalate: only after two failures")], monkeypatch)
+        assert "goal:escalation:Escalate: only after two failures" in tagger.names()
+
+    def test_rejects_goal_name_containing_a_colon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        for bad in [("bad:name", "desc"), "bad:name"]:
+            with pytest.raises(ValueError, match="colon"):
+                init_observability(FakeTagger(), agent_id="a1", goals=[bad])
+
+    def test_rejects_empty_goal_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        for bad in [("", "desc"), "   "]:
+            with pytest.raises(ValueError, match="name"):
+                init_observability(FakeTagger(), agent_id="a1", goals=[bad])
+
+    def test_rejects_duplicate_goal_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        # Same name twice — even across tuple and bare-string forms, and
+        # even when the descriptions differ (the server would silently
+        # keep only the first, which is almost certainly a bug upstream).
+        for dup in [
+            [("refund", "v1 wording"), ("refund", "v2 wording")],
+            [("refund", "described"), "refund"],
+        ]:
+            with pytest.raises(ValueError, match="duplicate"):
+                init_observability(FakeTagger(), agent_id="a1", goals=dup)
+
+
+class TestAddGoalTags:
+    """``add_goal_tags`` — the goals-only emitter for workers whose
+    observability bootstrap happens elsewhere (agent-transport's
+    ``AudioStreamServer`` wires identity tags + upload internally)."""
+
+    def test_emits_goal_tags_and_returns_normalized_goals(self) -> None:
+        tagger = FakeTagger()
+        returned = add_goal_tags(
+            tagger, [("refund", "Issue a refund when asked"), "identity-check"]
+        )
+        assert tagger.names() == [
+            "goal:refund:Issue a refund when asked",
+            "goal:identity-check",
+        ]
+        assert returned == [
+            {"name": "refund", "description": "Issue a refund when asked"},
+            {"name": "identity-check"},
+        ]
+
+    def test_requires_no_upload_url_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unlike init_observability, no URL validation: the transport that
+        # owns the bootstrap already enforced it.
+        monkeypatch.delenv("LIVEKIT_OBSERVABILITY_URL", raising=False)
+        monkeypatch.delenv("AGENT_OBSERVABILITY_URL", raising=False)
+        add_goal_tags(FakeTagger(), ["any-goal"])
+
+    def test_applies_the_same_validation_as_init_observability(self) -> None:
+        with pytest.raises(ValueError, match="colon"):
+            add_goal_tags(FakeTagger(), ["bad:name"])
+        with pytest.raises(ValueError, match="duplicate"):
+            add_goal_tags(FakeTagger(), ["twice", "twice"])
+        with pytest.raises(ValueError, match="name"):
+            add_goal_tags(FakeTagger(), ["   "])
 
 
 # ── ensure_observability_url ─────────────────────────────────────────────────

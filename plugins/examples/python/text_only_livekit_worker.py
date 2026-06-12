@@ -40,7 +40,9 @@ What this demonstrates:
 
   - ``init_observability(ctx.tagger, ...)`` — one call replaces ~20 lines
     of hand-rolled ``tagger.add(...)`` plumbing and fast-fails if the
-    upload URL is unset.
+    upload URL is unset. Includes ``goals=[...]`` — conversation goals
+    the server's goal analyzer judges post-session (met/unmet on the
+    agent's Conversation Goals tab).
   - ``run_judges_on_report(report, judges=...)`` — wraps the LiveKit
     ``JudgeGroup`` setup, structured logging, and LLM cleanup; mixes
     LiveKit built-ins with SDK judges.
@@ -180,6 +182,15 @@ async def entrypoint(ctx: JobContext) -> None:
         agent_name=AGENT_NAME,
         account_id=ACCOUNT_ID,
         transport="text",
+        # Conversation goals: the server's goal analyzer judges these
+        # against the transcript after the session ends (requires
+        # OPENAI_API_KEY on the SERVER). Verdicts land on the agent's
+        # Conversation Goals tab. Names are stable identities; the
+        # descriptions are what the LLM judge evaluates.
+        goals=[
+            ("order-lookup", "Look up the customer's order when they provide an order ID"),
+            ("status-communicated", "Clearly tell the customer their order's delivery status"),
+        ],
         logger=logger,
     )
 

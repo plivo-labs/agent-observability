@@ -45,12 +45,54 @@ async def entrypoint(ctx: JobContext) -> None:
         agent_name="support-bot",
         account_id="acct-7",
         transport="text",
+        goals=[
+            ("identity-check", "Confirm the caller's identity before account changes"),
+            ("order-resolution", "Resolve the order issue or open a support ticket"),
+        ],
     )
     # …your usual AgentSession.start(...) setup
 ```
 
 That's the whole observability surface for a raw-LiveKit worker — no hand-rolled
 `tagger.add(...)`, no `JudgeGroup` boilerplate, no `llm.aclose()` cleanup.
+
+## Conversation goals
+
+The `goals` parameter declares task outcomes the server's
+[goal analyzer](/docs/server/goals) judges after each session — no judging
+code in the agent, just data. Each entry is `(name, description)` or a bare
+`name` string:
+
+```python
+init_observability(
+    ctx.tagger,
+    agent_id="9c2f7e3d-…",
+    goals=[
+        # name + description — the description is what the LLM judge evaluates
+        ("identity-check", "Confirm the caller's identity before account changes"),
+        # descriptions may contain colons; names may not
+        ("escalation-policy", "Escalate only after: two failed resolution attempts"),
+        # bare string = name-only goal (the name doubles as the description)
+        "order-resolution",
+    ],
+)
+```
+
+A bad goal raises `ValueError` before any tag is emitted:
+
+- **names** are the goal's stable identity — non-empty, unique within the
+  call, and colon-free (the wire format `goal:<name>:<description>` splits
+  at the first colon).
+- **descriptions** are free text. Phrase them as observable conversation
+  behavior — the judge only sees the transcript
+  ([guidance](/docs/server/goals#writing-goals-the-judge-can-verify)).
+
+Verdicts (met/unmet, reasoning, what went wrong) land on the agent's
+**Conversation Goals** tab once the server has `OPENAI_API_KEY` set.
+
+Running on agent-transport's `AudioStreamServer` (which wires the
+observability bootstrap internally)? Call `add_goal_tags(ctx.tagger, goals)`
+instead — same goal validation, no second bootstrap, no upload-URL check.
 
 ## URL resolution
 

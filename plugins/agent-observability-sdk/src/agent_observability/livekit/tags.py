@@ -24,9 +24,86 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, Sequence
 
 from agent_observability.livekit.env import ensure_observability_url
+
+
+def _normalize_goal(goal: str | tuple[str, str]) -> dict[str, str]:
+    """Validate one goal and return ``{"name": ..., "description"?: ...}``
+    (no ``description`` key for name-only goals).
+
+    The server splits the ``goal:`` tag at the FIRST colon after the
+    prefix, so the name is the goal's stable identity and must not
+    contain colons; the description may.
+    """
+    if isinstance(goal, tuple):
+        raw_name, raw_description = goal
+    else:
+        raw_name, raw_description = goal, ""
+    name = raw_name.strip()
+    if not name:
+        raise ValueError("goal name must be non-empty")
+    if ":" in name:
+        raise ValueError(
+            f"goal name {name!r} must not contain a colon — "
+            "the server splits goal tags at the first colon, so a colon in the "
+            "name would corrupt the goal's identity. Put colons in the "
+            "description instead."
+        )
+    description = raw_description.strip()
+    return {"name": name, "description": description} if description else {"name": name}
+
+
+def _normalize_goals(goals: Sequence[str | tuple[str, str]]) -> list[dict[str, str]]:
+    """Validate every goal, rejecting duplicate names: the server dedupes
+    first-wins, so a duplicate here would silently drop a description —
+    almost certainly a bug in the calling agent code."""
+    normalized = [_normalize_goal(g) for g in goals]
+    seen: set[str] = set()
+    for goal in normalized:
+        if goal["name"] in seen:
+            raise ValueError(
+                f"duplicate goal name {goal['name']!r} — "
+                "goal names are the goal's stable identity and must be unique "
+                "per session."
+            )
+        seen.add(goal["name"])
+    return normalized
+
+
+def _emit_goal_tags(tagger: Any, normalized: list[dict[str, str]]) -> None:
+    for goal in normalized:
+        description = goal.get("description")
+        tagger.add(
+            f"goal:{goal['name']}:{description}" if description else f"goal:{goal['name']}",
+            metadata=dict(goal),
+        )
+
+
+def add_goal_tags(
+    tagger: Any, goals: Sequence[str | tuple[str, str]]
+) -> list[dict[str, str]]:
+    """Emit ``goal:<name>:<description>`` tags without the full bootstrap.
+
+    For workers whose observability bootstrap happens elsewhere —
+    agent-transport's ``AudioStreamServer`` wires identity tags and the
+    upload internally — this declares conversation goals on the session
+    without re-emitting identity tags and without requiring the
+    upload-URL env that :func:`init_observability` enforces.
+
+    Same goal validation as ``init_observability(goals=...)``: names are
+    the goal's stable identity — non-empty, unique, colon-free;
+    descriptions are free text. Raises ``ValueError`` before any tag is
+    emitted when a goal is invalid.
+
+    :param tagger: A LiveKit tagger (``ctx.tagger``).
+    :param goals: ``(name, description)`` tuples or bare ``name`` strings.
+    :return: The normalized goals, one ``{"name", "description"?}`` dict each.
+    """
+    normalized = _normalize_goals(goals)
+    _emit_goal_tags(tagger, normalized)
+    return normalized
 
 
 def init_observability(
@@ -36,6 +113,7 @@ def init_observability(
     agent_name: str | None = None,
     account_id: str | None = None,
     transport: str | None = None,
+    goals: Sequence[str | tuple[str, str]] | None = None,
     extra_metadata: dict[str, Any] | None = None,
     logger: logging.Logger | None = None,
 ) -> str:
@@ -53,6 +131,8 @@ def init_observability(
        - ``account_id:<value>`` (when supplied)
        - ``agent_name:<value>`` (when supplied)
        - ``transport:<value>`` (when supplied)
+       - ``goal:<name>:<description>`` per goal (when supplied; bare
+         ``goal:<name>`` for name-only goals)
        - ``agent.session`` (wrapper with everything in metadata)
 
     :param tagger: A LiveKit tagger. Anything with an
@@ -70,6 +150,11 @@ def init_observability(
         dashboards. Optional.
     :param transport: Short label like ``"text"``, ``"audio"``, ``"sip"``.
         Optional.
+    :param goals: Conversation goals the server's goal analyzer judges
+        after each session. Each entry is ``(name, description)`` or a
+        bare ``name`` string. The name is the goal's stable, filterable
+        identity — it must not contain colons; the description (what the
+        LLM judge evaluates) may. Optional.
     :param extra_metadata: Extra key/value pairs to ride along on the
         wrapper ``agent.session`` tag's metadata. No atomic tags are
         derived from these — they only land in the raw_report for
@@ -102,6 +187,9 @@ def init_observability(
             "backfill ever arriving."
         )
 
+    # Validate goals up front so a bad name fails before any tag lands.
+    normalized_goals = _normalize_goals(goals) if goals else []
+
     metadata: dict[str, Any] = {"agent_id": resolved_agent_id}
     if agent_name:
         metadata["agent_name"] = agent_name
@@ -109,6 +197,8 @@ def init_observability(
         metadata["account_id"] = account_id
     if transport:
         metadata["transport"] = transport
+    if normalized_goals:
+        metadata["goals"] = normalized_goals
     if extra_metadata:
         metadata.update(extra_metadata)
 
@@ -135,5 +225,6 @@ def init_observability(
             f"transport:{transport}",
             metadata={"transport": transport},
         )
+    _emit_goal_tags(tagger, normalized_goals)
 
     return resolved_agent_id
