@@ -64,6 +64,10 @@ A bad goal throws before any tag is emitted:
 Verdicts (met/unmet, reasoning, what went wrong) land on the agent's
 **Conversation Goals** tab once the server has `OPENAI_API_KEY` set.
 
+Running on agent-transport (bootstrap wired internally)? Call
+`addGoalTags(tagger, goals)` instead — same goal validation, no second
+bootstrap, no upload-URL check.
+
 ## URL resolution
 
 `initObservability` throws if `LIVEKIT_OBSERVABILITY_URL` (or the fallback

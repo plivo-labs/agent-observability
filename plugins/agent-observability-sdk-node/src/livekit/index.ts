@@ -18,6 +18,7 @@
  */
 
 export {
+  addGoalTags,
   initObservability,
   type Tagger,
   type InitObservabilityOptions,

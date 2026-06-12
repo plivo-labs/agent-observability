@@ -45,10 +45,11 @@ from agent_observability.livekit.env import (
     resolve_observability_url,
 )
 from agent_observability.livekit.evaluation import run_judges_on_report
-from agent_observability.livekit.tags import init_observability
+from agent_observability.livekit.tags import add_goal_tags, init_observability
 
 __all__ = [
     "ensure_observability_url",
+    "add_goal_tags",
     "init_observability",
     "resolve_observability_url",
     "run_judges_on_report",

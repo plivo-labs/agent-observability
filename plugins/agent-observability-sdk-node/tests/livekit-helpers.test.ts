@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initObservability, ensureObservabilityUrl } from "../src/livekit/index.js";
+import { initObservability, addGoalTags, ensureObservabilityUrl } from "../src/livekit/index.js";
 
 interface RecordedTag {
   name: string;
@@ -272,6 +272,35 @@ describe("initObservability", () => {
         ).toThrow(/duplicate/);
       }
     });
+  });
+});
+
+// addGoalTags — the goals-only emitter for workers whose observability
+// bootstrap happens elsewhere (agent-transport wires identity tags +
+// upload internally).
+describe("addGoalTags", () => {
+  it("emits goal tags and returns the normalized goals, no URL env required", () => {
+    delete process.env.LIVEKIT_OBSERVABILITY_URL;
+    delete process.env.AGENT_OBSERVABILITY_URL;
+    const { tagger, calls } = makeTagger();
+    const returned = addGoalTags(tagger, [
+      { name: "refund", description: "Issue a refund when asked" },
+      "identity-check",
+    ]);
+    expect(calls.map((c) => c.name)).toEqual([
+      "goal:refund:Issue a refund when asked",
+      "goal:identity-check",
+    ]);
+    expect(returned).toEqual([
+      { name: "refund", description: "Issue a refund when asked" },
+      { name: "identity-check" },
+    ]);
+  });
+
+  it("applies the same validation as initObservability", () => {
+    expect(() => addGoalTags(makeTagger().tagger, ["bad:name"])).toThrow(/colon/);
+    expect(() => addGoalTags(makeTagger().tagger, ["twice", "twice"])).toThrow(/duplicate/);
+    expect(() => addGoalTags(makeTagger().tagger, ["   "])).toThrow(/name/);
   });
 });
 

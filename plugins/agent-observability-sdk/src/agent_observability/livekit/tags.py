@@ -43,10 +43,10 @@ def _normalize_goal(goal: str | tuple[str, str]) -> dict[str, str]:
         raw_name, raw_description = goal, ""
     name = raw_name.strip()
     if not name:
-        raise ValueError("init_observability: goal name must be non-empty")
+        raise ValueError("goal name must be non-empty")
     if ":" in name:
         raise ValueError(
-            f"init_observability: goal name {name!r} must not contain a colon — "
+            f"goal name {name!r} must not contain a colon — "
             "the server splits goal tags at the first colon, so a colon in the "
             "name would corrupt the goal's identity. Put colons in the "
             "description instead."
@@ -64,11 +64,45 @@ def _normalize_goals(goals: Sequence[str | tuple[str, str]]) -> list[dict[str, s
     for goal in normalized:
         if goal["name"] in seen:
             raise ValueError(
-                f"init_observability: duplicate goal name {goal['name']!r} — "
+                f"duplicate goal name {goal['name']!r} — "
                 "goal names are the goal's stable identity and must be unique "
                 "per session."
             )
         seen.add(goal["name"])
+    return normalized
+
+
+def _emit_goal_tags(tagger: Any, normalized: list[dict[str, str]]) -> None:
+    for goal in normalized:
+        description = goal.get("description")
+        tagger.add(
+            f"goal:{goal['name']}:{description}" if description else f"goal:{goal['name']}",
+            metadata=dict(goal),
+        )
+
+
+def add_goal_tags(
+    tagger: Any, goals: Sequence[str | tuple[str, str]]
+) -> list[dict[str, str]]:
+    """Emit ``goal:<name>:<description>`` tags without the full bootstrap.
+
+    For workers whose observability bootstrap happens elsewhere —
+    agent-transport's ``AudioStreamServer`` wires identity tags and the
+    upload internally — this declares conversation goals on the session
+    without re-emitting identity tags and without requiring the
+    upload-URL env that :func:`init_observability` enforces.
+
+    Same goal validation as ``init_observability(goals=...)``: names are
+    the goal's stable identity — non-empty, unique, colon-free;
+    descriptions are free text. Raises ``ValueError`` before any tag is
+    emitted when a goal is invalid.
+
+    :param tagger: A LiveKit tagger (``ctx.tagger``).
+    :param goals: ``(name, description)`` tuples or bare ``name`` strings.
+    :return: The normalized goals, one ``{"name", "description"?}`` dict each.
+    """
+    normalized = _normalize_goals(goals)
+    _emit_goal_tags(tagger, normalized)
     return normalized
 
 
@@ -191,11 +225,6 @@ def init_observability(
             f"transport:{transport}",
             metadata={"transport": transport},
         )
-    for goal in normalized_goals:
-        description = goal.get("description")
-        tagger.add(
-            f"goal:{goal['name']}:{description}" if description else f"goal:{goal['name']}",
-            metadata=dict(goal),
-        )
+    _emit_goal_tags(tagger, normalized_goals)
 
     return resolved_agent_id

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from agent_observability.livekit import (
+    add_goal_tags,
     init_observability,
     ensure_observability_url,
     run_judges_on_report,
@@ -260,6 +261,43 @@ class TestInitObservabilityGoals:
         ]:
             with pytest.raises(ValueError, match="duplicate"):
                 init_observability(FakeTagger(), agent_id="a1", goals=dup)
+
+
+class TestAddGoalTags:
+    """``add_goal_tags`` — the goals-only emitter for workers whose
+    observability bootstrap happens elsewhere (agent-transport's
+    ``AudioStreamServer`` wires identity tags + upload internally)."""
+
+    def test_emits_goal_tags_and_returns_normalized_goals(self) -> None:
+        tagger = FakeTagger()
+        returned = add_goal_tags(
+            tagger, [("refund", "Issue a refund when asked"), "identity-check"]
+        )
+        assert tagger.names() == [
+            "goal:refund:Issue a refund when asked",
+            "goal:identity-check",
+        ]
+        assert returned == [
+            {"name": "refund", "description": "Issue a refund when asked"},
+            {"name": "identity-check"},
+        ]
+
+    def test_requires_no_upload_url_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unlike init_observability, no URL validation: the transport that
+        # owns the bootstrap already enforced it.
+        monkeypatch.delenv("LIVEKIT_OBSERVABILITY_URL", raising=False)
+        monkeypatch.delenv("AGENT_OBSERVABILITY_URL", raising=False)
+        add_goal_tags(FakeTagger(), ["any-goal"])
+
+    def test_applies_the_same_validation_as_init_observability(self) -> None:
+        with pytest.raises(ValueError, match="colon"):
+            add_goal_tags(FakeTagger(), ["bad:name"])
+        with pytest.raises(ValueError, match="duplicate"):
+            add_goal_tags(FakeTagger(), ["twice", "twice"])
+        with pytest.raises(ValueError, match="name"):
+            add_goal_tags(FakeTagger(), ["   "])
 
 
 # ── ensure_observability_url ─────────────────────────────────────────────────

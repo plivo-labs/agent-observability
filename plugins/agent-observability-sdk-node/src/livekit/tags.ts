@@ -37,11 +37,11 @@ function normalizeGoal(goal: GoalInput): { name: string; description?: string } 
   const rawDescription = typeof goal === "string" ? "" : (goal.description ?? "");
   const name = rawName.trim();
   if (!name) {
-    throw new Error("initObservability: goal name must be non-empty");
+    throw new Error("goal name must be non-empty");
   }
   if (name.includes(":")) {
     throw new Error(
-      `initObservability: goal name ${JSON.stringify(name)} must not contain a ` +
+      `goal name ${JSON.stringify(name)} must not contain a ` +
         "colon — the server splits goal tags at the first colon, so a colon in " +
         "the name would corrupt the goal's identity. Put colons in the " +
         "description instead.",
@@ -60,13 +60,44 @@ function normalizeGoals(goals: GoalInput[]): Array<{ name: string; description?:
     const goal = normalizeGoal(input);
     if (seen.has(goal.name)) {
       throw new Error(
-        `initObservability: duplicate goal name ${JSON.stringify(goal.name)} — ` +
+        `duplicate goal name ${JSON.stringify(goal.name)} — ` +
           "goal names are the goal's stable identity and must be unique per session.",
       );
     }
     seen.add(goal.name);
     return goal;
   });
+}
+
+function emitGoalTags(tagger: Tagger, goals: Array<{ name: string; description?: string }>): void {
+  for (const goal of goals) {
+    tagger.add(
+      goal.description ? `goal:${goal.name}:${goal.description}` : `goal:${goal.name}`,
+      { metadata: { ...goal } },
+    );
+  }
+}
+
+/**
+ * Emit `goal:<name>:<description>` tags without the full bootstrap.
+ *
+ * For workers whose observability bootstrap happens elsewhere —
+ * agent-transport wires identity tags and the upload internally — this
+ * declares conversation goals on the session without re-emitting
+ * identity tags and without requiring the upload-URL env that
+ * {@link initObservability} enforces. Same goal validation: names are
+ * the goal's stable identity (non-empty, unique, colon-free). Throws
+ * before any tag is emitted when a goal is invalid.
+ *
+ * @returns The normalized goals.
+ */
+export function addGoalTags(
+  tagger: Tagger,
+  goals: GoalInput[],
+): Array<{ name: string; description?: string }> {
+  const normalized = normalizeGoals(goals);
+  emitGoalTags(tagger, normalized);
+  return normalized;
 }
 
 export interface InitObservabilityOptions {
@@ -169,12 +200,7 @@ export function initObservability(tagger: Tagger, options: InitObservabilityOpti
   if (options.transport) {
     tagger.add(`transport:${options.transport}`, { metadata: { transport: options.transport } });
   }
-  for (const goal of goals) {
-    tagger.add(
-      goal.description ? `goal:${goal.name}:${goal.description}` : `goal:${goal.name}`,
-      { metadata: { ...goal } },
-    );
-  }
+  emitGoalTags(tagger, goals);
 
   return resolvedAgentId;
 }
