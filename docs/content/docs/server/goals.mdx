@@ -1,0 +1,106 @@
+---
+title: Conversation Goals
+description: Declare plain-text goals in agent code; after each session ends, an LLM judge reads the transcript and decides whether each goal was met. Verdicts surface per-agent with a completion rate.
+---
+
+A **goal** is a task outcome you expect a call to accomplish — "confirm the
+caller's identity before account changes", "resolve the order issue or open
+a ticket". Goals are declared in agent code as data (no judging code), and
+the server judges every tagged session after it ends.
+
+Goals complement [conversation evals](/docs/sdks/python/raw-livekit#judges):
+evals measure conversational *quality* (accuracy, safety — judges you write
+as code, run inside the agent's process), goals measure *outcomes* (binary
+met/unmet, judged centrally on the server). A session can pass every eval
+and still miss its goal — polite, accurate, and the refund never got issued.
+
+## Declaring goals
+
+Each goal has a **name** and a **description**:
+
+- **name** — the goal's stable identity. Used for grouping, the completion
+  rate, and filtering. Must not contain colons. Keep it short and slug-like:
+  `identity-check`, `order-resolution`.
+- **description** — what the LLM judge actually evaluates. Free text; colons
+  allowed. Be specific: the judge is strict and only marks a goal met when
+  the transcript proves it.
+
+Declare them in the SDK bootstrap ([Python](/docs/sdks/python/raw-livekit) /
+[Node](/docs/sdks/node/raw-livekit)):
+
+```python
+init_observability(
+    ctx.tagger,
+    agent_id="9c2f7e3d-…",
+    goals=[
+        ("identity-check", "Confirm the caller's identity before account changes"),
+        ("order-resolution", "Resolve the order issue or open a support ticket"),
+    ],
+)
+```
+
+On the wire each goal is one tag — `goal:<name>:<description>` — so goals
+ride both ingest paths (session reports and OTLP) with no new transport.
+
+## How judging works
+
+A background analyzer (same placement model as the [alert sweeper](/docs/server/alerts))
+sweeps every 30 seconds:
+
+1. Finds ended sessions that carry goal tags and a transcript, and haven't
+   been analyzed yet. Claims are atomic, so the API-inline analyzer and the
+   dedicated worker can run side by side without double-judging.
+2. Renders a role-labeled transcript and makes **one LLM call per session**
+   covering all of its goals.
+3. Writes one verdict per goal — `met` or `unmet`, with the judge's
+   reasoning and, for unmet goals, a short *what went wrong*.
+
+The judge is deliberately **strict**: a goal is met only when the transcript
+shows it happening or being explicitly confirmed. Promises ("I'll send that
+right over!"), intentions, and partial progress count as unmet, and ties
+break to unmet — a false "met" hides a real failure, while a false "unmet"
+just earns a human glance.
+
+Failures (rate limits, malformed model output) are retried on later sweeps,
+up to 3 attempts per session.
+
+## Configuration
+
+The analyzer is **off until `OPENAI_API_KEY` is set** — there is nothing to
+configure beyond the key for the default setup. See
+[Environment](/docs/server/environment) for the full list:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | — | Enables the analyzer. Unset = goals are collected but never judged. |
+| `JUDGE_LLM_MODEL` | — | Judge model override (highest precedence). |
+| `OPENAI_MODEL` | — | Fallback model name. Final fallback is `gpt-4.1-mini`. |
+| `GOAL_ANALYZER` | `inline` | Where the analyzer runs. `inline` = inside the API process. Set `off` when the dedicated worker is deployed. |
+
+## Reading the results
+
+The agent detail page gains a **Conversation Goals** tab (the last tab):
+
+- **Completion rate** across all analyzed sessions of the agent, plus
+  met/unmet totals.
+- A per-session table with one chip per goal (green met / red unmet), and a
+  drawer showing each goal's description, the judge's reasoning, and what
+  went wrong for unmet goals.
+
+Goal verdicts also appear in the per-session evaluations drawer alongside
+conversation-eval verdicts — same substrate, different `source`.
+
+The API mirror is `GET /api/agents/:agent_id/goal-results` — per-session
+grouped verdicts plus an agent-wide `summary { sessions_total, met_total,
+unmet_total }`.
+
+## Writing goals the judge can verify
+
+The judge only sees the transcript, so goals phrased as observable
+conversation behavior judge reliably; goals about back-office side effects
+don't:
+
+- ✅ `("identity-check", "Agent confirms the caller's name and account number before making changes")`
+- ✅ `("resolution-or-ticket", "The caller's issue is resolved in-call, or the agent commits to a ticket number")`
+- ❌ `("crm-updated", "The CRM record is updated")` — invisible in the
+  transcript; the judge will (correctly) say unmet every time.
