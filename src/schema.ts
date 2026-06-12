@@ -35,6 +35,13 @@ export const envSchema = z.object({
   JUDGE_LLM_MODEL: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),
 
+  // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
+  // origins (e.g. "https://obs.example.com,http://localhost:5173"). In
+  // production the dashboard is served same-origin so CORS isn't needed;
+  // set this when the dashboard runs on a different origin. Defaults to
+  // "*" (any origin) for zero-config local dev.
+  CORS_ALLOWED_ORIGINS: z.string().default("*"),
+
   // S3 configuration (optional — when set, recordings are uploaded to S3)
   S3_BUCKET: z.string().optional(),
   S3_REGION: z.string().default("us-east-1"),

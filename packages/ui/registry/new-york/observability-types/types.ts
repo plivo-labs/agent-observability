@@ -393,6 +393,11 @@ export interface AgentSessionRow {
   record_url: string | null
   estimated_cost_usd: number | null
   created_at: string
+  /** Transcript excerpt for the active ?q= search; present only on list
+   * rows fetched with a search. Matched words are wrapped in \u0001 / \u0002
+   * control-char markers (see TS_HEADLINE_OPTIONS in src/index.ts) — split
+   * on them to render highlights; never treat as HTML. */
+  match_snippet?: string | null
 }
 
 export interface SessionEvent {

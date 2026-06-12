@@ -172,3 +172,76 @@ describeDb("websearch transcript matching", () => {
     expect(await searchIds(acct, "the")).toEqual([]);
   });
 });
+
+/** Mirrors TS_HEADLINE_OPTIONS in src/index.ts — keep in sync. The unit
+ *  suite (tests/dashboard-api.test.ts) pins the endpoint-side string, so a
+ *  drift fails there, not silently here. */
+const HEADLINE_OPTS =
+  'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "';
+
+const th = testRun("ftsh");
+
+/** The exact SELECT expression GET /api/sessions adds for ?q= snippets. */
+async function snippetOf(acct: string, q: string): Promise<string | null> {
+  const rows = await sql.unsafe(
+    `SELECT ts_headline('english', transcript_text, websearch_to_tsquery('english', $2), $3) AS match_snippet
+     FROM agent_transport_sessions
+     WHERE account_id = $1
+       AND to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $2)
+     ORDER BY ended_at DESC LIMIT 1`,
+    [acct, q, HEADLINE_OPTS],
+  );
+  return rows[0]?.match_snippet ?? null;
+}
+
+describeDb("match_snippet headline", () => {
+  beforeAll(async () => {
+    await migrate(sql);
+  });
+
+  afterAll(async () => {
+    await th.cleanup();
+  });
+
+  test("wraps stemmed matches in control-char markers", async () => {
+    const acct = th.uid("acct");
+    await th.seedSession({
+      accountId: acct,
+      chatHistory: [msg("user", "I want to cancel my subscription today.")],
+    });
+    // The stored word ("cancel") shares the "cancellation" query's lexeme —
+    // ts_headline marks the stored word, not the query term.
+    const snippet = await snippetOf(acct, "cancellation");
+    expect(snippet).toContain("\u0001cancel\u0002");
+    expect(snippet).toContain("subscription");
+  });
+
+  test("marks each word of a quoted phrase match", async () => {
+    const acct = th.uid("acct");
+    await th.seedSession({
+      accountId: acct,
+      chatHistory: [msg("assistant", "Your refund request was processed yesterday.")],
+    });
+    const snippet = await snippetOf(acct, '"refund request"');
+    expect(snippet).toContain("\u0001refund\u0002");
+    expect(snippet).toContain("\u0001request\u0002");
+  });
+
+  test("joins two distant fragments with the delimiter", async () => {
+    const acct = th.uid("acct");
+    const filler = Array.from({ length: 30 }, (_, i) =>
+      msg("assistant", `Filler sentence number ${i} about the weather and traffic conditions.`),
+    );
+    await th.seedSession({
+      accountId: acct,
+      chatHistory: [
+        msg("user", "I need a refund for my last order."),
+        ...filler,
+        msg("user", "So when exactly will the refund arrive?"),
+      ],
+    });
+    const snippet = await snippetOf(acct, "refund");
+    expect(snippet).toContain(" … ");
+    expect(snippet?.match(/\u0001refund\u0002/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+});

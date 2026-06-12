@@ -54,6 +54,13 @@ export function escapeLikePattern(s: string): string {
   return s.replace(/[\\%_]/g, "\\$&");
 }
 
+/** Strip CR/LF (and other control chars) from a user-controlled value
+ *  before it goes into a log line, so an attacker can't inject newlines to
+ *  forge fake log entries (log injection). */
+export function sanitizeForLog(value: unknown): string {
+  return String(value ?? "").replace(/[\x00-\x1f\x7f]/g, "_");
+}
+
 /** Parse + clamp a `limit` query param. Each route family keeps its own
  *  ceiling — pass it explicitly so the bound is visible at the call site. */
 export function parseLimit(

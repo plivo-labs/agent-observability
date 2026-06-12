@@ -230,6 +230,49 @@ describe("decodeOtlpLogsRequest", () => {
     expect(logs[0].attributes.room_id).toBe("room-gzip");
   });
 
+  test("rejects a gzip bomb instead of allocating the full output", () => {
+    // 128 MiB of zeros compresses to a tiny payload but blows past the
+    // 64 MiB decompression cap — the decoder must throw rather than
+    // materialize the whole buffer (zip-bomb DoS).
+    const bomb = gzipSync(Buffer.alloc(128 * 1024 * 1024, 0));
+    expect(bomb.length).toBeLessThan(200 * 1024); // genuinely small on the wire
+    expect(() =>
+      decodeOtlpLogsRequest(new Uint8Array(bomb), "gzip", "application/json"),
+    ).toThrow();
+  });
+
+  test("throws on a malformed varint instead of scanning the whole buffer", () => {
+    // All-continuation bytes (MSB set) never terminate the varint. The
+    // 10-byte cap must abort rather than chew through the buffer.
+    const allContinuation = new Uint8Array(64).fill(0xff);
+    expect(() => decodeOtlpLogsRequest(allContinuation, null, null)).toThrow();
+  });
+
+  test("decodes a binary-protobuf ExportLogsServiceRequest", () => {
+    // Exercises the hand-rolled binary decoder (the default LiveKit wire
+    // format) end-to-end — previously only the JSON path was covered.
+    // AnyValue{ stringValue } — field 1, length-delimited.
+    const anyValueString = (s: string) => lengthDelimited(1, Buffer.from(s, "utf8"));
+    // KeyValue{ key, value:AnyValue } — fields 1 and 2.
+    const keyValue = (key: string, value: string) =>
+      Buffer.concat([stringField(1, key), lengthDelimited(2, anyValueString(value))]);
+    // LogRecord{ body=field5:AnyValue, attributes=field6:KeyValue }.
+    const logRecord = Buffer.concat([
+      lengthDelimited(5, anyValueString("session report")),
+      lengthDelimited(6, keyValue("room_id", "room-binary")),
+    ]);
+    // ScopeLogs{ logRecords=field2 }, ResourceLogs{ scopeLogs=field2 },
+    // ExportLogsServiceRequest{ resourceLogs=field1 }.
+    const scopeLogs = lengthDelimited(2, logRecord);
+    const resourceLogs = lengthDelimited(2, scopeLogs);
+    const request = lengthDelimited(1, resourceLogs);
+
+    const logs = decodeOtlpLogsRequest(new Uint8Array(request), null, "application/x-protobuf");
+    expect(logs).toHaveLength(1);
+    expect(logs[0].body).toBe("session report");
+    expect(logs[0].attributes.room_id).toBe("room-binary");
+  });
+
   test("returns empty array for an empty resourceLogs envelope", () => {
     const json = { resourceLogs: [] };
     const bytes = new TextEncoder().encode(JSON.stringify(json));

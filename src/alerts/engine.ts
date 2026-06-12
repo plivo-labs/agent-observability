@@ -45,6 +45,20 @@ interface WindowResult {
 
 const WINDOW_SQL = `($1 || ' minutes')::interval`;
 
+// Per-rule metric queries scan session_metrics/chat_history JSONB and can
+// get expensive on large windows. Run each inside its own transaction with
+// a statement_timeout so a single pathological query is cancelled by
+// Postgres instead of stalling the whole sweep (the caller's per-rule
+// catch turns the cancellation into a skipped rule).
+const METRIC_QUERY_TIMEOUT_MS = 5_000;
+
+async function runMetricQuery(query: string, params: unknown[]): Promise<any[]> {
+  return sql.begin(async (tx: any) => {
+    await tx.unsafe(`SET LOCAL statement_timeout = ${METRIC_QUERY_TIMEOUT_MS}`);
+    return tx.unsafe(query, params);
+  });
+}
+
 /** Rate over events: fires when matched/total exceeds the threshold, once
  *  the window holds at least min_samples observations. */
 function rateResult(
@@ -64,7 +78,7 @@ function rateResult(
 }
 
 async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult> {
-  const rows = await sql.unsafe(
+  const rows = await runMetricQuery(
     `SELECT COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'fail')::int AS matched,
             (array_agg(DISTINCT e.session_id)
@@ -84,7 +98,7 @@ async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult>
 async function evaluateOutcomeFailRate(rule: RuleToEvaluate): Promise<WindowResult> {
   // Outcomes match against the lk.-prefix-stripped value so 'fail' and
   // 'lk.fail' both count.
-  const rows = await sql.unsafe(
+  const rows = await runMetricQuery(
     `SELECT COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE regexp_replace(LOWER(o.outcome), '^lk\\.', '') IN ('fail', 'failure'))::int AS matched,
             (array_agg(DISTINCT o.session_id)
@@ -101,7 +115,7 @@ async function evaluateOutcomeFailRate(rule: RuleToEvaluate): Promise<WindowResu
 }
 
 async function evaluateInterruptionRate(rule: RuleToEvaluate): Promise<WindowResult> {
-  const rows = await sql.unsafe(
+  const rows = await runMetricQuery(
     `WITH win AS (
        SELECT session_id, chat_history
        FROM agent_transport_sessions
@@ -132,7 +146,7 @@ const LATENCY_SQL: Record<string, { value: string; where: string }> = {
 
 async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
   const expr = LATENCY_SQL[rule.metric];
-  const rows = await sql.unsafe(
+  const rows = await runMetricQuery(
     `WITH win AS (
        SELECT session_id, session_metrics
        FROM agent_transport_sessions

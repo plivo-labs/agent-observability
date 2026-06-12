@@ -38,6 +38,7 @@ mock.module("../src/db.js", () => ({
   sql: mockSql,
   insertSession: mock(() => Promise.resolve()),
   applyStoredSessionTags: mock(() => Promise.resolve()),
+  drainStagedRawReportPatches: mock(() => Promise.resolve()),
   upsertSessionTag: mock(() => Promise.resolve()),
   insertLiveKitEvaluation: mock(() => Promise.resolve()),
   upsertSessionOutcome: mock(() => Promise.resolve()),
@@ -60,6 +61,7 @@ mock.module("../src/migrate.js", () => ({
 
 mock.module("../src/s3.js", () => ({
   uploadRecording: () => Promise.resolve("https://s3.example.com/recording.ogg"),
+  deleteRecording: () => Promise.resolve(),
 }));
 
 const { default: server } = await import("../src/index.js");

@@ -1,7 +1,7 @@
 import { SQL } from "bun";
 import { config } from "./config.js";
 import { normalizeRawReportPatch } from "./raw-report.js";
-import { upsertAgent, upsertAgentTx } from "./agents/upsert.js";
+import { upsertAgentTx } from "./agents/upsert.js";
 import { costFromSessionUsage } from "./evals/metrics.js";
 import { ensurePricesLoaded } from "./evals/pricing.js";
 
@@ -114,10 +114,17 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
  *  `sql.begin` (the goal analyzer writes verdicts + its tracking row
  *  atomically); default is the global client. */
 export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db: SQL = sql): Promise<void> {
+  // Idempotent against at-least-once OTLP redelivery: a redelivered batch
+  // carries a byte-identical evaluation payload, so skip the insert when an
+  // identical row (same session/source/judge + exact raw payload) already
+  // exists. Guarding on `raw` equality never drops a genuinely different
+  // evaluation, and needs no unique constraint (so no migration that could
+  // fail on pre-existing duplicates).
   await db`
     INSERT INTO session_external_evals (
       session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw
-    ) VALUES (
+    )
+    SELECT
       ${input.sessionId},
       ${input.source},
       ${input.judgeName},
@@ -127,6 +134,12 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db:
       ${input.instructions},
       ${input.observedAt},
       ${input.raw}::jsonb
+    WHERE NOT EXISTS (
+      SELECT 1 FROM session_external_evals
+      WHERE session_id = ${input.sessionId}
+        AND source = ${input.source}
+        AND judge_name = ${input.judgeName}
+        AND raw = ${input.raw}::jsonb
     )
   `;
 }
@@ -152,28 +165,39 @@ export async function upsertSessionOutcome(input: SessionOutcomeInput): Promise<
   `;
 }
 
+/** The dedup key for a stored/incoming event: its chat item id, or null
+ *  when the event carries none (those can't be matched, so we keep them). */
+function eventItemId(event: unknown): string | null {
+  const item = (event as { item?: { id?: unknown } } | null)?.item;
+  return typeof item?.id === "string" && item.id.length > 0 ? item.id : null;
+}
+
+function asEventArray(value: unknown): unknown[] {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  return Array.isArray(parsed) ? parsed : [];
+}
+
 export async function mergeSessionRawReport(input: SessionRawReportPatchInput): Promise<void> {
   const patch = normalizeRawReportPatch(input.patch);
   if (Object.keys(patch).length === 0) {
     return;
   }
 
-  // Detect the OTLP-before-recording race. Every write below is an UPDATE
+  // Handle the OTLP-before-recording race. Every write below is an UPDATE
   // keyed on session_id; if the recording multipart hasn't created the row
-  // yet, the usage/cost/events carried in this patch are silently dropped
-  // (only session_tags are durable + replayed on insert via
-  // applyStoredSessionTags). Log it so the gap is visible in prod — if this
-  // never fires, the recording-first ordering holds and the heavier
-  // insert→upsert fix isn't warranted.
+  // yet, those UPDATEs match nothing and the usage/cost/events are lost.
+  // Park the patch in session_raw_report_patches instead and return — it
+  // gets replayed (in arrival order) by drainStagedRawReportPatches once
+  // insertSession creates the row, mirroring the session_tags replay.
   const [sessionRow] = await sql`
     SELECT 1 AS present FROM agent_transport_sessions WHERE session_id = ${input.sessionId} LIMIT 1
   `;
   if (!sessionRow) {
-    console.warn(
-      `[otlp] raw_report patch for session=${input.sessionId} arrived before its ` +
-        `recording row; usage/cost/events in this patch will be dropped ` +
-        `(keys=${Object.keys(patch).join(",")})`,
-    );
+    await sql`
+      INSERT INTO session_raw_report_patches (session_id, patch)
+      VALUES (${input.sessionId}, ${input.patch}::jsonb)
+    `;
+    return;
   }
 
   // Promote agent_id and agent_name from the patch into their indexed
@@ -271,27 +295,32 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     }
 
     if (events) {
+      // Dedup against at-least-once OTLP redelivery: append only the events
+      // whose item.id isn't already stored (id-less events can't be matched,
+      // so they're kept). The dedup is done here in JS — readable and
+      // unit-testable — and the SQL stays an atomic `|| fresh` concat so a
+      // concurrent append for the same session isn't lost.
+      const [cur] = await tx`
+        SELECT raw_report->'events' AS events
+        FROM agent_transport_sessions WHERE session_id = ${input.sessionId}
+      `;
+      const storedIds = new Set(
+        asEventArray(cur?.events).map(eventItemId).filter((id): id is string => id != null),
+      );
+      const fresh = events.filter((e) => {
+        const id = eventItemId(e);
+        return id == null || !storedIds.has(id);
+      });
+
       await tx`
         UPDATE agent_transport_sessions
-        SET raw_report = (
-          (
-            CASE
-              WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-              ELSE '{}'::jsonb
-            END
-          ) || ${restWithoutEvents}::jsonb || jsonb_build_object(
+        SET raw_report =
+          (CASE WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report ELSE '{}'::jsonb END)
+          || ${restWithoutEvents}::jsonb
+          || jsonb_build_object(
             'events',
-            COALESCE(
-              (
-                CASE
-                  WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
-                  ELSE '{}'::jsonb
-                END
-              )->'events',
-              '[]'::jsonb
-            ) || ${events}::jsonb
+            COALESCE(raw_report->'events', '[]'::jsonb) || ${fresh}::jsonb
           )
-        )
         WHERE session_id = ${input.sessionId}
       `;
       return;
@@ -308,6 +337,34 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
       WHERE session_id = ${input.sessionId}
     `;
   });
+}
+
+/**
+ * Replay any raw_report patches that were parked because they arrived
+ * before this session's recording row existed. Called by the recordings
+ * handler right after insertSession (alongside applyStoredSessionTags).
+ * Patches are replayed in arrival order through mergeSessionRawReport —
+ * which now finds the row present — then deleted. Best-effort per patch:
+ * one malformed parked patch can't block the rest.
+ */
+export async function drainStagedRawReportPatches(sessionId: string): Promise<void> {
+  const rows = await sql`
+    SELECT id, patch FROM session_raw_report_patches
+    WHERE session_id = ${sessionId}
+    ORDER BY id ASC
+  `;
+  for (const row of rows as Array<{ id: string; patch: Record<string, unknown> }>) {
+    try {
+      const patch = typeof row.patch === "string" ? JSON.parse(row.patch) : row.patch;
+      await mergeSessionRawReport({ sessionId, patch });
+      await sql`DELETE FROM session_raw_report_patches WHERE id = ${row.id}`;
+    } catch (e) {
+      console.error(
+        `[otlp] failed to replay staged raw_report patch id=${row.id} ` +
+          `session=${sessionId}: ${(e as Error).message}`,
+      );
+    }
+  }
 }
 
 function stringFromMetadata(metadata: Record<string, unknown> | null, key: string): string | null {
@@ -351,12 +408,6 @@ export async function applySessionTagMetadata(
     return;
   }
 
-  // Ensure the agent row exists before the session UPDATE sets the
-  // FK columns. Skipped when no agent_id was extracted from any tag.
-  if (agentId) {
-    await upsertAgent({ agentId, accountId, agentName });
-  }
-
   const assignments: string[] = [];
   const params: unknown[] = [];
   if (accountId) {
@@ -364,12 +415,15 @@ export async function applySessionTagMetadata(
     assignments.push(`account_id = $${params.length}`);
   }
   if (agentId) {
+    // COALESCE so a later tag can't clobber an agent_id already promoted by
+    // an earlier path — only fills when the column is still NULL, matching
+    // the defensive pattern in mergeSessionRawReport.
     params.push(agentId);
-    assignments.push(`agent_id = $${params.length}`);
+    assignments.push(`agent_id = COALESCE(agent_id, $${params.length})`);
   }
   if (agentName) {
     params.push(agentName);
-    assignments.push(`agent_name = $${params.length}`);
+    assignments.push(`agent_name = COALESCE(agent_name, $${params.length})`);
   }
   if (transport) {
     params.push(transport);
@@ -377,12 +431,21 @@ export async function applySessionTagMetadata(
   }
   params.push(sessionId);
 
-  await sql.unsafe(
-    `UPDATE agent_transport_sessions
-     SET ${assignments.join(", ")}
-     WHERE session_id = $${params.length}`,
-    params,
-  );
+  // upsertAgentTx (ensures the agent row exists for the FK) and the session
+  // UPDATE share one transaction so a concurrent insertSession can't
+  // interleave between them and leave the FK pointing at a not-yet-committed
+  // agent row.
+  await sql.begin(async (tx: any) => {
+    if (agentId) {
+      await upsertAgentTx(tx, { agentId, accountId, agentName });
+    }
+    await tx.unsafe(
+      `UPDATE agent_transport_sessions
+       SET ${assignments.join(", ")}
+       WHERE session_id = $${params.length}`,
+      params,
+    );
+  });
 }
 
 export async function applyStoredSessionTags(sessionId: string): Promise<void> {

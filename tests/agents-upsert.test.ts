@@ -176,10 +176,11 @@ describe("ingest path wiring", () => {
     expect(src).toContain("upsertAgent(");
   });
 
-  test("src/db.ts (applySessionTagMetadata) imports upsertAgent", async () => {
+  test("src/db.ts (applySessionTagMetadata) ensures the agent row via upsertAgentTx", async () => {
     const fs = await import("node:fs/promises");
     const src = await fs.readFile("src/db.ts", "utf8");
     expect(src).toContain('from "./agents/upsert.js"');
-    expect(src).toContain("upsertAgent(");
+    // COR-06: the upsert + session UPDATE share one transaction.
+    expect(src).toContain("upsertAgentTx(");
   });
 });
