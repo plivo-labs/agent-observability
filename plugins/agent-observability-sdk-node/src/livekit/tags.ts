@@ -51,6 +51,24 @@ function normalizeGoal(goal: GoalInput): { name: string; description?: string } 
   return description ? { name, description } : { name };
 }
 
+/** Validate every goal, rejecting duplicate names: the server dedupes
+ *  first-wins, so a duplicate here would silently drop a description —
+ *  almost certainly a bug in the calling agent code. */
+function normalizeGoals(goals: GoalInput[]): Array<{ name: string; description?: string }> {
+  const seen = new Set<string>();
+  return goals.map((input) => {
+    const goal = normalizeGoal(input);
+    if (seen.has(goal.name)) {
+      throw new Error(
+        `initObservability: duplicate goal name ${JSON.stringify(goal.name)} — ` +
+          "goal names are the goal's stable identity and must be unique per session.",
+      );
+    }
+    seen.add(goal.name);
+    return goal;
+  });
+}
+
 export interface InitObservabilityOptions {
   /**
    * Stable opaque agent identifier. Falls back to
@@ -128,7 +146,7 @@ export function initObservability(tagger: Tagger, options: InitObservabilityOpti
   }
 
   // Validate goals up front so a bad name fails before any tag lands.
-  const goals = (options.goals ?? []).map(normalizeGoal);
+  const goals = options.goals?.length ? normalizeGoals(options.goals) : [];
 
   const metadata: Record<string, unknown> = { agent_id: resolvedAgentId };
   if (options.agentName) metadata.agent_name = options.agentName;

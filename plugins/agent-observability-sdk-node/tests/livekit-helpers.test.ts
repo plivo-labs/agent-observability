@@ -253,6 +253,25 @@ describe("initObservability", () => {
         ).toThrow(/name/);
       }
     });
+
+    it("rejects duplicate goal names", () => {
+      process.env.LIVEKIT_OBSERVABILITY_URL = "https://obs.example.com";
+      // Same name twice — even across object and bare-string forms, and
+      // even when the descriptions differ (the server would silently keep
+      // only the first, which is almost certainly a bug upstream).
+      const dups: Array<Array<string | { name: string; description?: string }>> = [
+        [
+          { name: "refund", description: "v1 wording" },
+          { name: "refund", description: "v2 wording" },
+        ],
+        [{ name: "refund", description: "described" }, "refund"],
+      ];
+      for (const goals of dups) {
+        expect(() =>
+          initObservability(makeTagger().tagger, { agentId: "a1", goals, logger: quiet }),
+        ).toThrow(/duplicate/);
+      }
+    });
   });
 });
 

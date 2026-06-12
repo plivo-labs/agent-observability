@@ -29,8 +29,9 @@ from typing import Any, Sequence
 from agent_observability.livekit.env import ensure_observability_url
 
 
-def _normalize_goal(goal: str | tuple[str, str]) -> tuple[str, str | None]:
-    """Validate one goal and return ``(name, description-or-None)``.
+def _normalize_goal(goal: str | tuple[str, str]) -> dict[str, str]:
+    """Validate one goal and return ``{"name": ..., "description"?: ...}``
+    (no ``description`` key for name-only goals).
 
     The server splits the ``goal:`` tag at the FIRST colon after the
     prefix, so the name is the goal's stable identity and must not
@@ -51,7 +52,24 @@ def _normalize_goal(goal: str | tuple[str, str]) -> tuple[str, str | None]:
             "description instead."
         )
     description = raw_description.strip()
-    return name, description or None
+    return {"name": name, "description": description} if description else {"name": name}
+
+
+def _normalize_goals(goals: Sequence[str | tuple[str, str]]) -> list[dict[str, str]]:
+    """Validate every goal, rejecting duplicate names: the server dedupes
+    first-wins, so a duplicate here would silently drop a description —
+    almost certainly a bug in the calling agent code."""
+    normalized = [_normalize_goal(g) for g in goals]
+    seen: set[str] = set()
+    for goal in normalized:
+        if goal["name"] in seen:
+            raise ValueError(
+                f"init_observability: duplicate goal name {goal['name']!r} — "
+                "goal names are the goal's stable identity and must be unique "
+                "per session."
+            )
+        seen.add(goal["name"])
+    return normalized
 
 
 def init_observability(
@@ -136,7 +154,7 @@ def init_observability(
         )
 
     # Validate goals up front so a bad name fails before any tag lands.
-    normalized_goals = [_normalize_goal(g) for g in goals] if goals else []
+    normalized_goals = _normalize_goals(goals) if goals else []
 
     metadata: dict[str, Any] = {"agent_id": resolved_agent_id}
     if agent_name:
@@ -146,10 +164,7 @@ def init_observability(
     if transport:
         metadata["transport"] = transport
     if normalized_goals:
-        metadata["goals"] = [
-            {"name": name, "description": description} if description else {"name": name}
-            for name, description in normalized_goals
-        ]
+        metadata["goals"] = normalized_goals
     if extra_metadata:
         metadata.update(extra_metadata)
 
@@ -176,14 +191,11 @@ def init_observability(
             f"transport:{transport}",
             metadata={"transport": transport},
         )
-    for name, description in normalized_goals:
+    for goal in normalized_goals:
+        description = goal.get("description")
         tagger.add(
-            f"goal:{name}:{description}" if description else f"goal:{name}",
-            metadata=(
-                {"name": name, "description": description}
-                if description
-                else {"name": name}
-            ),
+            f"goal:{goal['name']}:{description}" if description else f"goal:{goal['name']}",
+            metadata=dict(goal),
         )
 
     return resolved_agent_id

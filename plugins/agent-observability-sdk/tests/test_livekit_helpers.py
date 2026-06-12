@@ -249,6 +249,18 @@ class TestInitObservabilityGoals:
             with pytest.raises(ValueError, match="name"):
                 init_observability(FakeTagger(), agent_id="a1", goals=[bad])
 
+    def test_rejects_duplicate_goal_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        # Same name twice — even across tuple and bare-string forms, and
+        # even when the descriptions differ (the server would silently
+        # keep only the first, which is almost certainly a bug upstream).
+        for dup in [
+            [("refund", "v1 wording"), ("refund", "v2 wording")],
+            [("refund", "described"), "refund"],
+        ]:
+            with pytest.raises(ValueError, match="duplicate"):
+                init_observability(FakeTagger(), agent_id="a1", goals=dup)
+
 
 # ── ensure_observability_url ─────────────────────────────────────────────────
 
