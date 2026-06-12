@@ -168,7 +168,12 @@ describe("GET /api/sessions", () => {
     expect(rowsQuery).toContain(
       "to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $1)"
     );
-    expect(rowsParams).toEqual(["cancel my subscription", 20, 0]);
+    expect(rowsParams).toEqual([
+      "cancel my subscription",
+      20,
+      0,
+      'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "',
+    ]);
   });
 
   test("ignores blank q", async () => {
@@ -202,6 +207,74 @@ describe("GET /api/sessions", () => {
     const body = await res.json();
     expect(body.meta.next).toContain("q=refund");
     expect(body.meta.previous).toContain("q=refund");
+  });
+
+  test("selects a ts_headline match_snippet on rows when q is active", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?q=refund", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    // The count query never pays for headline generation.
+    const [countQuery] = mockSql.mock.calls[0] as [string, unknown[]];
+    expect(countQuery).not.toContain("ts_headline");
+
+    const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
+    // $1 is the q param (the q predicate is always pushed first); the
+    // options string rides as the last param, after LIMIT/OFFSET.
+    expect(rowsQuery).toContain(
+      "ts_headline('english', transcript_text, websearch_to_tsquery('english', $1), $4) AS match_snippet"
+    );
+    expect(rowsParams).toEqual([
+      "refund",
+      20,
+      0,
+      'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "',
+    ]);
+  });
+
+  test("keeps snippet param numbering correct alongside other filters", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions?q=refund&agent_id=agent-1", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
+    // params: $1=q, $2=agent_id, $3=limit, $4=offset, $5=headline options
+    expect(rowsQuery).toContain(
+      "ts_headline('english', transcript_text, websearch_to_tsquery('english', $1), $5) AS match_snippet"
+    );
+    expect(rowsQuery).toContain("LIMIT $3 OFFSET $4");
+    expect(rowsParams).toHaveLength(5);
+  });
+
+  test("omits match_snippet entirely without q", async () => {
+    mockSql
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    const res = await server.fetch(
+      makeRequest("/api/sessions", {
+        headers: { Authorization: basicAuthHeader() },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const [rowsQuery, rowsParams] = mockSql.mock.calls[1] as [string, unknown[]];
+    expect(rowsQuery).not.toContain("ts_headline");
+    expect(rowsParams).toEqual([20, 0]);
   });
 
   test("passes started_from/started_to filters as timestamp predicates", async () => {

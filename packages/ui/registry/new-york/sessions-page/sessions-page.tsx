@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
+import type * as React from 'react'
 import { parseAsArrayOf, parseAsInteger, parseAsString, useQueryState } from 'nuqs'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Trash2 } from 'lucide-react'
+import { CornerDownRight, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -22,6 +23,34 @@ import { useObservabilityContext } from '@/lib/observability-provider'
 import type { AgentSessionRow, AgentStatsRange } from '@/lib/observability-types'
 import { DurationCell, TransportPill } from '@/components/obs-cells'
 import { KpiTile } from '@/components/kpi'
+
+/** Server-marked snippet → React nodes. /api/sessions wraps matched words
+ * in \u0001/\u0002 control chars (TS_HEADLINE_OPTIONS in src/index.ts);
+ * splitting on them here keeps everything plain text nodes — the snippet
+ * is user speech and must never be parsed as HTML. */
+const SNIPPET_MARK = /\u0001([\s\S]*?)\u0002/g
+
+const snippetNodes = (snippet: string): React.ReactNode[] => {
+  const nodes: React.ReactNode[] = []
+  let last = 0
+  for (const m of snippet.matchAll(SNIPPET_MARK)) {
+    // RegExpMatchArray.index is optional in some TS lib versions; matchAll
+    // always sets it, so default defensively rather than assert.
+    const idx = m.index ?? 0
+    if (idx > last) nodes.push(snippet.slice(last, idx))
+    nodes.push(
+      <mark
+        key={idx}
+        className="rounded-[2px] bg-warning-bg px-0.5 font-medium text-warning-fg"
+      >
+        {m[1]}
+      </mark>,
+    )
+    last = idx + m[0].length
+  }
+  if (last < snippet.length) nodes.push(snippet.slice(last))
+  return nodes
+}
 
 const TRANSPORT_OPTIONS = [
   { label: 'SIP', value: 'sip' },
@@ -58,6 +87,7 @@ export const SessionsPage = ({
   // (virtual column id `q` below), debounced by useDataTable before it
   // lands in the URL. The server does the matching (websearch syntax).
   const [q] = useQueryState('q', parseAsString.withDefault(''))
+  const searchActive = q.trim().length > 0
   // Single-date filter emits the picked day's midnight (local) as an epoch-ms
   // string. We expand it server-side into a 00:00 → next-midnight window so
   // the query returns every session that started during that calendar day.
@@ -374,6 +404,19 @@ export const SessionsPage = ({
         onRowClick={(row) => onSessionClick?.(row.original.session_id)}
         totalRowCount={totalCount}
         loading={loading}
+        renderRowDetail={
+          searchActive
+            ? (row) =>
+                row.original.match_snippet ? (
+                  <div className="flex min-w-0 items-baseline gap-1.5 pl-8 text-xs text-muted-foreground">
+                    <CornerDownRight size={12} className="shrink-0 translate-y-0.5" />
+                    <span className="block min-w-0 truncate">
+                      {snippetNodes(row.original.match_snippet)}
+                    </span>
+                  </div>
+                ) : null
+            : undefined
+        }
       />
 
       <Dialog open={confirmOpen} onOpenChange={(open) => !deleting && setConfirmOpen(open)}>

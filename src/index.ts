@@ -374,6 +374,14 @@ app.post("/observability/metrics/otlp/v0", async (c) => {
 
 // ── REST API for the dashboard UI ───────────────────────────────────────────
 
+/** ts_headline() options for /api/sessions match snippets. StartSel/StopSel
+ * are control characters — they cannot occur in spoken transcript text, and
+ * the dashboard splits on them to render <mark> spans (never raw HTML).
+ * Two ~12-word fragments, joined with " … ".
+ * Mirrored verbatim in tests-integration/transcript-search.test.ts. */
+const TS_HEADLINE_OPTIONS =
+  'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "';
+
 app.get("/api/sessions", async (c) => {
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
@@ -453,14 +461,26 @@ app.get("/api/sessions", async (c) => {
     params,
   );
 
+  // Match excerpt for an active transcript search: ts_headline() reuses the
+  // exact tsquery the predicate used, so stemming, quoted phrases, and
+  // -exclusions agree with the filter by construction. It runs only on the
+  // returned page — the GIN-indexed predicate narrowed the set first. $1 is
+  // always the q param because the q predicate is pushed first above.
+  const rowsParams: unknown[] = [...params, limit, offset];
+  let snippetCol = "";
+  if (q) {
+    snippetCol = `, ts_headline('english', transcript_text, websearch_to_tsquery('english', $1), $${rowsParams.length + 1}) AS match_snippet`;
+    rowsParams.push(TS_HEADLINE_OPTIONS);
+  }
+
   const rows = await sql.unsafe(
     `SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
-            turn_count, has_stt, has_llm, has_tts, record_url, created_at
+            turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol}
      FROM agent_transport_sessions
      ${whereClause}
      ORDER BY ended_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-    [...params, limit, offset],
+    rowsParams,
   );
 
   return c.json(buildListResponse(rows, limit, offset, countResult.total, "/api/sessions", extraParams));

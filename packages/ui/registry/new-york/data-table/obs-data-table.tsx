@@ -1,5 +1,6 @@
-import { flexRender, type Row, type Table as TanstackTable } from "@tanstack/react-table";
+import { Fragment } from "react";
 import type * as React from "react";
+import { flexRender, type Row, type Table as TanstackTable } from "@tanstack/react-table";
 import {
   Table,
   TableBody,
@@ -24,6 +25,11 @@ interface ObsDataTableProps<TData> extends React.ComponentProps<"div"> {
   /** Shows skeleton rows in the body when true. Prevents layout shift vs
    *  an above-the-table "Loading…" banner. */
   loading?: boolean;
+  /** Optional full-width detail line rendered under a data row (e.g. a
+   *  search-match snippet). Only rows where this returns non-null get the
+   *  extra line; it shares the parent row's click handling so the pair
+   *  reads as one clickable unit. */
+  renderRowDetail?: (row: Row<TData>) => React.ReactNode;
 }
 
 export function ObsDataTable<TData>({
@@ -32,6 +38,7 @@ export function ObsDataTable<TData>({
   onRowClick,
   totalRowCount,
   loading,
+  renderRowDetail,
   className,
   ...props
 }: ObsDataTableProps<TData>) {
@@ -92,28 +99,56 @@ export function ObsDataTable<TData>({
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  data-state={row.getIsSelected() ? "selected" : undefined}
-                  className={onRowClick ? "cursor-pointer hover:bg-muted/50" : undefined}
-                  onClick={
-                    onRowClick
-                      ? (e) => {
-                          const t = e.target as HTMLElement;
-                          if (t.closest('button, a, input, select, [role="menuitem"]')) return;
-                          onRowClick(row);
-                        }
-                      : undefined
-                  }
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+              rows.map((row) => {
+                const detail = renderRowDetail?.(row) ?? null;
+                const handleClick = onRowClick
+                  ? (e: React.MouseEvent) => {
+                      const t = e.target as HTMLElement;
+                      if (t.closest('button, a, input, select, [role="menuitem"]')) return;
+                      onRowClick(row);
+                    }
+                  : undefined;
+                return (
+                  <Fragment key={row.id}>
+                    <TableRow
+                      data-state={row.getIsSelected() ? "selected" : undefined}
+                      className={cn(
+                        onRowClick && "cursor-pointer hover:bg-muted/50",
+                        // The detail line belongs to this row — drop the
+                        // divider between them and pair the hover states so
+                        // the two <tr>s read as one unit.
+                        detail != null && "border-b-0 has-[+tr:hover]:bg-muted/50",
+                      )}
+                      onClick={handleClick}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                    {detail != null && (
+                      // Hover styling pairs with the parent row via
+                      // adjacent-sibling selectors so the two <tr>s light
+                      // up as one unit.
+                      <TableRow
+                        data-state={row.getIsSelected() ? "selected" : undefined}
+                        className={cn(
+                          onRowClick && "cursor-pointer hover:bg-muted/50 [:where(tr:hover)+&]:bg-muted/50",
+                        )}
+                        onClick={handleClick}
+                      >
+                        <TableCell
+                          colSpan={row.getVisibleCells().length}
+                          className="pt-0 pb-2.5"
+                        >
+                          {detail}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })
             )}
           </TableBody>
         </Table>

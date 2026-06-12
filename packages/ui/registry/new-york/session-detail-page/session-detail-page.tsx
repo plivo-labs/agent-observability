@@ -17,7 +17,13 @@ import { SessionConfig } from '@/components/session-config'
 import { SessionEvents } from '@/components/session-events'
 import { SessionEvaluationsDrawer } from '@/components/session-evaluations-drawer'
 
-export const SessionDetailPage = () => {
+export const SessionDetailPage = ({
+  searchQuery,
+}: {
+  /** Active transcript-search query carried from the sessions list (?q=).
+   * Threaded to the transcript so it can annotate matches. */
+  searchQuery?: string
+} = {}) => {
   const { session, loading, error } = useSession()
   const [evaluationsOpen, setEvaluationsOpen] = useState(false)
 
@@ -97,7 +103,7 @@ export const SessionDetailPage = () => {
                 <SessionTimeline />
               </div>
             )}
-            <TurnTranscriptSection />
+            <TurnTranscriptSection searchQuery={searchQuery} />
           </div>
         </TabsContent>
 
