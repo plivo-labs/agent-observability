@@ -152,6 +152,9 @@ const config = {
       '@/components/conversation-eval-detail-drawer': reg(
         'conversation-eval-detail-drawer/conversation-eval-detail-drawer.tsx',
       ),
+      '@/components/conversation-goals-tab': reg(
+        'conversation-goals-tab/conversation-goals-tab.tsx',
+      ),
     }
     return cfg
   },

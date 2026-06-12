@@ -124,21 +124,27 @@ reads the conversation and judges whether each goal was met.
 
 ### Goal transport (SDK → server)
 
+- Goals are structured: a **name** (stable identifier; max 100 chars,
+  no colons) plus a **description** (what the judge evaluates; max 500
+  chars). The name is the filterable identity — it enables the planned
+  "sessions where goal X was met" filter on the sessions list.
 - Both SDKs (`plugins/agent-observability-sdk`,
-  `plugins/agent-observability-sdk-node`) add a `goals: list[str]`
-  parameter to the existing `apply_observability_tags` helper.
-- Each goal is emitted as a tag string `goal:<text>` — the same
-  channel `account_id:<value>` already uses, so goals ride both
-  ingest paths unchanged:
+  `plugins/agent-observability-sdk-node`) add a
+  `goals: list[(name, description)]`-shaped parameter to the existing
+  `apply_observability_tags` helper.
+- Each goal is emitted as a tag string `goal:<name>:<description>` —
+  split at the FIRST colon after the prefix, so descriptions may
+  contain colons. `goal:<name>` alone is valid (description defaults
+  to the name). Same channel `account_id:<value>` already uses, so
+  goals ride both ingest paths unchanged:
   - recording path: header `room_tags` → `raw_report.tags`
   - OTLP path: `"tag"` records → `session_tags`
-- Server-side `extractGoals(session)` mirrors the existing
-  `extractAccountId` precedent (`src/index.ts:213`): collect every
-  tag with the `goal:` prefix from `raw_report` tags and
-  `session_tags`, preserving order, deduplicated.
-- Goal text constraint: tags are plain strings; commas and colons
-  after the prefix are part of the goal text. Practical length cap
-  enforced at analysis time (goal text truncated at 500 chars).
+- Server-side parsing collects every `goal:`-prefixed tag from both
+  sources, preserving order, deduplicated **by name** (first
+  occurrence wins).
+- Storage mapping in `session_external_evals`: `tag` = goal name,
+  `instructions` = description — so the future sessions filter is
+  `WHERE source='goal' AND tag=$name AND verdict='met'`.
 
 ### Analyzer job (worker sweep)
 

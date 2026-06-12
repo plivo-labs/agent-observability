@@ -217,6 +217,37 @@ export interface ConversationEvalSummary {
   evaluations: SessionExternalEvaluation[]
 }
 
+/** One judged goal of a session (session_external_evals, source='goal'). */
+export interface GoalVerdictRow {
+  /** Stable goal identifier — the future "sessions where goal X was met"
+   * filter keys on this. */
+  name: string
+  /** What the judge evaluated. */
+  description: string
+  verdict: 'met' | 'unmet' | string
+  reasoning: string | null
+  what_went_wrong: string | null
+  observed_at: string | null
+}
+
+/** One analyzed session in the agent's Conversation Goals tab. */
+export interface GoalSessionResult {
+  session_id: string
+  account_id: string | null
+  ended_at: string
+  duration_ms: number | null
+  met_count: number
+  unmet_count: number
+  goals: GoalVerdictRow[]
+}
+
+/** Agent-wide rollup across ALL analyzed sessions (not just the page). */
+export interface GoalResultsSummary {
+  sessions_total: number
+  met_total: number
+  unmet_total: number
+}
+
 export interface AgentsFilters {
   accountId?: string
   /** Exact-match filter on agent_id. */
