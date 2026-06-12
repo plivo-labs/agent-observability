@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from 'react'
+import { Fragment, useEffect, useMemo, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import {
   Collapsible,
@@ -27,6 +27,71 @@ const LATENCY_THRESHOLDS: Record<string, { good: number; warn: number }> = {
 // attention to a problem turn.
 const PILL_BASE =
   'rounded border px-1.5 py-0.5 text-[10px] font-mono font-normal tabular-nums bg-card'
+
+// ── Search-match annotation ──────────────────────────────────────────
+// The sessions list filters with Postgres websearch_to_tsquery; opening a
+// session from an active search carries the query here so the transcript
+// can annotate what (approximately) matched. Postgres does real English
+// stemming — this is a deliberate client-side approximation (shared stem
+// prefix after stripping common suffixes), good enough to point the eye.
+// The list snippet stays the server-truth for what matched.
+
+const STEM_SUFFIXES = ['ations', 'ation', 'ings', 'ing', 'ions', 'ion', 'ed', 'es', 'ly', 's']
+
+const crudeStem = (word: string): string => {
+  for (const suffix of STEM_SUFFIXES) {
+    if (word.length - suffix.length >= 3 && word.endsWith(suffix)) {
+      return word.slice(0, -suffix.length)
+    }
+  }
+  return word
+}
+
+/** Words worth highlighting from a websearch-style query: quoted phrases
+ * contribute their words; `-excluded` terms and bare or/and are dropped. */
+const parseSearchTerms = (q: string | undefined): string[] => {
+  if (!q) return []
+  return q
+    .replace(/"/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !w.startsWith('-'))
+    .map((w) => w.replace(/[^\p{L}\p{N}']/gu, '').toLowerCase())
+    .filter((w) => w.length >= 2 && w !== 'or' && w !== 'and')
+}
+
+const wordMatchesTerm = (word: string, term: string): boolean => {
+  const a = crudeStem(word.toLowerCase())
+  const b = crudeStem(term)
+  if (a === b) return true
+  return (b.length >= 3 && a.startsWith(b)) || (a.length >= 3 && b.startsWith(a))
+}
+
+/** Capture group keeps word tokens at odd indices of split() so the
+ * renderer tests only words and passes punctuation through untouched. */
+const WORD_TOKEN = /(\p{L}[\p{L}\p{N}']*)/gu
+
+const textHasMatch = (text: string, terms: string[]): boolean => {
+  if (!terms.length) return false
+  const words = text.match(WORD_TOKEN)
+  return !!words?.some((w) => terms.some((t) => wordMatchesTerm(w, t)))
+}
+
+const HighlightedText = ({ text, terms }: { text: string; terms: string[] }) => {
+  if (!terms.length) return <>{text}</>
+  return (
+    <>
+      {text.split(WORD_TOKEN).map((tok, i) =>
+        i % 2 === 1 && terms.some((t) => wordMatchesTerm(tok, t)) ? (
+          <mark key={i} className="rounded-[2px] bg-warning-bg px-0.5 text-warning-fg">
+            {tok}
+          </mark>
+        ) : (
+          <Fragment key={i}>{tok}</Fragment>
+        ),
+      )}
+    </>
+  )
+}
 
 /** STT confidence pill on user bubbles. Thresholds mirror voice SLOs:
  * ≥ 0.9 green, ≥ 0.7 amber, below red. */
@@ -89,7 +154,7 @@ const DeadAirDivider = ({ gapMs }: { gapMs: number }) => (
 
 export type TranscriptAlignment = 'chat' | 'left'
 
-const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: TurnRecord; highlighted?: boolean; turnRef?: React.Ref<HTMLDivElement>; alignment?: TranscriptAlignment }) => {
+const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat', searchTerms = [] }: { turn: TurnRecord; highlighted?: boolean; turnRef?: React.Ref<HTMLDivElement>; alignment?: TranscriptAlignment; searchTerms?: string[] }) => {
   const isAgentFirst = turn.agent_first
   const isChat = alignment === 'chat'
 
@@ -136,7 +201,7 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
                   <User size={11} className="text-muted-foreground" />
                 </div>
                 <div className="rounded-lg rounded-tl-sm bg-bubble-user border border-border px-3 py-2">
-                  <span className="text-xs">{turn.user_text}</span>
+                  <span className="text-xs"><HighlightedText text={turn.user_text} terms={searchTerms} /></span>
                 </div>
               </div>
               {turn.user_transcript_confidence != null && (
@@ -200,7 +265,7 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
                 <Bot size={11} className="text-info" />
               </div>
               <div className={`rounded-lg px-3 py-2 bg-bubble-agent border border-info-border ${isChat ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
-                <span className="text-xs">{turn.agent_text}</span>
+                <span className="text-xs"><HighlightedText text={turn.agent_text} terms={searchTerms} /></span>
               </div>
             </div>
           )}
@@ -229,7 +294,7 @@ const TurnCard = ({ turn, highlighted, turnRef, alignment = 'chat' }: { turn: Tu
   )
 }
 
-const ChatMessageCard = ({ item }: { item: ChatItem }) => {
+const ChatMessageCard = ({ item, searchTerms = [] }: { item: ChatItem; searchTerms?: string[] }) => {
   const role = item.role ?? item.message?.role ?? 'unknown'
   const rawContent = item.content ?? item.message?.content ?? ''
   const content = Array.isArray(rawContent) ? rawContent.join(' ') : rawContent
@@ -246,7 +311,7 @@ const ChatMessageCard = ({ item }: { item: ChatItem }) => {
       </div>
       <div>
         <span className="text-xxs-400 text-muted-foreground capitalize">{role}</span>
-        <p className="text-xs leading-relaxed">{content}</p>
+        <p className="text-xs leading-relaxed"><HighlightedText text={content} terms={searchTerms} /></p>
       </div>
     </div>
   )
@@ -258,12 +323,16 @@ export const TurnTranscriptSection = ({
   highlightedTurn: highlightedTurnProp,
   embedded,
   alignment = 'chat',
+  searchQuery,
 }: {
   chatHistory?: ChatItem[] | null
   metrics?: SessionMetrics | null
   highlightedTurn?: number | null
   embedded?: boolean
   alignment?: TranscriptAlignment
+  /** Active transcript-search query (?q=) — highlights matching words and
+   * scrolls to the first matching turn. */
+  searchQuery?: string
 }) => {
   const hook = useTranscript()
   const chatHistory = chatHistoryProp ?? hook.chatHistory
@@ -279,6 +348,21 @@ export const TurnTranscriptSection = ({
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
   }, [highlightedTurn])
+
+  const searchTerms = useMemo(() => parseSearchTerms(searchQuery), [searchQuery])
+
+  // Jump to the first matching turn when arriving from a search. An
+  // explicit highlightedTurn deep-link wins; this only fills the gap.
+  const turns = metrics?.turns
+  useEffect(() => {
+    if (!searchTerms.length || highlightedTurn != null) return
+    const first = turns?.find((t) =>
+      [t.user_text, t.agent_text].some((txt) => txt && textHasMatch(txt, searchTerms)),
+    )
+    if (first) {
+      turnRefs.current[first.turn_number]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [searchTerms, highlightedTurn, turns])
 
   // If we have structured turn data from metrics, show that
   if (metrics?.turns?.length) {
@@ -303,6 +387,7 @@ export const TurnTranscriptSection = ({
                 highlighted={highlightedTurn === turn.turn_number}
                 turnRef={(el) => { turnRefs.current[turn.turn_number] = el }}
                 alignment={alignment}
+                searchTerms={searchTerms}
               />
             </Fragment>
           ))}
@@ -326,7 +411,7 @@ export const TurnTranscriptSection = ({
         </div>
         <div className="space-y-1 max-h-[600px] overflow-y-auto">
           {messages.map((item, i) => (
-            <ChatMessageCard key={item.id || i} item={item} />
+            <ChatMessageCard key={item.id || i} item={item} searchTerms={searchTerms} />
           ))}
         </div>
       </div>
