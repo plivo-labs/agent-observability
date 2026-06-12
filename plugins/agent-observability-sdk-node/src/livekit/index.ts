@@ -17,7 +17,12 @@
  * API (Python ships a port for the Python-side `JudgeGroup`).
  */
 
-export { initObservability, type Tagger, type InitObservabilityOptions } from "./tags.js";
+export {
+  initObservability,
+  type Tagger,
+  type InitObservabilityOptions,
+  type GoalInput,
+} from "./tags.js";
 export {
   ensureObservabilityUrl,
   resolveObservabilityUrl,

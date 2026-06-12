@@ -160,6 +160,96 @@ class TestInitObservability:
         assert tagger.names() == ["agent.session", "agent_id:a1"]
 
 
+class TestInitObservabilityGoals:
+    """The ``goals`` parameter — conversation goals the server's analyzer
+    judges post-session. Wire format: ``goal:<name>:<description>``,
+    split server-side at the FIRST colon after the prefix (so names must
+    not contain colons; descriptions may)."""
+
+    def _init(
+        self,
+        tagger: FakeTagger,
+        goals: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        init_observability(tagger, agent_id="agent-uuid-1", goals=goals)
+
+    def test_emits_one_goal_tag_per_goal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tagger = FakeTagger()
+        self._init(
+            tagger,
+            [
+                ("identity-check", "Confirm the caller's identity"),
+                ("order-resolution", "Resolve the order issue or open a ticket"),
+            ],
+            monkeypatch,
+        )
+        assert "goal:identity-check:Confirm the caller's identity" in tagger.names()
+        assert "goal:order-resolution:Resolve the order issue or open a ticket" in tagger.names()
+
+    def test_bare_string_goal_emits_name_only_form(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, ["identity-check"], monkeypatch)
+        assert "goal:identity-check" in tagger.names()
+
+    def test_empty_description_collapses_to_name_only_form(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("identity-check", "  ")], monkeypatch)
+        assert "goal:identity-check" in tagger.names()
+
+    def test_goal_tag_metadata_carries_name_and_description(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("refund", "Issue a refund when asked")], monkeypatch)
+        goal_call = next(c for c in tagger.calls if c[0].startswith("goal:"))
+        assert goal_call[1] == {"name": "refund", "description": "Issue a refund when asked"}
+
+    def test_wrapper_metadata_includes_goals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("refund", "Issue a refund"), "identity-check"], monkeypatch)
+        wrapper = tagger.calls[0]
+        assert wrapper[0] == "agent.session"
+        assert wrapper[1] is not None
+        assert wrapper[1]["goals"] == [
+            {"name": "refund", "description": "Issue a refund"},
+            {"name": "identity-check"},
+        ]
+
+    def test_trims_name_and_description(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [(" refund ", "  Issue a refund  ")], monkeypatch)
+        assert "goal:refund:Issue a refund" in tagger.names()
+
+    def test_description_may_contain_colons(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [("escalation", "Escalate: only after two failures")], monkeypatch)
+        assert "goal:escalation:Escalate: only after two failures" in tagger.names()
+
+    def test_rejects_goal_name_containing_a_colon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        for bad in [("bad:name", "desc"), "bad:name"]:
+            with pytest.raises(ValueError, match="colon"):
+                init_observability(FakeTagger(), agent_id="a1", goals=[bad])
+
+    def test_rejects_empty_goal_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        for bad in [("", "desc"), "   "]:
+            with pytest.raises(ValueError, match="name"):
+                init_observability(FakeTagger(), agent_id="a1", goals=[bad])
+
+
 # ── ensure_observability_url ─────────────────────────────────────────────────
 
 

@@ -156,6 +156,104 @@ describe("initObservability", () => {
     });
     expect(calls.map((c) => c.name)).toEqual(["agent.session", "agent_id:a1"]);
   });
+
+  // The `goals` option — conversation goals the server's analyzer judges
+  // post-session. Wire format: `goal:<name>:<description>`, split
+  // server-side at the FIRST colon after the prefix (names must not
+  // contain colons; descriptions may).
+  describe("goals", () => {
+    const quiet = { info: () => {}, warn: () => {} };
+
+    function initWithGoals(goals: Array<string | { name: string; description?: string }>) {
+      process.env.LIVEKIT_OBSERVABILITY_URL = "https://obs.example.com";
+      const { tagger, calls } = makeTagger();
+      initObservability(tagger, { agentId: "agent-uuid-1", goals, logger: quiet });
+      return calls;
+    }
+
+    it("emits one goal tag per goal", () => {
+      const calls = initWithGoals([
+        { name: "identity-check", description: "Confirm the caller's identity" },
+        { name: "order-resolution", description: "Resolve the order issue or open a ticket" },
+      ]);
+      const names = calls.map((c) => c.name);
+      expect(names).toContain("goal:identity-check:Confirm the caller's identity");
+      expect(names).toContain("goal:order-resolution:Resolve the order issue or open a ticket");
+    });
+
+    it("bare string goals emit the name-only form", () => {
+      const names = initWithGoals(["identity-check"]).map((c) => c.name);
+      expect(names).toContain("goal:identity-check");
+    });
+
+    it("empty description collapses to the name-only form", () => {
+      const names = initWithGoals([{ name: "identity-check", description: "  " }]).map(
+        (c) => c.name,
+      );
+      expect(names).toContain("goal:identity-check");
+    });
+
+    it("goal tag metadata carries name and description", () => {
+      const calls = initWithGoals([{ name: "refund", description: "Issue a refund when asked" }]);
+      const goalCall = calls.find((c) => c.name.startsWith("goal:"));
+      expect(goalCall?.metadata).toEqual({
+        name: "refund",
+        description: "Issue a refund when asked",
+      });
+    });
+
+    it("wrapper metadata includes goals", () => {
+      const calls = initWithGoals([
+        { name: "refund", description: "Issue a refund" },
+        "identity-check",
+      ]);
+      expect(calls[0].name).toBe("agent.session");
+      expect(calls[0].metadata?.goals).toEqual([
+        { name: "refund", description: "Issue a refund" },
+        { name: "identity-check" },
+      ]);
+    });
+
+    it("trims name and description", () => {
+      const names = initWithGoals([{ name: " refund ", description: "  Issue a refund  " }]).map(
+        (c) => c.name,
+      );
+      expect(names).toContain("goal:refund:Issue a refund");
+    });
+
+    it("descriptions may contain colons", () => {
+      const names = initWithGoals([
+        { name: "escalation", description: "Escalate: only after two failures" },
+      ]).map((c) => c.name);
+      expect(names).toContain("goal:escalation:Escalate: only after two failures");
+    });
+
+    it("rejects a goal name containing a colon", () => {
+      process.env.LIVEKIT_OBSERVABILITY_URL = "https://obs.example.com";
+      for (const bad of [{ name: "bad:name", description: "d" }, "bad:name"]) {
+        expect(() =>
+          initObservability(makeTagger().tagger, {
+            agentId: "a1",
+            goals: [bad],
+            logger: quiet,
+          }),
+        ).toThrow(/colon/);
+      }
+    });
+
+    it("rejects an empty goal name", () => {
+      process.env.LIVEKIT_OBSERVABILITY_URL = "https://obs.example.com";
+      for (const bad of [{ name: "", description: "d" }, "   "]) {
+        expect(() =>
+          initObservability(makeTagger().tagger, {
+            agentId: "a1",
+            goals: [bad],
+            logger: quiet,
+          }),
+        ).toThrow(/name/);
+      }
+    });
+  });
 });
 
 describe("ensureObservabilityUrl", () => {
