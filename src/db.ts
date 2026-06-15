@@ -67,6 +67,14 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
   // chat_history at insert time carries only timings (TTFT/TTFB/e2e
   // latency), not token counts, so computing here would persist a
   // misleading $0 for every voice-agent session.
+  // Idempotent against at-least-once recording redelivery: the SDK retries a
+  // failed upload with a byte-identical recording, so a duplicate session_id is
+  // a retry, not new data. DO NOTHING (not DO UPDATE) is deliberate — by the
+  // time a retry lands, OTLP "session report" patches may have already
+  // back-filled session_metrics.usage / estimated_cost_usd / raw_report on the
+  // existing row; overwriting with the recording's original (token-free)
+  // payload would clobber that enrichment. Relies on the UNIQUE (session_id)
+  // constraint added in migration 019.
   await tx`
     INSERT INTO agent_transport_sessions (
       session_id, account_id, agent_id, agent_name, transport, started_at, ended_at, duration_ms, turn_count,
@@ -89,6 +97,7 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
       ${session.rawReport}::jsonb,
       ${session.recordUrl}
     )
+    ON CONFLICT (session_id) DO NOTHING
   `;
 }
 

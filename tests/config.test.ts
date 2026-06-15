@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { envSchema } from "../src/schema.js";
+import { envSchema, assertProdAuthConfigured } from "../src/schema.js";
 
 describe("envSchema", () => {
   const validEnv = {
@@ -135,5 +135,36 @@ describe("envSchema", () => {
       expect(result.data.S3_ACCESS_KEY_ID).toBeUndefined();
       expect(result.data.S3_SECRET_ACCESS_KEY).toBeUndefined();
     }
+  });
+
+  test("NODE_ENV defaults to development, accepts known modes, rejects others", () => {
+    const def = envSchema.safeParse(validEnv);
+    expect(def.success).toBe(true);
+    if (def.success) expect(def.data.NODE_ENV).toBe("development");
+
+    for (const env of ["development", "production", "test"]) {
+      expect(envSchema.safeParse({ ...validEnv, NODE_ENV: env }).success).toBe(true);
+    }
+    expect(envSchema.safeParse({ ...validEnv, NODE_ENV: "staging" }).success).toBe(false);
+  });
+});
+
+describe("assertProdAuthConfigured", () => {
+  test("dev without auth is allowed (zero-config open mode)", () => {
+    expect(() => assertProdAuthConfigured("development", false)).not.toThrow();
+  });
+
+  test("test env without auth is allowed", () => {
+    expect(() => assertProdAuthConfigured("test", false)).not.toThrow();
+  });
+
+  test("production without auth throws (fail-fast boot)", () => {
+    expect(() => assertProdAuthConfigured("production", false)).toThrow(
+      /NODE_ENV=production but no authentication/,
+    );
+  });
+
+  test("production with auth is allowed", () => {
+    expect(() => assertProdAuthConfigured("production", true)).not.toThrow();
   });
 });

@@ -57,6 +57,7 @@ export function registerAppMocks(): void {
     s3Enabled: false,
     basicAuthEnabled: true,
     liveKitAuthEnabled: true,
+    authEnabled: true,
   }));
 
   mock.module("../src/db.js", () => ({

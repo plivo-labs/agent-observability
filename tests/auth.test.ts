@@ -8,6 +8,7 @@ mock.module("../src/config.js", () => ({
   config: { LIVEKIT_API_KEY: undefined, LIVEKIT_API_SECRET: undefined },
   basicAuthEnabled: false,
   liveKitAuthEnabled: false,
+  authEnabled: false,
   // Full export surface so the shared module shape stays a superset — an
   // incomplete mock breaks files that import s3Enabled from config.
   s3Enabled: false,

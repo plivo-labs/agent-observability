@@ -6,7 +6,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
-import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
+import { config, s3Enabled, basicAuthEnabled, authEnabled } from "./config.js";
 import { uploadRecording, deleteRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
@@ -24,6 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
+import { startJobWorker, stopJobWorker } from "./jobs/worker.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -38,11 +39,17 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
   startAlertSweeper();
 }
 
+// Generic job worker: processes due eval/simulation jobs. Inline by default
+// (same zero-config rationale as the alert sweeper); set JOBS_WORKER=off when
+// the dedicated worker entrypoint runs. Skipped under test.
+if (process.env.NODE_ENV !== "test" && config.JOBS_WORKER === "inline") {
+  startJobWorker();
+}
+
 // When neither auth mode is configured, every ingest route AND the whole
 // dashboard API are open to anyone who can reach the port. That's a
 // supported zero-config mode, but it must never be silent — an env-loading
 // slip would otherwise expose all session data with no signal.
-const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
 if (!authEnabled) {
   console.warn(
     "[security] No authentication configured — ingest and /api are OPEN to " +
@@ -96,7 +103,7 @@ app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
 // ── Health check ────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => {
-  return c.json({ status: "ok", s3Enabled, authEnabled });
+  return c.json({ status: "ok", s3Enabled, authEnabled, env: config.NODE_ENV });
 });
 
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
@@ -651,6 +658,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
+    stopJobWorker();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);

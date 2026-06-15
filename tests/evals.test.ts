@@ -32,6 +32,7 @@ mock.module("../src/config.js", () => ({
   s3Enabled: false,
   basicAuthEnabled: true,
   liveKitAuthEnabled: false,
+  authEnabled: true,
 }));
 
 mock.module("../src/db.js", () => ({
@@ -42,6 +43,7 @@ mock.module("../src/db.js", () => ({
   upsertSessionTag: mock(() => Promise.resolve()),
   insertLiveKitEvaluation: mock(() => Promise.resolve()),
   upsertSessionOutcome: mock(() => Promise.resolve()),
+  mergeSessionRawReport: mock(() => Promise.resolve()),
   applySessionTagMetadata: mock(() => Promise.resolve()),
 }));
 

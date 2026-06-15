@@ -153,7 +153,8 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         turn_count, tool_call_count, interruption_count,
         agent_handoff_count, ttft_sample_count,
         prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens,
-        estimated_cost_usd
+        estimated_cost_usd,
+        source
       ) VALUES (
         ${run.run_id},
         ${run.name ?? null},
@@ -189,9 +190,11 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${runMetrics.completion_tokens},
         ${runMetrics.total_tokens},
         ${runMetrics.cached_prompt_tokens},
-        ${runMetrics.estimated_cost_usd}
+        ${runMetrics.estimated_cost_usd},
+        'sdk'
       )
       ON CONFLICT (run_id) DO UPDATE SET
+        source              = COALESCE(EXCLUDED.source,            eval_runs.source),
         name                = COALESCE(EXCLUDED.name,              eval_runs.name),
         status              = EXCLUDED.status,
         finished_at         = COALESCE(EXCLUDED.finished_at,       eval_runs.finished_at),

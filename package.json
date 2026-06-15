@@ -11,8 +11,10 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
     "hono": "^4.12.25",
     "jose": "^6.2.3",
+    "openai": "^6.42.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

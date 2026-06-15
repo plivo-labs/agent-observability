@@ -1,4 +1,4 @@
-import { envSchema } from "./schema.js";
+import { envSchema, assertProdAuthConfigured } from "./schema.js";
 
 const parsed = envSchema.safeParse(process.env);
 
@@ -24,3 +24,11 @@ export const basicAuthEnabled =
 export const liveKitAuthEnabled =
   !!config.LIVEKIT_API_KEY &&
   !!config.LIVEKIT_API_SECRET;
+
+export const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
+
+// Fail fast: a production deployment with no auth would silently expose all
+// ingest + dashboard data. Dev keeps the zero-config open mode (with the loud
+// startup warning in index.ts). The check itself lives in schema.ts so it
+// stays unit-testable without importing this module.
+assertProdAuthConfigured(config.NODE_ENV, authEnabled);
