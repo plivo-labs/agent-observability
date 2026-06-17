@@ -1,4 +1,4 @@
-"""Evaluation judges ported from cx-sqs-worker's vibe_eval metrics.
+"""LiveKit-compatible evaluation judges.
 
 Every judge in this package is a LiveKit-compatible `Judge`: it has a
 `name` property and an async `evaluate(*, chat_ctx, reference=None,
@@ -9,8 +9,8 @@ built-ins (`accuracy_judge`, `safety_judge`, …).
 Two flavors of judge:
 
 - **LLM judges** — factory functions returning `Judge(...)`. They wrap
-  cx-sqs-worker's criteria/steps as the judge's `instructions`, and
-  LiveKit's runtime handles the `submit_verdict` tool-call dance.
+  the judge's criteria/steps as its `instructions`, and LiveKit's runtime
+  handles the `submit_verdict` tool-call dance.
 - **Programmatic judges** — `IntentAccuracyJudge`, `ToolCorrectnessJudge`.
   Plain Python comparisons, no LLM. They still satisfy the LiveKit Judge
   protocol so users compose them uniformly.

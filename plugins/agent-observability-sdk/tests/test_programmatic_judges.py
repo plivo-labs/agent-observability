@@ -94,10 +94,10 @@ async def test_tool_correctness_unexpected_tool(chat_ctx_with_tools):
     judge = ToolCorrectnessJudge(expected_tools=["lookup_order"])
     result = await judge.evaluate(chat_ctx=ctx)
     # expected_count=1, matched=1 → score = 1.0 which passes threshold,
-    # BUT cx-sqs-worker's calculateToolScore says: if expected_count > 0,
+    # BUT the tool-score rule says: if expected_count > 0,
     # score = matched / expected. So this PASSES because we matched all
     # expected. Unexpected tools alone don't lower the score when
-    # expected_count > 0. This matches the Go port.
+    # expected_count > 0.
     assert result.verdict == "pass"
 
 
@@ -106,7 +106,7 @@ async def test_tool_correctness_unexpected_only(chat_ctx_with_tools):
     ctx = chat_ctx_with_tools("drop_database")
     judge = ToolCorrectnessJudge(expected_tools=[])
     result = await judge.evaluate(chat_ctx=ctx)
-    # expected_count=0, unexpected>0 → score 0.0 (programmatic.go:148-150)
+    # expected_count=0, unexpected>0 → score 0.0
     assert result.verdict == "fail"
     assert "Unexpected tools" in result.reasoning
 
