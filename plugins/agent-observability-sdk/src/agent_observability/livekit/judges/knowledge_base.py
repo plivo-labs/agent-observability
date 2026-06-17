@@ -1,9 +1,5 @@
 """Knowledge-base correctness judge.
 
-Ported from cx-sqs-worker
-`usecases/vibe_eval/evaluator/metrics/llm_metrics.go`
-(`NewKnowledgeBaseCorrectnessMetric`) + `GetKnowledgeBaseCorrectnessPromptConfig`.
-
 Used when the agent invoked a KB tool. The judge decides whether the call
 was necessary — i.e. whether the answer was already discoverable in the
 conversation context without the tool.

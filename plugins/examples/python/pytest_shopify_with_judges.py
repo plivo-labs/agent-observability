@@ -929,7 +929,7 @@ async def test_confirms_destructive_actions_judge_passes_when_user_consented():
 
 # ── Post-session judges (agent-observability-sdk) ───────────────────────────
 #
-# The SDK ships nine LiveKit-compatible judges ported from cx-sqs-worker.
+# The SDK ships nine LiveKit-compatible judges.
 # They satisfy the same Judge interface as the LiveKit built-ins above, so
 # they compose into a single JudgeGroup. `default_judges()` is the
 # pre-configured set of four ground-truth-free judges (Hallucination,

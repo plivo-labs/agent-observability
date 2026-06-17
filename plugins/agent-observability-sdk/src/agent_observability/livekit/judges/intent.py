@@ -3,14 +3,12 @@
 - `hold_requested_intent_accuracy_judge` (LLM) — was a hold/wait response
   appropriate? No ground truth required; the judge looks at the agent's last
   message and the user's preceding turn.
-  Ported from cx-sqs-worker `metrics/llm_metrics.go::NewHoldRequestedIntentAccuracyMetric`.
 - `IntentAccuracyJudge` (programmatic) — case-insensitive string match of
-  expected vs. actual intent. Ported line-for-line from
-  `metrics/programmatic.go::intentAccuracyMetric` (lines 11–54).
+  expected vs. actual intent.
 
-cx-sqs-worker's `intent_detection` judge is intentionally NOT ported —
-its prompt is tightly coupled to cx-sqs-worker's flow-graph "available
-intents" model, which doesn't generalize beyond that runtime.
+An `intent_detection` judge is intentionally not provided — its prompt
+assumes a closed, predeclared "available intents" set that doesn't
+generalize to open conversations.
 """
 
 from __future__ import annotations
@@ -40,8 +38,7 @@ class IntentAccuracyJudge:
     protocol (name property + async evaluate returning JudgmentResult), so
     it slots into `JudgeGroup` next to LLM judges.
 
-    Ports `cx-sqs-worker/.../metrics/programmatic.go:11-54` verbatim
-    including the score-then-verdict mapping (1.0 → pass, 0.0 → fail).
+    The score-then-verdict mapping is 1.0 → pass, 0.0 → fail.
     """
 
     def __init__(
