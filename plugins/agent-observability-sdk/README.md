@@ -5,10 +5,12 @@ The Python SDK for shipping evals + telemetry to
 Three surfaces in one install:
 
 - **LiveKit helpers** — bootstrap the tag bundle the v2 server expects
-  (`init_observability`), run judges against a session report
-  (`run_judges_on_report`), resolve the upload URL
-  (`ensure_observability_url`). For workers that drive LiveKit Agents
-  directly; agent-transport's `AudioStreamServer` does this internally.
+  (`init_observability`), declare conversation goals the server judges
+  post-session (`goals=[Goal(...)]`, or `add_goal_tags` without the full
+  bootstrap), run judges against a session report (`run_judges_on_report`),
+  resolve the upload URL (`ensure_observability_url`). For workers that
+  drive LiveKit Agents directly; agent-transport's `AudioStreamServer`
+  does this internally.
 - **Judges** — nine LiveKit-compatible judges (Hallucination,
   Response Accuracy, Tool Correctness, Loop Detection, …) plus a
   `default_judges()` composition helper. Plug straight into
@@ -33,7 +35,7 @@ deps and installed automatically. Python ≥ 3.10.
 ### 1. Raw LiveKit worker (text or audio, your own `AgentServer`)
 
 ```python
-from agent_observability.livekit import init_observability, run_judges_on_report
+from agent_observability.livekit import Goal, init_observability, run_judges_on_report
 from livekit.agents import AgentServer, JobContext
 from livekit.agents.evals import accuracy_judge, safety_judge
 
@@ -54,6 +56,10 @@ async def entrypoint(ctx: JobContext) -> None:
         agent_name="support-bot",
         account_id="acct-7",
         transport="text",
+        goals=[
+            Goal("identity-check", "Confirm the caller's identity before account changes"),
+            Goal("order-resolution", "Resolve the order issue or open a support ticket"),
+        ],
     )
     # …your usual AgentSession.start(...) setup
 ```
@@ -61,6 +67,14 @@ async def entrypoint(ctx: JobContext) -> None:
 That's the whole observability surface for a raw-LiveKit worker. No
 hand-rolled `tagger.add(...)` calls, no `JudgeGroup` boilerplate, no
 `llm.aclose()` cleanup.
+
+**Conversation goals** — each `Goal(name, description)` (both required;
+the name is colon-free and filterable, the description is what the judge
+reads) is graded by the server after the session, and verdicts land on
+the agent's Conversation Goals tab. The server does the judging, so this
+needs `OPENAI_API_KEY` set there. Workers whose bootstrap happens
+elsewhere (agent-transport) can emit goals on their own with
+`add_goal_tags(ctx.tagger, [...])`.
 
 ### 2. agent-transport worker (`AudioStreamServer`)
 

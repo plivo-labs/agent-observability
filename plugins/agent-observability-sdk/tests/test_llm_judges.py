@@ -16,6 +16,7 @@ So these tests verify:
 
 from __future__ import annotations
 
+from agent_observability.livekit import Goal
 from agent_observability.livekit.judges import (
     bot_detection_judge,
     call_screening_judge,
@@ -177,7 +178,7 @@ def test_intent_identification_splices_available_intents():
 
 def test_goal_evaluation_splices_goals():
     j = goal_evaluation_judge(
-        goals=[{"goal_name": "collect_email", "description": "Get user email"}],
+        goals=[Goal("collect_email", "Get user email")],
         flow_history="User provided maya@example.com",
     )
     assert j.name == "goal_evaluation"

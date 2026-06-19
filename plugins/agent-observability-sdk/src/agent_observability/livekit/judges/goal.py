@@ -2,29 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Any
+from typing import Iterable
 
 from livekit.agents.llm import LLM
 
+from agent_observability.livekit.goals import Goal
 from agent_observability.livekit.judges._base import _LLMJudge
 from agent_observability.livekit.judges._instructions import GOAL_EVALUATION
 
 
-def _format_goals(goals: Iterable[str | Mapping[str, Any]]) -> str:
-    out: list[str] = []
-    for goal in goals:
-        if isinstance(goal, Mapping):
-            name = goal.get("goal_name") or goal.get("name") or goal.get("id")
-            desc = goal.get("description") or goal.get("instructions")
-            out.append(f"- {name}: {desc}" if desc else f"- {name}")
-        else:
-            out.append(f"- {goal}")
-    return "\n".join(out) or "(none)"
+def _format_goals(goals: Iterable[Goal]) -> str:
+    return "\n".join(f"- {goal.name}: {goal.description}" for goal in goals) or "(none)"
 
 
 def goal_evaluation_judge(
     *,
-    goals: Iterable[str | Mapping[str, Any]],
+    goals: Iterable[Goal],
     flow_history: str | None = None,
     llm: LLM | None = None,
 ) -> _LLMJudge:
