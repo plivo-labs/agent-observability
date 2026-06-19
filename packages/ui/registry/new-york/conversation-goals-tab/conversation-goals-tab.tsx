@@ -129,25 +129,33 @@ function GoalChipsCell({ items }: { items: GoalVerdictRow[] }) {
 
 function GoalDetailDrawer({
   agentId,
+  sessionId,
   row,
+  loading,
   open,
   onOpenChange,
 }: {
   agentId: string
+  sessionId: string | null
   row: GoalSessionResult | null
+  loading: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  // The row may be absent when deep-linking to a session that isn't on the
+  // current page; fall back to the id from the URL so the title and the
+  // open-session link still work.
+  const id = row?.session_id ?? sessionId
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl" showCloseButton>
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <span className="font-mono text-sm">{row?.session_id}</span>
-            {row && (
+            <span className="font-mono text-sm">{id}</span>
+            {id && (
               <Button asChild variant="ghost" size="icon" className="size-6">
                 <a
-                  href={`/agents/${encodeURIComponent(agentId)}/sessions/${row.session_id}`}
+                  href={`/agents/${encodeURIComponent(agentId)}/sessions/${id}`}
                   title="Open session"
                 >
                   <ExternalLink size={14} />
@@ -161,7 +169,7 @@ function GoalDetailDrawer({
               : ''}
           </SheetDescription>
         </SheetHeader>
-        {row && (
+        {row ? (
           <Accordion type="multiple" className="px-4 pb-6">
             {row.goals.map((g, i) => (
               <AccordionItem key={`${g.name}-${i}`} value={`goal-${i}`}>
@@ -204,6 +212,20 @@ function GoalDetailDrawer({
               </AccordionItem>
             ))}
           </Accordion>
+        ) : (
+          !loading &&
+          id && (
+            <p className="px-4 pb-6 text-sm text-muted-foreground">
+              This session is not on the current page.{' '}
+              <a
+                href={`/agents/${encodeURIComponent(agentId)}/sessions/${id}`}
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                Open the session
+              </a>{' '}
+              to see its goal verdicts.
+            </p>
+          )
         )}
       </SheetContent>
     </Sheet>
@@ -373,7 +395,9 @@ export const ConversationGoalsTab = ({ agentId, accountId }: ConversationGoalsTa
 
       <GoalDetailDrawer
         agentId={agentId}
+        sessionId={detailSessionId || null}
         row={selectedRow}
+        loading={loading}
         open={!!detailSessionId}
         onOpenChange={(o) => {
           if (!o) setDetailSessionId(null)

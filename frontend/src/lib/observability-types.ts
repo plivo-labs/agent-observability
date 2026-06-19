@@ -224,7 +224,9 @@ export interface GoalVerdictRow {
   name: string
   /** What the judge evaluated. */
   description: string
-  verdict: 'met' | 'unmet' | string
+  /** Closed set: the server writes only these two for source='goal',
+   * unlike the open-union SessionEvaluationVerdict from external judges. */
+  verdict: 'met' | 'unmet'
   reasoning: string | null
   what_went_wrong: string | null
   observed_at: string | null
