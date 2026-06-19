@@ -1,4 +1,4 @@
-"""Goal-achievement judge ported from cx-sqs-worker goal evaluation."""
+"""Goal-achievement judge."""
 
 from __future__ import annotations
 

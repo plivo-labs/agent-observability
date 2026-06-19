@@ -56,7 +56,7 @@ STATIC_JUDGE_INSTRUCTIONS: dict[str, str] = {
     "freeflow_response_accuracy": FREEFLOW_RESPONSE_ACCURACY,
     "hold_requested_intent_accuracy": HOLD_REQUESTED_INTENT_ACCURACY,
     "loop_detection": LOOP_DETECTION,
-    # Conversation-level classifiers (cx-sqs-worker eval metrics). The
+    # Conversation-level classifiers (eval metrics). The
     # registry key is the judge's public ``name=`` — which differs from
     # the factory name for the voice classifiers (e.g. ``voicemail_detected``).
     "voicemail_detected": VOICEMAIL_DETECTION,

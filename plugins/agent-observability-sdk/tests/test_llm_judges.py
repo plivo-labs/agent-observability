@@ -3,14 +3,13 @@
 We don't actually call the LLM here — `_LLMJudge` is LiveKit code and is
 covered by livekit-agents' own test suite. What we own is:
 
-- the cx-sqs-worker criteria text that lives in `instructions`
+- the criteria text that lives in `instructions`
 - whether ground-truth args correctly splice into the template
 
 So these tests verify:
 
 1. each factory returns a Judge with the right `name`
-2. the rendered `instructions` contains the cx-sqs-worker hallmark phrases
-   (lifted verbatim from prompt/configs.go)
+2. the rendered `instructions` contains the expected hallmark phrases
 3. for parameterized factories, the ground-truth values appear in the
    final instructions string
 """

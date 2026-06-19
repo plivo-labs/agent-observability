@@ -11,8 +11,7 @@ Three surfaces in one install:
   resolve the upload URL (`ensure_observability_url`). For workers that
   drive LiveKit Agents directly; agent-transport's `AudioStreamServer`
   does this internally.
-- **Judges** — nine LiveKit-compatible judges ported from
-  [cx-sqs-worker](https://github.com/plivo/cx-sqs-worker) (Hallucination,
+- **Judges** — nine LiveKit-compatible judges (Hallucination,
   Response Accuracy, Tool Correctness, Loop Detection, …) plus a
   `default_judges()` composition helper. Plug straight into
   `livekit.agents.evals.JudgeGroup` alongside LiveKit's built-ins.
@@ -218,19 +217,6 @@ dependency + import:
 The plugin is auto-discovered via `pytest11` entry-point — no extra
 config needed. Auto-capture, `.judge()` interception, retry / fallback
 behaviour, and CI metadata extraction are byte-for-byte identical.
-
-## Not ported from cx-sqs-worker
-
-Two judges are intentionally absent because their prompts are tightly
-coupled to the cx-sqs-worker flow-graph runtime (global vs. node
-instructions, closed available-intents list):
-
-- `semi_rigid_response_accuracy`
-- `intent_detection`
-
-Use `rigid_response_accuracy_judge` or `freeflow_response_accuracy_judge`
-for response evaluation; use `IntentAccuracyJudge` for closed-set
-intent checks.
 
 ## License
 

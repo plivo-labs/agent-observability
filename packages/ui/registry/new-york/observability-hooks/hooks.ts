@@ -9,6 +9,8 @@ import type {
   AgentsFilters,
   ChatItem,
   ConversationEvalSummary,
+  GoalResultsSummary,
+  GoalSessionResult,
   EvalCaseRow,
   EvalRunDetail,
   EvalRunRow,
@@ -475,4 +477,55 @@ export function useConversationEvals(
   }, [api, agentId, limit, offset, accountId, sessionId, failedOnly])
 
   return { evals, meta, loading, error }
+}
+
+// ---------------------------------------------------------------------------
+// useGoalResults — sessions with goal verdicts for one agent, plus the
+// agent-wide met/unmet summary the tab header renders.
+// ---------------------------------------------------------------------------
+
+export function useGoalResults(
+  agentId: string | undefined,
+  limit = 50,
+  offset = 0,
+  filters?: { accountId?: string | null },
+) {
+  const { api } = useObservabilityContext()
+  const [results, setResults] = useState<GoalSessionResult[]>([])
+  const [summary, setSummary] = useState<GoalResultsSummary>({
+    sessions_total: 0,
+    met_total: 0,
+    unmet_total: 0,
+  })
+  const [meta, setMeta] = useState<PlivoMeta>({
+    limit,
+    offset,
+    total_count: 0,
+    next: null,
+    previous: null,
+  })
+  const [loading, setLoading] = useState(!!agentId)
+  const [error, setError] = useState<string | null>(null)
+
+  const accountId = filters?.accountId ?? null
+
+  useEffect(() => {
+    if (!agentId) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    api
+      .listGoalResults(agentId, limit, offset, { accountId })
+      .then((res) => {
+        if (cancelled) return
+        setResults(res.objects)
+        setMeta(res.meta)
+        setSummary(res.summary)
+      })
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => { cancelled = true }
+  }, [api, agentId, limit, offset, accountId])
+
+  return { results, summary, meta, loading, error }
 }

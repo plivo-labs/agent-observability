@@ -3,9 +3,9 @@ title: Judges
 description: The nine LiveKit-compatible judges shipped by agent-observability-sdk, plus the default_judges() composition helper. Drop them into a JudgeGroup or an agent-transport EvaluationConfig.
 ---
 
-The SDK ships nine judges ported from cx-sqs-worker that plug straight into
-LiveKit's `JudgeGroup` alongside LiveKit's own built-ins. Seven are LLM-based
-factories; two are programmatic (no LLM call).
+The SDK ships nine judges that plug straight into LiveKit's `JudgeGroup`
+alongside LiveKit's own built-ins. Seven are LLM-based factories; two are
+programmatic (no LLM call).
 
 ## LLM-based (7 factories)
 
@@ -53,11 +53,3 @@ judges = [
 
 Use them in a raw-LiveKit worker via [`run_judges_on_report`](/sdks/python/raw-livekit),
 or pass them to an agent-transport [`EvaluationConfig`](/sdks/python/quickstart).
-
-## Not ported from cx-sqs-worker
-
-Two judges are intentionally absent — their prompts are tightly coupled to the
-cx-sqs-worker flow-graph runtime: `semi_rigid_response_accuracy` and
-`intent_detection`. Use `rigid_response_accuracy_judge` or
-`freeflow_response_accuracy_judge` for response evaluation, and
-`IntentAccuracyJudge` for closed-set intent checks.
