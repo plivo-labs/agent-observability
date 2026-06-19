@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import asdict
 from typing import Any, Sequence
 
 from agent_observability.livekit.env import ensure_observability_url
@@ -56,10 +57,7 @@ def _dedupe_goals(goals: Sequence[Goal]) -> list[Goal]:
 
 def _emit_goal_tags(tagger: Any, goals: Sequence[Goal]) -> None:
     for goal in goals:
-        tagger.add(
-            f"goal:{goal.name}:{goal.description}",
-            metadata={"name": goal.name, "description": goal.description},
-        )
+        tagger.add(f"goal:{goal.name}:{goal.description}", metadata=asdict(goal))
 
 
 def add_goal_tags(tagger: Any, goals: Sequence[Goal]) -> list[Goal]:
@@ -174,9 +172,7 @@ def init_observability(
     if transport:
         metadata["transport"] = transport
     if deduped_goals:
-        metadata["goals"] = [
-            {"name": g.name, "description": g.description} for g in deduped_goals
-        ]
+        metadata["goals"] = [asdict(g) for g in deduped_goals]
     if extra_metadata:
         metadata.update(extra_metadata)
 

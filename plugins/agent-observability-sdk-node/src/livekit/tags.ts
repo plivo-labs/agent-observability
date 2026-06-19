@@ -40,7 +40,12 @@ export interface Goal {
 
 /** Validate and strip one goal so the emitted tag is always wire-safe. */
 function normalizeGoal(goal: Goal): Goal {
-  if (typeof goal !== "object" || goal === null || typeof goal.name !== "string") {
+  if (
+    typeof goal !== "object" ||
+    goal === null ||
+    typeof goal.name !== "string" ||
+    typeof goal.description !== "string"
+  ) {
     throw new TypeError("goals must be { name, description } objects");
   }
   const name = goal.name.trim();
@@ -55,7 +60,7 @@ function normalizeGoal(goal: Goal): Goal {
         "description instead.",
     );
   }
-  const description = (goal.description ?? "").trim();
+  const description = goal.description.trim();
   if (!description) {
     throw new Error(
       `goal ${JSON.stringify(name)} must have a non-empty description — ` +

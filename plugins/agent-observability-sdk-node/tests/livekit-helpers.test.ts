@@ -231,6 +231,11 @@ describe("initObservability", () => {
       );
     });
 
+    it("rejects a non-object goal (e.g. a legacy bare string)", () => {
+      expect(() => initWithGoals(["order-resolution" as never])).toThrow(/objects/);
+      expect(() => initWithGoals([{ name: "x" } as never])).toThrow(/objects/);
+    });
+
     it("rejects duplicate goal names", () => {
       // Same name twice with differing descriptions — the server would
       // silently keep only the first, almost certainly a bug upstream.
