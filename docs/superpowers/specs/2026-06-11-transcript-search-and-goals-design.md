@@ -129,13 +129,16 @@ reads the conversation and judges whether each goal was met.
   chars). The name is the filterable identity — it enables the planned
   "sessions where goal X was met" filter on the sessions list.
 - Both SDKs (`plugins/agent-observability-sdk`,
-  `plugins/agent-observability-sdk-node`) add a
-  `goals: list[(name, description)]`-shaped parameter to the existing
-  `apply_observability_tags` helper.
+  `plugins/agent-observability-sdk-node`) add a `goals` parameter to
+  the observability bootstrap, taking structured goals (Python
+  `Goal(name, description)`; Node `{ name, description }`) with **both
+  fields required** — name non-empty and colon-free, description
+  non-empty. Validated at construction; duplicate names rejected.
 - Each goal is emitted as a tag string `goal:<name>:<description>` —
   split at the FIRST colon after the prefix, so descriptions may
-  contain colons. `goal:<name>` alone is valid (description defaults
-  to the name). Same channel `account_id:<value>` already uses, so
+  contain colons. The server still tolerates a bare `goal:<name>`
+  defensively (description defaults to the name), though the SDKs no
+  longer emit that form. Same channel `account_id:<value>` already uses, so
   goals ride both ingest paths unchanged:
   - recording path: header `room_tags` → `raw_report.tags`
   - OTLP path: `"tag"` records → `session_tags`
