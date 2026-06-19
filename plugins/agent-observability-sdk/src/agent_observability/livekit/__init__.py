@@ -31,7 +31,9 @@ Three helpers, three problems:
 Import surface::
 
     from agent_observability.livekit import (
+        Goal,
         init_observability,
+        add_goal_tags,
         run_judges_on_report,
         ensure_observability_url,
         resolve_observability_url,
@@ -45,9 +47,11 @@ from agent_observability.livekit.env import (
     resolve_observability_url,
 )
 from agent_observability.livekit.evaluation import run_judges_on_report
+from agent_observability.livekit.goals import Goal
 from agent_observability.livekit.tags import add_goal_tags, init_observability
 
 __all__ = [
+    "Goal",
     "ensure_observability_url",
     "add_goal_tags",
     "init_observability",

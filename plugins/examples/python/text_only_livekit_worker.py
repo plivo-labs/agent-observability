@@ -63,7 +63,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_observability.livekit import init_observability, run_judges_on_report
+from agent_observability.livekit import Goal, init_observability, run_judges_on_report
 from agent_observability.livekit.judges import default_judges
 from livekit.agents import (
     Agent,
@@ -188,8 +188,8 @@ async def entrypoint(ctx: JobContext) -> None:
         # Conversation Goals tab. Names are stable identities; the
         # descriptions are what the LLM judge evaluates.
         goals=[
-            ("order-lookup", "Look up the customer's order when they provide an order ID"),
-            ("status-communicated", "Clearly tell the customer their order's delivery status"),
+            Goal("order-lookup", "Look up the customer's order when they provide an order ID"),
+            Goal("status-communicated", "Clearly tell the customer their order's delivery status"),
         ],
         logger=logger,
     )

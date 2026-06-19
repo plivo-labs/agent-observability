@@ -35,8 +35,8 @@ server.rtcSession({ agentName: "support-bot" }, async (ctx) => {
 
 The `goals` option declares task outcomes the server's
 [goal analyzer](/docs/server/goals) judges after each session — no judging
-code in the agent, just data. Each entry is `{ name, description }` or a
-bare `name` string:
+code in the agent, just data. Each entry is a `{ name, description }`
+object — both fields required:
 
 ```ts
 initObservability(ctx.tagger, {
@@ -46,8 +46,6 @@ initObservability(ctx.tagger, {
     { name: "identity-check", description: "Confirm the caller's identity before account changes" },
     // descriptions may contain colons; names may not
     { name: "escalation-policy", description: "Escalate only after: two failed resolution attempts" },
-    // bare string = name-only goal (the name doubles as the description)
-    "order-resolution",
   ],
 });
 ```
@@ -57,8 +55,8 @@ A bad goal throws before any tag is emitted:
 - **names** are the goal's stable identity — non-empty, unique within the
   call, and colon-free (the wire format `goal:<name>:<description>` splits
   at the first colon).
-- **descriptions** are free text. Phrase them as observable conversation
-  behavior — the judge only sees the transcript
+- **descriptions** are required free text. Phrase them as observable
+  conversation behavior — the judge only sees the transcript
   ([guidance](/docs/server/goals#writing-goals-the-judge-can-verify)).
 
 Verdicts (met/unmet, reasoning, what went wrong) land on the agent's

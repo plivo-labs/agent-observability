@@ -29,12 +29,14 @@ Declare them in the SDK bootstrap ([Python](/docs/sdks/python/raw-livekit) /
 [Node](/docs/sdks/node/raw-livekit)):
 
 ```python
+from agent_observability.livekit import Goal, init_observability
+
 init_observability(
     ctx.tagger,
     agent_id="9c2f7e3d-…",
     goals=[
-        ("identity-check", "Confirm the caller's identity before account changes"),
-        ("order-resolution", "Resolve the order issue or open a support ticket"),
+        Goal("identity-check", "Confirm the caller's identity before account changes"),
+        Goal("order-resolution", "Resolve the order issue or open a support ticket"),
     ],
 )
 ```
@@ -100,7 +102,7 @@ The judge only sees the transcript, so goals phrased as observable
 conversation behavior judge reliably; goals about back-office side effects
 don't:
 
-- ✅ `("identity-check", "Agent confirms the caller's name and account number before making changes")`
-- ✅ `("resolution-or-ticket", "The caller's issue is resolved in-call, or the agent commits to a ticket number")`
-- ❌ `("crm-updated", "The CRM record is updated")` — invisible in the
+- ✅ `Goal("identity-check", "Agent confirms the caller's name and account number before making changes")`
+- ✅ `Goal("resolution-or-ticket", "The caller's issue is resolved in-call, or the agent commits to a ticket number")`
+- ❌ `Goal("crm-updated", "The CRM record is updated")` — invisible in the
   transcript; the judge will (correctly) say unmet every time.

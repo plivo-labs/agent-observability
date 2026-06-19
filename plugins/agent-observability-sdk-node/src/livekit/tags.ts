@@ -27,15 +27,23 @@ export interface Tagger {
   add(name: string, options?: { metadata?: Record<string, unknown> }): void;
 }
 
-/** A conversation goal: `name` is the stable, filterable identity
- *  (no colons); `description` is what the server's LLM judge evaluates.
- *  A bare string is shorthand for a name-only goal. */
-export type GoalInput = string | { name: string; description?: string };
+/**
+ * A conversation goal. `name` is the stable, filterable identity — it must
+ * not contain a colon (the server splits `goal:` tags at the first colon).
+ * `description` is what the server's LLM judge evaluates. Both are
+ * required.
+ */
+export interface Goal {
+  name: string;
+  description: string;
+}
 
-function normalizeGoal(goal: GoalInput): { name: string; description?: string } {
-  const rawName = typeof goal === "string" ? goal : goal.name;
-  const rawDescription = typeof goal === "string" ? "" : (goal.description ?? "");
-  const name = rawName.trim();
+/** Validate and strip one goal so the emitted tag is always wire-safe. */
+function normalizeGoal(goal: Goal): Goal {
+  if (typeof goal !== "object" || goal === null || typeof goal.name !== "string") {
+    throw new TypeError("goals must be { name, description } objects");
+  }
+  const name = goal.name.trim();
   if (!name) {
     throw new Error("goal name must be non-empty");
   }
@@ -47,14 +55,20 @@ function normalizeGoal(goal: GoalInput): { name: string; description?: string } 
         "description instead.",
     );
   }
-  const description = rawDescription.trim();
-  return description ? { name, description } : { name };
+  const description = (goal.description ?? "").trim();
+  if (!description) {
+    throw new Error(
+      `goal ${JSON.stringify(name)} must have a non-empty description — ` +
+        "it is what the judge evaluates.",
+    );
+  }
+  return { name, description };
 }
 
 /** Validate every goal, rejecting duplicate names: the server dedupes
- *  first-wins, so a duplicate here would silently drop a description —
- *  almost certainly a bug in the calling agent code. */
-function normalizeGoals(goals: GoalInput[]): Array<{ name: string; description?: string }> {
+ *  first-wins, so a duplicate here would silently drop a goal — almost
+ *  certainly a bug in the calling agent code. */
+function normalizeGoals(goals: Goal[]): Goal[] {
   const seen = new Set<string>();
   return goals.map((input) => {
     const goal = normalizeGoal(input);
@@ -69,12 +83,11 @@ function normalizeGoals(goals: GoalInput[]): Array<{ name: string; description?:
   });
 }
 
-function emitGoalTags(tagger: Tagger, goals: Array<{ name: string; description?: string }>): void {
+function emitGoalTags(tagger: Tagger, goals: Goal[]): void {
   for (const goal of goals) {
-    tagger.add(
-      goal.description ? `goal:${goal.name}:${goal.description}` : `goal:${goal.name}`,
-      { metadata: { ...goal } },
-    );
+    tagger.add(`goal:${goal.name}:${goal.description}`, {
+      metadata: { name: goal.name, description: goal.description },
+    });
   }
 }
 
@@ -86,15 +99,13 @@ function emitGoalTags(tagger: Tagger, goals: Array<{ name: string; description?:
  * declares conversation goals on the session without re-emitting
  * identity tags and without requiring the upload-URL env that
  * {@link initObservability} enforces. Same goal validation: names are
- * the goal's stable identity (non-empty, unique, colon-free). Throws
- * before any tag is emitted when a goal is invalid.
+ * the goal's stable identity (non-empty, unique, colon-free) and every
+ * goal needs a description. Throws before any tag is emitted when a goal
+ * is invalid.
  *
- * @returns The normalized goals.
+ * @returns The goals, in order, deduplicated.
  */
-export function addGoalTags(
-  tagger: Tagger,
-  goals: GoalInput[],
-): Array<{ name: string; description?: string }> {
+export function addGoalTags(tagger: Tagger, goals: Goal[]): Goal[] {
   const normalized = normalizeGoals(goals);
   emitGoalTags(tagger, normalized);
   return normalized;
@@ -118,12 +129,12 @@ export interface InitObservabilityOptions {
   transport?: string;
   /**
    * Conversation goals the server's goal analyzer judges after each
-   * session. Each entry is `{ name, description }` or a bare `name`
-   * string. Names must not contain colons (the wire format
-   * `goal:<name>:<description>` splits at the first colon);
-   * descriptions may. Optional.
+   * session. Each entry is a `{ name, description }` object — both
+   * required. Names must not contain colons (the wire format
+   * `goal:<name>:<description>` splits at the first colon); descriptions
+   * may. Names must be unique. Optional.
    */
-  goals?: GoalInput[];
+  goals?: Goal[];
   /**
    * Extra key/value pairs to ride along on the wrapper `agent.session`
    * tag's metadata. No atomic tags are derived from these — they only
@@ -149,8 +160,7 @@ export interface InitObservabilityOptions {
  *      - `account_id:<value>` (when supplied)
  *      - `agent_name:<value>` (when supplied)
  *      - `transport:<value>` (when supplied)
- *      - `goal:<name>:<description>` per goal (when supplied; bare
- *        `goal:<name>` for name-only goals)
+ *      - `goal:<name>:<description>` per goal (when supplied)
  *      - `agent.session` (wrapper with everything in metadata)
  *
  * @returns The resolved `agent_id`.

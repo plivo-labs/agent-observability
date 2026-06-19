@@ -22,7 +22,7 @@ export {
   initObservability,
   type Tagger,
   type InitObservabilityOptions,
-  type GoalInput,
+  type Goal,
 } from "./tags.js";
 export {
   ensureObservabilityUrl,
