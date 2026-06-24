@@ -5,7 +5,27 @@ import { upsertAgentTx } from "./agents/upsert.js";
 import { costFromSessionUsage } from "./evals/metrics.js";
 import { ensurePricesLoaded } from "./evals/pricing.js";
 
-export const sql = new SQL(config.DATABASE_URL);
+// The Postgres client. In STATELESS mode (no DATABASE_URL) there is no connection, so `sql` is a
+// guard proxy: importing it is safe (17 modules do), but any query throws a clear error, and the
+// DB-backed routes/sweeps are gated off upstream (see `dbConfigured`) so that never fires in normal
+// stateless operation. Lifecycle calls (`.close`/`.end`) are no-ops so shutdown stays clean.
+function makeUnconfiguredSql(): SQL {
+  const fail = () => {
+    throw new Error(
+      "DATABASE_URL is not configured (AO is running in stateless mode): this operation requires a database.",
+    );
+  };
+  return new Proxy(fail as unknown as SQL, {
+    apply: fail, // `sql\`...\`` tagged-template call
+    get(_target, prop) {
+      if (prop === "close" || prop === "end") return async () => {};
+      if (prop === "then") return undefined; // never look like a thenable
+      return fail; // `.begin` / `.unsafe` / etc. — throws when invoked
+    },
+  });
+}
+
+export const sql = config.DATABASE_URL ? new SQL(config.DATABASE_URL) : makeUnconfiguredSql();
 
 interface SessionInsert {
   sessionId: string;

@@ -6,7 +6,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
-import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
+import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled, dbConfigured } from "./config.js";
 import { uploadRecording, deleteRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
@@ -26,8 +26,8 @@ import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 
-// Run migrations on startup if enabled
-if (config.AUTO_MIGRATE) {
+// Run migrations on startup if enabled (skipped in stateless mode — no database).
+if (config.AUTO_MIGRATE && dbConfigured) {
   await migrate(sql);
 }
 
@@ -35,7 +35,8 @@ if (config.AUTO_MIGRATE) {
 // retries. Runs inline by default so single-container deploys work with
 // zero config; set ALERT_SWEEPER=off when running the dedicated worker
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
-if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
+// Gated on dbConfigured: the sweeper is entirely DB-backed, so it's inert in stateless mode.
+if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
   startAlertSweeper();
 }
 

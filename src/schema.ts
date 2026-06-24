@@ -12,8 +12,11 @@ export const envSchema = z.object({
   LIVEKIT_API_KEY: z.string().optional(),
   LIVEKIT_API_SECRET: z.string().optional(),
 
-  // Postgres
-  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  // Postgres. Optional so AO can run as a STATELESS generator (Plivo / bring-your-own-backend)
+  // with no database. It is effectively required in the default mode: config.ts fails fast if
+  // SIM_PERSIST=true (the default) and DATABASE_URL is unset. Set SIM_PERSIST=false to run without it.
+  // preprocess: treat an empty string (`DATABASE_URL=` in an env file) the same as unset.
+  DATABASE_URL: z.preprocess((v) => (v === "" ? undefined : v), z.string().min(1).optional()),
   AUTO_MIGRATE: z
     .string()
     .default("false")
@@ -84,6 +87,18 @@ export const envSchema = z.object({
   // Scenario-generation model. Default gpt-5.5-1 matches aiassist (Plivo). For a
   // non-Azure deploy, override + point OPENAI_BASE_URL at the endpoint.
   SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5-1"),
+
+  // Scenario-library persistence mode. Selects whether AO owns its own scenario store:
+  //   • true  (default) — SELF-CONTAINED (OSS): each generated scenario is written to AO's
+  //     own Postgres (ao_simulation_scenarios) and the library routes serve it. Needs DATABASE_URL.
+  //   • false           — STATELESS generator (Plivo / bring-your-own-backend): AO streams
+  //     scenarios but writes NO database; the host (aiassist) persists what it relays. No DB needed.
+  // This is the DEFAULT; the per-request `?persist=true|false` query param overrides it. Persistence
+  // is impossible without a DB, so the effective value is always ANDed with DATABASE_URL being set.
+  SIM_PERSIST: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
 
   // ── Run engine (the ported cx-sqs-worker simulation loop) ───────────────────
   // Runs are dispatched via the SQS consumer (src/worker.ts), which drains run

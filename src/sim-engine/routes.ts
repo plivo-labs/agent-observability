@@ -14,7 +14,8 @@
 
 import type { Hono, Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { simEngineConfig } from "./config.js";
+import { simEngineConfig, scenarioPersistDefault } from "./config.js";
+import { dbConfigured } from "../config.js";
 import {
   GenerateScenariosRequest,
   DeleteScenariosRequest,
@@ -75,6 +76,8 @@ export function registerSimulationRoutes(app: Hono): void {
   app.get("/api/simulation/scenarios", async (c) => {
     const agentId = c.req.query("phlo_uuid") || null;
     const { page, pageSize, limit, offset } = pageParams(c, 50);
+    // STATELESS mode: AO owns no scenario store — the library is empty by definition.
+    if (!dbConfigured) return c.json({ api_id: newApiId(), scenarios: [], total: 0, page, page_size: pageSize });
     const { objects, total } = await listScenarios({ accountId: accountIdOf(c), agentId, limit, offset });
     return c.json({ api_id: newApiId(), scenarios: objects.map(toPersistedScenario), total, page, page_size: pageSize });
   });
@@ -99,7 +102,10 @@ export function registerSimulationRoutes(app: Hono): void {
     // runs as a STATELESS generator (`?persist=false`) — it streams scenarios but
     // writes no DB; aiassist persists each `scenario_saved` it relays into core-db
     // (the system of record). The full scenario rides on the SSE event either way.
-    const persist = c.req.query("persist") !== "false";
+    // Precedence: the per-request `?persist=` query param overrides the env default
+    // (SIM_PERSIST). ANDed with dbConfigured — persistence is impossible without a database.
+    const persistQuery = c.req.query("persist");
+    const persist = (persistQuery != null ? persistQuery !== "false" : scenarioPersistDefault) && dbConfigured;
     const genId = crypto.randomUUID();
     return streamSSE(c, async (stream) => {
       try {
@@ -149,6 +155,7 @@ export function registerSimulationRoutes(app: Hono): void {
   // 3. delete one scenario — account-scoped: a tenant can only delete its own; a
   //    uuid owned by another account is a no-op → 404 (so existence isn't leaked).
   app.delete("/api/simulation/scenarios/:scenario_uuid", async (c) => {
+    if (!dbConfigured) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
     const deleted = await deleteScenarios([c.req.param("scenario_uuid")], accountIdOf(c));
     if (deleted === 0) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
     return c.json({ api_id: newApiId(), deleted });
@@ -158,6 +165,7 @@ export function registerSimulationRoutes(app: Hono): void {
   app.post("/api/simulation/scenarios/batch-delete", async (c) => {
     const parsed = await readJson(c, (v) => DeleteScenariosRequest.parse(v));
     if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body must be { uuids: string[] (1-200) }"), 400);
+    if (!dbConfigured) return c.json({ api_id: newApiId(), deleted_count: 0 });
     const deleted = await deleteScenarios(parsed.value.uuids, accountIdOf(c));
     return c.json({ api_id: newApiId(), deleted_count: deleted });
   });
@@ -166,6 +174,7 @@ export function registerSimulationRoutes(app: Hono): void {
   app.delete("/api/simulation/scenarios", async (c) => {
     const agentId = c.req.query("phlo_uuid");
     if (!agentId) return c.json(buildErrorResponse("invalid_request", "phlo_uuid query param is required"), 400);
+    if (!dbConfigured) return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: 0 });
     const deleted = await deleteScenariosByAgent(agentId, accountIdOf(c));
     return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: deleted });
   });

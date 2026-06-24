@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { config, dbConfigured } from "../config.js";
 
 // AO Simulation Engine — config view + capability gates.
 //
@@ -56,6 +56,14 @@ export const queueDispatchEnabled =
 
 /** The /api/simulation/* group is mounted when ANY capability is configured (else the group 404s). */
 export const simFeatureEnabled = generationEnabled || runEnabled;
+
+/**
+ * Default scenario-library persistence for THIS process. Whether a generated scenario is written to
+ * AO's own DB when a request doesn't specify `?persist=`. SELF-CONTAINED (OSS) = true; STATELESS
+ * (Plivo / bring-your-own-backend) = false. ANDed with dbConfigured because persistence is
+ * impossible without a database (config.ts already fails fast on SIM_PERSIST=true + no DB).
+ */
+export const scenarioPersistDefault = config.SIM_PERSIST && dbConfigured;
 
 /**
  * Legacy gate: queue-dispatch prerequisites present (SQS + Redis). Superseded by the capability

@@ -22,6 +22,7 @@
  * the same loop.
  */
 
+import { dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
@@ -72,13 +73,21 @@ if (queueDispatchEnabled) {
   console.log("[worker] SQS consumer not configured (SQS/Redis/turn-url unset) — sweeper-only");
 }
 
-console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
-
-while (running) {
-  await runSweepOnce();
-  // Sleep in small slices so a shutdown signal is honored within ~1s
-  // instead of waiting out the full interval.
-  for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
+// The alert sweeper is entirely DB-backed. In STATELESS mode (no DATABASE_URL) it can't run, so the
+// worker is consumer-only: it stays alive for the SQS consumer (started above) until a shutdown signal.
+if (dbConfigured) {
+  console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
+  while (running) {
+    await runSweepOnce();
+    // Sleep in small slices so a shutdown signal is honored within ~1s
+    // instead of waiting out the full interval.
+    for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
+      await Bun.sleep(1000);
+    }
+  }
+} else {
+  console.log("[worker] DATABASE_URL unset — stateless mode: alert sweeper disabled, consumer-only");
+  while (running) {
     await Bun.sleep(1000);
   }
 }
