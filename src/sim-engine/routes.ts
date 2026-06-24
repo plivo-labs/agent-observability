@@ -1,0 +1,172 @@
+// AO Simulation Engine — HTTP + SSE routes (scenario library + generation).
+//
+// AO is the simulation engine: it owns scenario generation and the generated scenario
+// *library* CRUD. Runs are NOT exposed here — on Plivo aiassist produces runs (publishes
+// SQS, consumed by AO's worker) and owns run history; on the run path AO writes only the
+// Redis :RESULTS stream. So this module mounts generation + library routes only. (The
+// OSS-only in-process run mode + its run-history routes were removed for V1; re-add behind a
+// driver seam when OSS lands.)
+//
+// These routes live under AO's `/api/simulation` prefix, behind AO's existing `/api/*` basic
+// auth. The library routes are Postgres-backed. Generation streams an error event if no LLM is
+// configured rather than pre-blocking. Tenant id comes from the `auth-id` header (= hodor's
+// injected org account id → AO `account_id`); `phlo_uuid` → AO `agent_id` (AD-1).
+
+import type { Hono, Context } from "hono";
+import { streamSSE } from "hono/streaming";
+import { simEngineConfig } from "./config.js";
+import {
+  GenerateScenariosRequest,
+  DeleteScenariosRequest,
+  parseFlowJson,
+  FlowJsonError,
+} from "./schema.js";
+import {
+  listScenarios,
+  createScenario,
+  deleteScenarios,
+  deleteScenariosByAgent,
+  type SimScenarioRow,
+} from "./db.js";
+import { generateScenarios } from "./gen/generate.js";
+import { SSE, envelope } from "./events.js";
+import { newApiId, buildErrorResponse } from "../response.js";
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// SECURITY: `auth-id` is the tenant scope for every scenario read/write below. It is injected
+// (and the session it derives from is validated) by hodor, the API gateway — AO trusts it because
+// AO runs ONLY behind hodor on a private network, never exposed directly. A direct caller could
+// spoof this header, so if AO is ever fronted by anything other than hodor, add real auth here
+// (validate the account) before using it. Null (no header) = unscoped, single-tenant/no-auth mode.
+const accountIdOf = (c: Context): string | null => c.req.header("auth-id") || null;
+
+function pageParams(c: Context, defaultPageSize: number): { page: number; pageSize: number; limit: number; offset: number } {
+  const page = Math.max(1, Number(c.req.query("page")) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(c.req.query("page_size")) || defaultPageSize));
+  return { page, pageSize, limit: pageSize, offset: (page - 1) * pageSize };
+}
+
+async function readJson<T>(c: Context, parse: (v: unknown) => T): Promise<{ ok: true; value: T } | { ok: false }> {
+  try {
+    return { ok: true, value: parse(await c.req.json()) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+const toPersistedScenario = (r: SimScenarioRow) => ({
+  uuid: r.id,
+  account_id: r.account_id,
+  agent_id: r.agent_id,
+  name: r.name,
+  scenario: r.scenario,
+  tags: r.tags,
+  source: r.source,
+  coverage_key: r.coverage_key,
+  created_at: r.created_at,
+  updated_at: r.updated_at,
+});
+
+// ── registration ────────────────────────────────────────────────────────────────
+
+export function registerSimulationRoutes(app: Hono): void {
+  // 1. list scenarios
+  app.get("/api/simulation/scenarios", async (c) => {
+    const agentId = c.req.query("phlo_uuid") || null;
+    const { page, pageSize, limit, offset } = pageParams(c, 50);
+    const { objects, total } = await listScenarios({ accountId: accountIdOf(c), agentId, limit, offset });
+    return c.json({ api_id: newApiId(), scenarios: objects.map(toPersistedScenario), total, page, page_size: pageSize });
+  });
+
+  // 2. generate scenarios (SSE) — needs an LLM, NOT a queue. If no LLM is configured the generator
+  //    throws and the catch below streams an `error` event (no upfront block, so the route stays
+  //    testable with a mocked generator).
+  app.post("/api/simulation/scenarios/generate", async (c) => {
+    const parsed = await readJson(c, (v) => GenerateScenariosRequest.parse(v));
+    if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body failed GenerateScenariosRequest validation"), 400);
+    const body = parsed.value;
+    let canonical: Record<string, unknown>;
+    try {
+      canonical = parseFlowJson(body.flow_json) as unknown as Record<string, unknown>;
+    } catch (e) {
+      const detail = e instanceof FlowJsonError ? e.message : "invalid flow_json";
+      return c.json(buildErrorResponse("invalid_flow_json", detail), 400);
+    }
+    const accountId = accountIdOf(c);
+    // `persist` (default true): standalone/OSS AO owns the scenario library, so it
+    // writes each generated scenario to its own table. Behind aiassist on Plivo, AO
+    // runs as a STATELESS generator (`?persist=false`) — it streams scenarios but
+    // writes no DB; aiassist persists each `scenario_saved` it relays into core-db
+    // (the system of record). The full scenario rides on the SSE event either way.
+    const persist = c.req.query("persist") !== "false";
+    const genId = crypto.randomUUID();
+    return streamSSE(c, async (stream) => {
+      try {
+        for await (const ev of generateScenarios({
+          flowJson: canonical,
+          phloUuid: body.phlo_uuid,
+          maxScenarios: body.max_scenarios,
+          model: simEngineConfig.scenarioGenerationModel,
+          simulationMode: body.simulation_mode,
+          testCaseGenerationInstructions: body.test_case_generation_instructions,
+        })) {
+          if (ev.type === "scenario") {
+            const s = ev.scenario;
+            if (persist) {
+              await createScenario({
+                accountId,
+                agentId: body.phlo_uuid,
+                name: s.name,
+                scenario: s,
+                tags: s.tags,
+                coverageKey: s.eval_metadata?.coverage_key ?? null,
+              });
+            }
+            await stream.writeSSE({
+              event: SSE.SCENARIO_SAVED,
+              data: envelope("generation_id", genId, { scenario: s, agent_flow_description: s.agent_flow_description ?? "" }),
+            });
+          } else if (ev.type === "metadata") {
+            await stream.writeSSE({
+              event: SSE.COMPLETED,
+              data: envelope("generation_id", genId, { count: ev.metadata.saved_count, ...ev.metadata }),
+            });
+          } else {
+            // progress phases — console reads event_data.stage
+            await stream.writeSSE({
+              event: SSE.PROGRESS,
+              data: envelope("generation_id", genId, { stage: ev.type, generation_id: genId, ...ev }),
+            });
+          }
+        }
+      } catch (e) {
+        await stream.writeSSE({ event: SSE.ERROR, data: envelope("generation_id", genId, { error: (e as Error).message }) });
+      }
+    });
+  });
+
+  // 3. delete one scenario — account-scoped: a tenant can only delete its own; a
+  //    uuid owned by another account is a no-op → 404 (so existence isn't leaked).
+  app.delete("/api/simulation/scenarios/:scenario_uuid", async (c) => {
+    const deleted = await deleteScenarios([c.req.param("scenario_uuid")], accountIdOf(c));
+    if (deleted === 0) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
+    return c.json({ api_id: newApiId(), deleted });
+  });
+
+  // 4. batch delete — account-scoped: uuids owned by other accounts are silent no-ops.
+  app.post("/api/simulation/scenarios/batch-delete", async (c) => {
+    const parsed = await readJson(c, (v) => DeleteScenariosRequest.parse(v));
+    if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body must be { uuids: string[] (1-200) }"), 400);
+    const deleted = await deleteScenarios(parsed.value.uuids, accountIdOf(c));
+    return c.json({ api_id: newApiId(), deleted_count: deleted });
+  });
+
+  // 5. delete all scenarios for a phlo
+  app.delete("/api/simulation/scenarios", async (c) => {
+    const agentId = c.req.query("phlo_uuid");
+    if (!agentId) return c.json(buildErrorResponse("invalid_request", "phlo_uuid query param is required"), 400);
+    const deleted = await deleteScenariosByAgent(agentId, accountIdOf(c));
+    return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: deleted });
+  });
+}

@@ -24,6 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
+import { registerSimulationRoutes } from "./sim-engine/routes.js";
 
 // Run migrations on startup if enabled
 if (config.AUTO_MIGRATE) {
@@ -80,6 +81,9 @@ if (basicAuthEnabled) {
 const MB = 1024 * 1024;
 const RECORDING_BODY_LIMIT = 100 * MB;
 const OTLP_BODY_LIMIT = 16 * MB;
+// Simulation generate/library requests carry a flow_json (no audio) — 10 MB is ample for a
+// large flow while bounding a malicious/misconfigured oversized body (DoS guard).
+const SIM_BODY_LIMIT = 10 * MB;
 const tooLarge = (c: Context) =>
   c.json(buildErrorResponse("payload_too_large", "Request body exceeds the allowed size"), 413);
 
@@ -87,6 +91,9 @@ app.use("/observability/recordings/v0", bodyLimit({ maxSize: RECORDING_BODY_LIMI
 app.use("/observability/logs/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
 app.use("/observability/traces/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
 app.use("/observability/metrics/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+// Cap simulation request bodies too (flow_json can be large but not unbounded). Registered
+// before registerSimulationRoutes so it runs ahead of the /api/simulation handlers.
+app.use("/api/simulation/*", bodyLimit({ maxSize: SIM_BODY_LIMIT, onError: tooLarge }));
 
 app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
 app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);
@@ -115,6 +122,12 @@ registerAnalyticsRoutes(app);
 // ── Alert rules (windowed metric/count triggers + webhooks) ─────────────────
 
 registerAlertRoutes(app);
+
+// ── Simulation engine (scenario generation + scenario library CRUD) ──────────
+//    Routes under /api/simulation; 404s when the engine is unconfigured (no
+//    Redis). Registered after the /api/* auth middleware.
+
+registerSimulationRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 

@@ -10,6 +10,12 @@
  * burns cycles. (Running two is safe — suppression stamps and delivery
  * claims are atomic — just wasteful.)
  *
+ * When the SQS consumer is configured (SIM_EVAL_SQS_QUEUE_URL + REDIS_URL +
+ * LIVEKIT_SIM_TURN_URL set), this process ALSO runs the consumer that drains
+ * scenario-eval messages produced by aiassist and drives the turn loop. It runs
+ * alongside the alert sweeper, sharing the same SIGTERM/SIGINT shutdown. Without
+ * those vars the worker is sweeper-only.
+ *
  * Migrations stay API-owned (AUTO_MIGRATE on the API): the worker never
  * migrates, so there is no startup race between the two entrypoints.
  * Future background jobs (rollups, retention, online judges) slot into
@@ -17,16 +23,54 @@
  */
 
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
+import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
+import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
+import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
+import { makeLiveKitSimClient } from "./sim-engine/run-engine/livekit-client.js";
 
 let running = true;
+
+// Aborted on the first shutdown signal to stop the SQS consumer's long poll.
+// Created up front (cheap, no I/O) so the signal handler can always reach it,
+// whether or not the engine is wired up this run.
+const consumerAbort = new AbortController();
+// Held so a graceful shutdown can close the consumer's Redis connection.
+let consumerRedis: RedisClient | undefined;
 
 function shutdown(signal: string) {
   console.log(`[worker] ${signal} received — finishing current sweep, then exiting`);
   running = false;
+  // Tell the SQS consumer (if running) to stop its long poll + exit its loop.
+  consumerAbort.abort();
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+// Start the simulation-eval SQS consumer alongside the sweeper when it's configured
+// (SQS + Redis + a /turn endpoint). Otherwise the worker is sweeper-only. Fire-and-forget:
+// the consumer owns its poll loop and exits on the shared abort, so we don't await it below.
+if (queueDispatchEnabled) {
+  consumerRedis = makeRedis();
+  const livekit = makeLiveKitSimClient();
+  void consumeSimulationQueue(
+    { redis: consumerRedis, runnerDeps: { livekit } },
+    {
+      // queueDispatchEnabled guarantees sqsQueueUrl is set (isSimEngineEnabled checks it).
+      queueUrl: simEngineConfig.sqsQueueUrl!,
+      concurrency: simEngineConfig.workerConcurrency,
+      signal: consumerAbort.signal,
+    },
+  )
+    .catch((err) => console.error(`[worker] sim consumer crashed: ${(err as Error).message}`))
+    .finally(() => {
+      // Loop exited (clean shutdown or crash) — release the Redis connection so
+      // the process can exit without a lingering open socket.
+      consumerRedis?.quit().catch(() => {});
+    });
+} else {
+  console.log("[worker] SQS consumer not configured (SQS/Redis/turn-url unset) — sweeper-only");
+}
 
 console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
 
