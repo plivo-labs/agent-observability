@@ -4,7 +4,7 @@
 // planner → completeJSON → config; and not in combos.ts, which is verbatim-ported DATA.
 
 /** snake_case slug: lowercase, non-alphanumeric → "_", collapse repeats, trim "_".
- *  Ported from aiassist; used by the planner (capability ids) + the allocator (outcomes). */
+ *  Ported from the orchestrator service; used by the planner (capability ids) + the allocator (outcomes). */
 export function slug(s: string): string {
   return (s || "")
     .toLowerCase()

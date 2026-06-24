@@ -1,11 +1,11 @@
-// AO Simulation Engine — plivo-cx-livekit /turn client.
+// AO Simulation Engine — agent runtime /turn client.
 //
-// Port of cx-sqs-worker `usecases/simulation_eval/livekit_client.go`. One synchronous HTTP
+// Port of the reference worker `usecases/simulation_eval/livekit_client.go`. One synchronous HTTP
 // call per turn: the engine sends the simulated caller's message + the threaded conversation
 // state; livekit runs the CXAgent for a single turn and returns its reply, the detected intent,
 // updated variables, and the state to thread into the next turn.
 //
-// The AO↔livekit hop is plain HTTP (no Redis). plivo-cx-livekit is unauthenticated on the
+// The AO↔livekit hop is plain HTTP (no Redis). The agent runtime is unauthenticated on the
 // private network; optional Basic auth is supported via constructor opts to mirror the Go client.
 
 import { simEngineConfig } from "../config.js";
@@ -51,7 +51,7 @@ export interface LiveKitSimResponse {
 export interface LiveKitSimClientOptions {
   /** Base URL; defaults to simEngineConfig.livekitSimTurnUrl (LIVEKIT_SIM_TURN_URL). */
   url?: string;
-  /** Optional Basic-auth credentials (livekit is unauthenticated on Plivo's private network). */
+  /** Optional Basic-auth credentials (livekit is unauthenticated on the managed deployment's private network). */
   username?: string;
   password?: string;
   /** Per-request timeout in ms (default 60s). */

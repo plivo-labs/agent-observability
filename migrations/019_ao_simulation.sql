@@ -1,10 +1,10 @@
--- AO Simulation Engine — AO-owned tables (plan.md Phase 0.5, AD-1).
+-- AO Simulation Engine — AO-owned tables (plan.md Phase 0.5).
 --
 -- AO owns the generated scenario *library*. It stores the agent as a plain
--- `agent_id` (= phlo_uuid) TEXT column with NO FK: aiassist's simulation_*
+-- `agent_id` (= phlo_uuid) TEXT column with NO FK: the orchestrator service's simulation_*
 -- tables carry `flow_id BIGINT NOT NULL REFERENCES phlo(id)`, and resolving
 -- phlo_uuid → phlo.id would force a read of the CX `phlo` table — which AO is
--- forbidden to do. The `ao_` prefix guarantees no collision with aiassist's
+-- forbidden to do. The `ao_` prefix guarantees no collision with the orchestrator service's
 -- `simulation_*`.
 --
 -- AO does NOT store run history or per-scenario run results — that lives in a
@@ -13,10 +13,10 @@
 -- All identifying inputs (account_id, agent_id, the scenario/flow JSON) arrive via
 -- the HTTP request — HTTP is AO's only data boundary.
 --
--- Deployment (AD-1): OSS applies this file via AO's own migrator
--- (AUTO_MIGRATE=on, its own DB). Plivo ships a byte-identical copy as a
--- contacto-core-db Goose migration (AO runs DML-only, AUTO_MIGRATE=off, under a
--- least-privilege ao_user role).
+-- Deployment: OSS applies this file via AO's own migrator
+-- (AUTO_MIGRATE=on, its own DB). The managed deployment ships a byte-identical copy as a
+-- core-db Goose migration (AO runs DML-only, AUTO_MIGRATE=off, under a
+-- least-privilege DB role).
 --
 -- Every CREATE uses IF NOT EXISTS; CHECKs use existence guards. Safe to re-run.
 
@@ -28,12 +28,12 @@
 CREATE TABLE IF NOT EXISTS ao_simulation_scenarios (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id      TEXT,
-  agent_id        TEXT,              -- = phlo_uuid; NO FK to phlo (AD-1)
+  agent_id        TEXT,              -- = phlo_uuid; NO FK to phlo
   name            TEXT NOT NULL,
   scenario        JSONB NOT NULL,    -- full scenario dict (post validate_and_fix)
   tags            JSONB NOT NULL DEFAULT '[]'::jsonb,  -- JSONB (not TEXT[]): bun:sql can't bind JS arrays to PG arrays
   source          TEXT NOT NULL DEFAULT 'generated',  -- generated | manual | imported
-  coverage_key    TEXT,              -- slot dedup key from the generator (AD-4)
+  coverage_key    TEXT,              -- slot dedup key from the generator
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

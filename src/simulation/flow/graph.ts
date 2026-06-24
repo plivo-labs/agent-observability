@@ -4,7 +4,7 @@
 // optional `sourceHandle` (the intent or branch-outcome handle on the source's
 // output). All shape leniency (flat config, `config.model` wrapper, snake_case
 // globals, stored `connections`) is the normalizer's job — this parser does not
-// guess. Mirrors cx-sqs-worker's ParseFlowGraph (Go): agent nodes talk to the
+// guess. Mirrors the reference worker's ParseFlowGraph (Go): agent nodes talk to the
 // user; control/action nodes are mocked via world_state; terminal nodes end it.
 
 import { isAgentNode, isTerminalNode } from "./node-types.js";
@@ -15,7 +15,7 @@ export interface FlowNode {
   id: string;
   type: string;
   config: Record<string, any>;
-  /** config.name — an alternate world_state key (mirrors cx-sqs-worker). */
+  /** config.name — an alternate world_state key (mirrors the reference worker). */
   configName: string;
   isAgent: boolean;
   isTerminal: boolean;
@@ -87,7 +87,7 @@ export function nodeIntents(node: FlowNode): string[] {
 /**
  * Resolve an intent NAME (what the agent LLM emits) to the edge `sourceHandle` to
  * match — real flows key edges on the intent's `id` (UUID), not the name. Mirrors
- * cx-sqs-worker's resolveIntentSourceHandle: name → its `id`; if the value already
+ * the reference worker's resolveIntentSourceHandle: name → its `id`; if the value already
  * equals an intent `id` (LLM returned the UUID directly), pass it through; else
  * fall back to the name itself (handles fixtures whose edges key on intent_name).
  */

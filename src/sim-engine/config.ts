@@ -7,7 +7,7 @@ import { config, dbConfigured } from "../config.js";
 //   • generation — an LLM provider key (no Redis/SQS required),
 //   • runs        — REDIS_URL + LIVEKIT_SIM_TURN_URL (Redis is the live :RESULTS
 //                   stream + the Lua completion gate),
-//   • queue       — the SQS consumer (Plivo): consumes aiassist's run messages;
+//   • queue       — the SQS consumer (the managed deployment): consumes the orchestrator service's run messages;
 //                   additionally needs SIM_EVAL_SQS_QUEUE_URL. This is the only
 //                   run-dispatch path in V1 (the OSS in-process mode was removed —
 //                   re-add behind a driver seam when OSS lands).
@@ -60,7 +60,7 @@ export const simFeatureEnabled = generationEnabled || runEnabled;
 /**
  * Default scenario-library persistence for THIS process. Whether a generated scenario is written to
  * AO's own DB when a request doesn't specify `?persist=`. SELF-CONTAINED (OSS) = true; STATELESS
- * (Plivo / bring-your-own-backend) = false. ANDed with dbConfigured because persistence is
+ * (the managed deployment / bring-your-own-backend) = false. ANDed with dbConfigured because persistence is
  * impossible without a database (config.ts already fails fast on SIM_PERSIST=true + no DB).
  */
 export const scenarioPersistDefault = config.SIM_PERSIST && dbConfigured;
@@ -83,9 +83,9 @@ export const simEngineConfig = {
   awsRegion: config.AWS_REGION,
   /** Scenario-generation model (default gpt-5.5-1; see plan.md Phase 1). */
   scenarioGenerationModel: config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
-  /** Redis key prefix (default SIM_EVAL = aiassist on Plivo; override for OSS). */
+  /** Redis key prefix (default SIM_EVAL = the orchestrator service in the managed deployment; override for OSS). */
   simRedisPrefix: config.SIM_REDIS_PREFIX,
-  /** plivo-cx-livekit base URL; the engine POSTs /v1/simulation/session/turn here. */
+  /** agent runtime base URL; the engine POSTs /v1/simulation/session/turn here. */
   livekitSimTurnUrl: config.LIVEKIT_SIM_TURN_URL,
   /** UserSimulator LLM model; falls back to the generation model when unset. */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,

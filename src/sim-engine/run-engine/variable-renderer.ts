@@ -1,6 +1,6 @@
 // AO Simulation Engine — variable rendering ({{Node.var}} / {{var}}).
 //
-// Port of cx-sqs-worker `usecases/simulation_eval/variable_renderer.go`. The VariableStore
+// Port of the reference worker `usecases/simulation_eval/variable_renderer.go`. The VariableStore
 // holds node-execution outputs, dual-keyed by node config name AND node id, so a
 // `{{NodeConfigName.var}}` reference in flow instructions resolves regardless of which
 // identifier the flow author used. `render()` replaces those references in a template

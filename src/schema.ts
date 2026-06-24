@@ -12,7 +12,7 @@ export const envSchema = z.object({
   LIVEKIT_API_KEY: z.string().optional(),
   LIVEKIT_API_SECRET: z.string().optional(),
 
-  // Postgres. Optional so AO can run as a STATELESS generator (Plivo / bring-your-own-backend)
+  // Postgres. Optional so AO can run as a STATELESS generator (the managed deployment / bring-your-own-backend)
   // with no database. It is effectively required in the default mode: config.ts fails fast if
   // SIM_PERSIST=true (the default) and DATABASE_URL is unset. Set SIM_PERSIST=false to run without it.
   // preprocess: treat an empty string (`DATABASE_URL=` in an env file) the same as unset.
@@ -47,7 +47,7 @@ export const envSchema = z.object({
   // Provider-neutral: src/llm/completeJSON dispatches to the adapter named here.
   // Keys are read only when the matching provider is selected. OPENAI_BASE_URL
   // lets the OpenAI adapter target Azure OpenAI / OpenRouter / a local server
-  // (this is how Plivo's gpt-5.5-1 endpoint is wired in — see plan.md Phase 1).
+  // (this is how the managed deployment's gpt-5.5-1 endpoint is wired in — see plan.md Phase 1).
   LLM_PROVIDER: z.enum(["anthropic", "openai"]).default("anthropic"),
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -71,7 +71,7 @@ export const envSchema = z.object({
   //     stream + the Lua completion gate),
   //   • queue (the SQS consumer) additionally needs SIM_EVAL_SQS_QUEUE_URL.
   // SIM_EVAL_SQS_QUEUE_URL is the optional run-dispatch plug-in: set it to consume
-  // scenario-run messages produced by aiassist (Plivo). AWS credentials are read
+  // scenario-run messages produced by the orchestrator service (the managed deployment). AWS credentials are read
   // from the AWS SDK's standard provider chain (AWS_ACCESS_KEY_ID/_SECRET env,
   // shared config, or an instance role), NOT here — so no secret lands in this schema.
   SIM_EVAL_SQS_QUEUE_URL: z.string().optional(),
@@ -84,15 +84,15 @@ export const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true" || v === "1"),
   AWS_REGION: z.string().optional(),
-  // Scenario-generation model. Default gpt-5.5-1 matches aiassist (Plivo). For a
+  // Scenario-generation model. Default gpt-5.5-1 matches the orchestrator service (the managed deployment). For a
   // non-Azure deploy, override + point OPENAI_BASE_URL at the endpoint.
   SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5-1"),
 
   // Scenario-library persistence mode. Selects whether AO owns its own scenario store:
   //   • true  (default) — SELF-CONTAINED (OSS): each generated scenario is written to AO's
   //     own Postgres (ao_simulation_scenarios) and the library routes serve it. Needs DATABASE_URL.
-  //   • false           — STATELESS generator (Plivo / bring-your-own-backend): AO streams
-  //     scenarios but writes NO database; the host (aiassist) persists what it relays. No DB needed.
+  //   • false           — STATELESS generator (the managed deployment / bring-your-own-backend): AO streams
+  //     scenarios but writes NO database; the host (the orchestrator service) persists what it relays. No DB needed.
   // This is the DEFAULT; the per-request `?persist=true|false` query param overrides it. Persistence
   // is impossible without a DB, so the effective value is always ANDed with DATABASE_URL being set.
   SIM_PERSIST: z
@@ -100,16 +100,16 @@ export const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false" && v !== "0"),
 
-  // ── Run engine (the ported cx-sqs-worker simulation loop) ───────────────────
+  // ── Run engine (the ported reference-worker simulation loop) ───────────────────
   // Runs are dispatched via the SQS consumer (src/worker.ts), which drains run
-  // messages produced by aiassist; AO stays stateless (Redis-only, no Postgres run
+  // messages produced by the orchestrator service; AO stays stateless (Redis-only, no Postgres run
   // rows). Requires SIM_EVAL_SQS_QUEUE_URL. (V1 has no in-process mode — the OSS
   // queue-free path was removed; re-add behind a driver seam when OSS lands.)
   // Redis key prefix for the run-scoped keys (FLOW_JSON / SCENARIO_EXPECTED_COUNT /
-  // RESULTS / the Lua completion counters). Default SIM_EVAL matches aiassist on
-  // Plivo's shared Redis; override for an OSS deploy with its own Redis.
+  // RESULTS / the Lua completion counters). Default SIM_EVAL matches the orchestrator service on
+  // the managed deployment's shared Redis; override for an OSS deploy with its own Redis.
   SIM_REDIS_PREFIX: z.string().default("SIM_EVAL"),
-  // Base URL of plivo-cx-livekit. The engine POSTs each turn to
+  // Base URL of the agent runtime. The engine POSTs each turn to
   // {LIVEKIT_SIM_TURN_URL}/v1/simulation/session/turn. Required for the run engine
   // (Stage 2+); unset on a generation-only deploy.
   LIVEKIT_SIM_TURN_URL: z.string().optional(),

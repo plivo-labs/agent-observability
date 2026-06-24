@@ -1,7 +1,7 @@
 // AO Simulation Engine — HTTP + SSE routes (scenario library + generation).
 //
 // AO is the simulation engine: it owns scenario generation and the generated scenario
-// *library* CRUD. Runs are NOT exposed here — on Plivo aiassist produces runs (publishes
+// *library* CRUD. Runs are NOT exposed here — in the managed deployment the orchestrator service produces runs (publishes
 // SQS, consumed by AO's worker) and owns run history; on the run path AO writes only the
 // Redis :RESULTS stream. So this module mounts generation + library routes only. (The
 // OSS-only in-process run mode + its run-history routes were removed for V1; re-add behind a
@@ -9,8 +9,8 @@
 //
 // These routes live under AO's `/api/simulation` prefix, behind AO's existing `/api/*` basic
 // auth. The library routes are Postgres-backed. Generation streams an error event if no LLM is
-// configured rather than pre-blocking. Tenant id comes from the `auth-id` header (= hodor's
-// injected org account id → AO `account_id`); `phlo_uuid` → AO `agent_id` (AD-1).
+// configured rather than pre-blocking. Tenant id comes from the `auth-id` header (= the API gateway's
+// injected org account id → AO `account_id`); `phlo_uuid` → AO `agent_id`.
 
 import type { Hono, Context } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -36,9 +36,9 @@ import { newApiId, buildErrorResponse } from "../response.js";
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // SECURITY: `auth-id` is the tenant scope for every scenario read/write below. It is injected
-// (and the session it derives from is validated) by hodor, the API gateway — AO trusts it because
-// AO runs ONLY behind hodor on a private network, never exposed directly. A direct caller could
-// spoof this header, so if AO is ever fronted by anything other than hodor, add real auth here
+// (and the session it derives from is validated) by the API gateway — AO trusts it because
+// AO runs ONLY behind the API gateway on a private network, never exposed directly. A direct caller could
+// spoof this header, so if AO is ever fronted by anything other than the API gateway, add real auth here
 // (validate the account) before using it. Null (no header) = unscoped, single-tenant/no-auth mode.
 const accountIdOf = (c: Context): string | null => c.req.header("auth-id") || null;
 
@@ -98,9 +98,9 @@ export function registerSimulationRoutes(app: Hono): void {
     }
     const accountId = accountIdOf(c);
     // `persist` (default true): standalone/OSS AO owns the scenario library, so it
-    // writes each generated scenario to its own table. Behind aiassist on Plivo, AO
+    // writes each generated scenario to its own table. Behind the orchestrator service in the managed deployment, AO
     // runs as a STATELESS generator (`?persist=false`) — it streams scenarios but
-    // writes no DB; aiassist persists each `scenario_saved` it relays into core-db
+    // writes no DB; the orchestrator service persists each `scenario_saved` it relays into core-db
     // (the system of record). The full scenario rides on the SSE event either way.
     // Precedence: the per-request `?persist=` query param overrides the env default
     // (SIM_PERSIST). ANDed with dbConfigured — persistence is impossible without a database.

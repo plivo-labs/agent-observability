@@ -24,7 +24,7 @@ import type { Slot, RuntimeScenario, EvalMetadata, PlannerWithInventory } from "
 import { isRecord } from "../json.js";
 
 // AO Simulation Engine — WRITER (LLM 2) + validate_and_fix (Phase 1.5).
-// Faithful port of aiassist `_write_scenario_chunk`, `_combo_context_for_slots`,
+// Faithful port of the orchestrator service `_write_scenario_chunk`, `_combo_context_for_slots`,
 // `validate_and_fix_scenario` + its helpers. The writer emits a strict schema with
 // world_state as an array + *_json string blobs; validate_and_fix turns that into the
 // runtime shape (dict world_state), fills defaults from the slot, and stamps eval_metadata.

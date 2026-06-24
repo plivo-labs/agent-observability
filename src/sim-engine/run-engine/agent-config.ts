@@ -1,6 +1,6 @@
 // AO Simulation Engine — buildAgentConfig (the per-turn LiveKit agent_config payload).
 //
-// Port of cx-sqs-worker `usecases/simulation_eval/scenario_runner.go` `buildAgentConfig`
+// Port of the reference worker `usecases/simulation_eval/scenario_runner.go` `buildAgentConfig`
 // (L519-557). Each AI turn the engine builds the `agent_config` object livekit's /turn
 // endpoint runs the CXAgent against: the node's own config (deep-copied), plus flow-level
 // data hoisted in — global_prompt, voice_config, stt_guidance — and the variable store
@@ -15,7 +15,7 @@ import type { VariableStore } from "./variable-renderer.js";
 import { isRecord, deepCopyMap } from "../json.js";
 
 /** The node fields buildAgentConfig reads. Structurally compatible with the handoff
- *  planner's node and with cx-sqs-worker's FlowNode (id / type / config / configName). */
+ *  planner's node and with the reference worker's FlowNode (id / type / config / configName). */
 export interface AgentConfigNode {
   id: string;
   type: string;

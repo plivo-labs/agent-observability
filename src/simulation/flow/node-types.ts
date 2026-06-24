@@ -1,7 +1,7 @@
 // Single source of truth for the flow node-type taxonomy. Replaces the scattered
 // classifiers that used to live in graph.ts. Cross-checked against the console
-// (contacto-console flow/types.ts), the worker (cx-sqs-worker config/constants.go)
-// and aiassist's scenario_generator.py classification.
+// (the flow editor flow/types.ts), the worker (the reference worker config/constants.go)
+// and the orchestrator service's scenario_generator.py classification.
 //
 // Design rule (from the plan): do NOT out-strict the runtime. Unknown types are
 // ACCEPTED — they're classified as "unknown" and only warned about when they sit

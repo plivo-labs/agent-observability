@@ -12,7 +12,7 @@
  *
  * When the SQS consumer is configured (SIM_EVAL_SQS_QUEUE_URL + REDIS_URL +
  * LIVEKIT_SIM_TURN_URL set), this process ALSO runs the consumer that drains
- * scenario-eval messages produced by aiassist and drives the turn loop. It runs
+ * scenario-eval messages produced by the orchestrator service and drives the turn loop. It runs
  * alongside the alert sweeper, sharing the same SIGTERM/SIGINT shutdown. Without
  * those vars the worker is sweeper-only.
  *

@@ -107,6 +107,33 @@ app.get("/health", (c) => {
   return c.json({ status: "ok", s3Enabled, authEnabled });
 });
 
+// Liveness: the process is up and serving. Cheap, dependency-free — this is what the
+// container HEALTHCHECK and the load-balancer target group poll. Alias of /health.
+app.get("/status", (c) => {
+  return c.json({ status: "ok" });
+});
+
+// Readiness: verify the backing dependency this process actually holds — Postgres, via the
+// persistent `sql` client — when a database is configured. In stateless mode (no DATABASE_URL)
+// there is no DB to check, so it reports "not_configured" and stays healthy. (Redis liveness
+// belongs to the worker, which owns the Redis connection; the API holds no Redis client to poll.)
+app.get("/deepstatus", async (c) => {
+  const checks: Record<string, string> = {};
+  let ok = true;
+  if (dbConfigured) {
+    try {
+      await sql`SELECT 1`;
+      checks.database = "ok";
+    } catch {
+      checks.database = "error";
+      ok = false;
+    }
+  } else {
+    checks.database = "not_configured";
+  }
+  return c.json({ status: ok ? "ok" : "degraded", ...checks }, ok ? 200 : 503);
+});
+
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
 
 registerEvalRoutes(app);

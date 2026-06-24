@@ -1,12 +1,12 @@
 import { CanonicalFlow } from "./flow-schema.js";
 
 // Tier 1.5: many shapes → one canonical. `normalizeFlow(input)` ingests ANY real
-// Plivo flow_json — the config-service stored shape ("Shape A": `connections` with
+// platform flow_json — the flow editor stored shape ("Shape A": `connections` with
 // "nodeId.handle" endpoints, flat `config`, `global_meta.system_prompt`, a `phlo`
 // object) OR the already-canonical shape ("Shape B": split `edges`, `data.config`,
 // camelCase globals) — and returns the single CanonicalFlow the rest of AO trusts.
 //
-// This subsumes (and generalizes) the Plivo-only platform/plivo-flow-adapter:
+// This subsumes (and generalizes) the managed-deployment-only flow adapter:
 // that adapter only knew Shape A; this knows both and auto-detects. The console's
 // `inverseTransformFlowData` is the reference for the Shape A → canonical transform.
 //
@@ -15,7 +15,7 @@ import { CanonicalFlow } from "./flow-schema.js";
 // `source`/`target`/`sourceHandle`. Everything else is converted into exactly that
 // before `CanonicalFlow.parse()` — a parse failure here is a TRUE structural error.
 
-// ── secret + UI-field stripping (ported from plivo-flow-adapter) ──────────────
+// ── secret + UI-field stripping (ported from the flow adapter) ──────────────
 // Conservative substring match: any config key that looks like a credential is
 // dropped recursively, so a flow fetched/pasted for simulation never leaks auth
 // tokens/passwords into the persisted run or the LLM generator.

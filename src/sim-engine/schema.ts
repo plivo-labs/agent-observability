@@ -6,16 +6,16 @@ import type { CanonicalFlow } from "../simulation/flow/flow-schema.js";
 // AO Simulation Engine — boundary schemas (Phase 0.3)
 //
 // Three contracts live here:
-//   1. The HTTP request bodies for generate/run — mirrored EXACTLY from aiassist
-//      (plan.md AD-5: `models/simulation.py` GenerateScenariosRequest /
+//   1. The HTTP request bodies for generate/run — mirrored EXACTLY from the orchestrator service
+//      (plan.md: `models/simulation.py` GenerateScenariosRequest /
 //      RunScenariosRequest), so the future console cutover is near-zero change.
 //   2. `flow_json` validation — we DON'T re-describe the messy console shape with
 //      a bespoke Zod (it has two real-world variants). Instead we delegate to the
 //      ported `normalizeFlow`, which folds ANY accepted shape into the single
 //      `CanonicalFlow` and is exactly what the worker's ParseFlowGraph expects
-//      (plan.md AD-7). `parseFlowJson()` is that boundary gate.
+//      (see the design notes). `parseFlowJson()` is that boundary gate.
 //   3. The Scenario dict — matched field-for-field to the worker's
-//      `SimulationScenario` Go struct (cx-sqs-worker
+//      `SimulationScenario` Go struct (the reference worker
 //      usecases/simulation_eval/models.go L44-64), since AO produces scenarios
 //      (the WRITER) and later enqueues them for that worker to unmarshal.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,13 +27,13 @@ export type SimulationMode = z.infer<typeof SimulationMode>;
 // `flow_json` arrives as an arbitrary JSON object at the request boundary; its
 // real structural validation is `parseFlowJson()` below (normalizeFlow). Keeping
 // it loose here means we accept BOTH the console "canonical" shape and the
-// config-service "stored" shape without rejecting one at the Zod layer.
+// flow editor "stored" shape without rejecting one at the Zod layer.
 const FlowJsonInput = z.record(z.string(), z.unknown());
 
 /**
- * POST .../scenarios/generate — mirror of aiassist's `GenerateScenariosRequest`.
- * `phlo_uuid` is the agent id (stored as `agent_id` in AO's own tables, AD-1).
- * `account_id` is NOT in the body: like aiassist (which reads the hodor-injected
+ * POST .../scenarios/generate — mirror of the orchestrator service's `GenerateScenariosRequest`.
+ * `phlo_uuid` is the agent id (stored as `agent_id` in AO's own tables).
+ * `account_id` is NOT in the body: like the orchestrator service (which reads the API-gateway-injected
  * `auth-id` header) AO resolves the account from the auth context at the route
  * layer (Phase 4), so this body stays byte-compatible with the console's.
  */
@@ -47,7 +47,7 @@ export const GenerateScenariosRequest = z.object({
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
 
 /**
- * POST .../scenarios/run — mirror of aiassist's `RunScenariosRequest`. Selects
+ * POST .../scenarios/run — mirror of the orchestrator service's `RunScenariosRequest`. Selects
  * already-generated scenarios by id. (Phase 4 may also accept inline scenario
  * dicts for AO-native callers; that's an additive superset, not a change here.)
  */
@@ -60,13 +60,13 @@ export const RunScenariosRequest = z.object({
 });
 export type RunScenariosRequest = z.infer<typeof RunScenariosRequest>;
 
-/** POST .../scenarios/batch-delete — mirror of aiassist's `DeleteScenariosRequest`. */
+/** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`. */
 export const DeleteScenariosRequest = z.object({
   uuids: z.array(z.string()).min(1).max(200),
 });
 export type DeleteScenariosRequest = z.infer<typeof DeleteScenariosRequest>;
 
-/** PATCH .../runs/:run_uuid/rename — mirror of aiassist's `RenameSimulationRunRequest`. */
+/** PATCH .../runs/:run_uuid/rename — mirror of the orchestrator service's `RenameSimulationRunRequest`. */
 export const RenameSimulationRunRequest = z.object({
   name: z.string().min(1).max(255),
 });
@@ -89,7 +89,7 @@ export const WorldStateEntry = z.object({
   outcome: z.string(),
   data: z.record(z.string(), z.unknown()),
   // The generator's writer emits per-node `action_mocks` too (validate_and_fix
-  // keeps them). The cx-sqs-worker ignores them — the Phase 2 serializer drops
+  // keeps them). The reference worker ignores them — the Phase 2 serializer drops
   // them — but we model it optional so an internal scenario validates here.
   action_mocks: z.record(z.string(), z.unknown()).optional(),
 });
@@ -143,7 +143,7 @@ export class FlowJsonError extends Error {
  * `CanonicalFlow.parse`) on a true structural problem — e.g. no nodes. We wrap
  * that in a typed `FlowJsonError` so the route can answer 400 with a clean
  * message instead of leaking a raw ZodError. The returned `CanonicalFlow` is
- * exactly the shape we hand to Redis for the worker's ParseFlowGraph (AD-7).
+ * exactly the shape we hand to Redis for the worker's ParseFlowGraph (see the design notes).
  */
 export function parseFlowJson(input: unknown): CanonicalFlow {
   try {

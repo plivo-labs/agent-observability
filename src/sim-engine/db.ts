@@ -2,10 +2,10 @@ import { sql } from "../db.js";
 
 // AO Simulation Engine — data accessors for the ao_simulation_scenarios table.
 //
-// AO owns the generated scenario *library* (AD-1: AO never reads/writes a CX
+// AO owns the generated scenario *library* (AO never reads/writes a CX
 // table, never `phlo`). This table is the only one these accessors touch; the
 // scenario-library API routes (src/sim-engine/routes.ts) go through here. (Run
-// history lives in aiassist on Plivo; AO's old in-process run-row accessors were
+// history lives in the orchestrator service in the managed deployment; AO's old in-process run-row accessors were
 // removed for V1 along with the in-process dispatch mode.)
 //
 // bun:sql gotchas honored throughout (see CLAUDE.md / src/alerts/engine.ts):

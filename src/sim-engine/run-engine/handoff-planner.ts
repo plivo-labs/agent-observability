@@ -1,6 +1,6 @@
 // AO Simulation Engine — handoff plan (output_state_config for livekit's intent handler).
 //
-// Port of cx-sqs-worker `usecases/simulation_eval/handoff_planner.go` (+ the three helpers
+// Port of the reference worker `usecases/simulation_eval/handoff_planner.go` (+ the three helpers
 // it borrows from edge_resolver.go: resolveIntentSourceHandle, resolvePromptEdge,
 // hasOutgoingAIConversationTarget — ported privately here so this file stays self-contained
 // and does not collide with run-engine/edge-resolver.ts).

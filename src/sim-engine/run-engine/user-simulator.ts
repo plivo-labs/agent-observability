@@ -1,6 +1,6 @@
 // AO Simulation Engine — UserSimulator (the simulated caller LLM).
 //
-// Port of cx-sqs-worker `usecases/simulation_eval/user_simulator.go` +
+// Port of the reference worker `usecases/simulation_eval/user_simulator.go` +
 // `prompts/user_simulator.tmpl` + `behavioral_traits.go`. Each turn the engine asks an
 // LLM to produce the simulated caller's NEXT utterance, given the persona, goal,
 // behavioral traits, conversation history, the active mode (normal / interruption /

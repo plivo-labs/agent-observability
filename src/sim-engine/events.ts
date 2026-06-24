@@ -1,4 +1,4 @@
-// AO Simulation Engine — SSE event names + envelope (Phase 4.1, AD-5).
+// AO Simulation Engine — SSE event names + envelope (Phase 4.1).
 //
 // The names are EXACTLY the set the console's simulation-store consumes, so the eventual console
 // cutover is near-zero change. Every payload is wrapped in the same envelope the worker uses —
@@ -25,7 +25,7 @@ export const SSE = {
   STREAM_ENDED: "stream_ended",
 } as const;
 
-/** Terminal events that end a run's SSE relay (mirrors the worker/aiassist set). */
+/** Terminal events that end a run's SSE relay (mirrors the worker/orchestrator service set). */
 export const TERMINAL_SSE = new Set<string>([
   SSE.SIMULATION_COMPLETED,
   SSE.SIMULATION_ERROR,

@@ -1,6 +1,6 @@
 // AO Simulation Engine — FlowGraph executor types.
 //
-// Faithful port of cx-sqs-worker `usecases/simulation_eval/flow_types.go`
+// Faithful port of the reference worker `usecases/simulation_eval/flow_types.go`
 // (plus the minimal `VariableStore` from `variable_renderer.go` and
 // `WorldStateEntry` from `models.go` that the orchestrator depends on).
 //

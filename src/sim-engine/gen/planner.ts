@@ -7,7 +7,7 @@ import type { PlannerWithInventory, ExistingScenarioSummary, SimulationMode } fr
 import { slug } from "./text.js";
 
 // AO Simulation Engine — PLANNER (LLM 1) + deterministic fallback (Phase 1.3).
-// Faithful port of aiassist `_plan_capabilities` + `_fallback_planner`. The planner
+// Faithful port of the orchestrator service `_plan_capabilities` + `_fallback_planner`. The planner
 // proposes capabilities (loose schema); the fallback synthesizes them from the route
 // inventory when the LLM has none.
 

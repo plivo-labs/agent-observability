@@ -1,6 +1,6 @@
 // AO Simulation Engine — FlowGraph parser + traversal orchestrator.
 //
-// Faithful port of cx-sqs-worker `usecases/simulation_eval/flow_orchestrator.go`
+// Faithful port of the reference worker `usecases/simulation_eval/flow_orchestrator.go`
 // (`ParseFlowGraph` + the `FlowOrchestrator.Run` traversal loop and its
 // `executeMockedNode` / `defaultMockedOutcome` helpers).
 //

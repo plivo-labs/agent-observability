@@ -1,10 +1,10 @@
 // AO Simulation Engine — combo libraries + allocation constants (Phase 1.1).
 //
-// Ported VERBATIM from aiassist `usecases/eval/scenario_generator.py` (the constants
+// Ported VERBATIM from the orchestrator service `usecases/eval/scenario_generator.py` (the constants
 // block, ~L456-690). These are DATA (persona archetypes, conversation patterns,
-// scoring weights), NOT the sensitive prompt text — so they are committed (AD-4
-// git-ignores only `prompts.ts`). The deterministic allocator (1.4) depends on these
-// EXACT values + ids, so do not "improve" them — parity with aiassist requires them
+// scoring weights), NOT the sensitive prompt text — so they are committed (the design notes
+// git-ignore only `prompts.ts`). The deterministic allocator (1.4) depends on these
+// EXACT values + ids, so do not "improve" them — parity with the orchestrator service requires them
 // byte-for-byte.
 
 export interface PersonaCombo {
@@ -100,7 +100,7 @@ export const PERSONA_COMBOS: Record<string, PersonaCombo> = {
   P11: { style: "off-topic", verbosity: "high", emotional_state: "confused", behavioral_traits: ["goes_off_topic", "asks_questions_mid_flow"] },
   P12: { style: "format-messy", verbosity: "normal", emotional_state: "neutral", behavioral_traits: ["gives_wrong_format", "self_corrects"] },
   P13: { style: "chatty", verbosity: "high", emotional_state: "impatient", behavioral_traits: ["provides_unsolicited_info", "rushes"] },
-  // P14-P19: ported (in aiassist) from AO's PERSONA_CATALOG. Schema-uniform with P01-P13;
+  // P14-P19: ported (in the orchestrator service) from AO's PERSONA_CATALOG. Schema-uniform with P01-P13;
   // only style/verbosity/emotional_state/behavioral_traits are consumed by the writer.
   P14: { style: "polite", verbosity: "normal", emotional_state: "happy", behavioral_traits: ["cooperative"] },
   P15: { style: "rushed", verbosity: "normal", emotional_state: "impatient", behavioral_traits: ["rushes", "contradicts_self", "asks_questions_mid_flow"] },

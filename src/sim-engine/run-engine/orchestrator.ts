@@ -1,6 +1,6 @@
 // AO Simulation Engine — turn-loop orchestrator (the ScenarioRunner).
 //
-// Faithful port of cx-sqs-worker `usecases/simulation_eval/scenario_runner.go` (the
+// Faithful port of the reference worker `usecases/simulation_eval/scenario_runner.go` (the
 // `ScenarioRunner` + `ExecuteAINode`), wiring together the pieces built in Stages 2–5:
 //   UserSimulator (LLM) → stress injection → /turn client → sm:{} history → :RESULTS emitters,
 // driven by the FlowOrchestrator (Stage 4) which calls back into `executeAINode` per ai_agent_v2 node.
@@ -69,7 +69,7 @@ export interface RunScenarioJob {
   scenario: Scenario;
   authId: string;
   agentFlowDescription: string;
-  /** Raw flow JSON (the FLOW_JSON aiassist seeded; the engine reads it via getFlowJson). */
+  /** Raw flow JSON (the FLOW_JSON the orchestrator service seeded; the engine reads it via getFlowJson). */
   flowJson: string;
   maxTurns: number;
 }

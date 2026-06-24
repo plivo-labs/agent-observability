@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // AO Simulation Engine — PLANNER + WRITER output schemas (Phase 1.1).
 //
-// Ported VERBATIM from aiassist `scenario_generator.py` (PLANNER_OUTPUT_SCHEMA L276-352,
+// Ported VERBATIM from the orchestrator service `scenario_generator.py` (PLANNER_OUTPUT_SCHEMA L276-352,
 // WRITER_OUTPUT_SCHEMA L354-454). Two representations:
 //   • `*_JSON_SCHEMA` — the raw JSON Schema (the inner "schema" object), passed to
 //     `completeJSON`'s `jsonSchema` option. The PLANNER is LOOSE (strict:false → we do

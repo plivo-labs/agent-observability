@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// The one fixed, authoritative schema for a Plivo flow_json (the canonical
+// The one fixed, authoritative schema for a platform flow_json (the canonical
 // "Agent Flow 3" shape AO consumes after normalization). Tier 1 of the layered
 // design: STRICT on the structural envelope the orchestrator depends on, LENIENT
 // (.passthrough()) on open-ended node config so upstream config changes and brand

@@ -20,10 +20,10 @@ import { slug } from "./text.js"; // pure leaf — keeps the allocator config-fr
 
 // AO Simulation Engine — DETERMINISTIC slot allocator (Phase 1.4).
 //
-// Byte-exact port of aiassist's allocator (scenario_generator.py). NO randomness;
+// Byte-exact port of the orchestrator service's allocator (scenario_generator.py). NO randomness;
 // every sort is total-order so output is reproducible given identical inputs. Pure:
 // imports only the combo constants — no LLM, no config, no DB. Do not "tidy" the
-// formulas/ordering: parity with aiassist depends on them exactly.
+// formulas/ordering: parity with the orchestrator service depends on them exactly.
 
 type Dict = Record<string, any>;
 const SEP = ""; // unit separator for pair/triple keys

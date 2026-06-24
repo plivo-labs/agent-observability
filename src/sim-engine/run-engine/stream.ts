@@ -2,7 +2,7 @@
 //
 // The five simulation events the engine writes to the Redis :RESULTS stream, with payloads
 // byte-identical to the worker's (models.go SimEventType + the eventData maps in
-// scenario_runner.go / simulation_eval_handler.go). aiassist reads these and persists + relays
+// scenario_runner.go / simulation_eval_handler.go). The orchestrator service reads these and persists + relays
 // them unchanged. V1 ships without eval, so scenario_completed omits evaluation/eval_error.
 
 import { xaddEvent, type RedisClient } from "../queue/redis.js";

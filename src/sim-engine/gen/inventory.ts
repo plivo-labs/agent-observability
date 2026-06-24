@@ -8,10 +8,10 @@ import { isRecord } from "../json.js";
 
 // AO Simulation Engine — mechanical flow inventory (Phase 1.2).
 //
-// Faithful port of aiassist `_build_flow_inventory` + helpers (scenario_generator.py
+// Faithful port of the orchestrator service `_build_flow_inventory` + helpers (scenario_generator.py
 // ~L744-1051). Runs on the canonical flow produced by `normalizeFlow` (nodes with
 // `data.config`, split `edges` with source/target/sourceHandle, folded `agentSettings`)
-// — i.e. exactly the shape aiassist's `flow_json` already has. Output feeds the PLANNER
+// — i.e. exactly the shape the orchestrator service's `flow_json` already has. Output feeds the PLANNER
 // payload (1.3) and the allocator's route grounding (1.4). Reads dict-style + defensive,
 // mirroring the Python `.get(...)` access.
 

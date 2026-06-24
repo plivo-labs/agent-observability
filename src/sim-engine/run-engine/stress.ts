@@ -1,6 +1,6 @@
 // AO Simulation Engine — stress injection (interruption / non-answer / STT noise).
 //
-// Port of the stress logic in cx-sqs-worker `usecases/simulation_eval/scenario_runner.go`:
+// Port of the stress logic in the reference worker `usecases/simulation_eval/scenario_runner.go`:
 //   - shouldInterrupt        (L171-193)
 //   - shouldInjectNonAnswer  (L195-216)
 //   - pickNonAnswerType      (L218-223)

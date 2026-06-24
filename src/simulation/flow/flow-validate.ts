@@ -1,7 +1,7 @@
 import type { CanonicalFlow } from "./flow-schema.js";
 import { classifyNodeType } from "./node-types.js";
 
-// Tier 2: graph integrity as a REPORT, not a reject — exactly how Plivo's own
+// Tier 2: graph integrity as a REPORT, not a reject — exactly how the platform's own
 // console behaves (it surfaces validation_errors in a popover but still saves the
 // draft). `validateFlow` runs on an ALREADY-normalized CanonicalFlow and returns
 // { errors, warnings, simulatable }. FATAL checks (no start, no reachable agent,

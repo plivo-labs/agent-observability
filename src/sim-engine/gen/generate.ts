@@ -6,13 +6,13 @@ import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES } from "./
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
 
 // AO Simulation Engine — generation orchestration (Phase 1.6).
-// Port of aiassist `generate_scenarios_stream`: PLANNER (2 attempts) → deterministic
+// Port of the orchestrator service `generate_scenarios_stream`: PLANNER (2 attempts) → deterministic
 // ALLOCATOR (2 attempts, replan on the 2nd) → WRITER (chunks of 10, parallel, with
 // chunk + per-slot fallback retries) → dedup by coverage_key. Yields progress events
 // + scenarios as a discriminated union (the Phase 4 route layer maps these to SSE).
 //
 // V1 simplification: non-streaming writer chunks (parallel via Promise.all), deferring
-// aiassist's token-streaming recovery — same schema, validation, retries, and events.
+// the orchestrator service's token-streaming recovery — same schema, validation, retries, and events.
 
 type Dict = Record<string, any>;
 

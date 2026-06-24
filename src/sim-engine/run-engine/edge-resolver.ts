@@ -1,6 +1,6 @@
 // AO Simulation Engine — EdgeResolver.
 //
-// Faithful port of cx-sqs-worker `usecases/simulation_eval/edge_resolver.go`.
+// Faithful port of the reference worker `usecases/simulation_eval/edge_resolver.go`.
 // Resolves the next node from (current node + execution result) via a
 // node-type switch that derives a `sourceHandle`, then matches it against
 // the node's outgoing edges. PURE — no Redis, DB, or HTTP.

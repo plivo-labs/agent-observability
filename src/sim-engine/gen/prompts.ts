@@ -1,14 +1,14 @@
 // AO Simulation Engine — scenario-generator prompts (committed).
 //
-// Faithful STRUCTURAL paraphrase of aiassist's PLANNER + WRITER prompts — same inputs,
-// same modes, same JSON output contract. The exact verbatim Plivo wording can be pasted
+// Faithful STRUCTURAL paraphrase of the orchestrator service's PLANNER + WRITER prompts — same inputs,
+// same modes, same JSON output contract. The exact verbatim upstream wording can be pasted
 // in here (this file is committed now; OSS genericization is a later concern). Unit tests
 // inject MockLLM, so prompt CONTENT is never asserted — only that these return a usable
 // system prompt. Keep the exported function names + signatures stable (planner.ts /
 // writer.ts import them).
 
 /**
- * PLANNER (LLM 1) system prompt. Mirrors aiassist `_planner_prompt(simulation_mode,
+ * PLANNER (LLM 1) system prompt. Mirrors the orchestrator service `_planner_prompt(simulation_mode,
  * smoke_cap)`: base instructions + a smoke-mode suffix capped at `smokeCap`. The user
  * payload (flow_json, mechanical_inventory, conversation_pattern_library,
  * existing_scenario_summaries, user_instructions, simulation_mode) is assembled by the
@@ -48,7 +48,7 @@ export function plannerSystemPrompt(simulationMode: "smoke" | "stress", smokeCap
 }
 
 /**
- * WRITER (LLM 2) system prompt. Mirrors aiassist `_writer_prompt()`. The user payload
+ * WRITER (LLM 2) system prompt. Mirrors the orchestrator service `_writer_prompt()`. The user payload
  * (generation_id, writer_context, the slots batch, and the resolved combo_definitions)
  * is assembled by writer.ts — this is only the system instruction. Output is STRICT
  * against scenario_writer_output.

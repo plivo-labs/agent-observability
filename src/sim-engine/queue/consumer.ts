@@ -1,9 +1,9 @@
 // AO Simulation Engine — SQS consumer (the "dispatch adapter").
 //
-// Port of cx-sqs-worker `usecases/simulation_eval/simulation_eval_handler.go` (the
+// Port of the reference worker `usecases/simulation_eval/simulation_eval_handler.go` (the
 // `runScenario` message handler + `failScenario`), adapted to AO's thinner boundary:
 // AO owns ONLY the engine (scenario turn loop + the run-level completion gate), so this
-// handler does no Postgres writes and no DLQ routing — aiassist persists + relays the
+// handler does no Postgres writes and no DLQ routing — the orchestrator service persists + relays the
 // :RESULTS stream, and "always complete" (delete the message) is the failure posture.
 //
 // The pipeline per message:
@@ -42,7 +42,7 @@ export interface ConsumerDeps {
   runnerDeps?: Omit<ScenarioRunnerDeps, "redis">;
 }
 
-/** The aiassist→AO SQS envelope (Body is JSON of this). Only the fields the handler reads
+/** The orchestrator-service→AO SQS envelope (Body is JSON of this). Only the fields the handler reads
  *  are typed; the rest ride along untyped (`payload.body` is a loose dict by contract). */
 interface SimulationEnvelope {
   event_type?: string;
@@ -130,9 +130,9 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
 
   // From here on we HAVE a run uuid + scenario id — every failure routes through
   // failScenario so the gate advances and simulation_completed still fires.
-  // Emits go straight to the live Redis :RESULTS stream (Plivo; aiassist relays it).
+  // Emits go straight to the live Redis :RESULTS stream (the managed deployment; the orchestrator service relays it).
   try {
-    // ── Read the flow JSON aiassist seeded for this run. A miss is fatal for the scenario
+    // ── Read the flow JSON the orchestrator service seeded for this run. A miss is fatal for the scenario
     //    (we can't run the flow), but not for the run — fail the scenario, advance the gate. ──
     let flowJson: string;
     try {

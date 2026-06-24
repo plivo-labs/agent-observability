@@ -1,6 +1,6 @@
 // AO Simulation Engine — Pipecat conversation history (sm:{sessionID}).
 //
-// Port of cx-sqs-worker history_writer.go. Each turn the engine appends to a Redis LIST keyed
+// Port of the reference worker history_writer.go. Each turn the engine appends to a Redis LIST keyed
 // `sm:{flowRunUUID}` so the livekit CXAgent at /turn sees prior context. NOTE: `sm:` is Pipecat's
 // own key convention (what livekit / Sentinel read) — it is deliberately NOT under SIM_REDIS_PREFIX.
 // Turn shape: {user:{content,role,meta_data}, assistant:{content:{intent,variables,message},role,meta_data}}.
