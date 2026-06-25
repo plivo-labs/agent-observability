@@ -53,7 +53,10 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 // the consumer owns its poll loop and exits on the shared abort, so we don't await it below.
 if (queueDispatchEnabled) {
   consumerRedis = makeRedis();
-  const livekit = makeLiveKitSimClient();
+  const livekit = makeLiveKitSimClient({
+    username: simEngineConfig.livekitSimTurnUser,
+    password: simEngineConfig.livekitSimTurnPass,
+  });
   void consumeSimulationQueue(
     { redis: consumerRedis, runnerDeps: { livekit } },
     {

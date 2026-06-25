@@ -113,6 +113,11 @@ export const envSchema = z.object({
   // {LIVEKIT_SIM_TURN_URL}/v1/simulation/session/turn. Required for the run engine
   // (Stage 2+); unset on a generation-only deploy.
   LIVEKIT_SIM_TURN_URL: z.string().optional(),
+  // Optional Basic-auth credentials for the agent runtime /turn endpoint. Rendered from the
+  // shared LiveKit sim secret (LiveKitSimConfig.Username/.Password) on the managed deployment;
+  // empty/unset → the client sends no Authorization header (unauthenticated private network).
+  LIVEKIT_SIM_TURN_USER: z.string().optional(),
+  LIVEKIT_SIM_TURN_PASS: z.string().optional(),
   // The UserSimulator (simulated caller) LLM model. Falls back to the scenario
   // generation model when unset (see simEngineConfig.userSimulatorModel).
   USER_SIMULATOR_MODEL: z.string().optional(),

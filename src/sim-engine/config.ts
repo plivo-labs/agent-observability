@@ -87,6 +87,9 @@ export const simEngineConfig = {
   simRedisPrefix: config.SIM_REDIS_PREFIX,
   /** agent runtime base URL; the engine POSTs /v1/simulation/session/turn here. */
   livekitSimTurnUrl: config.LIVEKIT_SIM_TURN_URL,
+  /** Optional Basic-auth creds for the /turn endpoint (empty → unauthenticated). */
+  livekitSimTurnUser: config.LIVEKIT_SIM_TURN_USER,
+  livekitSimTurnPass: config.LIVEKIT_SIM_TURN_PASS,
   /** UserSimulator LLM model; falls back to the generation model when unset. */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
   /** Scenarios run concurrently per worker process / per in-process run (fan-out bound). */
