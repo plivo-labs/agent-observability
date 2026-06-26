@@ -101,8 +101,14 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      // Network error / timeout — retry while attempts remain, otherwise fail.
+      // Network error / timeout / non-2xx (e.g. a 404 from a misconfigured LLM endpoint).
+      // Log it on AO's own stdout so failures are visible here, not only in the caller that
+      // re-raises the streamed error. No secret/api-key is in the message; the prompt is omitted.
       lastError = e;
+      console.error(
+        `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${model}): ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
       continue;
     }
     addUsage(usage, raw.usage);

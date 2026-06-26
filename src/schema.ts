@@ -51,7 +51,19 @@ export const envSchema = z.object({
   LLM_PROVIDER: z.enum(["anthropic", "openai"]).default("anthropic"),
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  // API root for the OpenAI adapter (the part BEFORE /chat/completions or /responses).
+  // Vanilla OpenAI: https://api.openai.com/v1. An OpenAI-compatible gateway (Azure
+  // "/openai/v1", OpenRouter, a local server) sets its own root here.
   OPENAI_BASE_URL: z.string().optional(),
+  // Wire-format the OpenAI adapter speaks. Both are standard OpenAI APIs:
+  //   • "chat"      (default) — Chat Completions: POST {base}/chat/completions, `messages` + response_format.
+  //   • "responses"           — Responses API:    POST {base}/responses, `input` + text.format.
+  // Pick "responses" for gateways that only expose the Responses API.
+  OPENAI_API_MODE: z.enum(["chat", "responses"]).default("chat"),
+  // Auth header style for the OpenAI adapter:
+  //   • "bearer"  (default) — Authorization: Bearer <key>  (vanilla OpenAI / OpenRouter).
+  //   • "api-key"           — api-key: <key>                (Azure-style / api-key gateways).
+  OPENAI_AUTH_STYLE: z.enum(["bearer", "api-key"]).default("bearer"),
 
   // Per-role model overrides (empty = the adapter's built-in default). The
   // scenario generator uses the "generator" role; the sim-engine also passes an

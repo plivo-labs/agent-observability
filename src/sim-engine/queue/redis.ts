@@ -50,11 +50,20 @@ export function makeRedis(opts: MakeRedisOptions = {}): RedisClient {
   const url = opts.url ?? simEngineConfig.redisUrl;
   if (!url) throw new Error("REDIS_URL is not configured");
   const useCluster = opts.cluster ?? simEngineConfig.redisCluster;
+  // Resilience options: a managed/ELB Redis endpoint can reset idle connections
+  // ("connection reset by peer"). TCP keepalive keeps long-lived stream connections
+  // warm, and reconnectOnError transparently reconnects on a reset instead of
+  // failing in-flight commands. TLS is NOT forced here — use a rediss:// URL for it.
+  const redisOptions = {
+    keepAlive: 30_000,
+    retryStrategy: (times: number) => Math.min(times * 200, 2_000),
+    reconnectOnError: (err: Error) => /READONLY|ECONNRESET|reset by peer/i.test(err.message),
+  };
   if (useCluster) {
     // A single seed URL is enough — the Cluster client discovers the rest of the nodes.
-    return new Cluster([url]);
+    return new Cluster([url], { redisOptions });
   }
-  return new Redis(url);
+  return new Redis(url, redisOptions);
 }
 
 // ── Writer (the engine's stream append primitive) ───────────────────────────────────────────
