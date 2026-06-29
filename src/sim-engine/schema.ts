@@ -82,15 +82,13 @@ export const ScenarioPersona = z.object({
 });
 export type ScenarioPersona = z.infer<typeof ScenarioPersona>;
 
-/** One node's mocked outcome in `world_state`. The worker's WorldStateEntry only
- *  carries `outcome` + `data` (action mocks are folded in by the writer's
- *  validate_and_fix; the worker ignores anything beyond these two). */
+/** One node's mocked outcome in `world_state`. All fields are optional: the writer
+ *  only emits `outcome`/`data`/`action_mocks` when non-empty, so a valid entry can
+ *  carry just one of them (e.g. `{ outcome }` or `{ action_mocks }`). The runner
+ *  defaults a missing `data` to `{}` and a missing `outcome` to the node default. */
 export const WorldStateEntry = z.object({
-  outcome: z.string(),
-  data: z.record(z.string(), z.unknown()),
-  // The generator's writer emits per-node `action_mocks` too (validate_and_fix
-  // keeps them). The reference worker ignores them — the Phase 2 serializer drops
-  // them — but we model it optional so an internal scenario validates here.
+  outcome: z.string().optional(),
+  data: z.record(z.string(), z.unknown()).optional().default({}),
   action_mocks: z.record(z.string(), z.unknown()).optional(),
 });
 export type WorldStateEntry = z.infer<typeof WorldStateEntry>;
@@ -116,10 +114,10 @@ export const Scenario = z
     interruption: InterruptionConfig,
     stt_noise: STTNoiseConfig,
     non_answer: NonAnswerConfig,
-    world_state: z.record(z.string(), WorldStateEntry),
-    start_node_params: z.record(z.string(), z.unknown()),
-    max_turns: z.number().int(),
-    tags: z.array(z.string()),
+    world_state: z.record(z.string(), WorldStateEntry).default({}),
+    start_node_params: z.record(z.string(), z.unknown()).default({}),
+    max_turns: z.number().int().min(1).max(200).default(25),
+    tags: z.array(z.string()).default([]),
   })
   .passthrough();
 export type Scenario = z.infer<typeof Scenario>;
