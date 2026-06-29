@@ -1,5 +1,5 @@
 import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
-import { PlannerOutputZ } from "./schemas.js";
+import { PlannerOutputZ, PLANNER_SCHEMA_NAME, PLANNER_JSON_SCHEMA } from "./schemas.js";
 import { plannerSystemPrompt } from "./prompts.js";
 import { buildFlowInventory, type MechanicalInventory } from "./inventory.js";
 import { EXECUTABLE_NODE_TYPES, SUPPORTED_TERMINAL_NODE_TYPES, BLOCKED_NODE_TYPES, CONVERSATION_PATTERNS, PLANNER_MAX_OUTPUT_TOKENS, MAX_EXISTING_SCENARIO_SUMMARIES } from "./combos.js";
@@ -79,6 +79,10 @@ export async function planCapabilities(
     system: plannerSystemPrompt(mode, args.smokeCap ?? 0),
     prompt: JSON.stringify(payload),
     maxTokens: PLANNER_MAX_OUTPUT_TOKENS,
+    // Send text.format (loose, strict:false) so the model emits bounded structured output and
+    // doesn't free-form past max_output_tokens → status="incomplete". Replicates aiassist's
+    // planner exactly (PLANNER_OUTPUT_SCHEMA, strict:false); we still re-validate with Zod.
+    jsonSchema: { name: PLANNER_SCHEMA_NAME, schema: PLANNER_JSON_SCHEMA, strict: false },
     provider: args.provider,
   });
   const planner = { ...res.data, mechanical_inventory: inventory } as PlannerWithInventory;

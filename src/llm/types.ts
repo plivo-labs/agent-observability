@@ -33,7 +33,7 @@ export interface ProviderCompleteArgs {
    * provider forces the response to match this schema exactly — guarantees the
    * required fields instead of the looser json_object "valid JSON" contract.
    */
-  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   /** Aborts the call when the completeJSON timeout fires. */
   signal: AbortSignal;
 }
@@ -66,7 +66,7 @@ export interface CompleteJSONOptions<T> {
   /** Nucleus sampling top_p. */
   topP?: number;
   /** Strict JSON-schema for structured output — guarantees required fields (OpenAI/Azure). */
-  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   timeoutMs?: number;
   /** Reprompt attempts after the first call (default from config). */
   maxRetries?: number;

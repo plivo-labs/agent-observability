@@ -29,7 +29,7 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
   // Strict json_schema when a schema is supplied (guarantees required fields);
   // otherwise the looser json_object (valid-JSON-only) mode.
   const response_format = jsonSchema
-    ? ({ type: "json_schema", json_schema: { name: jsonSchema.name, strict: true, schema: jsonSchema.schema } } as const)
+    ? ({ type: "json_schema", json_schema: { name: jsonSchema.name, strict: jsonSchema.strict ?? true, schema: jsonSchema.schema } } as const)
     : ({ type: "json_object" } as const);
   const res = await getClient().chat.completions.create(
     {
@@ -58,6 +58,7 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
 
 interface ResponsesResult {
   status?: string;
+  incomplete_details?: { reason?: string };
   output?: { content?: { text?: string }[] }[];
   output_text?: string;
   usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
@@ -106,7 +107,7 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
     // Strict structured output when a schema is supplied; otherwise free JSON (the
     // planner relies on the JSON_ONLY_HINT + zod validation in completeJSON).
     ...(jsonSchema
-      ? { text: { format: { type: "json_schema", name: jsonSchema.name, strict: true, schema: jsonSchema.schema } } }
+      ? { text: { format: { type: "json_schema", name: jsonSchema.name, strict: jsonSchema.strict ?? true, schema: jsonSchema.schema } } }
       : {}),
   };
 
@@ -118,7 +119,8 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
   const json = (await res.json()) as ResponsesResult;
   // The Responses API can return a 200 with a non-terminal status (incomplete output).
   if (json.status && json.status !== "completed") {
-    throw new Error(`responses status="${json.status}" (incomplete output)`);
+    const reason = json.incomplete_details?.reason ? ` reason="${json.incomplete_details.reason}"` : "";
+    throw new Error(`responses status="${json.status}"${reason} (incomplete output)`);
   }
   return {
     text: extractResponsesText(json),
