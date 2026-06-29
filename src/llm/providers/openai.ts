@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { config } from "../../config.js";
-import type { LlmProvider, ProviderCompleteArgs, RawCompletion } from "../types.js";
+import type { LlmProvider, ProviderCompleteArgs, RawCompletion, LlmUsage } from "../types.js";
 
 let client: OpenAI | undefined;
 
@@ -34,7 +34,8 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
   const res = await getClient().chat.completions.create(
     {
       model,
-      max_tokens: maxTokens,
+      // maxTokens === 0 means "no cap" → omit so the model uses its default budget.
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
       response_format,
       ...(temperature !== undefined ? { temperature } : {}),
       ...(topP !== undefined ? { top_p: topP } : {}),
@@ -133,6 +134,107 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
 }
 
 /**
+ * Streaming Responses API: POST {base}/responses with `stream:true` and (by design) NO
+ * `max_output_tokens` when maxTokens is 0 — so a long batch (the writer's 10 scenarios on a
+ * reasoning model) is never truncated into `status="incomplete"`. We accumulate the
+ * `response.output_text.delta` chunks into the full JSON text, then completeJSON validates it
+ * with Zod exactly as for the non-streaming path. Direct port of aiassist's `_stream_scenario_writer`
+ * (same event names, same no-cap body). Honors the abort signal for the per-attempt timeout.
+ */
+async function completeViaResponsesStream(args: ProviderCompleteArgs): Promise<RawCompletion> {
+  const { system, user, model, maxTokens, temperature, topP, jsonSchema, signal } = args;
+  if (!config.OPENAI_API_KEY) {
+    throw new Error("LLM_PROVIDER=openai but OPENAI_API_KEY is not set");
+  }
+  const base = (config.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const url = `${base}/responses`;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (config.OPENAI_AUTH_STYLE === "api-key") headers["api-key"] = config.OPENAI_API_KEY;
+  else headers["Authorization"] = `Bearer ${config.OPENAI_API_KEY}`;
+
+  const body: Record<string, unknown> = {
+    model,
+    input: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    // maxTokens === 0 means "no cap" → omit (aiassist's streaming writer sends none).
+    ...(maxTokens ? { max_output_tokens: maxTokens } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(topP !== undefined ? { top_p: topP } : {}),
+    ...(jsonSchema
+      ? { text: { format: { type: "json_schema", name: jsonSchema.name, strict: jsonSchema.strict ?? true, schema: jsonSchema.schema } } }
+      : {}),
+    stream: true,
+  };
+
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
+  if (!res.ok || !res.body) {
+    const preview = (await res.text().catch(() => "")).slice(0, 500);
+    throw new Error(`${res.status} ${res.statusText}${preview ? ` - ${preview}` : ""}`.trim());
+  }
+
+  // Parse the SSE stream line-by-line. OpenAI emits one JSON object per `data:` line; we read
+  // its `type` to route. We accumulate text deltas and capture usage from the terminal event.
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let usage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+  const handleEvent = (dataStr: string): boolean => {
+    if (dataStr === "[DONE]") return true; // sentinel → stop
+    let event: any;
+    try {
+      event = JSON.parse(dataStr);
+    } catch {
+      return false; // ignore non-JSON keepalives/comments
+    }
+    const type: string = event?.type ?? "";
+    if (type === "response.output_text.delta") {
+      if (typeof event.delta === "string") text += event.delta;
+    } else if (type === "response.failed" || type === "response.incomplete") {
+      const payload = event.response ?? event;
+      const reason = payload?.incomplete_details?.reason ? ` reason="${payload.incomplete_details.reason}"` : "";
+      throw new Error(`responses stream status="${payload?.status ?? type}"${reason} (incomplete output)`);
+    } else if (type === "response.completed") {
+      const payload: ResponsesResult = event.response ?? {};
+      if (payload.status && payload.status !== "completed") {
+        const reason = payload.incomplete_details?.reason ? ` reason="${payload.incomplete_details.reason}"` : "";
+        throw new Error(`responses stream status="${payload.status}"${reason} (incomplete output)`);
+      }
+      // Prefer the accumulated deltas; fall back to the terminal payload's text.
+      if (!text) text = extractResponsesText(payload);
+      usage = {
+        promptTokens: payload.usage?.input_tokens ?? 0,
+        completionTokens: payload.usage?.output_tokens ?? 0,
+        totalTokens: payload.usage?.total_tokens ?? 0,
+      };
+    }
+    return false;
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue; // skip `event:` lines, comments, blanks
+      if (handleEvent(line.slice(5).trim())) {
+        await reader.cancel().catch(() => {});
+        return { text, usage };
+      }
+    }
+  }
+
+  return { text, usage };
+}
+
+/**
  * OpenAI-compatible adapter. Speaks either Chat Completions (default) or the Responses
  * API, selected by OPENAI_API_MODE; auth header (Bearer vs api-key) by OPENAI_AUTH_STYLE.
  * Both are standard OpenAI APIs — defaults are vanilla-OpenAI, so a plain OpenAI key works
@@ -142,8 +244,11 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
 export const openaiProvider: LlmProvider = {
   name: "openai",
   async complete(args: ProviderCompleteArgs): Promise<RawCompletion> {
-    return config.OPENAI_API_MODE === "responses"
-      ? completeViaResponses(args)
-      : completeViaChat(args);
+    if (config.OPENAI_API_MODE === "responses") {
+      // Streaming only on the Responses path (the writer asks for it); the Chat path
+      // ignores `stream` and stays non-streaming.
+      return args.stream ? completeViaResponsesStream(args) : completeViaResponses(args);
+    }
+    return completeViaChat(args);
   },
 };

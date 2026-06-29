@@ -12,7 +12,6 @@ import {
   CANONICAL_TRAITS,
   OUT_OF_SCOPE_SCENARIO_TERMS,
   MOCKABLE_NODE_REGISTRY,
-  WRITER_MAX_OUTPUT_TOKENS,
 } from "./combos.js";
 import {
   extractEmbeddedActions,
@@ -358,7 +357,11 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
     model,
     system: writerSystemPrompt(),
     prompt: JSON.stringify(payload),
-    maxTokens: WRITER_MAX_OUTPUT_TOKENS,
+    // Stream with NO output cap (maxTokens:null) — a batch of 10 scenarios on a reasoning model
+    // overruns any fixed cap and returns status="incomplete". This is aiassist's exact primary
+    // writer path (_stream_scenario_writer: stream:true, no max_output_tokens).
+    stream: true,
+    maxTokens: null,
     jsonSchema: { name: WRITER_SCHEMA_NAME, schema: WRITER_JSON_SCHEMA },
     provider: args.provider,
   });

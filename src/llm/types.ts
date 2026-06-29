@@ -23,7 +23,16 @@ export interface ProviderCompleteArgs {
   system: string;
   user: string;
   model: string;
+  /** Output token cap. `0` means "omit the cap" — let the model emit until done
+   *  (used by the streaming writer so a long batch isn't truncated). */
   maxTokens: number;
+  /**
+   * Stream the response (Responses API SSE) instead of one blocking call. Lets
+   * the model emit an arbitrarily long result without a `max_output_tokens` cap,
+   * so a big batch never returns `status="incomplete"`. Honored only on the
+   * Responses path; the Chat path ignores it (stays non-streaming).
+   */
+  stream?: boolean;
   /** Sampling temperature; provider default when undefined. */
   temperature?: number;
   /** Nucleus sampling top_p; provider default when undefined. */
@@ -60,7 +69,11 @@ export interface CompleteJSONOptions<T> {
   role?: LlmRole;
   /** Explicit model id; overrides role-based selection. */
   model?: string;
-  maxTokens?: number;
+  /** Output token cap. Omit for the default; pass `null` for "no cap" (the
+   *  streaming writer uses this so a large batch isn't truncated). */
+  maxTokens?: number | null;
+  /** Stream the provider call (Responses API SSE). See ProviderCompleteArgs.stream. */
+  stream?: boolean;
   /** Sampling temperature (e.g. the user simulator runs hot at 0.85). */
   temperature?: number;
   /** Nucleus sampling top_p. */

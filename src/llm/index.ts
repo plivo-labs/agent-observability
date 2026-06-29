@@ -73,7 +73,9 @@ const JSON_ONLY_HINT =
 export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<LlmResult<T>> {
   const provider = opts.provider ?? (await resolveProvider());
   const model = resolveModel(opts.role, opts.model, provider.name);
-  const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+  // undefined → the default cap; explicit null → 0, which the provider reads as
+  // "omit max_output_tokens" (no cap — used by the streaming writer).
+  const maxTokens = opts.maxTokens === undefined ? DEFAULT_MAX_TOKENS : (opts.maxTokens ?? 0);
   const timeoutMs = opts.timeoutMs ?? config.LLM_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? config.LLM_MAX_RETRIES;
 
@@ -98,6 +100,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         temperature: opts.temperature,
         topP: opts.topP,
         jsonSchema: opts.jsonSchema,
+        stream: opts.stream,
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {

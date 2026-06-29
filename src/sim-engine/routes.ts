@@ -172,6 +172,9 @@ export function registerSimulationRoutes(app: Hono): void {
           }
         }
       } catch (e) {
+        // Log on AO's own stdout too — until now the failure reached only the client as an SSE
+        // error, so a "Stream error" in the console left no server-side trace to debug from.
+        console.error(`[sim-gen] generation stream failed (generation_id=${genId}):`, (e as Error).message);
         await stream.writeSSE({ event: SSE.ERROR, data: envelope("generation_id", genId, { error: (e as Error).message }) });
       }
     });
