@@ -681,6 +681,11 @@ if (process.env.NODE_ENV === "production") {
 const serveConfig = {
   port: config.PORT,
   fetch: app.fetch,
+  // Bun's default idleTimeout is 10s, which kills long-lived SSE responses (the
+  // scenario-generation stream stays open for the planner + writer LLM calls).
+  // The generate route also sends a `: keepalive` comment every ~10s, so this is
+  // a backstop; 60s leaves comfortable margin above that heartbeat interval.
+  idleTimeout: 60,
 };
 
 // Run as the entrypoint: serve explicitly so SIGTERM/SIGINT can stop

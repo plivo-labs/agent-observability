@@ -109,14 +109,39 @@ export function registerSimulationRoutes(app: Hono): void {
     const genId = crypto.randomUUID();
     return streamSSE(c, async (stream) => {
       try {
-        for await (const ev of generateScenarios({
+        const iterator = generateScenarios({
           flowJson: canonical,
           phloUuid: body.phlo_uuid,
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
           simulationMode: body.simulation_mode,
           testCaseGenerationInstructions: body.test_case_generation_instructions,
-        })) {
+        })[Symbol.asyncIterator]();
+        // Heartbeat: emit a `: keepalive` SSE comment every ~10s while the generator is
+        // silent (the planner + parallel writer LLM calls run for tens of seconds with no
+        // events) so Bun's idleTimeout — and any proxy in front — don't drop the long SSE.
+        // Direct port of aiassist's with_heartbeat(10s). `:`-comment lines are ignored by
+        // SSE clients (aiassist's reader skips them).
+        const HEARTBEAT_MS = 10_000;
+        for (;;) {
+          const nextEvent = iterator.next();
+          let result: Awaited<typeof nextEvent> | undefined;
+          for (;;) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const heartbeat = new Promise<"__hb__">((resolve) => {
+              timer = setTimeout(() => resolve("__hb__"), HEARTBEAT_MS);
+            });
+            const winner = await Promise.race([nextEvent, heartbeat]);
+            if (timer) clearTimeout(timer);
+            if (winner === "__hb__") {
+              await stream.write(": keepalive\n\n");
+              continue;
+            }
+            result = winner;
+            break;
+          }
+          if (!result || result.done) break;
+          const ev = result.value;
           if (ev.type === "scenario") {
             const s = ev.scenario;
             if (persist) {
