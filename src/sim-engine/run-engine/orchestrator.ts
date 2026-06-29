@@ -248,6 +248,7 @@ class ScenarioRunner implements AINodeExecutor {
     // 5. Call /turn with the full stateless context.
     const req: LiveKitSimRequest = {
       phlo_run_uuid: this.flowRunUuid,
+      simulation_session_id: this.flowRunUuid,
       node_uuid: node.id,
       node_run_uuid: nodeRunUuid,
       auth_id: this.job.authId,

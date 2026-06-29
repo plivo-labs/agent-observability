@@ -19,6 +19,9 @@ const MAX_ERROR_PREVIEW = 500; // matches the Go client's 500-char error body pr
  *  always-present `is_interruption` mirrors the Go field's lack of omitempty. */
 export interface LiveKitSimRequest {
   phlo_run_uuid: string;
+  /** Session id livekit uses for conversation continuity across turns; set to the flow_run_uuid
+   *  (mirrors the reference worker, which defaults it to phlo_run_uuid). */
+  simulation_session_id?: string;
   node_uuid: string;
   node_run_uuid: string;
   auth_id: string;

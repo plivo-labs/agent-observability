@@ -576,8 +576,9 @@ export interface GenerateUserMessageInput {
  * for structured `{ message }`, and — mirroring the Go retry — makes ONE more attempt when
  * the first message is blank, throwing if it's still blank after the retry.
  *
- * Runs hot (temperature 0.85) like the Go simulator profile so caller utterances vary turn
- * to turn instead of collapsing to the same safe phrasing.
+ * No `temperature` is sent — matches the reference (cx-sqs) simulator, which sends none, and avoids
+ * a 400 on reasoning models (the Responses API rejects `temperature` for those). The simulator model
+ * (gpt-4.1) uses its default sampling.
  */
 export async function generateUserMessage(input: GenerateUserMessageInput): Promise<string> {
   const prompt = buildUserSimulatorPrompt(
@@ -595,7 +596,6 @@ export async function generateUserMessage(input: GenerateUserMessageInput): Prom
       prompt,
       role: "simulator",
       model: input.model,
-      temperature: 0.85,
       jsonSchema: USER_MESSAGE_JSON_SCHEMA,
       provider: input.provider,
     });
