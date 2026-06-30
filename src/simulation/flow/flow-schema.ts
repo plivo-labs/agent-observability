@@ -55,7 +55,9 @@ export { Intent, AgentConfig, BranchConfig };
 const Node = z
   .object({
     id: z.string().min(1),
-    type: z.string().min(1),
+    // `type` is tolerated empty (cx-sqs keeps such nodes too — it classifies at run time, not parse
+    // time). A node with no type just classifies as "unknown" downstream; it must never 400 the flow.
+    type: z.string(),
     // Canonical config location is `data.config`. Both locations are tolerated
     // PRE-normalize so a parse before normalization (e.g. CanonicalFlow.parse on
     // a half-canonical input) doesn't choke; normalizeFlow collapses them to
@@ -78,14 +80,25 @@ export const CanonicalFlow = z
   .object({
     flow_name: z.string().optional(),
     // systemPrompt is either the prompt text or the console's
-    // { prompt, all_nodes_enabled } object. flowGlobals reads either.
+    // { prompt, all_nodes_enabled } object. flowGlobals reads either. Coerce defensively first:
+    // real flows can ship `system_prompt: { prompt: null }` (or other non-string prompt), which would
+    // otherwise fail BOTH union members → an opaque 400. systemPrompt is only LLM context here, so a
+    // missing/odd prompt must degrade to "" rather than reject the whole flow.
     systemPrompt: z
-      .union([
+      .preprocess((v) => {
+        if (v == null) return "";
+        if (typeof v === "string") return v;
+        if (typeof v === "object") {
+          const o = v as Record<string, unknown>;
+          return typeof o.prompt === "string" ? o : { ...o, prompt: "" };
+        }
+        return String(v);
+      }, z.union([
         z.string(),
         z
           .object({ prompt: z.string().default(""), all_nodes_enabled: z.boolean().optional() })
           .passthrough(),
-      ])
+      ]))
       .default(""),
     agentSettings: z
       .object({

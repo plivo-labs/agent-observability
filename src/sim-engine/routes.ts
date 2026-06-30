@@ -56,6 +56,20 @@ async function readJson<T>(c: Context, parse: (v: unknown) => T): Promise<{ ok: 
   }
 }
 
+// Compact, log-safe detail for a rejected request body. A ZodError carries an `issues` array (which
+// field failed and why); serialize that so a 400 is diagnosable from logs + the response — the old
+// path swallowed it entirely, making generate 400s impossible to debug from aiassist/OpenSearch.
+function rejectionDetail(e: unknown): string {
+  if (e && typeof e === "object" && "issues" in e) {
+    try {
+      return JSON.stringify((e as { issues: unknown }).issues);
+    } catch {
+      /* fall through to message */
+    }
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 const toPersistedScenario = (r: SimScenarioRow) => ({
   uuid: r.id,
   account_id: r.account_id,
@@ -86,14 +100,23 @@ export function registerSimulationRoutes(app: Hono): void {
   //    throws and the catch below streams an `error` event (no upfront block, so the route stays
   //    testable with a mocked generator).
   app.post("/api/simulation/scenarios/generate", async (c) => {
-    const parsed = await readJson(c, (v) => GenerateScenariosRequest.parse(v));
-    if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body failed GenerateScenariosRequest validation"), 400);
-    const body = parsed.value;
+    // Parse inline (not via readJson) so the Zod failure detail is logged + returned. A generate 400
+    // must be self-explanatory: aiassist only relays the status, so an opaque body left these
+    // undebuggable in OpenSearch.
+    let body: GenerateScenariosRequest;
+    try {
+      body = GenerateScenariosRequest.parse(await c.req.json());
+    } catch (e) {
+      const detail = rejectionDetail(e);
+      console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
+      return c.json(buildErrorResponse("invalid_request", detail), 400);
+    }
     let canonical: Record<string, unknown>;
     try {
       canonical = parseFlowJson(body.flow_json) as unknown as Record<string, unknown>;
     } catch (e) {
       const detail = e instanceof FlowJsonError ? e.message : "invalid flow_json";
+      console.warn(`[sim-gen] 400 invalid_flow_json phlo_uuid=${body.phlo_uuid}: ${detail}`);
       return c.json(buildErrorResponse("invalid_flow_json", detail), 400);
     }
     const accountId = accountIdOf(c);

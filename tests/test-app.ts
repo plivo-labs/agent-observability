@@ -83,8 +83,13 @@ export function registerAppMocks(): void {
 
 registerAppMocks();
 
-// Import the app only after the mocks above are registered.
-export const server = (await import("../src/index.js")).default;
+// Import the app only after the mocks above are registered. src/index.ts's default export is
+// `import.meta.main ? undefined : serveConfig` (undefined only when run as the entrypoint), so its
+// static type includes `undefined`. Tests always import it (never main), so it's defined here — guard
+// once to narrow the type and fail loudly if that ever changes, instead of `server!` at every call.
+const importedServer = (await import("../src/index.js")).default;
+if (!importedServer) throw new Error("src/index.ts default export is undefined (unexpected in tests)");
+export const server = importedServer;
 
 export function basicAuthHeader(): string {
   return `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASS}`).toString("base64")}`;

@@ -147,7 +147,18 @@ export function parseFlowJson(input: unknown): CanonicalFlow {
   try {
     return normalizeFlow(input);
   } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
+    // The overwhelmingly common cause is "no usable nodes" (CanonicalFlow's nodes.min(1) — an empty/
+    // draft flow, or every node dropped for a missing id). Surface that in plain words instead of a raw
+    // Zod "Array must contain at least 1 element(s)" so callers (and our logs) can act on it.
+    const issues = (e as { issues?: Array<{ path?: unknown[]; code?: string }> })?.issues;
+    const emptyNodes =
+      Array.isArray(issues) &&
+      issues.some((i) => Array.isArray(i.path) && i.path[0] === "nodes" && i.code === "too_small");
+    const detail = emptyNodes
+      ? "flow has no nodes to simulate (it may be empty, or every node was missing an id)"
+      : e instanceof Error
+        ? e.message
+        : String(e);
     throw new FlowJsonError(`invalid flow_json: ${detail}`, e);
   }
 }
