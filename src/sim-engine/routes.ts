@@ -117,12 +117,16 @@ export function registerSimulationRoutes(app: Hono): void {
           simulationMode: body.simulation_mode,
           testCaseGenerationInstructions: body.test_case_generation_instructions,
         })[Symbol.asyncIterator]();
-        // Heartbeat: emit a `: keepalive` SSE comment every ~10s while the generator is
-        // silent (the planner + parallel writer LLM calls run for tens of seconds with no
-        // events) so Bun's idleTimeout — and any proxy in front — don't drop the long SSE.
-        // Direct port of aiassist's with_heartbeat(10s). `:`-comment lines are ignored by
-        // SSE clients (aiassist's reader skips them).
+        // Heartbeat: emit a real `progress` event every ~10s while the generator is silent (the
+        // planner + parallel writer LLM calls run for tens of seconds with no events). This keeps
+        // Bun's idleTimeout / any proxy alive AND — critically — keeps the aiassist relay's Redis
+        // stream (SIM_GEN:{id}:EVENTS) active: aiassist's SSE reader SKIPS `:`-comment lines, so a
+        // bare keepalive comment never reached Redis; the consumer's XREAD connection then idled and
+        // the ELB reset it after ~60s → the console "stream error". A real progress frame IS forwarded
+        // (XADDed), so the stream/connection never idles out. `stage:"heartbeat"` carries no counts,
+        // so it is safe for the console (advisory progress; a stage switch hits its default no-op).
         const HEARTBEAT_MS = 10_000;
+        let hbSeq = 0;
         for (;;) {
           const nextEvent = iterator.next();
           let result: Awaited<typeof nextEvent> | undefined;
@@ -134,7 +138,10 @@ export function registerSimulationRoutes(app: Hono): void {
             const winner = await Promise.race([nextEvent, heartbeat]);
             if (timer) clearTimeout(timer);
             if (winner === "__hb__") {
-              await stream.write(": keepalive\n\n");
+              await stream.writeSSE({
+                event: SSE.PROGRESS,
+                data: envelope("generation_id", genId, { stage: "heartbeat", generation_id: genId, seq: ++hbSeq }),
+              });
               continue;
             }
             result = winner;
