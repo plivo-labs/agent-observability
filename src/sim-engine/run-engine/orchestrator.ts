@@ -39,7 +39,14 @@ import {
   type Rng,
 } from "./stress.js";
 import { patchAssistantResponse, setSessionTTL, writeAssistantTurn, writeUserTurn } from "./history.js";
-import { LiveKitSimClient, makeLiveKitSimClient, type LiveKitSimRequest } from "./livekit-client.js";
+import {
+  LiveKitSimClient,
+  makeLiveKitSimClient,
+  isSpokenTurn,
+  isTransitionTurn,
+  normalizedTurnType,
+  type LiveKitSimRequest,
+} from "./livekit-client.js";
 import { emitScenarioStarted, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
 
@@ -114,6 +121,11 @@ class ScenarioRunner implements AINodeExecutor {
   private lastTurnWasInterruption = false;
   private lastTurnWasNonAnswer = false;
 
+  // Per-turn latency samples (ms), mirroring the reference worker's userSimDurations / livekitDurations
+  // so we can log a scenario timing summary and compare against cx-sqs (scenario_runner.go:683-701).
+  private readonly userSimDurations: number[] = [];
+  private readonly livekitDurations: number[] = [];
+
   constructor(
     deps: ScenarioRunnerDeps,
     private readonly job: RunScenarioJob,
@@ -146,6 +158,7 @@ class ScenarioRunner implements AINodeExecutor {
     variableStore: VariableStore,
   ): Promise<NodeExecutionResult | null> {
     // 1. Determine the user message + interruption/non-answer state (mutually exclusive).
+    const turnStart = Date.now();
     const isNodeSwitch = this.conversationHistory.length > 0 && node.id !== this.currentNodeId;
 
     let userMsg = "";
@@ -153,6 +166,7 @@ class ScenarioRunner implements AINodeExecutor {
     let isNonAnswer = false;
     let nonAnswerType = "";
     let partialAssistantMsg = "";
+    let userSimMs = 0;
 
     if (this.conversationHistory.length === 0) {
       userMsg = "Hello!";
@@ -197,6 +211,7 @@ class ScenarioRunner implements AINodeExecutor {
         simHistory[simHistory.length - 1] = { role: "assistant", content: partialAssistantMsg };
       }
 
+      const userSimStart = Date.now();
       userMsg = await generateUserMessage({
         scenario: this.job.scenario,
         history: simHistory,
@@ -207,6 +222,8 @@ class ScenarioRunner implements AINodeExecutor {
         provider: this.llmProvider,
         model: this.llmModel,
       });
+      userSimMs = Date.now() - userSimStart;
+      this.userSimDurations.push(userSimMs);
     }
 
     this.lastTurnWasNonAnswer = isNonAnswer;
@@ -262,7 +279,10 @@ class ScenarioRunner implements AINodeExecutor {
     if (isInterruption) {
       req.partial_assistant_message = partialAssistantMsg;
     }
+    const livekitStart = Date.now();
     const resp = await this.livekit.executeTurn(req);
+    const livekitMs = Date.now() - livekitStart;
+    this.livekitDurations.push(livekitMs);
 
     // 6. Thread the returned state forward (in-memory; SaveLiveKitContext skipped in V1).
     this.contextItems = resp.context_items ?? [];
@@ -274,8 +294,18 @@ class ScenarioRunner implements AINodeExecutor {
     const agentMessage = resp.message;
     const variables = resp.variables ?? {};
 
-    // 7. Write the assistant reply: standalone turn on a node switch, else patch the user turn.
-    if (isNodeSwitch) {
+    // Classify the turn (port of scenario_runner.go:442-444): a "transition" is a silent node handoff
+    // (no spoken agent utterance). Only spoken turns are recorded to history AND fed to the simulator,
+    // so a transition/empty/handoff turn never pollutes the simulator's view (the turn-count driver).
+    const turnType = normalizedTurnType(resp);
+    const spoken = isSpokenTurn(resp);
+    const transition = isTransitionTurn(resp);
+
+    // 7. Write the assistant reply: skip on a silent transition; standalone turn on a node switch;
+    //    else patch the pre-written user turn (mirrors scenario_runner.go:462-482).
+    if (transition) {
+      // non-spoken transition — no conversational history write (matches the Go skip)
+    } else if (isNodeSwitch) {
       await writeAssistantTurn(this.redis, this.flowRunUuid, node.id, intent, variables, agentMessage);
     } else {
       await patchAssistantResponse(this.redis, this.flowRunUuid, convIndex, node.id, intent, variables, agentMessage);
@@ -283,13 +313,15 @@ class ScenarioRunner implements AINodeExecutor {
 
     const variablesByNodeSnapshot = deepCopy(this.variablesByNode);
 
-    // 8. Emit turn_completed (byte-identical payload to scenario_runner.go:438).
+    // 8. Emit turn_completed (byte-identical payload to scenario_runner.go:486-505, incl. turn_type/is_spoken).
     await emitTurnCompleted(this.redis, this.job.simRunUuid, {
       scenario_id: this.job.scenarioId,
       turn: turnIndex,
       node_uuid: node.id,
       user: userMsg,
       agent: agentMessage,
+      turn_type: turnType,
+      is_spoken: spoken,
       intent,
       variables,
       variables_by_node: variablesByNodeSnapshot,
@@ -303,15 +335,48 @@ class ScenarioRunner implements AINodeExecutor {
 
     // 9. (SaveTranscriptTurn skipped — V1 has no inline evaluator.)
 
-    // 10. Accumulate conversation history for the simulator (node switch → assistant only).
+    // 10. Accumulate conversation history for the simulator (port of appendConversationTurns,
+    //     scenario_runner.go:564-580): node switch → assistant only IF spoken; normal turn → always the
+    //     user turn, assistant only IF spoken. A non-spoken transition adds nothing the simulator sees.
     if (isNodeSwitch) {
-      this.conversationHistory.push({ role: "assistant", content: agentMessage });
+      if (spoken) this.conversationHistory.push({ role: "assistant", content: agentMessage });
     } else {
-      this.conversationHistory.push({ role: "user", content: userMsg }, { role: "assistant", content: agentMessage });
+      this.conversationHistory.push({ role: "user", content: userMsg });
+      if (spoken) this.conversationHistory.push({ role: "assistant", content: agentMessage });
     }
 
-    // 11. Return the result for edge resolution (intent → sourceHandle).
+    // 11. Per-turn timing (mirrors scenario_runner.go "Turn total") — split sim vs /turn latency
+    //     so a parity comparison against cx-sqs can pinpoint which call dominates.
+    console.log(
+      `[sim] turn total scenario_id=${this.job.scenarioId} turn=${turnIndex} node=${node.id} ` +
+        `total_ms=${Date.now() - turnStart} user_sim_ms=${userSimMs} livekit_ms=${livekitMs}`,
+    );
+
+    // 12. Return the result for edge resolution (intent → sourceHandle).
     return { outcome: intent, variables, message: agentMessage };
+  }
+
+  /**
+   * Log the per-scenario latency summary (avg/p50/max for the user-simulator LLM and the /turn calls)
+   * plus the resolved simulator model + api mode. Mirrors the reference worker's LogTimingSummary
+   * (scenario_runner.go:683-701) and is the single place the live simulator model is logged on the
+   * success path (AO otherwise logs the model only on an LLM failure).
+   */
+  logTimingSummary(): void {
+    const avg = (a: number[]) => (a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0);
+    const max = (a: number[]) => (a.length ? Math.max(...a) : 0);
+    const p50 = (a: number[]) => {
+      if (!a.length) return 0;
+      const sorted = [...a].sort((x, y) => x - y);
+      return sorted[Math.floor(sorted.length / 2)]!;
+    };
+    console.log(
+      `[sim] scenario summary scenario_id=${this.job.scenarioId} ` +
+        `model=${this.llmModel ?? "(unset)"} api=chat turns=${this.livekitDurations.length} ` +
+        `user_sim_avg_ms=${avg(this.userSimDurations)} user_sim_p50_ms=${p50(this.userSimDurations)} ` +
+        `user_sim_max_ms=${max(this.userSimDurations)} livekit_avg_ms=${avg(this.livekitDurations)} ` +
+        `livekit_p50_ms=${p50(this.livekitDurations)} livekit_max_ms=${max(this.livekitDurations)}`,
+    );
   }
 }
 
@@ -353,6 +418,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     orchestrator.seedStartNodeParams((job.scenario.start_node_params ?? {}) as Record<string, unknown>);
 
     const result = await orchestrator.run();
+    runner.logTimingSummary();
 
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,

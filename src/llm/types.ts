@@ -43,6 +43,13 @@ export interface ProviderCompleteArgs {
    * required fields instead of the looser json_object "valid JSON" contract.
    */
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
+  /**
+   * Override the wire API for THIS call: "chat" (Chat Completions) or "responses"
+   * (Responses API). Defaults to OPENAI_API_MODE when undefined. The user-simulator
+   * forces "chat" to mirror the reference (cx-sqs) caller; generation stays on the
+   * global mode (Responses, required by its reasoning model).
+   */
+  apiMode?: "chat" | "responses";
   /** Aborts the call when the completeJSON timeout fires. */
   signal: AbortSignal;
 }
@@ -80,6 +87,11 @@ export interface CompleteJSONOptions<T> {
   topP?: number;
   /** Strict JSON-schema for structured output — guarantees required fields (OpenAI/Azure). */
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
+  /** Override the wire API for this call ("chat" | "responses"); defaults to OPENAI_API_MODE. */
+  apiMode?: "chat" | "responses";
+  /** Skip the appended JSON_ONLY_HINT and send `system` verbatim. The simulator uses this so the
+   *  system prompt is the bare template (matches cx-sqs, which relies on strict json_schema alone). */
+  noJsonHint?: boolean;
   timeoutMs?: number;
   /** Reprompt attempts after the first call (default from config). */
   maxRetries?: number;

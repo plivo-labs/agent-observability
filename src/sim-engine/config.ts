@@ -90,7 +90,13 @@ export const simEngineConfig = {
   /** Optional Basic-auth creds for the /turn endpoint (empty → unauthenticated). */
   livekitSimTurnUser: config.LIVEKIT_SIM_TURN_USER,
   livekitSimTurnPass: config.LIVEKIT_SIM_TURN_PASS,
-  /** UserSimulator LLM model; falls back to the generation model when unset. */
+  /**
+   * UserSimulator (simulated caller) LLM model. MUST be a non-reasoning chat model (cx-sqs uses
+   * gpt-4.1 via the shared AZURE_VIBE_SIMULATOR_DEPLOYMENT secret). Falls back to the generation
+   * model only when unset — the schema preprocess maps an empty env to undefined so the `??` fires
+   * cleanly. The simulator call also forces Chat Completions (see user-simulator.ts), so a reasoning
+   * model would be wrong here.
+   */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
   /** Scenarios run concurrently per worker process / per in-process run (fan-out bound). */
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,

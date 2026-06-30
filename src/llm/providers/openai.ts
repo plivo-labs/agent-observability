@@ -41,7 +41,9 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
       ...(topP !== undefined ? { top_p: topP } : {}),
       messages: [
         { role: "system", content: system },
-        { role: "user", content: user },
+        // Match the reference (cx-sqs) body: append the user turn only when non-empty
+        // (buildChatCompletionsBody appends `user` only if userPrompt != "").
+        ...(user ? [{ role: "user" as const, content: user }] : []),
       ],
     },
     { signal },
@@ -244,7 +246,9 @@ async function completeViaResponsesStream(args: ProviderCompleteArgs): Promise<R
 export const openaiProvider: LlmProvider = {
   name: "openai",
   async complete(args: ProviderCompleteArgs): Promise<RawCompletion> {
-    if (config.OPENAI_API_MODE === "responses") {
+    // Per-call override wins over the global mode; the simulator forces "chat" to mirror cx-sqs.
+    const mode = args.apiMode ?? config.OPENAI_API_MODE;
+    if (mode === "responses") {
       // Streaming only on the Responses path (the writer asks for it); the Chat path
       // ignores `stream` and stays non-streaming.
       return args.stream ? completeViaResponsesStream(args) : completeViaResponses(args);

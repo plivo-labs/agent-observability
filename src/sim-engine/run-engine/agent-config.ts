@@ -4,8 +4,9 @@
 // (L519-557). Each AI turn the engine builds the `agent_config` object livekit's /turn
 // endpoint runs the CXAgent against: the node's own config (deep-copied), plus flow-level
 // data hoisted in — global_prompt, voice_config, stt_guidance — and the variable store
-// flattened into `all_node_vars`. `{{Node.var}}` references in the node's `instructions`
-// are rendered against the variable store before sending.
+// flattened into `all_node_vars`. `{{Node.var}}` references in the node's `instructions`,
+// `first_response`, and each `extract_variables[].variable_instructions` are rendered against
+// the variable store before sending (SER-5529).
 //
 // The handoff plan (`output_state_config`) is attached by the CALLER (the ScenarioRunner
 // port) after this returns — not here — exactly as the Go does
@@ -30,6 +31,8 @@ export interface AgentConfigNode {
  * Faithful to the Go field-for-field:
  *   1. agent_config = deep copy of node.config.
  *   2. If `instructions` is a string, render `{{Node.var}}` refs against the variable store.
+ *   2b. (SER-5529) Render the same refs in `first_response` and every
+ *        `extract_variables[].variable_instructions` (non-empty strings only).
  *   3. From flowConfig (the camelCase flow JSON):
  *        - systemPrompt.prompt        → agent_config.global_prompt
  *        - agentSettings.voice_ai_config → agent_config.voice_config
@@ -57,6 +60,24 @@ export function buildAgentConfig(
   // 2. Render {{Node.var}} in instructions (only when it's actually a string).
   if (typeof agentConfig["instructions"] === "string") {
     agentConfig["instructions"] = variableStore.render(agentConfig["instructions"] as string);
+  }
+
+  // 2b. SER-5529: render upstream refs (e.g. {{Start.http.params.X}}) inside first_response and each
+  // extract_variable's instructions too — not just `instructions`. Without this, nodevar-default
+  // extractions like "record {{Start.http.params.To_zip}} if the caller doesn't change it" reach livekit
+  // as a literal placeholder it ignores, so those fields never get recorded in sim while real calls fill
+  // them from the on-file payload. Mutation is safe: deepCopyMap (structuredClone) gave us fresh nested
+  // objects, so the reused FlowNode.config is untouched across turns.
+  if (typeof agentConfig["first_response"] === "string" && agentConfig["first_response"] !== "") {
+    agentConfig["first_response"] = variableStore.render(agentConfig["first_response"] as string);
+  }
+  const extractVariables = agentConfig["extract_variables"];
+  if (Array.isArray(extractVariables)) {
+    for (const ev of extractVariables) {
+      if (isRecord(ev) && typeof ev["variable_instructions"] === "string" && ev["variable_instructions"] !== "") {
+        ev["variable_instructions"] = variableStore.render(ev["variable_instructions"] as string);
+      }
+    }
   }
 
   // 3. Hoist flow-level data. Each lookup mirrors the Go's nested type assertions —

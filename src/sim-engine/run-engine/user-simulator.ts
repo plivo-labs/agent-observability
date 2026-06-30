@@ -576,9 +576,12 @@ export interface GenerateUserMessageInput {
  * for structured `{ message }`, and — mirroring the Go retry — makes ONE more attempt when
  * the first message is blank, throwing if it's still blank after the retry.
  *
- * No `temperature` is sent — matches the reference (cx-sqs) simulator, which sends none, and avoids
- * a 400 on reasoning models (the Responses API rejects `temperature` for those). The simulator model
- * (gpt-4.1) uses its default sampling.
+ * Byte-for-byte parity with the reference (cx-sqs) caller call:
+ *  - Chat Completions API (`apiMode: "chat"`) — cx-sqs hardcodes APIFormatChatCompletions; AO's
+ *    global OPENAI_API_MODE=responses (needed by the reasoning generation model) is overridden here.
+ *  - The full template is the SYSTEM prompt with an EMPTY user turn (cx-sqs sends userPrompt ""),
+ *    and `noJsonHint` keeps the system bare (strict json_schema alone forces the shape).
+ *  - No `temperature`/`top_p`, no `max_tokens` cap, 180s client timeout — exactly as cx-sqs.
  */
 export async function generateUserMessage(input: GenerateUserMessageInput): Promise<string> {
   const prompt = buildUserSimulatorPrompt(
@@ -593,10 +596,18 @@ export async function generateUserMessage(input: GenerateUserMessageInput): Prom
   const call = () =>
     completeJSON({
       schema: UserMessageSchema,
-      prompt,
+      system: prompt,
+      prompt: "",
+      noJsonHint: true,
       role: "simulator",
       model: input.model,
       jsonSchema: USER_MESSAGE_JSON_SCHEMA,
+      apiMode: "chat",
+      maxTokens: null,
+      timeoutMs: 180_000,
+      // cx-sqs makes ONE LLM call (no parse/network retry); the only retry is the empty-message one below.
+      // maxRetries:0 → completeJSON makes a single attempt, so worst case is 2 calls, matching the reference.
+      maxRetries: 0,
       provider: input.provider,
     });
 

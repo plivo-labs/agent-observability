@@ -79,7 +79,13 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   const timeoutMs = opts.timeoutMs ?? config.LLM_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? config.LLM_MAX_RETRIES;
 
-  const system = opts.system ? `${opts.system}\n\n${JSON_ONLY_HINT}` : JSON_ONLY_HINT;
+  // noJsonHint sends `system` verbatim (the simulator passes the bare template, mirroring cx-sqs
+  // which relies on strict json_schema alone). Otherwise append the JSON-only instruction.
+  const system = opts.noJsonHint
+    ? (opts.system ?? "")
+    : opts.system
+      ? `${opts.system}\n\n${JSON_ONLY_HINT}`
+      : JSON_ONLY_HINT;
   let user = opts.prompt;
 
   const usage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -101,6 +107,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         topP: opts.topP,
         jsonSchema: opts.jsonSchema,
         stream: opts.stream,
+        apiMode: opts.apiMode,
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {

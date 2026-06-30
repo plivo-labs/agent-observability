@@ -132,7 +132,10 @@ export const envSchema = z.object({
   LIVEKIT_SIM_TURN_PASS: z.string().optional(),
   // The UserSimulator (simulated caller) LLM model. Falls back to the scenario
   // generation model when unset (see simEngineConfig.userSimulatorModel).
-  USER_SIMULATOR_MODEL: z.string().optional(),
+  // preprocess: treat an empty string (`USER_SIMULATOR_MODEL=` rendered from an empty secret) the
+  // same as unset, so it falls back cleanly via `??` instead of slipping through as "" (which
+  // would otherwise be sent as an empty model id). Mirrors DATABASE_URL above.
+  USER_SIMULATOR_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
   // Scenarios one worker process runs concurrently (SQS consumer fan-out).
   SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
 });

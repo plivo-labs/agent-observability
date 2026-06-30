@@ -40,6 +40,10 @@ export interface TurnCompletedEvent {
   node_uuid: string;
   user: string;
   agent: string;
+  /** "speech" | "transition" — whether the agent spoke or silently transitioned (scenario_runner.go:494). */
+  turn_type: string;
+  /** Whether this turn had a real spoken agent utterance (scenario_runner.go:495). */
+  is_spoken: boolean;
   intent: string;
   variables: Record<string, unknown>;
   variables_by_node: Record<string, Record<string, unknown>>;
