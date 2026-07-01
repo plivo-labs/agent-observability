@@ -106,6 +106,12 @@ app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
 app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);
 app.use("/observability/traces/otlp/v0", nativeLiveKitUploadAuth);
 app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
+// The judge-conversation redirect is a native ingest path too (cx-sqs-worker posts
+// server-to-server). The basic-auth gate above (/observability/evals/*) only registers
+// when AGENT_OBSERVABILITY_USER/_PASS are set, so on a LiveKit-only deployment this route
+// would otherwise be open. Apply the same dual-auth (Basic OR LiveKit Bearer) as the other
+// ingest channels so it's protected under either configured auth mode.
+app.use("/observability/evals/judge-conversation/v0", nativeLiveKitUploadAuth);
 
 // ── Health check ────────────────────────────────────────────────────────────
 
