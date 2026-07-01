@@ -49,6 +49,8 @@ import {
 } from "./livekit-client.js";
 import { emitScenarioStarted, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
+import { evaluateSimulationForRun } from "../../evals-engine/integration/sim-adapter.js";
+import type { EvalTurn } from "../../evals-engine/index.js";
 
 type Scenario = z.infer<typeof ScenarioSchema>;
 
@@ -120,6 +122,10 @@ class ScenarioRunner implements AINodeExecutor {
   private variablesByNode: Record<string, Record<string, unknown>> = {};
   private lastTurnWasInterruption = false;
   private lastTurnWasNonAnswer = false;
+
+  // Eval transcript: the per-turn slice the eval engine consumes (node_uuid, user, agent, intent),
+  // accumulated across the loop so runScenario can score the scenario before emitting scenario_completed.
+  private readonly evalTurns: EvalTurn[] = [];
 
   // Per-turn latency samples (ms), mirroring the reference worker's userSimDurations / livekitDurations
   // so we can log a scenario timing summary and compare against cx-sqs (scenario_runner.go:683-701).
@@ -345,6 +351,11 @@ class ScenarioRunner implements AINodeExecutor {
       if (spoken) this.conversationHistory.push({ role: "assistant", content: agentMessage });
     }
 
+    // 10b. Accumulate the eval transcript (node_uuid + user/agent text + chosen intent) for the
+    //      post-run evaluator. Every executed AI turn is recorded (including transitions) so the
+    //      grouped-by-node view the eval engine builds matches what actually ran.
+    this.evalTurns.push({ node_uuid: node.id, user: userMsg, agent: agentMessage, intent });
+
     // 11. Per-turn timing (mirrors scenario_runner.go "Turn total") — split sim vs /turn latency
     //     so a parity comparison against cx-sqs can pinpoint which call dominates.
     console.log(
@@ -362,6 +373,16 @@ class ScenarioRunner implements AINodeExecutor {
    * (scenario_runner.go:683-701) and is the single place the live simulator model is logged on the
    * success path (AO otherwise logs the model only on an LLM failure).
    */
+  /** The accumulated eval transcript (for the post-run evaluator). */
+  getEvalTurns(): EvalTurn[] {
+    return this.evalTurns;
+  }
+
+  /** Latest per-node extracted variables (for the variable-extraction judge). */
+  getVariablesByNode(): Record<string, Record<string, unknown>> {
+    return this.variablesByNode;
+  }
+
   logTimingSummary(): void {
     const avg = (a: number[]) => (a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0);
     const max = (a: number[]) => (a.length ? Math.max(...a) : 0);
@@ -420,12 +441,31 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const result = await orchestrator.run();
     runner.logTimingSummary();
 
+    // Score the scenario (node + goal axes, cx-sqs SkipConversationEval). Never throws: a scoring failure
+    // returns { eval_error: true } so the scenario still completes. Uses the same LLM provider as the
+    // simulator; prod resolves from env when deps.llmProvider is undefined.
+    const evalOutcome = await evaluateSimulationForRun({
+      turns: runner.getEvalTurns(),
+      graph,
+      flowObj,
+      variablesByNode: runner.getVariablesByNode(),
+      scenarioId: job.scenarioId,
+      // cx-sqs ConversationEvaluation header (cosmetic raw-JSON parity). flow_uuid falls back to the sim-run
+      // uuid like cx-sqs buildFlowDefinition; run_uuid is this scenario's flow_run_uuid. flow_name is derived
+      // inside the adapter from the built eval input (single source of truth).
+      flowUuid: [flowObj.flow_uuid, flowObj.uuid].find((v): v is string => typeof v === "string") ?? job.simRunUuid,
+      runUuid: flowRunUuid,
+      provider: deps.llmProvider,
+    });
+
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,
       flow_run_uuid: flowRunUuid,
       stop_reason: result.stop_reason || "end_conversation",
       turns: result.turn_count,
       nodes_visited: result.nodes_visited.length,
+      ...(evalOutcome.evaluation ? { evaluation: evalOutcome.evaluation } : {}),
+      ...(evalOutcome.eval_error ? { eval_error: true } : {}),
     });
 
     return result;

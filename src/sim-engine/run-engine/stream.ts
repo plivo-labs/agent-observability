@@ -6,6 +6,7 @@
 // them unchanged. V1 ships without eval, so scenario_completed omits evaluation/eval_error.
 
 import { xaddEvent, type RedisClient } from "../queue/redis.js";
+import type { EvaluationResult } from "../../evals-engine/index.js";
 
 export const SIM_EVENT = {
   SCENARIO_STARTED: "scenario_started",
@@ -56,7 +57,8 @@ export interface TurnCompletedEvent {
 }
 
 /** scenario_completed — simulation_eval_handler.go:227 (success) / :291 (failure).
- *  V1 has no eval, so `evaluation`/`eval_error` are omitted; `error` is set on the failure path. */
+ *  Node+goal `evaluation` is attached on the success path (cx-sqs SkipConversationEval); on eval failure
+ *  `eval_error: true` is set instead (never both). `error` is set on the scenario failure path. */
 export interface ScenarioCompletedEvent {
   scenario_id: string;
   flow_run_uuid?: string;
@@ -64,6 +66,10 @@ export interface ScenarioCompletedEvent {
   turns?: number;
   nodes_visited?: number;
   error?: string;
+  /** The node+goal evaluation (cx-sqs `evaluation`). Omitted when eval failed or produced nothing. */
+  evaluation?: EvaluationResult;
+  /** Set true (instead of `evaluation`) when scoring failed — mirrors cx-sqs `eval_error`. */
+  eval_error?: boolean;
 }
 
 /** simulation_error — run_manager.go FailSimulationRun:250. */
