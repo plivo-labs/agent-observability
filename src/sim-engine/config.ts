@@ -65,12 +65,6 @@ export const simFeatureEnabled = generationEnabled || runEnabled;
  */
 export const scenarioPersistDefault = config.SIM_PERSIST && dbConfigured;
 
-/**
- * Legacy gate: queue-dispatch prerequisites present (SQS + Redis). Superseded by the capability
- * gates above; retained for back-compat with callers/tests that referenced the old all-or-nothing gate.
- */
-export const simEngineEnabled = isSimEngineEnabled(config.SIM_EVAL_SQS_QUEUE_URL, config.REDIS_URL);
-
 /** Focused, typed view of the sim-engine settings, read once at startup. */
 export const simEngineConfig = {
   /** SQS queue the worker drains (per environment). */

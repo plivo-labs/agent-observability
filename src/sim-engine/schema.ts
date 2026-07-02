@@ -51,31 +51,11 @@ export const GenerateScenariosRequest = z.object({
 });
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
 
-/**
- * POST .../scenarios/run — mirror of the orchestrator service's `RunScenariosRequest`. Selects
- * already-generated scenarios by id. (Phase 4 may also accept inline scenario
- * dicts for AO-native callers; that's an additive superset, not a change here.)
- */
-export const RunScenariosRequest = z.object({
-  flow_json: FlowJsonInput,
-  phlo_uuid: z.string().min(1),
-  scenario_uuids: z.array(z.string()).min(1).max(100),
-  max_turns: z.number().int().min(1).max(200).default(25),
-  simulation_mode: SimulationMode.default("stress"),
-});
-export type RunScenariosRequest = z.infer<typeof RunScenariosRequest>;
-
 /** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`. */
 export const DeleteScenariosRequest = z.object({
   uuids: z.array(z.string()).min(1).max(200),
 });
 export type DeleteScenariosRequest = z.infer<typeof DeleteScenariosRequest>;
-
-/** PATCH .../runs/:run_uuid/rename — mirror of the orchestrator service's `RenameSimulationRunRequest`. */
-export const RenameSimulationRunRequest = z.object({
-  name: z.string().min(1).max(255),
-});
-export type RenameSimulationRunRequest = z.infer<typeof RenameSimulationRunRequest>;
 
 // ── Scenario (matches the worker's SimulationScenario, models.go L44-64) ───────
 

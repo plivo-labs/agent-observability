@@ -246,7 +246,6 @@ export const MAX_EXISTING_SCENARIO_SUMMARIES = 200;
 export const WRITER_CHUNK_SIZE = 10;
 export const WRITER_CHUNK_RETRIES = 1;
 export const WRITER_SLOT_RETRIES = 1;
-export const WRITER_MAX_OUTPUT_TOKENS = 12000;
 export const PLANNER_MAX_OUTPUT_TOKENS = 8000;
 
 export const OUT_OF_SCOPE_ROUTE_TERMS = [

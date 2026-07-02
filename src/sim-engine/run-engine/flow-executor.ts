@@ -258,16 +258,6 @@ export class FlowOrchestrator {
   }
 }
 
-/** Factory mirroring Go's `NewFlowOrchestrator`. */
-export function newFlowOrchestrator(
-  graph: FlowGraph,
-  worldState: Map<string, WorldStateEntry> | null,
-  maxTurns: number,
-  aiExecutor: AINodeExecutor | null,
-): FlowOrchestrator {
-  return new FlowOrchestrator(graph, worldState, maxTurns, aiExecutor);
-}
-
 /** Per-node-type default outcome when world_state has no override (port of `defaultMockedOutcome`).
  *  Param is the structural shape BOTH `FlowNode` and the handoff planner's `HandoffNode` satisfy, so
  *  both reuse this single definition. */
