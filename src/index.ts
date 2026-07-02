@@ -25,7 +25,6 @@ import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
-import { registerJudgeConversationRoute } from "./evals-engine/http.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
 if (config.AUTO_MIGRATE && dbConfigured) {
@@ -72,13 +71,7 @@ if (basicAuthEnabled) {
     username: config.AGENT_OBSERVABILITY_USER!,
     password: config.AGENT_OBSERVABILITY_PASS!,
   });
-  // The judge-conversation route gets dual-mode auth (Basic OR LiveKit Bearer) via
-  // nativeLiveKitUploadAuth below. Skip the Basic-only gate for it — otherwise, in a
-  // deployment with BOTH auth modes configured, this middleware 401s Bearer JWTs on
-  // this one route while every other ingest route accepts them.
-  app.use("/observability/evals/*", (c, next) =>
-    c.req.path === "/observability/evals/judge-conversation/v0" ? next() : auth(c, next),
-  );
+  app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
 }
 
@@ -92,9 +85,6 @@ const OTLP_BODY_LIMIT = 16 * MB;
 // Simulation generate/library requests carry a flow_json (no audio) — 10 MB is ample for a
 // large flow while bounding a malicious/misconfigured oversized body (DoS guard).
 const SIM_BODY_LIMIT = 10 * MB;
-// cx-sqs-worker redirect: a completed-call ConversationInput (transcript + node config,
-// no audio) — 16 MB matches the OTLP channels and bounds an oversized body.
-const JUDGE_BODY_LIMIT = 16 * MB;
 const tooLarge = (c: Context) =>
   c.json(buildErrorResponse("payload_too_large", "Request body exceeds the allowed size"), 413);
 
@@ -105,19 +95,11 @@ app.use("/observability/metrics/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, 
 // Cap simulation request bodies too (flow_json can be large but not unbounded). Registered
 // before registerSimulationRoutes so it runs ahead of the /api/simulation handlers.
 app.use("/api/simulation/*", bodyLimit({ maxSize: SIM_BODY_LIMIT, onError: tooLarge }));
-// Cap the cx-sqs-worker redirect body (registered before the route below).
-app.use("/observability/evals/judge-conversation/v0", bodyLimit({ maxSize: JUDGE_BODY_LIMIT, onError: tooLarge }));
 
 app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
 app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);
 app.use("/observability/traces/otlp/v0", nativeLiveKitUploadAuth);
 app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
-// The judge-conversation redirect is a native ingest path too (cx-sqs-worker posts
-// server-to-server). The basic-auth gate above (/observability/evals/*) only registers
-// when AGENT_OBSERVABILITY_USER/_PASS are set, so on a LiveKit-only deployment this route
-// would otherwise be open. Apply the same dual-auth (Basic OR LiveKit Bearer) as the other
-// ingest channels so it's protected under either configured auth mode.
-app.use("/observability/evals/judge-conversation/v0", nativeLiveKitUploadAuth);
 
 // ── Health check ────────────────────────────────────────────────────────────
 
@@ -155,10 +137,6 @@ app.get("/deepstatus", async (c) => {
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
 
 registerEvalRoutes(app);
-
-// ── cx-sqs-worker "Option A" redirect: run the node+goal eval engine on a completed
-//    real call and return the cx ConversationEvaluationOutput the worker persists.
-registerJudgeConversationRoute(app);
 
 // ── Agent endpoints (agent-oriented IA: virtual entity derived from
 //    distinct agent_name across sessions + eval_runs) ─────────────────────────

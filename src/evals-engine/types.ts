@@ -37,11 +37,6 @@ export interface NodeEvalInput {
   chosen_intent: string;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
   required_variables: string[];
-  /** Optional per-variable recording rules (name → `variable_instructions`). When present the
-   *  variable judge renders each rule next to its variable so groundedness is judged against
-   *  the configured semantics (e.g. "record yes only if explicitly confirmed"), matching the
-   *  context the cx-sqs Go evaluator gives its judges. */
-  variable_rules?: Record<string, string>;
   /** Variables actually extracted at this node (`variables_by_node[node_uuid]`). */
   extracted_variables: Record<string, unknown>;
   /** Turns that ran at this node, in order. */

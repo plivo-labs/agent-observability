@@ -70,16 +70,7 @@ export async function runVariableExtractionJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: VariableExtractionRaw; usage: LlmUsage }> {
-  // Render each variable with its configured recording rule when available — grading
-  // "grounded in context" without the rule semantics is what made this judge over-fire.
-  const expected = node.required_variables.length
-    ? node.required_variables
-        .map((v) => {
-          const rule = node.variable_rules?.[v];
-          return rule ? `- ${v} (rule: ${rule})` : `- ${v}`;
-        })
-        .join("\n")
-    : "(none)";
+  const expected = node.required_variables.length ? node.required_variables.map((v) => `- ${v}`).join("\n") : "(none)";
   const actualEntries = Object.entries(node.extracted_variables ?? {});
   const actual = actualEntries.length ? actualEntries.map(([k, v]) => `- ${k}: ${JSON.stringify(v)}`).join("\n") : "(none)";
   return runLlmJudge({
