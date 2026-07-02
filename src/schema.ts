@@ -29,13 +29,11 @@ export const envSchema = z.object({
   ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
 
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
-  // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless
-  // OPENAI_API_KEY (defined in the LLM provider section below) is set.
-  // Model precedence: JUDGE_LLM_MODEL → OPENAI_MODEL → gpt-4.1-mini
-  // (same contract as the Python SDK judge helper).
+  // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
+  // configured LLM provider has a key. It judges through the shared LLM stack
+  // (runGoalJudge → completeJSON) on the "judge" role, so the judge model comes
+  // from JUDGE_MODEL (below) — there is no goals-specific model knob.
   GOAL_ANALYZER: z.enum(["inline", "off"]).default("inline"),
-  JUDGE_LLM_MODEL: z.string().optional(),
-  OPENAI_MODEL: z.string().optional(),
 
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In

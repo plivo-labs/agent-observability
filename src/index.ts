@@ -42,9 +42,10 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 }
 
 // Goal analyzer: post-session LLM judging of goal:<text> tags. Same
-// placement model as the alert sweeper; additionally a no-op (with one
-// startup log) unless OPENAI_API_KEY is set.
-if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline") {
+// placement model as the alert sweeper — DB-backed, so gate on dbConfigured
+// too (inert in stateless mode); additionally a no-op (with one startup log)
+// unless an LLM provider key is configured.
+if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
   startGoalAnalyzer();
 }
 

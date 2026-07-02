@@ -65,10 +65,17 @@ export async function claimGoalSessions(limit: number): Promise<string[]> {
        LIMIT $1
      ) c
      ON CONFLICT (session_id) DO UPDATE
-     SET status = 'claimed', claimed_at = NOW()
+     SET status = 'claimed', claimed_at = NOW(),
+         -- Count a STALE-claim reclaim toward the attempt cap: a session whose
+         -- analysis crashed the process never reached markGoalAnalysisError (which
+         -- bumps attempts on the error path), so without this a poison session is
+         -- re-claimed forever. The error branch already counted, so don't double-bump.
+         attempts = session_goal_analyses.attempts
+           + (CASE WHEN session_goal_analyses.status = 'claimed' THEN 1 ELSE 0 END)
      WHERE (session_goal_analyses.status = 'error' AND session_goal_analyses.attempts < ${MAX_ATTEMPTS})
         OR (session_goal_analyses.status = 'claimed'
-            AND session_goal_analyses.claimed_at < NOW() - interval '${STALE_CLAIM}')
+            AND session_goal_analyses.claimed_at < NOW() - interval '${STALE_CLAIM}'
+            AND session_goal_analyses.attempts < ${MAX_ATTEMPTS})
      RETURNING session_id`,
     [limit],
   );

@@ -1,15 +1,17 @@
 /**
- * Unit tests for the goal-analyzer sweep: claim → load → judge (mock
- * LLM via ai/test) → write verdicts / mark errors. The db layer is
- * mocked (its semantics are covered by tests-integration/goals-db);
- * these tests pin the orchestration and the model-output contract.
+ * Unit tests for the goal-analyzer sweep: claim → load → judge (via the repo's
+ * MockLLM through runGoalJudge/completeJSON) → write verdicts / mark errors.
+ * The db layer is mocked (its semantics are covered by tests-integration/
+ * goals-db); these tests pin the orchestration and the verdict contract —
+ * including name-keyed reconciliation (order-independent) and the missing/empty
+ * cases.
  */
 import { describe, test, expect, mock, beforeEach } from "bun:test";
-import { MockLanguageModelV3 } from "ai/test";
+import { MockLLM } from "../src/llm/mock.js";
 
 const mockClaim = mock(() => Promise.resolve([] as string[]));
 const mockLoad = mock(() =>
-  Promise.resolve({ goals: [] as string[], chatHistory: null as unknown }),
+  Promise.resolve({ goals: [] as unknown, chatHistory: null as unknown }),
 );
 const mockComplete = mock(() => Promise.resolve());
 const mockError = mock(() => Promise.resolve());
@@ -22,10 +24,15 @@ mock.module("../src/goals/db.js", () => ({
   MAX_ATTEMPTS: 3,
 }));
 
+// completeJSON reads LLM_TIMEOUT_MS (AbortSignal.timeout) + LLM_PROVIDER; the
+// injected MockLLM bypasses provider resolution and the key checks.
 const fakeConfig: Record<string, unknown> = {
+  LLM_PROVIDER: "anthropic",
+  ANTHROPIC_API_KEY: undefined,
   OPENAI_API_KEY: undefined,
-  JUDGE_LLM_MODEL: undefined,
-  OPENAI_MODEL: undefined,
+  JUDGE_MODEL: undefined,
+  LLM_TIMEOUT_MS: 30_000,
+  LLM_MAX_RETRIES: 1,
   GOAL_ANALYZER: "inline",
 };
 mock.module("../src/config.js", () => ({
@@ -33,29 +40,19 @@ mock.module("../src/config.js", () => ({
   s3Enabled: false,
   basicAuthEnabled: false,
   liveKitAuthEnabled: false,
+  dbConfigured: false,
 }));
 
-const { runGoalSweepOnce, resolveJudgeModel } = await import("../src/goals/analyzer.js");
+const { runGoalSweepOnce } = await import("../src/goals/analyzer.js");
 
 const CHAT = [
   { type: "message", role: "user", content: ["I want to cancel my subscription."] },
   { type: "message", role: "assistant", content: ["Done — cancelled."] },
 ];
 
-function modelReturning(...payloads: unknown[]) {
-  let call = 0;
-  return new MockLanguageModelV3({
-    doGenerate: async () => {
-      const payload = payloads[Math.min(call++, payloads.length - 1)];
-      if (payload instanceof Error) throw payload;
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-        finishReason: "stop" as const,
-        usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
-        warnings: [],
-      };
-    },
-  });
+/** A MockLLM returning the evals-engine goal-judge JSON shape. */
+function judgeReturning(...verdicts: Array<{ goal_name: string; achieved: boolean; reason: string; technical_reason: string }>) {
+  return new MockLLM([JSON.stringify({ goals: verdicts })]);
 }
 
 beforeEach(() => {
@@ -63,23 +60,10 @@ beforeEach(() => {
   mockLoad.mockClear();
   mockComplete.mockClear();
   mockError.mockClear();
-  fakeConfig.OPENAI_API_KEY = undefined;
-  fakeConfig.JUDGE_LLM_MODEL = undefined;
-  fakeConfig.OPENAI_MODEL = undefined;
-});
-
-describe("resolveJudgeModel", () => {
-  test("precedence: JUDGE_LLM_MODEL → OPENAI_MODEL → gpt-4.1-mini", () => {
-    expect(resolveJudgeModel()).toBe("gpt-4.1-mini");
-    fakeConfig.OPENAI_MODEL = "gpt-4o";
-    expect(resolveJudgeModel()).toBe("gpt-4o");
-    fakeConfig.JUDGE_LLM_MODEL = "gpt-5";
-    expect(resolveJudgeModel()).toBe("gpt-5");
-  });
 });
 
 describe("runGoalSweepOnce", () => {
-  test("is a no-op without an API key or injected model", async () => {
+  test("is a no-op without a provider key or injected provider", async () => {
     await runGoalSweepOnce();
     expect(mockClaim).not.toHaveBeenCalled();
   });
@@ -95,12 +79,10 @@ describe("runGoalSweepOnce", () => {
     } as never);
 
     await runGoalSweepOnce({
-      model: modelReturning({
-        goals: [
-          { met: true, reasoning: "Issue was resolved.", what_went_wrong: null },
-          { met: false, reasoning: "Never asked.", what_went_wrong: "No identity check" },
-        ],
-      }),
+      provider: judgeReturning(
+        { goal_name: "resolution", achieved: true, reason: "Issue was resolved.", technical_reason: "" },
+        { goal_name: "identity", achieved: false, reason: "Never asked.", technical_reason: "No identity check" },
+      ),
     });
 
     expect(mockComplete).toHaveBeenCalledTimes(1);
@@ -125,7 +107,31 @@ describe("runGoalSweepOnce", () => {
     expect(mockError).not.toHaveBeenCalled();
   });
 
-  test("verdict-count mismatch marks an error and writes nothing", async () => {
+  test("verdicts are matched to goals BY NAME, not array position (G-1)", async () => {
+    mockClaim.mockResolvedValueOnce(["s1"] as never);
+    mockLoad.mockResolvedValueOnce({
+      goals: [
+        { name: "resolution", description: "Resolve the issue" },
+        { name: "identity", description: "Confirm identity" },
+      ],
+      chatHistory: CHAT,
+    } as never);
+
+    // Model returns the verdicts in the REVERSE order — name-keyed
+    // reconciliation must still attribute each to the right goal.
+    await runGoalSweepOnce({
+      provider: judgeReturning(
+        { goal_name: "identity", achieved: false, reason: "Never asked.", technical_reason: "No identity check" },
+        { goal_name: "resolution", achieved: true, reason: "Issue was resolved.", technical_reason: "" },
+      ),
+    });
+
+    const [, verdicts] = mockComplete.mock.calls[0] as unknown as [string, Array<{ name: string; met: boolean }>];
+    expect(verdicts[0]).toMatchObject({ name: "resolution", met: true });
+    expect(verdicts[1]).toMatchObject({ name: "identity", met: false });
+  });
+
+  test("a goal the model skipped defaults to not-met (no hard error)", async () => {
     mockClaim.mockResolvedValueOnce(["s1"] as never);
     mockLoad.mockResolvedValueOnce({
       goals: [
@@ -136,15 +142,28 @@ describe("runGoalSweepOnce", () => {
     } as never);
 
     await runGoalSweepOnce({
-      model: modelReturning({
-        goals: [{ met: true, reasoning: "only one", what_went_wrong: null }],
-      }),
+      provider: judgeReturning({ goal_name: "a", achieved: true, reason: "ok", technical_reason: "" }),
     });
+
+    expect(mockError).not.toHaveBeenCalled();
+    const [, verdicts] = mockComplete.mock.calls[0] as unknown as [string, Array<Record<string, unknown>>];
+    expect(verdicts[0]).toMatchObject({ name: "a", met: true });
+    expect(verdicts[1]).toMatchObject({ name: "b", met: false, reasoning: "Goal not evaluated by LLM" });
+  });
+
+  test("an empty transcript is marked errored, never judged", async () => {
+    mockClaim.mockResolvedValueOnce(["s1"] as never);
+    mockLoad.mockResolvedValueOnce({
+      goals: [{ name: "a", description: "A" }],
+      chatHistory: null,
+    } as never);
+
+    await runGoalSweepOnce({ provider: judgeReturning({ goal_name: "a", achieved: true, reason: "ok", technical_reason: "" }) });
 
     expect(mockComplete).not.toHaveBeenCalled();
     expect(mockError).toHaveBeenCalledTimes(1);
     const [, message] = mockError.mock.calls[0] as unknown as [string, string];
-    expect(message).toContain("verdict");
+    expect(message).toContain("empty transcript");
   });
 
   test("a model failure marks that session and continues with the next", async () => {
@@ -153,11 +172,17 @@ describe("runGoalSweepOnce", () => {
       .mockResolvedValueOnce({ goals: [{ name: "a", description: "A" }], chatHistory: CHAT } as never)
       .mockResolvedValueOnce({ goals: [{ name: "b", description: "B" }], chatHistory: CHAT } as never);
 
-    await runGoalSweepOnce({
-      model: modelReturning(new Error("rate limited"), {
-        goals: [{ met: true, reasoning: "ok", what_went_wrong: null }],
-      }),
-    });
+    // Content-keyed responder (sessions run concurrently, so a positional queue
+    // would be non-deterministic): the session judging goal "a" always gets
+    // unparseable output → completeJSON exhausts retries → LlmError; goal "b" succeeds.
+    const provider = new MockLLM([
+      (args) =>
+        args.user.includes('"goal_name":"a"')
+          ? "not json"
+          : JSON.stringify({ goals: [{ goal_name: "b", achieved: true, reason: "ok", technical_reason: "" }] }),
+    ]);
+
+    await runGoalSweepOnce({ provider });
 
     expect(mockError).toHaveBeenCalledTimes(1);
     expect((mockError.mock.calls[0] as unknown as [string, string])[0]).toBe("s1");
@@ -169,9 +194,7 @@ describe("runGoalSweepOnce", () => {
     mockClaim.mockResolvedValueOnce(["s1"] as never);
     mockLoad.mockResolvedValueOnce({ goals: [], chatHistory: CHAT } as never);
 
-    await runGoalSweepOnce({
-      model: modelReturning({ goals: [] }),
-    });
+    await runGoalSweepOnce({ provider: judgeReturning({ goal_name: "x", achieved: true, reason: "ok", technical_reason: "" }) });
 
     expect(mockComplete).not.toHaveBeenCalled();
     expect(mockError).toHaveBeenCalledTimes(1);
