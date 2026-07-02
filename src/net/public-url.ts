@@ -20,6 +20,30 @@ export class SsrfError extends Error {
   }
 }
 
+/** Resolve a hostname to its IP addresses. Injectable so tests exercise the
+ *  real resolve→block path with a fake resolver (no network, no prod/test fork
+ *  in assertPublicUrl itself). Returns the list of resolved IP strings. */
+export type HostResolver = (host: string) => Promise<string[]>;
+
+let resolver: HostResolver = async (host) => {
+  // In tests, resolve any hostname to a benign public IP so suites that
+  // legitimately deliver to `localhost` receivers stay green and network-free.
+  // The resolve→block path is exercised by injecting a resolver via
+  // __setResolverForTest (see public-url.test.ts); IP-literal blocking always runs.
+  if (process.env.NODE_ENV === "test") return ["93.184.216.34"];
+  const results = await lookup(host, { all: true });
+  return results.map((r) => r.address);
+};
+
+/** Test hook: swap the DNS resolver. Returns a restore function. */
+export function __setResolverForTest(fn: HostResolver): () => void {
+  const prev = resolver;
+  resolver = fn;
+  return () => {
+    resolver = prev;
+  };
+}
+
 /** Parse a dotted-quad IPv4 into its 32-bit unsigned value, or null if malformed. */
 function ipv4ToInt(ip: string): number | null {
   const parts = ip.split(".");
@@ -96,26 +120,20 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   }
   const host = url.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
 
-  const addresses: string[] = [];
+  let addresses: string[];
   if (net.isIP(host)) {
-    addresses.push(host);
-  } else if (process.env.NODE_ENV === "test") {
-    // Tests deliver to `localhost` receivers and create rules with example
-    // hostnames, and must stay network-free — skip DNS resolution here. The
-    // scheme check and every IP-literal check above still run, and the
-    // resolution branch is exercised in prod. (Unit-test the IP logic directly.)
-    return;
+    addresses = [host];
   } else {
-    let resolved;
     try {
-      resolved = await lookup(host, { all: true });
+      addresses = await resolver(host);
     } catch {
       throw new SsrfError(`could not resolve host "${host}"`);
     }
-    if (resolved.length === 0) throw new SsrfError(`host "${host}" resolved to no addresses`);
-    for (const r of resolved) addresses.push(r.address);
+    if (addresses.length === 0) throw new SsrfError(`host "${host}" resolved to no addresses`);
   }
 
+  // The block loop ALWAYS runs — an IP literal is checked directly, a hostname is
+  // resolved (via the injectable `resolver`) and every returned address checked.
   for (const addr of addresses) {
     if (isBlockedAddress(addr)) {
       throw new SsrfError(`host "${host}" resolves to a non-public address (${addr})`);

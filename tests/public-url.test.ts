@@ -1,9 +1,11 @@
 /**
- * SSRF guard unit tests. Hermetic: only IP-literal + scheme paths are asserted
- * (hostname DNS resolution is skipped under NODE_ENV=test, so no network here).
+ * SSRF guard unit tests. Hermetic: IP-literal + scheme paths run directly; the
+ * hostname resolve→block path is exercised by injecting a fake resolver (no
+ * network), so the core "a name that maps to a private IP is blocked" logic is
+ * covered rather than skipped.
  */
-import { describe, test, expect } from "bun:test";
-import { assertPublicUrl, SsrfError } from "../src/net/public-url.js";
+import { describe, test, expect, afterEach } from "bun:test";
+import { assertPublicUrl, SsrfError, __setResolverForTest } from "../src/net/public-url.js";
 
 describe("assertPublicUrl", () => {
   test("allows a public IP literal", async () => {
@@ -38,5 +40,50 @@ describe("assertPublicUrl", () => {
 
   test("rejects a malformed URL", async () => {
     await expect(assertPublicUrl("not a url")).rejects.toBeInstanceOf(SsrfError);
+  });
+});
+
+describe("assertPublicUrl — hostname resolve→block (injected resolver)", () => {
+  afterEach(() => {
+    // Each test installs its own restore; belt-and-suspenders reset to default.
+    __setResolverForTest(async () => ["93.184.216.34"]);
+  });
+
+  test("blocks a hostname that resolves to a private address", async () => {
+    const restore = __setResolverForTest(async () => ["10.1.2.3"]);
+    try {
+      await expect(assertPublicUrl("https://evil.example.com/hook")).rejects.toBeInstanceOf(SsrfError);
+    } finally {
+      restore();
+    }
+  });
+
+  test("blocks when ANY resolved address is private (mixed A records)", async () => {
+    const restore = __setResolverForTest(async () => ["93.184.216.34", "169.254.169.254"]);
+    try {
+      await expect(assertPublicUrl("https://dual.example.com/x")).rejects.toBeInstanceOf(SsrfError);
+    } finally {
+      restore();
+    }
+  });
+
+  test("allows a hostname that resolves only to public addresses", async () => {
+    const restore = __setResolverForTest(async () => ["93.184.216.34"]);
+    try {
+      await expect(assertPublicUrl("https://good.example.com/hook")).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("rejects when resolution fails", async () => {
+    const restore = __setResolverForTest(async () => {
+      throw new Error("ENOTFOUND");
+    });
+    try {
+      await expect(assertPublicUrl("https://nxdomain.example.com/x")).rejects.toBeInstanceOf(SsrfError);
+    } finally {
+      restore();
+    }
   });
 });

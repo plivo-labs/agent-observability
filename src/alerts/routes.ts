@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import {
   buildErrorResponse,
   buildListResponse,
@@ -35,6 +35,21 @@ function toPublicRule(rule: AlertRuleRow): Omit<AlertRuleRow, "secret"> & { has_
 
 const LIMIT = { fallback: 20, max: 100 } as const;
 
+/** SSRF guard for a rule's webhook_url. Returns a 400 Response to short-circuit
+ *  the handler when the target is private/loopback/metadata; null when it's OK.
+ *  Re-throws non-SSRF errors (they're real 500s). */
+async function ssrfCheck(c: Context, url: string): Promise<Response | null> {
+  try {
+    await assertPublicUrl(url);
+    return null;
+  } catch (e) {
+    if (e instanceof SsrfError) {
+      return c.json(buildErrorResponse("invalid_payload", `webhook_url rejected: ${e.message}`), 400);
+    }
+    throw e;
+  }
+}
+
 export function registerAlertRoutes(app: Hono) {
   // ── Rules CRUD ────────────────────────────────────────────────────────────
 
@@ -67,14 +82,8 @@ export function registerAlertRoutes(app: Hono) {
       return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
     }
     // Reject a private/loopback/metadata webhook target up front (SSRF).
-    try {
-      await assertPublicUrl(parsed.data.webhook_url);
-    } catch (e) {
-      if (e instanceof SsrfError) {
-        return c.json(buildErrorResponse("invalid_payload", `webhook_url rejected: ${e.message}`), 400);
-      }
-      throw e;
-    }
+    const ssrf = await ssrfCheck(c, parsed.data.webhook_url);
+    if (ssrf) return ssrf;
     try {
       const rule = await insertAlertRule(parsed.data);
       return c.json({ api_id: newApiId(), ...toPublicRule(rule) }, 201);
@@ -125,14 +134,8 @@ export function registerAlertRoutes(app: Hono) {
       }
       // If this patch sets/changes the webhook target, re-run the SSRF guard.
       if (parsed.data.webhook_url !== undefined) {
-        try {
-          await assertPublicUrl(parsed.data.webhook_url);
-        } catch (e) {
-          if (e instanceof SsrfError) {
-            return c.json(buildErrorResponse("invalid_payload", `webhook_url rejected: ${e.message}`), 400);
-          }
-          throw e;
-        }
+        const ssrf = await ssrfCheck(c, parsed.data.webhook_url);
+        if (ssrf) return ssrf;
       }
       const rule = await updateAlertRule(id, parsed.data);
       if (!rule) return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);
