@@ -146,4 +146,71 @@ describe("fromCxConversationInput", () => {
     };
     expect(fromCxConversationInput(input).nodes).toEqual([]);
   });
+
+  test("ai_action (tool) nodes are excluded — Go's evaluator allowlists ai_agent_v2 only", () => {
+    const input: CxConversationInput = {
+      flow_definition: { nodes: { act: { prompt: "" }, ai: { prompt: "p" } } },
+      flow_run: {
+        node_run_history: [
+          {
+            node_uuid: "act",
+            node_type: "ai_action",
+            data: { turns: [{ speaker: "bot", message: "Order looked up.", tool_calls: ["lookup_order → {status: shipped}"] }] },
+          },
+          { node_uuid: "ai", node_type: "ai_agent_v2", data: { turns: [{ speaker: "user", message: "hi" }] } },
+        ],
+      },
+    };
+    const out = fromCxConversationInput(input);
+    expect(out.nodes.map((n) => n.node_uuid)).toEqual(["ai"]);
+  });
+
+  test("assistant turns keep tool/KB evidence; tool-only turns get the placeholder", () => {
+    const input: CxConversationInput = {
+      flow_definition: { nodes: { n: { prompt: "p" } } },
+      flow_run: {
+        node_run_history: [
+          {
+            node_uuid: "n",
+            node_type: "ai_agent_v2",
+            data: {
+              turns: [
+                // tool-output-only turn: previously dropped, now kept with the Go placeholder
+                { speaker: "bot", message: "", tool_calls: ["overall_spend_summary → {total: 4200}"] },
+                {
+                  speaker: "bot",
+                  message: "Your total spend is 4,200.",
+                  tool_calls: ["get_currency → INR"],
+                  kb_results: { references: [{ chunks: [{ content: "Spend policy chunk." }] }] },
+                },
+                { speaker: "user", message: "Okay thanks", is_interrupted: true },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    const turns = fromCxConversationInput(input).nodes[0].turns;
+    expect(turns[0].agent).toBe(
+      "[Tool execution results included in response]\nTool_Calls: overall_spend_summary → {total: 4200}",
+    );
+    expect(turns[1].agent).toBe(
+      "Your total spend is 4,200.\nKB_Chunks:\n  [1] Spend policy chunk.\nTool_Calls: get_currency → INR",
+    );
+    expect(turns[2].user).toBe("Okay thanks [interrupted]");
+  });
+
+  test("variable recording rules are forwarded as variable_rules (omitted when absent)", () => {
+    const input = baseInput();
+    input.flow_definition!.nodes!["ai-node"].extract_variables = [
+      { variable_name: "caller_name", variable_instructions: "Full name as stated by the caller." },
+      { variable_name: "callback_time" }, // no rule
+    ];
+    const withRules = fromCxConversationInput(input).nodes[0];
+    expect(withRules.required_variables).toEqual(["caller_name", "callback_time"]);
+    expect(withRules.variable_rules).toEqual({ caller_name: "Full name as stated by the caller." });
+
+    const noRules = fromCxConversationInput(baseInput()).nodes[0];
+    expect(noRules.variable_rules).toBeUndefined();
+  });
 });

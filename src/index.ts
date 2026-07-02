@@ -72,7 +72,13 @@ if (basicAuthEnabled) {
     username: config.AGENT_OBSERVABILITY_USER!,
     password: config.AGENT_OBSERVABILITY_PASS!,
   });
-  app.use("/observability/evals/*", auth);
+  // The judge-conversation route gets dual-mode auth (Basic OR LiveKit Bearer) via
+  // nativeLiveKitUploadAuth below. Skip the Basic-only gate for it — otherwise, in a
+  // deployment with BOTH auth modes configured, this middleware 401s Bearer JWTs on
+  // this one route while every other ingest route accepts them.
+  app.use("/observability/evals/*", (c, next) =>
+    c.req.path === "/observability/evals/judge-conversation/v0" ? next() : auth(c, next),
+  );
   app.use("/api/*", auth);
 }
 

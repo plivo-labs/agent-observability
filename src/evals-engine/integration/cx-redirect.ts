@@ -38,6 +38,12 @@ export interface CxTurn {
   speaker?: string;
   message?: string;
   is_system_message?: boolean;
+  is_interrupted?: boolean;
+  /** Tool execution results attached to an assistant turn (cx `Turn.tool_calls`). */
+  tool_calls?: string[];
+  /** Knowledge-base retrieval attached to an assistant turn (cx `Turn.kb_results`:
+   *  `{ references: [{ chunks: [{ content: string }] }] }`). */
+  kb_results?: Record<string, unknown> | null;
   variables?: Record<string, unknown> | null;
 }
 
@@ -54,7 +60,7 @@ export interface CxNodeRunEntry {
 export interface CxNodeDefinition {
   prompt?: string;
   intents?: unknown[];
-  extract_variables?: Array<{ variable_name?: string }>;
+  extract_variables?: Array<{ variable_name?: string; variable_instructions?: string }>;
 }
 
 export interface CxGoalDefinition {
@@ -108,21 +114,14 @@ export interface CxConversationEvaluationOutput {
 /** Speakers that map to the user side of an exchange (everything else is the agent). */
 const USER_SPEAKERS = new Set(["user", "customer", "human", "caller", "callee", "contact"]);
 
-/** Node types cx-sqs-worker's transformer treats as non-evaluable (no LLM node judging).
- *  Anything not in this set + carrying turns is treated as an AI node. */
-const SKIP_NODE_TYPES = new Set([
-  "start",
-  "http_request",
-  "http",
-  "webhook",
-  "hangup",
-  "end",
-  "transfer",
-  "handoff_only",
-  "conditional",
-  "condition",
-  "set_variable",
-]);
+/** The node types cx-sqs-worker's Go evaluator actually judges. The worker's gate is a
+ *  per-processor allowlist — every processor except `ai_agent_v2` returns
+ *  `SkipEvaluation() == true` (see cx-sqs-worker usecases/eval/transformer/processor/*.go:
+ *  ai_action, branch_v2, call_forward, end_conversation, http_request, initiate_call,
+ *  agent_preset_conversation, start are all skipped). Mirroring the allowlist keeps the
+ *  redirect's node coverage identical to the Go engine; a blocklist here previously let
+ *  `ai_action` (tool) nodes through and judged nodes the old pipeline never evaluated. */
+const EVALUABLE_NODE_TYPES = new Set(["ai_agent_v2"]);
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -135,6 +134,46 @@ function turnsOf(entry: CxNodeRunEntry): CxTurn[] {
   return Array.isArray(turns) ? turns : [];
 }
 
+/** Pull KB chunk contents out of a cx `kb_results` payload
+ *  (`{ references: [{ chunks: [{ content }] }] }` — mirrors the Go `extractKBChunks`).
+ *  Permissive: any shape mismatch yields no chunks, never a throw. */
+function kbChunks(kb: CxTurn["kb_results"]): string[] {
+  const refs = kb && typeof kb === "object" ? (kb as { references?: unknown }).references : undefined;
+  if (!Array.isArray(refs)) return [];
+  const chunks: string[] = [];
+  for (const ref of refs) {
+    const list = ref && typeof ref === "object" ? (ref as { chunks?: unknown }).chunks : undefined;
+    if (!Array.isArray(list)) continue;
+    for (const c of list) {
+      const content = c && typeof c === "object" ? (c as { content?: unknown }).content : undefined;
+      if (typeof content === "string" && content) chunks.push(content);
+    }
+  }
+  return chunks;
+}
+
+/** Render an assistant turn's text with its evidence, mirroring the Go evaluator's
+ *  `formatTurn`: spoken message first (placeholder when the turn is tool-output-only),
+ *  then KB chunks and tool results as labelled evidence lines. Without these, the
+ *  hallucination/variable judges are blind to tool- and KB-grounded facts — the top
+ *  false-positive source on real tool-using flows. */
+function agentText(t: CxTurn): string {
+  const tools = Array.isArray(t.tool_calls)
+    ? t.tool_calls.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  const chunks = kbChunks(t.kb_results);
+  let msg = (t.message ?? "").trim();
+  if (!msg && tools.length) msg = "[Tool execution results included in response]";
+  if (t.is_interrupted && msg) msg += " [interrupted]";
+  const lines: string[] = msg ? [msg] : [];
+  if (chunks.length) {
+    lines.push("KB_Chunks:");
+    chunks.forEach((c, i) => lines.push(`  [${i + 1}] ${c}`));
+  }
+  if (tools.length) lines.push(`Tool_Calls: ${tools.join(", ")}`);
+  return lines.join("\n");
+}
+
 /** Convert a node's per-speaker cx turns into the engine's `EvalTurn[]`, one turn per
  * utterance, in order.
  *
@@ -143,20 +182,24 @@ function turnsOf(entry: CxNodeRunEntry): CxTurn[] {
  * turn per utterance therefore reproduces the exact chronological transcript with no
  * reordering — important because voice calls are agent-led (the agent greets first),
  * so any user+agent "pairing" would mis-order the greeting. System/boilerplate turns
- * (idle-hangup, reminders) and empty messages are dropped — feeding idle prompts as
- * agent speech is what made the loop judge over-fire. Per-turn intent is left empty;
- * the node-level `chosen_intent` is carried on `NodeEvalInput` instead.
+ * (idle-hangup, reminders) are dropped — feeding idle prompts as agent speech is what
+ * made the loop judge over-fire. Assistant turns keep their tool/KB evidence (see
+ * `agentText`); tool-output-only turns are kept, not dropped. Per-turn intent is left
+ * empty; the node-level `chosen_intent` is carried on `NodeEvalInput` instead.
  */
 function buildTurns(nodeUuid: string, cxTurns: CxTurn[]): EvalTurn[] {
   const out: EvalTurn[] = [];
   for (const t of cxTurns) {
     if (t.is_system_message) continue;
-    const msg = (t.message ?? "").trim();
-    if (!msg) continue;
     if (isUser(t.speaker)) {
+      let msg = (t.message ?? "").trim();
+      if (!msg) continue;
+      if (t.is_interrupted) msg += " [interrupted]";
       out.push({ node_uuid: nodeUuid, user: msg, agent: "", intent: "" });
     } else {
-      out.push({ node_uuid: nodeUuid, user: "", agent: msg, intent: "" });
+      const text = agentText(t);
+      if (!text) continue;
+      out.push({ node_uuid: nodeUuid, user: "", agent: text, intent: "" });
     }
   }
   return out;
@@ -182,6 +225,23 @@ function requiredVariables(def: CxNodeDefinition | undefined): string[] {
   return ev
     .map((v) => v?.variable_name)
     .filter((n): n is string => typeof n === "string" && n.length > 0);
+}
+
+/** Per-variable recording rules (name → variable_instructions) from the node definition.
+ *  The worker sends these; without them the variable judge grades "grounded in context"
+ *  with no idea of the configured semantics. Returns undefined when no rule is present. */
+function variableRules(def: CxNodeDefinition | undefined): Record<string, string> | undefined {
+  const ev = def?.extract_variables;
+  if (!Array.isArray(ev)) return undefined;
+  const rules: Record<string, string> = {};
+  for (const v of ev) {
+    const name = v?.variable_name;
+    const rule = v?.variable_instructions;
+    if (typeof name === "string" && name && typeof rule === "string" && rule.trim()) {
+      rules[name] = rule.trim();
+    }
+  }
+  return Object.keys(rules).length ? rules : undefined;
 }
 
 function readGoals(def: CxFlowDefinition): GoalInput[] {
@@ -258,13 +318,14 @@ export function buildCxEvalInput(cx: CxConversationInput): {
     const nodeUuid = entry.node_uuid ?? "";
     const nodeDef = defNodes[nodeUuid];
     if (!nodeUuid || !nodeDef) continue; // no config → not an evaluable node
-    if (SKIP_NODE_TYPES.has((entry.node_type ?? "").toLowerCase())) continue;
+    if (!EVALUABLE_NODE_TYPES.has((entry.node_type ?? "").toLowerCase())) continue;
 
     const cxTurns = turnsOf(entry);
     const turns = buildTurns(nodeUuid, cxTurns);
     if (turns.length === 0) continue; // nothing was said at this node
 
     allTurns.push(...turns);
+    const rules = variableRules(nodeDef);
     nodes.push({
       node_uuid: nodeUuid,
       node_name: entry.node_name || nodeUuid,
@@ -272,6 +333,7 @@ export function buildCxEvalInput(cx: CxConversationInput): {
       available_intents: Array.isArray(nodeDef.intents) ? nodeDef.intents : [],
       chosen_intent: typeof entry.chosen_intent === "string" ? entry.chosen_intent : "",
       required_variables: requiredVariables(nodeDef),
+      ...(rules ? { variable_rules: rules } : {}),
       extracted_variables: extractedVariables(cxTurns),
       turns,
       turn_count: turns.length,
