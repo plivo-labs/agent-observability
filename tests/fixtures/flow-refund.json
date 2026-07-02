@@ -1,0 +1,41 @@
+{
+  "flow_name": "refund-flow",
+  "systemPrompt": { "prompt": "You are a helpful support agent for Acme.", "all_nodes_enabled": true },
+  "global_meta": { "stt_guidance": "Expect spoken order numbers." },
+  "nodes": [
+    { "id": "start", "type": "start", "data": { "config": { "name": "start" } } },
+    {
+      "id": "greet",
+      "type": "ai_agent_v2",
+      "data": {
+        "config": {
+          "name": "greet",
+          "instructions": "Greet {{customer.name}} and find out why they are calling.",
+          "intents": [{ "intent_name": "wants_refund" }, { "intent_name": "other" }],
+          "extract_variables": [{ "variable_name": "order_id" }]
+        }
+      }
+    },
+    { "id": "check", "type": "branch_v2", "data": { "config": { "name": "eligibility_check" } } },
+    {
+      "id": "refund",
+      "type": "ai_agent_v2",
+      "data": {
+        "config": {
+          "name": "refund",
+          "instructions": "Process the refund for order {{greet.order_id}} and confirm.",
+          "intents": [{ "intent_name": "done" }]
+        }
+      }
+    },
+    { "id": "bye", "type": "end_conversation", "data": { "config": { "name": "bye" } } }
+  ],
+  "edges": [
+    { "source": "start", "target": "greet" },
+    { "source": "greet", "sourceHandle": "wants_refund", "target": "check" },
+    { "source": "greet", "sourceHandle": "other", "target": "bye" },
+    { "source": "check", "sourceHandle": "eligible", "target": "refund" },
+    { "source": "check", "sourceHandle": "no_match", "target": "bye" },
+    { "source": "refund", "sourceHandle": "done", "target": "bye" }
+  ]
+}

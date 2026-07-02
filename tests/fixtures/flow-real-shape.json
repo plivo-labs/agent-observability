@@ -1,0 +1,57 @@
+{
+  "flow_name": "real-shape-flow",
+  "systemPrompt": { "prompt": "You are Acme support. Be concise.", "all_nodes_enabled": true },
+  "agentSettings": {
+    "knowledge_base_ids": ["kb-acme"],
+    "voice_ai_config": { "language": "en-US", "allow_greeting_interruption": true }
+  },
+  "global_meta": { "stt_guidance": "Expect spoken order numbers." },
+  "nodes": [
+    { "id": "n-start", "type": "start", "data": { "config": { "name": "Start", "triggers": ["voice"] } } },
+    {
+      "id": "n-greet",
+      "type": "ai_agent_v2",
+      "data": {
+        "config": {
+          "name": "greet",
+          "instructions": "Greet the caller and find out why they're calling.",
+          "intents": [
+            { "id": "11111111-1111-1111-1111-111111111111", "intent_name": "wants_refund", "intent_instructions": "caller wants a refund" },
+            { "id": "22222222-2222-2222-2222-222222222222", "intent_name": "other", "intent_instructions": "anything else" }
+          ],
+          "extract_variables": [
+            { "variable_name": "order_id", "variable_instructions": "the caller's order number" }
+          ]
+        }
+      }
+    },
+    { "id": "n-check", "type": "branch_v2", "data": { "config": { "name": "eligibility_check" } } },
+    { "id": "n-notify", "type": "prompt", "data": { "config": { "name": "notify" } } },
+    { "id": "n-http", "type": "http_request", "data": { "config": { "name": "lookup_order" } } },
+    {
+      "id": "n-refund",
+      "type": "ai_agent_v2",
+      "data": {
+        "config": {
+          "name": "refund",
+          "instructions": "Process the refund for order {{greet.order_id}} and confirm.",
+          "knowledge_base_ids": ["kb-acme"],
+          "intents": [
+            { "id": "33333333-3333-3333-3333-333333333333", "intent_name": "done", "intent_instructions": "refund handled" }
+          ]
+        }
+      }
+    },
+    { "id": "n-bye", "type": "end_conversation", "data": { "config": { "name": "bye" } } }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-start", "target": "n-greet", "sourceHandle": "voice" },
+    { "id": "e2", "source": "n-greet", "target": "n-check", "sourceHandle": "11111111-1111-1111-1111-111111111111" },
+    { "id": "e3", "source": "n-greet", "target": "n-bye", "sourceHandle": "22222222-2222-2222-2222-222222222222" },
+    { "id": "e4", "source": "n-check", "target": "n-notify", "sourceHandle": "eligible" },
+    { "id": "e5", "source": "n-check", "target": "n-bye", "sourceHandle": "no_match" },
+    { "id": "e6", "source": "n-notify", "target": "n-http", "sourceHandle": "success" },
+    { "id": "e7", "source": "n-http", "target": "n-refund", "sourceHandle": "success" },
+    { "id": "e8", "source": "n-refund", "target": "n-bye", "sourceHandle": "33333333-3333-3333-3333-333333333333" }
+  ]
+}

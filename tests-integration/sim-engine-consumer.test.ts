@@ -1,0 +1,292 @@
+// Stage 7: the SQS consumer (dispatch adapter) end-to-end, against ElasticMQ + real Redis +
+// a fake /turn server. Publishes N run_simulation_scenario messages, drains the queue with
+// consumeSimulationQueue, and asserts the full per-scenario :RESULTS sequence, that the Lua
+// completion gate fires simulation_completed EXACTLY once at N, that the processed count is N,
+// and that the queue drains to empty.
+//
+//   REDIS_URL=redis://127.0.0.1:6379 bun test tests-integration/sim-engine-consumer.test.ts
+//
+// Skips cleanly when Redis OR ElasticMQ is unreachable. Starts (and stops, in afterAll) its own
+// ElasticMQ container; Redis is expected to already be running on 6379.
+
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { Redis } from "ioredis";
+import { execFileSync } from "node:child_process";
+import {
+  CreateQueueCommand,
+  GetQueueAttributesCommand,
+  SendMessageCommand,
+  SQSClient,
+} from "@aws-sdk/client-sqs";
+import { LiveKitSimClient } from "../src/sim-engine/run-engine/livekit-client.js";
+import { expectedCountKey, flowJsonKey, resultsKey } from "../src/sim-engine/queue/redis.js";
+// Type-only import — erased at compile time, so it does NOT load the module before the env is
+// set below. The runtime value (consumeSimulationQueue) comes from the dynamic import.
+import type { ConsumerDeps } from "../src/sim-engine/queue/consumer.js";
+
+const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
+const SQS_ENDPOINT = "http://127.0.0.1:9324";
+const ELASTICMQ_CONTAINER = "ao-sim-elasticmq";
+const SCENARIO_COUNT = 3;
+
+// ── The SQS client reads its endpoint + creds from the AWS SDK chain at construction, so set
+//    them BEFORE importing the consumer (a dynamic import below). ElasticMQ accepts any creds. ──
+process.env.AWS_ENDPOINT_URL_SQS = SQS_ENDPOINT;
+process.env.AWS_REGION = "us-east-1";
+process.env.AWS_ACCESS_KEY_ID = "test";
+process.env.AWS_SECRET_ACCESS_KEY = "test";
+
+// Dynamic import AFTER the env is set (the module reads simEngineConfig.awsRegion on load).
+const { consumeSimulationQueue } = await import("../src/sim-engine/queue/consumer.js");
+
+// start → A1 (ai) → end. Turn 1's user message is the hardcoded "Hello!" (no LLM), A1 returns the
+// `done` intent, the edge routes to end_conversation → the scenario stops with end_conversation.
+const FLOW = JSON.stringify({
+  nodes: [
+    { id: "S", type: "start", data: { config: { name: "Start" } } },
+    { id: "A1", type: "ai_agent_v2", data: { config: { name: "Agent1", intents: [{ id: "int-done", intent_name: "done" }] } } },
+    { id: "E", type: "end_conversation", data: { config: { name: "End", end_message: "Bye" } } },
+  ],
+  edges: [
+    { id: "S-A1", source: "S", target: "A1", sourceHandle: "http" },
+    { id: "A1-E", source: "A1", target: "E", sourceHandle: "int-done" },
+  ],
+});
+
+/** Build one scenario dict (the inline `payload.body.scenario`); distinct id per index. */
+function makeScenario(index: number): Record<string, unknown> {
+  return {
+    id: `s${index}`,
+    name: `Scenario ${index}`,
+    persona: { personality: "calm", emotional_state: "neutral", behavioral_traits: [], details: {} },
+    goal: `Goal ${index}`,
+    language: "en-US",
+    interruption: { enabled: false, probability: 0 },
+    stt_noise: { enabled: false, severity: "light" },
+    non_answer: { enabled: false, probability: 0 },
+    world_state: {},
+    start_node_params: {},
+    max_turns: 25,
+    tags: [],
+  };
+}
+
+/** The aiassist→AO SQS envelope for one scenario. */
+function makeEnvelope(runUuid: string, index: number): string {
+  return JSON.stringify({
+    event_type: "simulation_eval",
+    event_name: "run_simulation_scenario",
+    visibility_timeout: 300,
+    payload: {
+      body: {
+        simulation_run_uuid: runUuid,
+        scenario_id: `s${index}`,
+        auth_id: "acct-1",
+        scenario_index: index,
+        scenario: makeScenario(index),
+        agent_flow_description: "Test agent",
+        simulation_mode: "stress",
+        enqueue_ts: Date.now(),
+      },
+    },
+  });
+}
+
+async function probeRedis(): Promise<Redis | null> {
+  const c = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, retryStrategy: () => null });
+  try {
+    await c.connect();
+    await c.ping();
+    return c;
+  } catch {
+    c.disconnect();
+    return null;
+  }
+}
+
+/** Start ElasticMQ (idempotent) and wait until its SQS port answers a ListQueues-ish call. */
+async function startElasticMq(): Promise<SQSClient | null> {
+  // execFileSync (no shell) — args are a fixed array, so no shell metachar interpretation.
+  try {
+    execFileSync("docker", ["rm", "-f", ELASTICMQ_CONTAINER], { stdio: "ignore" });
+  } catch {
+    /* nothing to remove */
+  }
+  try {
+    execFileSync(
+      "docker",
+      ["run", "-d", "--rm", "-p", "9324:9324", "--name", ELASTICMQ_CONTAINER, "softwaremill/elasticmq-native"],
+      { stdio: "ignore" },
+    );
+  } catch (err) {
+    console.warn(`[sim-engine-consumer] could not start ElasticMQ (${(err as Error).message}) — skipping`);
+    return null;
+  }
+
+  const sqs = new SQSClient({ endpoint: SQS_ENDPOINT, region: "us-east-1" });
+  // Poll for readiness: CreateQueue is idempotent, so we use it as the liveness probe.
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      await sqs.send(new CreateQueueCommand({ QueueName: "readiness-probe" }));
+      return sqs;
+    } catch {
+      await Bun.sleep(250);
+    }
+  }
+  console.warn("[sim-engine-consumer] ElasticMQ did not become ready — skipping");
+  return null;
+}
+
+const redis = await probeRedis();
+const sqs = redis ? await startElasticMq() : null;
+const ready = !!redis && !!sqs;
+const suite = ready ? describe : describe.skip;
+if (!redis) console.warn(`[sim-engine-consumer] no Redis at ${REDIS_URL} — skipping integration suite`);
+
+let server: ReturnType<typeof Bun.serve>;
+let turnBase = "";
+let queueUrl = "";
+
+beforeAll(async () => {
+  // Fake /turn: A1 returns the `done` intent so the flow walks straight to end_conversation.
+  server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = (await req.json()) as Record<string, unknown>;
+      const node = body.node_uuid as string;
+      return Response.json({
+        message: `reply from ${node}`,
+        intent: node === "A1" ? "done" : "",
+        variables: {},
+        tool_calls: [],
+        response_items: [{ role: "assistant", content: `reply from ${node}` }],
+        node_uuid: node,
+        node_run_uuid: body.node_run_uuid,
+        ended: true,
+        stop_reason: "",
+        context_items: [],
+        variables_by_node: {},
+      });
+    },
+  });
+  turnBase = `http://127.0.0.1:${server.port}`;
+
+  if (sqs) {
+    const created = await sqs.send(new CreateQueueCommand({ QueueName: "sim-eval-test" }));
+    queueUrl = created.QueueUrl!;
+  }
+});
+
+afterAll(async () => {
+  server?.stop(true);
+  if (redis) await redis.quit();
+  try {
+    execFileSync("docker", ["rm", "-f", ELASTICMQ_CONTAINER], { stdio: "ignore" });
+  } catch {
+    /* container already gone */
+  }
+});
+
+async function readEntries(r: Redis, u: string): Promise<{ type: string; data: any }[]> {
+  const entries = (await r.call("XRANGE", resultsKey(u), "-", "+")) as [string, string[]][];
+  return entries.map(([, fields]) => {
+    const map: Record<string, string> = {};
+    for (let i = 0; i + 1 < fields.length; i += 2) map[fields[i]!] = fields[i + 1]!;
+    return { type: map.type!, data: JSON.parse(map.data!) };
+  });
+}
+
+/** Approximate-messages-available, the ElasticMQ-visible queue depth (for the drain assertion). */
+async function approxMessages(client: SQSClient, url: string): Promise<number> {
+  const attrs = await client.send(
+    new GetQueueAttributesCommand({ QueueUrl: url, AttributeNames: ["ApproximateNumberOfMessages"] }),
+  );
+  return Number(attrs.Attributes?.ApproximateNumberOfMessages ?? "0");
+}
+
+suite("consumeSimulationQueue — drains the queue + runs the turn loop E2E", () => {
+  const r = redis!;
+  const client = sqs!;
+
+  test(`processes ${SCENARIO_COUNT} scenarios, fires simulation_completed exactly once, drains the queue`, async () => {
+    const runUuid = crypto.randomUUID();
+
+    // Seed FLOW_JSON + the expected scenario count for the run-level Lua gate.
+    await r.set(flowJsonKey(runUuid), FLOW);
+    await r.set(expectedCountKey(runUuid), String(SCENARIO_COUNT));
+
+    // Publish N distinct scenario messages.
+    for (let i = 0; i < SCENARIO_COUNT; i++) {
+      await client.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: makeEnvelope(runUuid, i) }));
+    }
+
+    // Drain with the real consumer, pointing it at ElasticMQ + the fake /turn server.
+    const abort = new AbortController();
+    const deps: ConsumerDeps = { redis: r, runnerDeps: { livekit: new LiveKitSimClient({ url: turnBase }) } };
+    const consumer = consumeSimulationQueue(deps, {
+      queueUrl,
+      concurrency: 4,
+      signal: abort.signal,
+      sqs: client,
+    });
+
+    // Wait until the :RESULTS stream shows N scenario_completed + the simulation_completed, then abort.
+    const deadline = Date.now() + 30_000;
+    let entries: { type: string; data: any }[] = [];
+    while (Date.now() < deadline) {
+      entries = await readEntries(r, runUuid);
+      const completed = entries.filter((e) => e.type === "scenario_completed").length;
+      const simDone = entries.some((e) => e.type === "simulation_completed");
+      if (completed >= SCENARIO_COUNT && simDone) break;
+      await Bun.sleep(100);
+    }
+    abort.abort();
+    await consumer; // the long poll cancels on abort → the loop exits cleanly
+
+    // ── Per-scenario sequence: each of s0..s2 emitted scenario_started + ≥1 turn_completed +
+    //    scenario_completed. We group the events by scenario_id from their event_data. ──
+    const byScenario = new Map<string, string[]>();
+    for (const e of entries) {
+      const sid = e.data.event_data?.scenario_id as string | undefined;
+      if (sid === undefined) continue; // simulation_completed has no scenario_id
+      const list = byScenario.get(sid) ?? [];
+      list.push(e.type);
+      byScenario.set(sid, list);
+    }
+
+    for (let i = 0; i < SCENARIO_COUNT; i++) {
+      const types = byScenario.get(`s${i}`) ?? [];
+      expect(types[0], `scenario s${i} should start with scenario_started`).toBe("scenario_started");
+      expect(types.filter((t) => t === "turn_completed").length, `scenario s${i} should have ≥1 turn_completed`).toBeGreaterThanOrEqual(1);
+      expect(types[types.length - 1], `scenario s${i} should end with scenario_completed`).toBe("scenario_completed");
+      // The fake /turn drives A1→done→end, so every scenario ends on end_conversation (no error).
+      const completedEvent = entries.find(
+        (e) => e.type === "scenario_completed" && e.data.event_data.scenario_id === `s${i}`,
+      );
+      expect(completedEvent!.data.event_data.stop_reason).toBe("end_conversation");
+    }
+
+    // ── simulation_completed fires EXACTLY once (the Lua SETNX gate at N) with processed=N. ──
+    const simCompletedEvents = entries.filter((e) => e.type === "simulation_completed");
+    expect(simCompletedEvents.length).toBe(1);
+    expect(simCompletedEvents[0]!.data.event_data.scenarios_processed).toBe(SCENARIO_COUNT);
+
+    // ── The queue drains: no messages left visible. ──
+    // ElasticMQ's ApproximateNumberOfMessages settles to 0 once all are deleted; allow a moment.
+    let remaining = await approxMessages(client, queueUrl);
+    for (let attempt = 0; attempt < 20 && remaining !== 0; attempt++) {
+      await Bun.sleep(150);
+      remaining = await approxMessages(client, queueUrl);
+    }
+    expect(remaining).toBe(0);
+
+    // Cleanup the run-scoped keys.
+    await r.del(
+      resultsKey(runUuid),
+      flowJsonKey(runUuid),
+      expectedCountKey(runUuid),
+      `SIM_EVAL:{${runUuid}}:SCENARIO_PROCESSED_COUNT`,
+      `SIM_EVAL:{${runUuid}}:SCENARIO_COMPLETED`,
+    );
+  }, 45_000);
+});
