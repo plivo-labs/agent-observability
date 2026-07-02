@@ -20,7 +20,10 @@ import type { CanonicalFlow } from "../simulation/flow/flow-schema.js";
 //      (the WRITER) and later enqueues them for that worker to unmarshal.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Simulation difficulty mode. "stress" is the default; "smoke" is the capped, fast path. */
+/** Simulation difficulty mode. Only "stress" is implemented; "smoke" was never
+ *  built (its allocator path throws) so it is COERCED to "stress" at the request
+ *  boundary (see GenerateScenariosRequest) — a caller that still sends "smoke"
+ *  (e.g. an upstream default) gets a stress run instead of an error. */
 export const SimulationMode = z.enum(["smoke", "stress"]);
 export type SimulationMode = z.infer<typeof SimulationMode>;
 
@@ -42,7 +45,9 @@ export const GenerateScenariosRequest = z.object({
   phlo_uuid: z.string().min(1),
   max_scenarios: z.number().int().min(1).max(100).default(50),
   test_case_generation_instructions: z.string().default(""),
-  simulation_mode: SimulationMode.default("stress"),
+  // "smoke" is unimplemented — coerce it to "stress" here so an upstream caller
+  // that defaults to "smoke" gets a working run rather than a generation error.
+  simulation_mode: z.preprocess((m) => (m === "smoke" ? "stress" : m), SimulationMode.default("stress")),
 });
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
 
