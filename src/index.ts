@@ -55,10 +55,20 @@ if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbCo
 // slip would otherwise expose all session data with no signal.
 const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
 if (!authEnabled) {
+  // Zero-auth exposes every ingest route AND the whole dashboard API. Refuse to
+  // boot in that state unless it's an explicit, deliberate choice — a silent
+  // env slip must never open all session data with no signal.
+  if (!config.ALLOW_UNAUTHENTICATED && process.env.NODE_ENV !== "test") {
+    console.error(
+      "[security] No authentication configured — refusing to start. Set " +
+        "AGENT_OBSERVABILITY_USER/_PASS or the LiveKit API key pair, or set " +
+        "ALLOW_UNAUTHENTICATED=true to run intentionally open (local dev / trusted network).",
+    );
+    process.exit(1);
+  }
   console.warn(
-    "[security] No authentication configured — ingest and /api are OPEN to " +
-      "anyone who can reach this port. Set AGENT_OBSERVABILITY_USER/_PASS or " +
-      "the LiveKit API key pair to require credentials.",
+    "[security] ALLOW_UNAUTHENTICATED=true — ingest and /api are OPEN to anyone " +
+      "who can reach this port. Intended only for local dev / a trusted private network.",
   );
 }
 
@@ -74,7 +84,11 @@ app.use("*", logger());
 const corsOrigins = (config.CORS_ALLOWED_ORIGINS ?? "*").split(",").map((o) => o.trim()).filter(Boolean);
 app.use("/api/*", cors({ origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins }));
 
-// Basic auth (all routes except /health, only when configured)
+// Auth on the eval-ingest + dashboard API (all routes except /health) whenever
+// ANY auth mode is enabled. Basic auth gets the hono middleware (so a browser
+// sees the WWW-Authenticate prompt). LiveKit-only deploys — which have no basic
+// credential — fall back to the dual Bearer/Basic middleware so these routes are
+// never left silently open (the bug: previously only basicAuthEnabled gated them).
 if (basicAuthEnabled) {
   const auth = basicAuth({
     username: config.AGENT_OBSERVABILITY_USER!,
@@ -82,6 +96,9 @@ if (basicAuthEnabled) {
   });
   app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
+} else if (liveKitAuthEnabled) {
+  app.use("/observability/evals/*", nativeLiveKitUploadAuth);
+  app.use("/api/*", nativeLiveKitUploadAuth);
 }
 
 // Cap ingest body sizes so a giant (or malicious) upload can't be buffered

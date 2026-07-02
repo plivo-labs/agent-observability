@@ -7,6 +7,15 @@ export const envSchema = z.object({
   AGENT_OBSERVABILITY_USER: z.string().optional(),
   AGENT_OBSERVABILITY_PASS: z.string().optional(),
 
+  // Escape hatch: allow the server to boot with NO authentication configured
+  // (neither basic nor LiveKit). Off by default so a misconfigured deploy
+  // fails fast instead of silently exposing every route; set true only for
+  // local dev / a trusted private network.
+  ALLOW_UNAUTHENTICATED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+
   // LiveKit native observability upload auth. The SDK signs Bearer JWTs with
   // these values and includes an observability.write grant.
   LIVEKIT_API_KEY: z.string().optional(),
@@ -145,4 +154,15 @@ export const envSchema = z.object({
   USER_SIMULATOR_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
   // Scenarios one worker process runs concurrently (SQS consumer fan-out).
   SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+
+  // Hard ceiling on scenarios one generate request may ask for. The schema
+  // already caps max_scenarios at 100; this env lets a deployment tighten it
+  // further (a single request fans out to ~max_scenarios parallel writer LLM
+  // calls, so this bounds the per-request LLM cost). A request over the cap
+  // is rejected with 400.
+  MAX_SCENARIOS_PER_REQUEST: z.coerce.number().int().positive().max(100).default(100),
+  // Concurrent scenario-generation requests allowed per process. Each request
+  // is an expensive multi-call LLM fan-out, so this stops a burst from
+  // multiplying into unbounded spend; requests over the limit get 429.
+  GEN_MAX_CONCURRENT: z.coerce.number().int().positive().default(2),
 });

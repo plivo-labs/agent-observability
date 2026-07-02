@@ -19,6 +19,7 @@ import {
 } from "./db.js";
 import { deliverTest } from "./deliver.js";
 import { alertRuleCreateSchema, alertRulePatchSchema } from "./schema.js";
+import { assertPublicUrl, SsrfError } from "../net/public-url.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -64,6 +65,15 @@ export function registerAlertRoutes(app: Hono) {
     const parsed = alertRuleCreateSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
+    }
+    // Reject a private/loopback/metadata webhook target up front (SSRF).
+    try {
+      await assertPublicUrl(parsed.data.webhook_url);
+    } catch (e) {
+      if (e instanceof SsrfError) {
+        return c.json(buildErrorResponse("invalid_payload", `webhook_url rejected: ${e.message}`), 400);
+      }
+      throw e;
     }
     try {
       const rule = await insertAlertRule(parsed.data);
@@ -112,6 +122,17 @@ export function registerAlertRoutes(app: Hono) {
       });
       if (!merged.success) {
         return c.json(buildErrorResponse("invalid_payload", formatZodError(merged.error)), 400);
+      }
+      // If this patch sets/changes the webhook target, re-run the SSRF guard.
+      if (parsed.data.webhook_url !== undefined) {
+        try {
+          await assertPublicUrl(parsed.data.webhook_url);
+        } catch (e) {
+          if (e instanceof SsrfError) {
+            return c.json(buildErrorResponse("invalid_payload", `webhook_url rejected: ${e.message}`), 400);
+          }
+          throw e;
+        }
       }
       const rule = await updateAlertRule(id, parsed.data);
       if (!rule) return c.json(buildErrorResponse("not_found", "Alert rule not found"), 404);

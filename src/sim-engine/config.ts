@@ -100,4 +100,8 @@ export const simEngineConfig = {
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
   /** Scenarios run concurrently per worker process / per in-process run (fan-out bound). */
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,
+  /** Hard per-request scenario ceiling (a generate request over this is rejected 400). */
+  maxScenariosPerRequest: config.MAX_SCENARIOS_PER_REQUEST,
+  /** Concurrent generate requests allowed per process (over the limit → 429). */
+  genMaxConcurrent: config.GEN_MAX_CONCURRENT,
 } as const;

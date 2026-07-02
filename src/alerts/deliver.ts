@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { AlertRuleRow, DueDelivery, WebhookAttemptInput } from "./db.js";
 import { insertWebhookAttempt } from "./db.js";
+import { assertPublicUrl } from "../net/public-url.js";
 
 // ── Webhook delivery ────────────────────────────────────────────────────────
 //
@@ -54,6 +55,9 @@ async function sendWebhook(req: WebhookRequest): Promise<DeliveryResult> {
   }
   const started = performance.now();
   try {
+    // SSRF guard immediately before the fetch (DNS can change since rule
+    // creation): reject loopback / private / link-local / metadata targets.
+    await assertPublicUrl(req.url);
     const res = await fetch(req.url, {
       method: req.method,
       headers,
