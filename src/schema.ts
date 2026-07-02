@@ -155,12 +155,12 @@ export const envSchema = z.object({
   // Scenarios one worker process runs concurrently (SQS consumer fan-out).
   SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
 
-  // Hard ceiling on scenarios one generate request may ask for. The schema
-  // already caps max_scenarios at 100; this env lets a deployment tighten it
-  // further (a single request fans out to ~max_scenarios parallel writer LLM
-  // calls, so this bounds the per-request LLM cost). A request over the cap
-  // is rejected with 400.
-  MAX_SCENARIOS_PER_REQUEST: z.coerce.number().int().positive().max(100).default(100),
+  // Hard ceiling on scenarios one generate request may ask for. The request
+  // schema allows up to 100, but the default policy caps it at 50 (a single
+  // request fans out to ~max_scenarios parallel writer LLM calls, so this bounds
+  // the per-request LLM cost). A request over the cap is rejected with 400.
+  // Raise via env up to 100 if a deployment needs it.
+  MAX_SCENARIOS_PER_REQUEST: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
   // is an expensive multi-call LLM fan-out, so this stops a burst from
   // multiplying into unbounded spend; requests over the limit get 429.
