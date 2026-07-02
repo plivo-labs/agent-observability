@@ -1,9 +1,5 @@
 """Loop-detection judge.
 
-Ported from cx-sqs-worker
-`usecases/vibe_eval/evaluator/metrics/llm_metrics.go`
-(`NewLoopDetectionMetric`) + `GetLoopDetectionPromptConfig`.
-
 Runs on a session in isolation — no ground truth required. Reads the
 conversation history and flags unjustified repetition of the agent's own
 recent messages.

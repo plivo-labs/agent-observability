@@ -1,9 +1,5 @@
 """Variable-extraction judge.
 
-Ported from cx-sqs-worker
-`usecases/vibe_eval/evaluator/metrics/llm_metrics.go`
-(`NewVariableExtractionMetric`) + `GetVariableExtractionPromptConfig`.
-
 Needs ground truth: the set of variables the node SHOULD extract, plus the
 mapping the agent ACTUALLY extracted. Both are baked into the instructions
 at construction time.

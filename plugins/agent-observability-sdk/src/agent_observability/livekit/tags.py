@@ -24,9 +24,62 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from dataclasses import asdict
+from typing import Any, Sequence
 
 from agent_observability.livekit.env import ensure_observability_url
+from agent_observability.livekit.goals import Goal
+
+
+def _dedupe_goals(goals: Sequence[Goal]) -> list[Goal]:
+    """Reject duplicate names: the server dedupes first-wins, so a duplicate
+    here would silently drop a goal — almost certainly a bug in the calling
+    agent code. Each :class:`Goal` is already validated at construction; this
+    only enforces list-level uniqueness."""
+    seen: set[str] = set()
+    result: list[Goal] = []
+    for goal in goals:
+        if not isinstance(goal, Goal):
+            raise TypeError(
+                f"goals must be Goal instances, got {type(goal).__name__} — "
+                "use Goal(name, description)."
+            )
+        if goal.name in seen:
+            raise ValueError(
+                f"duplicate goal name {goal.name!r} — "
+                "goal names are the goal's stable identity and must be unique "
+                "per session."
+            )
+        seen.add(goal.name)
+        result.append(goal)
+    return result
+
+
+def _emit_goal_tags(tagger: Any, goals: Sequence[Goal]) -> None:
+    for goal in goals:
+        tagger.add(f"goal:{goal.name}:{goal.description}", metadata=asdict(goal))
+
+
+def add_goal_tags(tagger: Any, goals: Sequence[Goal]) -> list[Goal]:
+    """Emit ``goal:<name>:<description>`` tags without the full bootstrap.
+
+    For workers whose observability bootstrap happens elsewhere —
+    agent-transport's ``AudioStreamServer`` wires identity tags and the
+    upload internally — this declares conversation goals on the session
+    without re-emitting identity tags and without requiring the
+    upload-URL env that :func:`init_observability` enforces.
+
+    Names must be unique across the list (the server keeps only the first
+    of a duplicate); each :class:`Goal` validates its own name/description
+    at construction. Raises before any tag is emitted on a duplicate name.
+
+    :param tagger: A LiveKit tagger (``ctx.tagger``).
+    :param goals: :class:`Goal` instances.
+    :return: The goals, in order, deduplicated.
+    """
+    deduped = _dedupe_goals(goals)
+    _emit_goal_tags(tagger, deduped)
+    return deduped
 
 
 def init_observability(
@@ -36,6 +89,7 @@ def init_observability(
     agent_name: str | None = None,
     account_id: str | None = None,
     transport: str | None = None,
+    goals: Sequence[Goal] | None = None,
     extra_metadata: dict[str, Any] | None = None,
     logger: logging.Logger | None = None,
 ) -> str:
@@ -53,6 +107,7 @@ def init_observability(
        - ``account_id:<value>`` (when supplied)
        - ``agent_name:<value>`` (when supplied)
        - ``transport:<value>`` (when supplied)
+       - ``goal:<name>:<description>`` per goal (when supplied)
        - ``agent.session`` (wrapper with everything in metadata)
 
     :param tagger: A LiveKit tagger. Anything with an
@@ -70,6 +125,10 @@ def init_observability(
         dashboards. Optional.
     :param transport: Short label like ``"text"``, ``"audio"``, ``"sip"``.
         Optional.
+    :param goals: Conversation goals the server's goal analyzer judges
+        after each session, as :class:`Goal` instances. The name is the
+        goal's stable, filterable identity (no colons); the description is
+        what the LLM judge evaluates. Names must be unique. Optional.
     :param extra_metadata: Extra key/value pairs to ride along on the
         wrapper ``agent.session`` tag's metadata. No atomic tags are
         derived from these — they only land in the raw_report for
@@ -102,6 +161,9 @@ def init_observability(
             "backfill ever arriving."
         )
 
+    # Dedupe goals up front so a duplicate name fails before any tag lands.
+    deduped_goals = _dedupe_goals(goals) if goals else []
+
     metadata: dict[str, Any] = {"agent_id": resolved_agent_id}
     if agent_name:
         metadata["agent_name"] = agent_name
@@ -109,6 +171,8 @@ def init_observability(
         metadata["account_id"] = account_id
     if transport:
         metadata["transport"] = transport
+    if deduped_goals:
+        metadata["goals"] = [asdict(g) for g in deduped_goals]
     if extra_metadata:
         metadata.update(extra_metadata)
 
@@ -135,5 +199,6 @@ def init_observability(
             f"transport:{transport}",
             metadata={"transport": transport},
         )
+    _emit_goal_tags(tagger, deduped_goals)
 
     return resolved_agent_id

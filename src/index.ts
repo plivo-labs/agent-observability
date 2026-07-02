@@ -25,6 +25,7 @@ import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
+import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
 if (config.AUTO_MIGRATE && dbConfigured) {
@@ -38,6 +39,13 @@ if (config.AUTO_MIGRATE && dbConfigured) {
 // Gated on dbConfigured: the sweeper is entirely DB-backed, so it's inert in stateless mode.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
   startAlertSweeper();
+}
+
+// Goal analyzer: post-session LLM judging of goal:<text> tags. Same
+// placement model as the alert sweeper; additionally a no-op (with one
+// startup log) unless OPENAI_API_KEY is set.
+if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline") {
+  startGoalAnalyzer();
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -697,6 +705,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
+    stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);

@@ -11,8 +11,10 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.69",
     "@anthropic-ai/sdk": "^0.104.1",
     "@aws-sdk/client-sqs": "^3.1070.0",
+    "ai": "^6.0.201",
     "hono": "^4.12.25",
     "ioredis": "^5.11.1",
     "jose": "^6.2.3",

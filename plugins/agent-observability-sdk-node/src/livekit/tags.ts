@@ -27,6 +27,95 @@ export interface Tagger {
   add(name: string, options?: { metadata?: Record<string, unknown> }): void;
 }
 
+/**
+ * A conversation goal. `name` is the stable, filterable identity — it must
+ * not contain a colon (the server splits `goal:` tags at the first colon).
+ * `description` is what the server's LLM judge evaluates. Both are
+ * required.
+ */
+export interface Goal {
+  name: string;
+  description: string;
+}
+
+/** Validate and strip one goal so the emitted tag is always wire-safe. */
+function normalizeGoal(goal: Goal): Goal {
+  if (
+    typeof goal !== "object" ||
+    goal === null ||
+    typeof goal.name !== "string" ||
+    typeof goal.description !== "string"
+  ) {
+    throw new TypeError("goals must be { name, description } objects");
+  }
+  const name = goal.name.trim();
+  if (!name) {
+    throw new Error("goal name must be non-empty");
+  }
+  if (name.includes(":")) {
+    throw new Error(
+      `goal name ${JSON.stringify(name)} must not contain a ` +
+        "colon — the server splits goal tags at the first colon, so a colon in " +
+        "the name would corrupt the goal's identity. Put colons in the " +
+        "description instead.",
+    );
+  }
+  const description = goal.description.trim();
+  if (!description) {
+    throw new Error(
+      `goal ${JSON.stringify(name)} must have a non-empty description — ` +
+        "it is what the judge evaluates.",
+    );
+  }
+  return { name, description };
+}
+
+/** Validate every goal, rejecting duplicate names: the server dedupes
+ *  first-wins, so a duplicate here would silently drop a goal — almost
+ *  certainly a bug in the calling agent code. */
+function normalizeGoals(goals: Goal[]): Goal[] {
+  const seen = new Set<string>();
+  return goals.map((input) => {
+    const goal = normalizeGoal(input);
+    if (seen.has(goal.name)) {
+      throw new Error(
+        `duplicate goal name ${JSON.stringify(goal.name)} — ` +
+          "goal names are the goal's stable identity and must be unique per session.",
+      );
+    }
+    seen.add(goal.name);
+    return goal;
+  });
+}
+
+function emitGoalTags(tagger: Tagger, goals: Goal[]): void {
+  for (const goal of goals) {
+    tagger.add(`goal:${goal.name}:${goal.description}`, {
+      metadata: { name: goal.name, description: goal.description },
+    });
+  }
+}
+
+/**
+ * Emit `goal:<name>:<description>` tags without the full bootstrap.
+ *
+ * For workers whose observability bootstrap happens elsewhere —
+ * agent-transport wires identity tags and the upload internally — this
+ * declares conversation goals on the session without re-emitting
+ * identity tags and without requiring the upload-URL env that
+ * {@link initObservability} enforces. Same goal validation: names are
+ * the goal's stable identity (non-empty, unique, colon-free) and every
+ * goal needs a description. Throws before any tag is emitted when a goal
+ * is invalid.
+ *
+ * @returns The goals, in order, deduplicated.
+ */
+export function addGoalTags(tagger: Tagger, goals: Goal[]): Goal[] {
+  const normalized = normalizeGoals(goals);
+  emitGoalTags(tagger, normalized);
+  return normalized;
+}
+
 export interface InitObservabilityOptions {
   /**
    * Stable opaque agent identifier. Falls back to
@@ -43,6 +132,14 @@ export interface InitObservabilityOptions {
   accountId?: string;
   /** Short label like `"text"`, `"audio"`, `"sip"`. Optional. */
   transport?: string;
+  /**
+   * Conversation goals the server's goal analyzer judges after each
+   * session. Each entry is a `{ name, description }` object — both
+   * required. Names must not contain colons (the wire format
+   * `goal:<name>:<description>` splits at the first colon); descriptions
+   * may. Names must be unique. Optional.
+   */
+  goals?: Goal[];
   /**
    * Extra key/value pairs to ride along on the wrapper `agent.session`
    * tag's metadata. No atomic tags are derived from these — they only
@@ -68,6 +165,7 @@ export interface InitObservabilityOptions {
  *      - `account_id:<value>` (when supplied)
  *      - `agent_name:<value>` (when supplied)
  *      - `transport:<value>` (when supplied)
+ *      - `goal:<name>:<description>` per goal (when supplied)
  *      - `agent.session` (wrapper with everything in metadata)
  *
  * @returns The resolved `agent_id`.
@@ -93,10 +191,14 @@ export function initObservability(tagger: Tagger, options: InitObservabilityOpti
     );
   }
 
+  // Validate goals up front so a bad name fails before any tag lands.
+  const goals = options.goals?.length ? normalizeGoals(options.goals) : [];
+
   const metadata: Record<string, unknown> = { agent_id: resolvedAgentId };
   if (options.agentName) metadata.agent_name = options.agentName;
   if (options.accountId) metadata.account_id = options.accountId;
   if (options.transport) metadata.transport = options.transport;
+  if (goals.length > 0) metadata.goals = goals;
   if (options.extraMetadata) Object.assign(metadata, options.extraMetadata);
 
   // Wrapper tag — carries everything in metadata for raw_report fidelity.
@@ -113,6 +215,7 @@ export function initObservability(tagger: Tagger, options: InitObservabilityOpti
   if (options.transport) {
     tagger.add(`transport:${options.transport}`, { metadata: { transport: options.transport } });
   }
+  emitGoalTags(tagger, goals);
 
   return resolvedAgentId;
 }

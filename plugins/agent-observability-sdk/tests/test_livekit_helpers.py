@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 
 from agent_observability.livekit import (
+    Goal,
+    add_goal_tags,
     init_observability,
     ensure_observability_url,
     run_judges_on_report,
@@ -158,6 +160,143 @@ class TestInitObservability:
         }
         # No atomic deployment: or region: tag — only the agent_id one.
         assert tagger.names() == ["agent.session", "agent_id:a1"]
+
+
+class TestGoal:
+    """The ``Goal`` value type — stripped and validated at construction, so
+    a constructed Goal is always wire-safe. Both fields are required."""
+
+    def test_strips_name_and_description(self) -> None:
+        goal = Goal("  refund  ", "  Issue a refund  ")
+        assert goal.name == "refund"
+        assert goal.description == "Issue a refund"
+
+    def test_description_may_contain_colons(self) -> None:
+        # Only the name is colon-constrained (it is the tag delimiter).
+        goal = Goal("escalation", "Escalate: only after two failures")
+        assert goal.description == "Escalate: only after two failures"
+
+    def test_rejects_name_containing_a_colon(self) -> None:
+        with pytest.raises(ValueError, match="colon"):
+            Goal("bad:name", "desc")
+
+    def test_rejects_empty_name(self) -> None:
+        with pytest.raises(ValueError, match="name"):
+            Goal("   ", "desc")
+
+    def test_rejects_empty_description(self) -> None:
+        with pytest.raises(ValueError, match="description"):
+            Goal("identity-check", "   ")
+
+
+class TestInitObservabilityGoals:
+    """The ``goals`` parameter — conversation goals the server's analyzer
+    judges post-session. Wire format: ``goal:<name>:<description>``,
+    split server-side at the FIRST colon after the prefix (so names must
+    not contain colons; descriptions may)."""
+
+    def _init(
+        self,
+        tagger: FakeTagger,
+        goals: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        init_observability(tagger, agent_id="agent-uuid-1", goals=goals)
+
+    def test_emits_one_goal_tag_per_goal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tagger = FakeTagger()
+        self._init(
+            tagger,
+            [
+                Goal("identity-check", "Confirm the caller's identity"),
+                Goal("order-resolution", "Resolve the order issue or open a ticket"),
+            ],
+            monkeypatch,
+        )
+        assert "goal:identity-check:Confirm the caller's identity" in tagger.names()
+        assert (
+            "goal:order-resolution:Resolve the order issue or open a ticket"
+            in tagger.names()
+        )
+
+    def test_goal_tag_metadata_carries_name_and_description(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(tagger, [Goal("refund", "Issue a refund when asked")], monkeypatch)
+        goal_call = next(c for c in tagger.calls if c[0].startswith("goal:"))
+        assert goal_call[1] == {"name": "refund", "description": "Issue a refund when asked"}
+
+    def test_wrapper_metadata_includes_goals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tagger = FakeTagger()
+        self._init(
+            tagger,
+            [Goal("refund", "Issue a refund"), Goal("identity-check", "Confirm identity")],
+            monkeypatch,
+        )
+        wrapper = tagger.calls[0]
+        assert wrapper[0] == "agent.session"
+        assert wrapper[1] is not None
+        assert wrapper[1]["goals"] == [
+            {"name": "refund", "description": "Issue a refund"},
+            {"name": "identity-check", "description": "Confirm identity"},
+        ]
+
+    def test_rejects_duplicate_goal_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        # Same name twice, even with differing descriptions — the server
+        # would silently keep only the first, almost certainly a bug upstream.
+        with pytest.raises(ValueError, match="duplicate"):
+            init_observability(
+                FakeTagger(),
+                agent_id="a1",
+                goals=[Goal("refund", "v1 wording"), Goal("refund", "v2 wording")],
+            )
+
+    def test_rejects_non_goal_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LIVEKIT_OBSERVABILITY_URL", "https://obs.example.com")
+        # The legacy tuple/string forms are gone — only Goal is accepted.
+        with pytest.raises(TypeError, match="Goal"):
+            init_observability(
+                FakeTagger(), agent_id="a1", goals=[("refund", "Issue a refund")]
+            )
+
+
+class TestAddGoalTags:
+    """``add_goal_tags`` — the goals-only emitter for workers whose
+    observability bootstrap happens elsewhere (agent-transport's
+    ``AudioStreamServer`` wires identity tags + upload internally)."""
+
+    def test_emits_goal_tags_and_returns_goals(self) -> None:
+        tagger = FakeTagger()
+        goals = [
+            Goal("refund", "Issue a refund when asked"),
+            Goal("identity-check", "Confirm the caller's identity"),
+        ]
+        returned = add_goal_tags(tagger, goals)
+        assert tagger.names() == [
+            "goal:refund:Issue a refund when asked",
+            "goal:identity-check:Confirm the caller's identity",
+        ]
+        assert returned == goals
+
+    def test_requires_no_upload_url_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unlike init_observability, no URL validation: the transport that
+        # owns the bootstrap already enforced it.
+        monkeypatch.delenv("LIVEKIT_OBSERVABILITY_URL", raising=False)
+        monkeypatch.delenv("AGENT_OBSERVABILITY_URL", raising=False)
+        add_goal_tags(FakeTagger(), [Goal("any-goal", "do the thing")])
+
+    def test_rejects_duplicate_goal_names(self) -> None:
+        with pytest.raises(ValueError, match="duplicate"):
+            add_goal_tags(
+                FakeTagger(), [Goal("twice", "first"), Goal("twice", "second")]
+            )
 
 
 # ── ensure_observability_url ─────────────────────────────────────────────────

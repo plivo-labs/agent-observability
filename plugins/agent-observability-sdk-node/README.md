@@ -4,19 +4,22 @@ The Node SDK for shipping evals + telemetry to
 [agent-observability](https://github.com/plivo-labs/agent-observability).
 Two surfaces in one install:
 
-- **LiveKit helpers** — `initObservability`, `ensureObservabilityUrl`.
-  Bootstrap the tag bundle the v2 server expects from raw-LiveKit Node
-  workers. (agent-transport's `AudioStreamServer` already does this
-  internally; you only need these helpers when you drive LiveKit Agents
-  directly.)
+- **LiveKit helpers** — `initObservability`, `addGoalTags`,
+  `ensureObservabilityUrl`. Bootstrap the tag bundle the v2 server expects
+  from raw-LiveKit Node workers, and declare conversation goals the server
+  judges post-session. (agent-transport's `AudioStreamServer` already does
+  the bootstrap internally; you only need these helpers when you drive
+  LiveKit Agents directly.)
 - **Vitest reporter** — auto-registered when you list it in
   `vitest.config.ts`. Every `vitest run` becomes one `eval_run` in the
   dashboard; every `it(...)` becomes an `eval_case` with events,
   judgments, and failure detail.
 
-> **No judges yet.** The Python sibling ships nine LiveKit-compatible
-> judges, but LiveKit Node Agents 1.3.0 has no Judge API. Judges land
-> on the Node side once LiveKit catches up.
+> **No client-side judges yet.** The Python sibling ships nine
+> LiveKit-compatible judges, but LiveKit Node Agents 1.3.0 has no Judge
+> API. Judges land on the Node side once LiveKit catches up. In the
+> meantime, **conversation goals** (below) give you server-side grading
+> with no client Judge API needed.
 
 ## Install
 
@@ -43,6 +46,10 @@ server.rtcSession({ agentName: "support-bot" }, async (ctx) => {
     agentName: "support-bot",
     accountId: "acct-7",
     transport: "text",
+    goals: [
+      { name: "identity-check", description: "Confirm the caller's identity before account changes" },
+      { name: "order-resolution", description: "Resolve the order issue or open a support ticket" },
+    ],
   });
   // …your usual AgentSession.start(...) wiring
 });
@@ -52,6 +59,14 @@ server.rtcSession({ agentName: "support-bot" }, async (ctx) => {
 fallback `AGENT_OBSERVABILITY_URL`) is unset — there is no point
 continuing if the session report has nowhere to go. Use
 `ensureObservabilityUrl()` directly for a non-fatal warn-only contract.
+
+**Conversation goals** — each `{ name, description }` (both required; the
+name is colon-free and filterable, the description is what the judge
+reads) is graded by the server after the session, and verdicts land on
+the agent's Conversation Goals tab. The server does the judging, so this
+needs `OPENAI_API_KEY` set there. Workers whose bootstrap happens
+elsewhere (agent-transport) can emit goals on their own with
+`addGoalTags(tagger, [...])`.
 
 ### 2. Vitest reporter
 

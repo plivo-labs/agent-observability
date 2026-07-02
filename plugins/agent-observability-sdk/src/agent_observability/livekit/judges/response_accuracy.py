@@ -1,17 +1,12 @@
 """Response-accuracy judges (rigid / freeflow).
 
-Ported from cx-sqs-worker
-`usecases/vibe_eval/evaluator/metrics/llm_metrics.go`
-(`NewRigidResponseAccuracyMetric`, `NewFreeflowResponseAccuracyMetric`) +
-their `MetricPromptConfig` counterparts.
-
 - `rigid_response_accuracy_judge` — compare against an expected response.
 - `freeflow_response_accuracy_judge` — no ground truth, just contextual
   flow.
 
-The semi-rigid variant from cx-sqs-worker is intentionally NOT ported —
-its prompt is tightly coupled to cx-sqs-worker's flow-graph "node
-instructions" model, which doesn't generalize beyond that runtime.
+A semi-rigid variant is intentionally not provided — its prompt assumes a
+closed, predeclared set of per-turn expected responses that doesn't
+generalize to open conversations.
 """
 
 from __future__ import annotations
