@@ -10,7 +10,7 @@ describe("envSchema — run-engine vars", () => {
   test("apply defaults when unset", () => {
     const env = envSchema.parse(base);
     expect(env.SIM_REDIS_PREFIX).toBe("SIM_EVAL");
-    expect(env.SIM_WORKER_CONCURRENCY).toBe(4);
+    expect(env.SIM_WORKER_CONCURRENCY).toBe(8);
     expect(env.LIVEKIT_SIM_TURN_URL).toBeUndefined();
     expect(env.USER_SIMULATOR_MODEL).toBeUndefined();
   });
@@ -19,12 +19,12 @@ describe("envSchema — run-engine vars", () => {
     const env = envSchema.parse({
       ...base,
       SIM_REDIS_PREFIX: "OSS_SIM",
-      SIM_WORKER_CONCURRENCY: "8",
+      SIM_WORKER_CONCURRENCY: "16",
       LIVEKIT_SIM_TURN_URL: "http://livekit.internal:8080",
       USER_SIMULATOR_MODEL: "gpt-5.5-1",
     });
     expect(env.SIM_REDIS_PREFIX).toBe("OSS_SIM");
-    expect(env.SIM_WORKER_CONCURRENCY).toBe(8);
+    expect(env.SIM_WORKER_CONCURRENCY).toBe(16);
     expect(env.LIVEKIT_SIM_TURN_URL).toBe("http://livekit.internal:8080");
     expect(env.USER_SIMULATOR_MODEL).toBe("gpt-5.5-1");
   });

@@ -152,8 +152,13 @@ export const envSchema = z.object({
   // same as unset, so it falls back cleanly via `??` instead of slipping through as "" (which
   // would otherwise be sent as an empty model id). Mirrors DATABASE_URL above.
   USER_SIMULATOR_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
-  // Scenarios one worker process runs concurrently (SQS consumer fan-out).
-  SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  // SQS consumer fan-out: the number of independent worker loops the consumer runs, i.e. the max
+  // scenarios processed concurrently per worker process. Each worker polls SQS independently and
+  // processes one message at a time (see src/sim-engine/queue/consumer.ts), so N scenarios stay in
+  // flight regardless of how SQS batches deliveries — the analogue of cx-sqs-worker's N goroutines.
+  // Size against downstream capacity: each concurrent scenario is a full /turn loop + LLM eval, so
+  // raise this (per deploy) only as far as the agent runtime + LLM/judge endpoints can absorb.
+  SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(8),
 
   // Hard ceiling on scenarios one generate request may ask for. The request
   // schema allows up to 100, but the default policy caps it at 50 (a single

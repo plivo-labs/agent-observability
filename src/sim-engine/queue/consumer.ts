@@ -26,7 +26,10 @@ import { runScenario, type ScenarioRunnerDeps } from "../run-engine/orchestrator
 import { Scenario } from "../schema.js";
 
 /** SQS receive/visibility tuning (mirrors the worker's long-poll consumer). */
-const MAX_MESSAGES_PER_RECEIVE = 10;
+// One message per receive: each worker in the pool is an independent poller that fully processes
+// its message before pulling the next, so the number of concurrent scenarios is exactly the pool
+// size — no in-batch fan-out to reason about, and no "wait for the whole batch" head-of-line stall.
+const MAX_MESSAGES_PER_RECEIVE = 1;
 const WAIT_TIME_SECONDS = 20; // long-poll: one held connection instead of a hot spin
 const VISIBILITY_TIMEOUT_SECONDS = 300; // matches the message's own visibility_timeout
 
@@ -189,67 +192,39 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
   }
 }
 
-/** Options for the poll loop. */
+/** Options for the consumer. */
 export interface ConsumeOptions {
   /** SQS queue URL to drain. */
   queueUrl: string;
-  /** Max scenarios processed concurrently within a received batch (the fan-out bound). */
+  /** Number of independent worker loops = max scenarios processed concurrently (the fan-out). */
   concurrency: number;
-  /** Abort to stop the loop cleanly (wired to SIGTERM/SIGINT in the worker). */
+  /** Abort to stop every worker cleanly (wired to SIGTERM/SIGINT in the worker). */
   signal: AbortSignal;
   /** Injectable SQS client (tests pass one pointed at ElasticMQ; prod builds one from config). */
   sqs?: SQSClient;
 }
 
 /**
- * Process a received batch with a bounded number of in-flight handlers. A fixed pool of
- * `min(concurrency, batch.length)` workers each pulls the next message off a shared cursor,
- * runs the handler, and DELETES the message on handler success. handleSimulationMessage
- * never rethrows (it always means "delete"), so a handler rejection here would be a genuine
- * infra fault (e.g. the delete call) — we log it and leave the message for redelivery rather
- * than deleting work that didn't complete.
+ * One autonomous worker: long-poll receive → handle → delete → repeat, until the signal aborts.
+ * Running `concurrency` of these against a shared SQS + Redis client is the fan-out — the direct
+ * analogue of cx-sqs-worker's N independent worker goroutines (poller.go StartWorkers). Because
+ * each worker polls independently, N scenarios stay in flight regardless of how SQS batches
+ * deliveries (SQS often returns 1 message per receive for a small queue), and a slow scenario in
+ * one worker never blocks the others — the head-of-line stall of the old single batch-blocking
+ * loop is gone.
+ *
+ * handleSimulationMessage never rethrows (it always means "delete"), so a throw reaching here is a
+ * genuine infra fault (e.g. the DeleteMessage call) — log it and leave the message for redelivery
+ * rather than deleting work that didn't complete. At-least-once redelivery is safe: the run-level
+ * Lua gate (SETNX) fires simulation_completed exactly once even if a scenario re-runs.
  */
-async function processBatch(
+async function runWorkerLoop(
   deps: ConsumerDeps,
   sqs: SQSClient,
   queueUrl: string,
-  messages: Message[],
-  concurrency: number,
+  signal: AbortSignal,
+  workerId: number,
 ): Promise<void> {
-  let cursor = 0;
-  const next = (): Message | undefined => (cursor < messages.length ? messages[cursor++] : undefined);
-
-  const worker = async (): Promise<void> => {
-    for (let msg = next(); msg !== undefined; msg = next()) {
-      if (!msg.Body || !msg.ReceiptHandle) continue; // SQS guarantees both on a real message
-      try {
-        await handleSimulationMessage(deps, msg.Body);
-        // Handler resolved → "complete" → delete so it isn't redelivered.
-        await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: msg.ReceiptHandle }));
-      } catch (err) {
-        // handleSimulationMessage never rethrows, so reaching here means the DeleteMessage
-        // call failed. Don't delete — let the visibility timeout lapse + SQS redeliver.
-        console.error(`[sim-consumer] failed to delete message ${msg.MessageId ?? "<unknown>"}: ${(err as Error).message}`);
-      }
-    }
-  };
-
-  const poolSize = Math.max(1, Math.min(concurrency, messages.length));
-  await Promise.all(Array.from({ length: poolSize }, () => worker()));
-}
-
-/**
- * The long-poll consumer loop. Receives up to 10 messages with a 20s long poll, processes
- * the batch with bounded concurrency, deletes each completed message, and repeats until the
- * signal aborts. The 20s WaitTimeSeconds also bounds shutdown latency: an in-flight receive
- * returns within ~20s of the abort, then the loop's `signal.aborted` check exits cleanly.
- */
-export async function consumeSimulationQueue(deps: ConsumerDeps, opts: ConsumeOptions): Promise<void> {
-  const { queueUrl, concurrency, signal } = opts;
-  const sqs = opts.sqs ?? new SQSClient({ region: simEngineConfig.awsRegion });
-
-  console.log(`[sim-consumer] started — draining ${queueUrl} (concurrency ${concurrency})`);
-
   while (!signal.aborted) {
     let messages: Message[];
     try {
@@ -267,14 +242,42 @@ export async function consumeSimulationQueue(deps: ConsumerDeps, opts: ConsumeOp
     } catch (err) {
       if (signal.aborted) break; // the abort cancelled the receive — clean exit
       // Transient SQS error: log + back off briefly so we don't hot-spin on a persistent fault.
-      console.error(`[sim-consumer] ReceiveMessage failed: ${(err as Error).message}`);
+      console.error(`[sim-consumer] worker ${workerId} ReceiveMessage failed: ${(err as Error).message}`);
       await Bun.sleep(1000);
       continue;
     }
 
-    if (messages.length === 0) continue; // long poll expired with nothing — loop
-    await processBatch(deps, sqs, queueUrl, messages, concurrency);
+    for (const msg of messages) {
+      if (!msg.Body || !msg.ReceiptHandle) continue; // SQS guarantees both on a real message
+      try {
+        await handleSimulationMessage(deps, msg.Body);
+        // Handler resolved → "complete" → delete so it isn't redelivered.
+        await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: msg.ReceiptHandle }));
+      } catch (err) {
+        // handleSimulationMessage never rethrows, so reaching here means the DeleteMessage call
+        // failed. Don't delete — let the visibility timeout lapse + SQS redeliver.
+        console.error(`[sim-consumer] worker ${workerId} failed to delete message ${msg.MessageId ?? "<unknown>"}: ${(err as Error).message}`);
+      }
+    }
   }
+}
+
+/**
+ * Drain the queue with a fixed pool of `concurrency` independent worker loops (see runWorkerLoop),
+ * all sharing one SQS + Redis client. Returns when every worker has exited on the shared abort
+ * signal. The 20s WaitTimeSeconds bounds shutdown latency: each in-flight receive cancels on abort
+ * (or returns within ~20s), then that worker's `signal.aborted` check exits.
+ */
+export async function consumeSimulationQueue(deps: ConsumerDeps, opts: ConsumeOptions): Promise<void> {
+  const { queueUrl, concurrency, signal } = opts;
+  const sqs = opts.sqs ?? new SQSClient({ region: simEngineConfig.awsRegion });
+  const poolSize = Math.max(1, concurrency);
+
+  console.log(`[sim-consumer] started — draining ${queueUrl} with ${poolSize} workers`);
+
+  await Promise.all(
+    Array.from({ length: poolSize }, (_, i) => runWorkerLoop(deps, sqs, queueUrl, signal, i)),
+  );
 
   console.log("[sim-consumer] stopped");
 }

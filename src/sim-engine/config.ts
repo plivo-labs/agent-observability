@@ -92,7 +92,8 @@ export const simEngineConfig = {
    * model would be wrong here.
    */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
-  /** Scenarios run concurrently per worker process / per in-process run (fan-out bound). */
+  /** Number of independent SQS worker loops = max scenarios run concurrently per worker process
+   *  (fan-out bound). See SIM_WORKER_CONCURRENCY + src/sim-engine/queue/consumer.ts. */
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,
   /** Hard per-request scenario ceiling (a generate request over this is rejected 400). */
   maxScenariosPerRequest: config.MAX_SCENARIOS_PER_REQUEST,
