@@ -289,4 +289,98 @@ suite("consumeSimulationQueue — drains the queue + runs the turn loop E2E", ()
       `SIM_EVAL:{${runUuid}}:SCENARIO_COMPLETED`,
     );
   }, 45_000);
+
+  // The fan-out property: a pool of N workers keeps N scenarios in flight at once. A serial
+  // consumer (the old batch-blocking loop against a queue that hands out 1 msg/receive) would peak
+  // at exactly 1 concurrent /turn request; the pool must peak at >1. We measure it directly with a
+  // /turn that sleeps (to widen the overlap window) and tracks the max simultaneous requests.
+  test("runs scenarios concurrently — a pool of N workers keeps >1 in flight", async () => {
+    const runUuid = crypto.randomUUID();
+    const N = 4;
+    await r.set(flowJsonKey(runUuid), FLOW);
+    await r.set(expectedCountKey(runUuid), String(N));
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const slowServer = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const body = (await req.json()) as Record<string, unknown>;
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        try {
+          await Bun.sleep(300); // widen the window so concurrent scenarios overlap on /turn
+          const node = body.node_uuid as string;
+          return Response.json({
+            message: `reply from ${node}`,
+            intent: node === "A1" ? "done" : "",
+            variables: {},
+            tool_calls: [],
+            response_items: [{ role: "assistant", content: `reply from ${node}` }],
+            node_uuid: node,
+            node_run_uuid: body.node_run_uuid,
+            ended: true,
+            stop_reason: "",
+            context_items: [],
+            variables_by_node: {},
+          });
+        } finally {
+          inFlight--;
+        }
+      },
+    });
+
+    try {
+      const created = await client.send(new CreateQueueCommand({ QueueName: "sim-eval-concurrency" }));
+      const concUrl = created.QueueUrl!;
+      for (let i = 0; i < N; i++) {
+        await client.send(new SendMessageCommand({ QueueUrl: concUrl, MessageBody: makeEnvelope(runUuid, i) }));
+      }
+
+      const abort = new AbortController();
+      const deps: ConsumerDeps = { redis: r, runnerDeps: { livekit: new LiveKitSimClient({ url: `http://127.0.0.1:${slowServer.port}` }) } };
+      const consumer = consumeSimulationQueue(deps, { queueUrl: concUrl, concurrency: N, signal: abort.signal, sqs: client });
+
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const entries = await readEntries(r, runUuid);
+        if (entries.filter((e) => e.type === "scenario_completed").length >= N) break;
+        await Bun.sleep(100);
+      }
+      abort.abort();
+      await consumer;
+
+      // Serial would peak at 1; the pool must overlap. (Typically reaches N=4, but >1 is the
+      // decisive, non-flaky assertion that scenarios ran in parallel rather than one-at-a-time.)
+      expect(maxInFlight).toBeGreaterThan(1);
+      expect(maxInFlight).toBeLessThanOrEqual(N);
+
+      await r.del(
+        resultsKey(runUuid),
+        flowJsonKey(runUuid),
+        expectedCountKey(runUuid),
+        `SIM_EVAL:{${runUuid}}:SCENARIO_PROCESSED_COUNT`,
+        `SIM_EVAL:{${runUuid}}:SCENARIO_COMPLETED`,
+      );
+    } finally {
+      slowServer.stop(true);
+    }
+  }, 45_000);
+
+  // Graceful shutdown: with an empty queue the workers park in their long-poll receive; aborting
+  // must cancel those in-flight receives so consumeSimulationQueue resolves promptly (no hang).
+  test("aborting stops all workers promptly", async () => {
+    const created = await client.send(new CreateQueueCommand({ QueueName: "sim-eval-shutdown" }));
+    const emptyUrl = created.QueueUrl!;
+
+    const abort = new AbortController();
+    const deps: ConsumerDeps = { redis: r, runnerDeps: { livekit: new LiveKitSimClient({ url: turnBase }) } };
+    const consumer = consumeSimulationQueue(deps, { queueUrl: emptyUrl, concurrency: 4, signal: abort.signal, sqs: client });
+
+    await Bun.sleep(300); // let all 4 workers enter their long poll
+    const t0 = Date.now();
+    abort.abort();
+    await consumer; // must resolve: every worker's in-flight receive cancels on abort
+    expect(Date.now() - t0).toBeLessThan(5000);
+  }, 20_000);
 });
