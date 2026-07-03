@@ -1,7 +1,8 @@
 import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
 import { PlannerOutputZ, PLANNER_SCHEMA_NAME, PLANNER_JSON_SCHEMA } from "./schemas.js";
 import { plannerSystemPrompt } from "./prompts.js";
-import { buildFlowInventory, type MechanicalInventory } from "./inventory.js";
+import { buildFlowInventory, containsOutOfScopeRouteTerm, type MechanicalInventory } from "./inventory.js";
+import { routeId } from "./allocator.js";
 import { EXECUTABLE_NODE_TYPES, SUPPORTED_TERMINAL_NODE_TYPES, BLOCKED_NODE_TYPES, CONVERSATION_PATTERNS, PLANNER_MAX_OUTPUT_TOKENS, MAX_EXISTING_SCENARIO_SUMMARIES } from "./combos.js";
 import type { PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
 import { slug } from "./text.js";
@@ -86,12 +87,72 @@ export async function planCapabilities(
     provider: args.provider,
   });
   const planner = { ...res.data, mechanical_inventory: inventory } as PlannerWithInventory;
-  return { planner, usage: res.usage };
+  // Merge the LLM's route_anchors with the mechanical inventory (fills target_node_id/name,
+  // drops out-of-scope/blocked, backfills anchor-less caps). If nothing survives, fall back to
+  // route-derived capabilities so generation degrades gracefully instead of hard-failing.
+  let capabilities = capabilitiesWithRoutes(planner);
+  if (capabilities.length === 0) {
+    capabilities = capabilitiesWithRoutes({ ...fallbackPlanner(args.flowJson), mechanical_inventory: inventory });
+  }
+  const finalPlanner = { ...planner, capabilities } as unknown as PlannerWithInventory;
+  return { planner: finalPlanner, usage: res.usage };
 }
 
 /**
- * Deterministic fallback planner — one capability per non-blocked route, or a single
- * generic capability if the flow has no routes. Mirrors `_fallback_planner`.
+ * Merge each capability's LLM-emitted `route_anchors` with the mechanical-inventory routes
+ * (keyed by source_node_id + intent_name) so `target_node_id`/`target_node_name`/`support`
+ * are populated, drop out-of-scope or blocked anchors, and backfill a capability that ends
+ * with no anchors from the first executable inventory route. Faithful port of aiassist
+ * `_planner_capabilities_with_routes`. Returns the enriched capability list.
+ */
+export function capabilitiesWithRoutes(planner: PlannerWithInventory): Dict[] {
+  const invRoutes = (planner.mechanical_inventory?.routes ?? []) as unknown as Dict[];
+  const byKey = new Map<string, Dict>();
+  for (const r of invRoutes) byKey.set(`${r.source_node_id ?? ""} ${r.intent_name ?? ""}`, r);
+  const executable = invRoutes.filter(
+    (r) =>
+      r.support !== "blocked" &&
+      !containsOutOfScopeRouteTerm(r.route_id, r.intent_name, r.intent_instructions, r.target_node_name, r.target_node_type),
+  );
+  const result: Dict[] = [];
+  for (const cap of (planner.capabilities ?? []) as unknown as Dict[]) {
+    if (!cap || typeof cap !== "object") continue;
+    if (
+      containsOutOfScopeRouteTerm(
+        cap.capability_id,
+        cap.name,
+        cap.description,
+        (cap.source_signals ?? []).join(" "),
+        (cap.success_criteria ?? []).join(" "),
+      )
+    ) {
+      continue;
+    }
+    const anchors: Dict[] = [];
+    for (const anchor of (cap.route_anchors ?? []) as Dict[]) {
+      if (!anchor || typeof anchor !== "object") continue;
+      const inv = byKey.get(`${anchor.source_node_id ?? ""} ${anchor.intent_name ?? ""}`);
+      const merged = { ...(inv ?? {}), ...anchor }; // inventory as base so targets fill in; anchor overrides
+      merged.route_id = merged.route_id || routeId(merged);
+      if (
+        merged.support !== "blocked" &&
+        !containsOutOfScopeRouteTerm(merged.route_id, merged.intent_name, merged.intent_instructions, merged.target_node_name, merged.target_node_type)
+      ) {
+        anchors.push(merged);
+      }
+    }
+    if (anchors.length === 0) anchors.push(...executable.slice(0, 1));
+    if (anchors.length > 0 || executable.length === 0) {
+      result.push({ ...cap, route_anchors: anchors });
+    }
+  }
+  return result;
+}
+
+/**
+ * Deterministic fallback planner — one core capability per non-blocked inventory route (or a
+ * single general-conversation capability when the flow has no routes). Used when the LLM
+ * planner yields no usable capabilities. Mirrors aiassist `_fallback_planner`.
  */
 export function fallbackPlanner(flowJson: Dict): PlannerWithInventory {
   const inventory = buildFlowInventory(flowJson);
@@ -151,5 +212,6 @@ export function fallbackPlanner(flowJson: Dict): PlannerWithInventory {
     blocked_or_deferred_outcomes: [],
     planner_rationale: "Fallback planner built from route inventory.",
     mechanical_inventory: inventory,
-  } as PlannerWithInventory;
+  } as unknown as PlannerWithInventory;
 }
+

@@ -266,7 +266,7 @@ function scoreCandidate(
 
 // ── candidates ───────────────────────────────────────────────────────────────────
 
-function routeId(route: Dict): string {
+export function routeId(route: Dict): string {
   return route.route_id || `${route.source_node_id || ""}:${route.intent_name || ""}`;
 }
 

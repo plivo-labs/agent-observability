@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initObservability, ensureObservabilityUrl } from "../src/livekit/index.js";
+import { initObservability, addGoalTags, ensureObservabilityUrl, type Goal } from "../src/livekit/index.js";
 
 interface RecordedTag {
   name: string;
@@ -155,6 +155,133 @@ describe("initObservability", () => {
       region: "us-east-1",
     });
     expect(calls.map((c) => c.name)).toEqual(["agent.session", "agent_id:a1"]);
+  });
+
+  // The `goals` option — conversation goals the server's analyzer judges
+  // post-session. Wire format: `goal:<name>:<description>`, split
+  // server-side at the FIRST colon after the prefix (names must not
+  // contain colons; descriptions may). Each goal is a { name, description }
+  // object; both fields are required.
+  describe("goals", () => {
+    const quiet = { info: () => {}, warn: () => {} };
+
+    function initWithGoals(goals: Goal[]) {
+      process.env.LIVEKIT_OBSERVABILITY_URL = "https://obs.example.com";
+      const { tagger, calls } = makeTagger();
+      initObservability(tagger, { agentId: "agent-uuid-1", goals, logger: quiet });
+      return calls;
+    }
+
+    it("emits one goal tag per goal", () => {
+      const calls = initWithGoals([
+        { name: "identity-check", description: "Confirm the caller's identity" },
+        { name: "order-resolution", description: "Resolve the order issue or open a ticket" },
+      ]);
+      const names = calls.map((c) => c.name);
+      expect(names).toContain("goal:identity-check:Confirm the caller's identity");
+      expect(names).toContain("goal:order-resolution:Resolve the order issue or open a ticket");
+    });
+
+    it("goal tag metadata carries name and description", () => {
+      const calls = initWithGoals([{ name: "refund", description: "Issue a refund when asked" }]);
+      const goalCall = calls.find((c) => c.name.startsWith("goal:"));
+      expect(goalCall?.metadata).toEqual({
+        name: "refund",
+        description: "Issue a refund when asked",
+      });
+    });
+
+    it("wrapper metadata includes goals", () => {
+      const calls = initWithGoals([
+        { name: "refund", description: "Issue a refund" },
+        { name: "identity-check", description: "Confirm the caller's identity" },
+      ]);
+      expect(calls[0].name).toBe("agent.session");
+      expect(calls[0].metadata?.goals).toEqual([
+        { name: "refund", description: "Issue a refund" },
+        { name: "identity-check", description: "Confirm the caller's identity" },
+      ]);
+    });
+
+    it("trims name and description", () => {
+      const names = initWithGoals([{ name: " refund ", description: "  Issue a refund  " }]).map(
+        (c) => c.name,
+      );
+      expect(names).toContain("goal:refund:Issue a refund");
+    });
+
+    it("descriptions may contain colons", () => {
+      const names = initWithGoals([
+        { name: "escalation", description: "Escalate: only after two failures" },
+      ]).map((c) => c.name);
+      expect(names).toContain("goal:escalation:Escalate: only after two failures");
+    });
+
+    it("rejects a goal name containing a colon", () => {
+      expect(() => initWithGoals([{ name: "bad:name", description: "d" }])).toThrow(/colon/);
+    });
+
+    it("rejects an empty goal name", () => {
+      expect(() => initWithGoals([{ name: "   ", description: "d" }])).toThrow(/name/);
+    });
+
+    it("rejects an empty description", () => {
+      expect(() => initWithGoals([{ name: "identity-check", description: "  " }])).toThrow(
+        /description/,
+      );
+    });
+
+    it("rejects a non-object goal (e.g. a legacy bare string)", () => {
+      expect(() => initWithGoals(["order-resolution" as never])).toThrow(/objects/);
+      expect(() => initWithGoals([{ name: "x" } as never])).toThrow(/objects/);
+    });
+
+    it("rejects duplicate goal names", () => {
+      // Same name twice with differing descriptions — the server would
+      // silently keep only the first, almost certainly a bug upstream.
+      expect(() =>
+        initWithGoals([
+          { name: "refund", description: "v1 wording" },
+          { name: "refund", description: "v2 wording" },
+        ]),
+      ).toThrow(/duplicate/);
+    });
+  });
+});
+
+// addGoalTags — the goals-only emitter for workers whose observability
+// bootstrap happens elsewhere (agent-transport wires identity tags +
+// upload internally).
+describe("addGoalTags", () => {
+  it("emits goal tags and returns the goals, no URL env required", () => {
+    delete process.env.LIVEKIT_OBSERVABILITY_URL;
+    delete process.env.AGENT_OBSERVABILITY_URL;
+    const { tagger, calls } = makeTagger();
+    const goals: Goal[] = [
+      { name: "refund", description: "Issue a refund when asked" },
+      { name: "identity-check", description: "Confirm the caller's identity" },
+    ];
+    const returned = addGoalTags(tagger, goals);
+    expect(calls.map((c) => c.name)).toEqual([
+      "goal:refund:Issue a refund when asked",
+      "goal:identity-check:Confirm the caller's identity",
+    ]);
+    expect(returned).toEqual(goals);
+  });
+
+  it("applies the same validation as initObservability", () => {
+    expect(() => addGoalTags(makeTagger().tagger, [{ name: "bad:name", description: "d" }])).toThrow(
+      /colon/,
+    );
+    expect(() =>
+      addGoalTags(makeTagger().tagger, [
+        { name: "twice", description: "first" },
+        { name: "twice", description: "second" },
+      ]),
+    ).toThrow(/duplicate/);
+    expect(() => addGoalTags(makeTagger().tagger, [{ name: "   ", description: "d" }])).toThrow(
+      /name/,
+    );
   });
 });
 

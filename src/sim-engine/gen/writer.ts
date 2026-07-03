@@ -18,6 +18,8 @@ import {
   extractAvailableLanguages,
   extractStartNodePayloadKeys,
   flowHasOutboundCall,
+  nodeName,
+  nodeConfig,
 } from "./inventory.js";
 import type { Slot, RuntimeScenario, EvalMetadata, PlannerWithInventory } from "./types.js";
 import { isRecord } from "../json.js";
@@ -309,6 +311,30 @@ function findMockableTypesInFlow(flowJson: Dict): Dict[] {
   return out;
 }
 
+/**
+ * Nodes for the writer's context: the ones this chunk's slots actually route through
+ * (source + target of each slot's expected_route_outcome), plus the start node, each
+ * reshaped to `{id, type, name, config}` with `config` hoisted from `node.data.config`.
+ * The writer prompt reads `nodes[].config.instructions`, so sending raw nodes (config
+ * nested under `data`) silently broke flow-aware goal grounding. Faithful to aiassist
+ * `_writer_context`.
+ */
+export function writerContextNodes(flowJson: Dict, slots: Slot[]): Dict[] {
+  const nodeIds = new Set<string>();
+  for (const slot of slots) {
+    const route = slot.expected_route_outcome;
+    if (route?.source_node_id) nodeIds.add(route.source_node_id);
+    if (route?.target_node_id) nodeIds.add(route.target_node_id);
+  }
+  const out: Dict[] = [];
+  for (const node of (flowJson.nodes as Dict[]) || []) {
+    if (nodeIds.has(node?.id) || node?.type === "start") {
+      out.push({ id: node.id ?? "", type: node.type ?? "", name: nodeName(node), config: nodeConfig(node) });
+    }
+  }
+  return out;
+}
+
 export interface WriteScenarioChunkArgs {
   flowJson: Dict;
   planner: PlannerWithInventory;
@@ -337,7 +363,7 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
     generation_id: generationId,
     writer_context: {
       agent_flow_description: planner.agent_flow_description,
-      nodes: flowJson.nodes ?? [],
+      nodes: writerContextNodes(flowJson, slots),
       embedded_actions: extractEmbeddedActions(flowJson),
       mockable_types: findMockableTypesInFlow(flowJson),
       available_languages: extractAvailableLanguages(flowJson),

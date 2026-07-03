@@ -1,8 +1,5 @@
 """Hallucination judge.
 
-Ported from cx-sqs-worker `usecases/vibe_eval/evaluator/metrics/llm_metrics.go`
-(`NewHallucinationMetric`) + `prompt/configs.go` (`GetHallucinationPromptConfig`).
-
 Runs on a session in isolation — no ground truth required.
 """
 

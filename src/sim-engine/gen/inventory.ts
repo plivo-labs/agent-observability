@@ -93,12 +93,12 @@ function stableStringify(value: unknown): string {
   );
 }
 
-function nodeConfig(node: Dict): Dict {
+export function nodeConfig(node: Dict): Dict {
   const data = isObj(node.data) ? node.data : {};
   return isObj(data.config) ? data.config : {};
 }
 
-function nodeName(node: Dict): string {
+export function nodeName(node: Dict): string {
   const data = isObj(node.data) ? node.data : {};
   const meta = isObj(data.meta) ? data.meta : {};
   const config = nodeConfig(node);
@@ -122,7 +122,7 @@ function supportForTargetType(targetType: string): RouteInventoryItem["support"]
   return "blocked";
 }
 
-function containsOutOfScopeRouteTerm(...values: unknown[]): boolean {
+export function containsOutOfScopeRouteTerm(...values: unknown[]): boolean {
   const text = values.map((v) => String(v ?? "").toLowerCase()).join(" ");
   return OUT_OF_SCOPE_ROUTE_TERMS.some((term) => text.includes(term));
 }

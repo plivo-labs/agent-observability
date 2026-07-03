@@ -25,6 +25,7 @@ import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
+import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
 if (config.AUTO_MIGRATE && dbConfigured) {
@@ -40,16 +41,34 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
   startAlertSweeper();
 }
 
+// Goal analyzer: post-session LLM judging of goal:<text> tags. Same
+// placement model as the alert sweeper — DB-backed, so gate on dbConfigured
+// too (inert in stateless mode); additionally a no-op (with one startup log)
+// unless an LLM provider key is configured.
+if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
+  startGoalAnalyzer();
+}
+
 // When neither auth mode is configured, every ingest route AND the whole
 // dashboard API are open to anyone who can reach the port. That's a
 // supported zero-config mode, but it must never be silent — an env-loading
 // slip would otherwise expose all session data with no signal.
 const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
 if (!authEnabled) {
+  // Zero-auth exposes every ingest route AND the whole dashboard API. Refuse to
+  // boot in that state unless it's an explicit, deliberate choice — a silent
+  // env slip must never open all session data with no signal.
+  if (!config.ALLOW_UNAUTHENTICATED && process.env.NODE_ENV !== "test") {
+    console.error(
+      "[security] No authentication configured — refusing to start. Set " +
+        "AGENT_OBSERVABILITY_USER/_PASS or the LiveKit API key pair, or set " +
+        "ALLOW_UNAUTHENTICATED=true to run intentionally open (local dev / trusted network).",
+    );
+    process.exit(1);
+  }
   console.warn(
-    "[security] No authentication configured — ingest and /api are OPEN to " +
-      "anyone who can reach this port. Set AGENT_OBSERVABILITY_USER/_PASS or " +
-      "the LiveKit API key pair to require credentials.",
+    "[security] ALLOW_UNAUTHENTICATED=true — ingest and /api are OPEN to anyone " +
+      "who can reach this port. Intended only for local dev / a trusted private network.",
   );
 }
 
@@ -65,7 +84,11 @@ app.use("*", logger());
 const corsOrigins = (config.CORS_ALLOWED_ORIGINS ?? "*").split(",").map((o) => o.trim()).filter(Boolean);
 app.use("/api/*", cors({ origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins }));
 
-// Basic auth (all routes except /health, only when configured)
+// Auth on the eval-ingest + dashboard API (all routes except /health) whenever
+// ANY auth mode is enabled. Basic auth gets the hono middleware (so a browser
+// sees the WWW-Authenticate prompt). LiveKit-only deploys — which have no basic
+// credential — fall back to the dual Bearer/Basic middleware so these routes are
+// never left silently open (the bug: previously only basicAuthEnabled gated them).
 if (basicAuthEnabled) {
   const auth = basicAuth({
     username: config.AGENT_OBSERVABILITY_USER!,
@@ -73,6 +96,9 @@ if (basicAuthEnabled) {
   });
   app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
+} else if (liveKitAuthEnabled) {
+  app.use("/observability/evals/*", nativeLiveKitUploadAuth);
+  app.use("/api/*", nativeLiveKitUploadAuth);
 }
 
 // Cap ingest body sizes so a giant (or malicious) upload can't be buffered
@@ -697,6 +723,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
+    stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);

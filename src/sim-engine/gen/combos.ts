@@ -246,8 +246,9 @@ export const MAX_EXISTING_SCENARIO_SUMMARIES = 200;
 export const WRITER_CHUNK_SIZE = 10;
 export const WRITER_CHUNK_RETRIES = 1;
 export const WRITER_SLOT_RETRIES = 1;
-export const WRITER_MAX_OUTPUT_TOKENS = 12000;
-export const PLANNER_MAX_OUTPUT_TOKENS = 8000;
+// 24000 matches aiassist's SIM_EVAL_PLANNER_MAX_OUTPUT_TOKENS default — its config
+// comment records that 8000 truncated a large share of planner runs (status="incomplete").
+export const PLANNER_MAX_OUTPUT_TOKENS = 24000;
 
 export const OUT_OF_SCOPE_ROUTE_TERMS = [
   "voicemail", "voice_mail", "answering_machine", "answering machine",

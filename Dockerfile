@@ -1,4 +1,7 @@
-FROM oven/bun:latest AS base
+# Pin the runtime image to a specific Bun version (not :latest) so builds are
+# reproducible and a surprise base-image change can't alter behavior. Bump
+# deliberately; CI may further pin this to an immutable @sha256 digest.
+FROM oven/bun:1.3.10 AS base
 WORKDIR /app
 
 # Install backend dependencies

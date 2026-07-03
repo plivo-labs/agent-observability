@@ -15,11 +15,11 @@
 // OMITTED — livekit's continue_ai falls back to ending the session when the key is absent.
 //
 // GRAPH NOTE: this planner needs each edge's `data.nodeVars` (to build `template_vars`) and
-// each node's `data.config.name` (an alternate world_state key). AO's shared
-// simulation/flow/graph.ts FlowGraph is a leaner orchestrator view that drops edge `data`,
-// so we parse our OWN minimal graph here — `buildHandoffGraph` mirrors the worker's
-// ParseFlowGraph for exactly the fields the plan reads (id/type/config/configName + edge
-// source/target/sourceHandle/data). The flow is assumed already CANONICAL (data.config).
+// each node's `data.config.name` (an alternate world_state key). The run-engine's FlowGraph
+// (flow-executor.ts) is a leaner orchestrator view that drops edge `data`, so we parse our OWN
+// minimal graph here — `buildHandoffGraph` mirrors the worker's ParseFlowGraph for exactly the
+// fields the plan reads (id/type/config/configName + edge source/target/sourceHandle/data). The
+// flow is assumed already CANONICAL (data.config).
 
 import type { VariableStore } from "./variable-renderer.js";
 import type { WorldStateEntry } from "../schema.js";

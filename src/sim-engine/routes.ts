@@ -16,6 +16,7 @@ import type { Hono, Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { simEngineConfig, scenarioPersistDefault } from "./config.js";
 import { dbConfigured } from "../config.js";
+import { tryAcquireGenerationSlot, releaseGenerationSlot } from "./gen/inflight.js";
 import {
   GenerateScenariosRequest,
   DeleteScenariosRequest,
@@ -111,6 +112,13 @@ export function registerSimulationRoutes(app: Hono): void {
       console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
       return c.json(buildErrorResponse("invalid_request", detail), 400);
     }
+    // Hard per-request scenario ceiling (cost guard): a request over the cap is
+    // rejected outright rather than silently clamped, so the caller knows.
+    if (body.max_scenarios > simEngineConfig.maxScenariosPerRequest) {
+      const detail = `max_scenarios ${body.max_scenarios} exceeds the per-request limit of ${simEngineConfig.maxScenariosPerRequest}`;
+      console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
+      return c.json(buildErrorResponse("invalid_request", detail), 400);
+    }
     let canonical: Record<string, unknown>;
     try {
       canonical = parseFlowJson(body.flow_json) as unknown as Record<string, unknown>;
@@ -129,6 +137,16 @@ export function registerSimulationRoutes(app: Hono): void {
     // (SIM_PERSIST). ANDed with dbConfigured — persistence is impossible without a database.
     const persistQuery = c.req.query("persist");
     const persist = (persistQuery != null ? persistQuery !== "false" : scenarioPersistDefault) && dbConfigured;
+    // Concurrency cap: each generation is an expensive multi-call LLM fan-out.
+    // Acquire AFTER the cheap validations (so a 400 never leaks a slot) and
+    // release when the stream ends (in the finally below), not when the handler
+    // returns — streamSSE returns immediately while the body streams on.
+    if (!tryAcquireGenerationSlot(simEngineConfig.genMaxConcurrent)) {
+      return c.json(
+        buildErrorResponse("rate_limited", "Too many concurrent scenario-generation requests; retry shortly"),
+        429,
+      );
+    }
     const genId = crypto.randomUUID();
     return streamSSE(c, async (stream) => {
       try {
@@ -206,6 +224,8 @@ export function registerSimulationRoutes(app: Hono): void {
         // error, so a "Stream error" in the console left no server-side trace to debug from.
         console.error(`[sim-gen] generation stream failed (generation_id=${genId}):`, (e as Error).message);
         await stream.writeSSE({ event: SSE.ERROR, data: envelope("generation_id", genId, { error: (e as Error).message }) });
+      } finally {
+        releaseGenerationSlot();
       }
     });
   });

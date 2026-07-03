@@ -95,7 +95,28 @@ Goals:
 Flow/run history or additional context:
 {flow_history}
 
-For each goal, decide whether the conversation achieved it. Pass when all required goals were achieved. Fail when any required goal was clearly missed. Maybe when the transcript lacks enough evidence.`;
+For each goal, decide whether the conversation achieved it. Pass when all required goals were achieved. Fail when any required goal was clearly missed. Maybe when the transcript lacks enough evidence.
+
+Early termination by user: if the user's intent or action clearly satisfies a goal's core criteria but the conversation ends abruptly (e.g. the chosen intent is "hangup") before the agent can complete follow-up actions like confirming, acknowledging, or closing, mark the goal as achieved. The agent cannot control when the user terminates — judge whether the goal's substantive outcome was reached, not whether every procedural step afterward completed.{sim_rules}`;
+
+// Simulation-only rules (cx-sqs goal user.tmpl {{if .IsSimulation}} block). A sim
+// transcript is a replay that omits some non-dialogue node logs, so the judge must
+// not penalize missing downstream logs and may treat a terminal compliance intent
+// as a success proxy. Appended to GOAL_EVALUATION only on the simulation eval path;
+// the live goals feature evaluates real sessions and leaves this empty.
+const GOAL_SIM_RULES = `
+
+===== SIMULATION CONTEXT =====
+This transcript is generated from a simulation replay and may omit explicit logs for some non-dialogue nodes (for example HTTP/action side effects, branch execution details, call-forward metadata, template send receipts).
+
+Evaluation rules for simulation:
+1. Use only evidence present in this transcript (messages, extracted variables, chosen intents).
+2. Do NOT automatically mark achieved=false only because downstream non-dialogue node logs are missing.
+3. Do NOT assume unseen side effects; infer only from the strongest upstream conversational evidence.
+4. Success proxy rule: if the chosen intent indicates a terminal compliance outcome (for example "User Opt Out") and there is no contradictory evidence, treat the matching compliance goal as achieved in simulation.
+5. Contradictory evidence includes explicit refusal to comply, explicit opposite action, or explicit non-completion.
+6. If evidence is genuinely insufficient, mark achieved=false and clearly state "insufficient simulation evidence" in technical_reason.
+7. When using the success proxy rule, explicitly mention the proxy basis in technical_reason.`;
 
 // ── output-format sections (authored to request the rich fields the console contract needs) ──────────
 
@@ -138,5 +159,8 @@ export const systemForInstructionAdherence = (instructions: string, objective: s
 export const systemForIntent = (availableIntents: string, chosenIntent: string): string =>
   compose(fill(INTENT_IDENTIFICATION, { available_intents: availableIntents, chosen_intent: chosenIntent }), OUT_INTENT);
 
-export const systemForGoal = (goals: string, flowHistory: string): string =>
-  compose(fill(GOAL_EVALUATION, { goals, flow_history: flowHistory }), OUT_GOAL);
+export const systemForGoal = (goals: string, flowHistory: string, isSimulation = false): string =>
+  compose(
+    fill(GOAL_EVALUATION, { goals, flow_history: flowHistory, sim_rules: isSimulation ? GOAL_SIM_RULES : "" }),
+    OUT_GOAL,
+  );

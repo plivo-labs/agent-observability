@@ -1,9 +1,8 @@
 """Judge instruction strings.
 
-Each constant captures the Criteria + Steps from cx-sqs-worker's
-`MetricPromptConfig`
-(`cx-sqs-worker/usecases/vibe_eval/evaluator/prompt/configs.go`), rewritten to
-the imperative voice LiveKit's `Judge` expects in `instructions`.
+Each constant captures the Criteria + Steps for a judge's metric prompt,
+rewritten to the imperative voice LiveKit's `Judge` expects in
+`instructions`.
 
 LiveKit's `Judge.evaluate` already wraps the instructions inside a
 "Criteria: …" preamble and prepends the conversation, so the strings here

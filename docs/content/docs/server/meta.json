@@ -1,5 +1,12 @@
 {
   "title": "Server",
   "defaultOpen": true,
-  "pages": ["quickstart", "environment", "api", "alerts", "..."]
+  "pages": [
+    "quickstart",
+    "environment",
+    "api",
+    "alerts",
+    "goals",
+    "..."
+  ]
 }

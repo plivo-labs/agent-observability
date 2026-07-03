@@ -22,12 +22,13 @@
  * the same loop.
  */
 
-import { dbConfigured } from "./config.js";
+import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
 import { makeLiveKitSimClient } from "./sim-engine/run-engine/livekit-client.js";
+import { runGoalSweepOnce } from "./goals/analyzer.js";
 
 let running = true;
 
@@ -82,6 +83,12 @@ if (dbConfigured) {
   console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
   while (running) {
     await runSweepOnce();
+    // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
+    // Honor GOAL_ANALYZER=off so an AO deploy that is the sim/eval engine (not the goals instance)
+    // doesn't run goal sweeps in the worker either — parity with the API-side inline gate.
+    if (config.GOAL_ANALYZER !== "off") {
+      await runGoalSweepOnce();
+    }
     // Sleep in small slices so a shutdown signal is honored within ~1s
     // instead of waiting out the full interval.
     for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {

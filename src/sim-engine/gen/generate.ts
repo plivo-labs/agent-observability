@@ -193,6 +193,15 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     yield { type: "writer_chunk_done", chunk_index: chunkIndex, chunk_count: chunks.length, chunk_saved_count: chunkSaved, failed_slot_ids: r.failedSlotIds };
   }
 
+  // All-failed: every planned slot failed and nothing was saved. Throw (the route's
+  // catch emits an SSE `error` event) instead of a `completed`/metadata event — mirrors
+  // aiassist, which emits `type:"error"` and no `completed` when count==0. Emitting a
+  // completed event with partial_success=true here would make the console show "completed"
+  // AND a partial-success banner implying scenarios exist, when none were saved.
+  if (saved === 0 && slots.length > 0) {
+    throw new Error("Scenario generation failed for all planned slots.");
+  }
+
   yield {
     type: "metadata",
     metadata: {
@@ -201,7 +210,8 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       saved_count: saved,
       failed_count: failedSlotIds.length,
       failed_slot_ids: failedSlotIds,
-      partial_success: saved < slots.length,
+      // Partial success requires at least one saved scenario (aiassist parity).
+      partial_success: saved > 0 && saved < slots.length,
       planner_usage: plannerUsage,
       writer_usages: writerUsages,
     },

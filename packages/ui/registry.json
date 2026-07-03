@@ -1697,10 +1697,40 @@
       ]
     },
     {
+      "name": "conversation-goals-tab",
+      "type": "registry:block",
+      "title": "Conversation Goals Tab",
+      "description": "Sessions judged against the agent's plain-text goals — per-goal met/unmet chips, agent-wide completion-rate KPI tiles, and a row drawer with per-goal reasoning and what-went-wrong detail.",
+      "dependencies": [
+        "lucide-react",
+        "@tanstack/react-table",
+        "nuqs"
+      ],
+      "registryDependencies": [
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-types.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-format.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-api.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/observability-hooks.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/kpi.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/data-table.json",
+        "badge",
+        "accordion",
+        "button",
+        "hover-card",
+        "sheet"
+      ],
+      "files": [
+        {
+          "path": "registry/new-york/conversation-goals-tab/conversation-goals-tab.tsx",
+          "type": "registry:component"
+        }
+      ]
+    },
+    {
       "name": "agent-detail-page",
       "type": "registry:block",
       "title": "Agent Detail Page",
-      "description": "Agent dashboard with Overview / Sessions / Simulation Evals / Conversation Evals tabs. URL-synced range picker (24h / 7d / 30d) propagates to the Overview KPIs and Sessions tab sparklines.",
+      "description": "Agent dashboard with Overview / Sessions / Simulation Evals / Conversation Evals / Conversation Goals tabs. URL-synced range picker (24h / 7d / 30d) propagates to the Overview KPIs and Sessions tab sparklines.",
       "dependencies": [
         "lucide-react",
         "nuqs",
@@ -1714,6 +1744,7 @@
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/agent-runs-page.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/sessions-page.json",
         "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/conversation-evals-tab.json",
+        "https://raw.githubusercontent.com/plivo-labs/agent-observability/main/packages/ui/public/r/conversation-goals-tab.json",
         "tabs",
         "skeleton"
       ],
