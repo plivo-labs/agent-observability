@@ -27,6 +27,11 @@ export const envSchema = z.object({
   // the dedicated worker entrypoint (bun src/worker.ts) so exactly one
   // sweeper is active.
   ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
+  // Eval sweeper: judges ingested sessions that carry an agent config.
+  // "inline" runs it in the API process (zero-config single container);
+  // set "off" on the API when the dedicated worker runs it, so exactly one
+  // sweeper is active.
+  EVAL_SWEEPER: z.enum(["inline", "off"]).default("inline"),
 
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In

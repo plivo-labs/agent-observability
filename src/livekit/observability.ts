@@ -5,6 +5,7 @@ import {
   mergeSessionRawReport,
   upsertSessionOutcome,
   upsertSessionTag,
+  upsertSessionAgentConfig,
 } from "../db.js";
 import type { DecodedOtlpLog } from "./protobuf.js";
 import { parseJsonValue } from "../raw-report.js";
@@ -13,6 +14,7 @@ interface PersistResult {
   tags: number;
   evaluations: number;
   outcomes: number;
+  agentConfigs: number;
 }
 
 interface RawReportPatch extends Record<string, unknown> {
@@ -142,10 +144,15 @@ function eventFromChatItem(log: DecodedOtlpLog): Record<string, unknown> | null 
 
   const item = normalizeChatItem(chatItem);
   const createdAt = parseTimestampSeconds(item.created_at) ?? timestampSeconds(log.timestamp);
+  // Opaque per-utterance node reference the sender may attach so downstream
+  // eval can group turns by the node that produced them. Correlates to a
+  // node `ref` in the agent config; AO never interprets its value.
+  const nodeRef = asString(log.attributes.node_ref) ?? asString(chatItem.node_ref);
 
   return {
     type: "conversation_item_added",
     created_at: createdAt,
+    ...(nodeRef ? { node_ref: nodeRef } : {}),
     item,
   };
 }
@@ -234,6 +241,12 @@ async function handleChatItem({ log, sessionId, rawReportPatches }: OtlpHandlerC
   }
 }
 
+// Reserved tag name: a client may deliver the agent config through the tag
+// channel (name = AGENT_CONFIG_TAG, metadata = the config). The config is the
+// eval opt-in; it's stored as agent config rather than a plain tag so it never
+// pollutes the session's tag list. See handleAgentConfig for the config shape.
+const AGENT_CONFIG_TAG = "agent.config";
+
 async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
   const tag = asRecord(log.attributes.tag);
   const name = asString(tag?.name);
@@ -241,8 +254,27 @@ async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx)
     return;
   }
   const metadata = asRecord(tag?.metadata);
+  if (name === AGENT_CONFIG_TAG) {
+    await storeAgentConfig(sessionId, metadata, observedAt, result);
+    return;
+  }
   await persistTag(sessionId, name, metadata, observedAt);
   result.tags += 1;
+}
+
+/** Validate + store an agent config (from either the dedicated record or the
+ *  reserved tag). Requires at least one node; otherwise ignored. */
+async function storeAgentConfig(
+  sessionId: string,
+  config: Record<string, unknown> | null,
+  observedAt: Date | null,
+  result: PersistResult,
+): Promise<void> {
+  if (!config || !Array.isArray(config.nodes) || config.nodes.length === 0) {
+    return;
+  }
+  await upsertSessionAgentConfig({ sessionId, config, source: "livekit_otlp", observedAt });
+  result.agentConfigs += 1;
 }
 
 async function handleEvaluation({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
@@ -288,6 +320,13 @@ async function handleOutcome({ log, sessionId, observedAt, result }: OtlpHandler
   result.outcomes += 1;
 }
 
+// Dedicated record path (a client that can emit a custom OTLP record body uses
+// this; clients that can only emit tags use the reserved AGENT_CONFIG_TAG
+// instead — both land in the same store via storeAgentConfig).
+async function handleAgentConfig({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
+  await storeAgentConfig(sessionId, asRecord(log.attributes["agent.config"]), observedAt, result);
+}
+
 // String-keyed dispatch on log.body. Replaces the former linear
 // if-chain; an unknown body is simply ignored (no handler entry).
 const OTLP_HANDLERS: Record<string, OtlpHandler> = {
@@ -296,10 +335,13 @@ const OTLP_HANDLERS: Record<string, OtlpHandler> = {
   "tag": handleTag,
   "evaluation": handleEvaluation,
   "outcome": handleOutcome,
+  // The eval opt-in: sessions that carry an agent config get judged by the
+  // background eval sweeper; sessions without one are stored/displayed only.
+  "agent config": handleAgentConfig,
 };
 
 export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<PersistResult> {
-  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0 };
+  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0, agentConfigs: 0 };
   const rawReportPatches = new Map<string, RawReportPatch>();
 
   for (const log of logs) {

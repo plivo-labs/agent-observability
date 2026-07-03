@@ -479,3 +479,173 @@ export async function applyStoredSessionTags(sessionId: string): Promise<void> {
     })),
   );
 }
+
+// ── Ingest-based evals: agent config + sweeper verdicts ──────────────────────
+//
+// session_agent_config stores the generic authoring config a client attaches at
+// call end (per-node instructions, intents, variable rules, goals, opaque node
+// refs). Its presence is the eval opt-in. session_eval_verdicts doubles as the
+// sweeper's work claim: inserting the row IS claiming the session (PK conflict
+// = someone else won). Deterministic judge failures land as status='error' and
+// are never retried; a worker that died mid-judge leaves a stale 'running' row
+// that gets re-claimed after EVAL_CLAIM_STALE_MINUTES.
+
+export interface SessionAgentConfigInput {
+  sessionId: string;
+  config: Record<string, unknown>;
+  source: string;
+  observedAt: Date | null;
+}
+
+export async function upsertSessionAgentConfig(input: SessionAgentConfigInput): Promise<void> {
+  await sql`
+    INSERT INTO session_agent_config (
+      session_id, config, source, observed_at
+    ) VALUES (
+      ${input.sessionId},
+      ${input.config}::jsonb,
+      ${input.source},
+      ${input.observedAt}
+    )
+    ON CONFLICT (session_id) DO UPDATE SET
+      config = EXCLUDED.config,
+      observed_at = COALESCE(EXCLUDED.observed_at, session_agent_config.observed_at),
+      updated_at = NOW()
+  `;
+}
+
+/** Grace period before a session becomes claimable — lets the multipart
+ *  recording report land after the OTLP records so the transcript is
+ *  complete when the judges read it. */
+const EVAL_CLAIM_SETTLE_SECONDS = 30;
+const EVAL_CLAIM_STALE_MINUTES = 15;
+
+/**
+ * Claim the next session that needs judging. Two-step: first adopt a stale
+ * 'running' claim (a worker died mid-judge), otherwise claim a fresh session
+ * that has an agent config + a stored session row and no verdicts yet. The
+ * INSERT … ON CONFLICT DO NOTHING makes concurrent sweepers race-safe: exactly
+ * one claims any given session. Returns the claimed session_id or null.
+ */
+export async function claimNextEvalSession(): Promise<string | null> {
+  const stale = await sql`
+    UPDATE session_eval_verdicts SET claimed_at = NOW(), updated_at = NOW()
+    WHERE session_id = (
+      SELECT session_id FROM session_eval_verdicts
+      WHERE status = 'running'
+        AND claimed_at < NOW() - INTERVAL '1 minute' * ${EVAL_CLAIM_STALE_MINUTES}
+      ORDER BY claimed_at
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING session_id
+  `;
+  if (stale.length > 0) {
+    return stale[0].session_id as string;
+  }
+
+  const fresh = await sql`
+    INSERT INTO session_eval_verdicts (session_id)
+    SELECT c.session_id
+    FROM session_agent_config c
+    JOIN agent_transport_sessions s ON s.session_id = c.session_id
+    WHERE NOT EXISTS (
+        SELECT 1 FROM session_eval_verdicts v WHERE v.session_id = c.session_id
+      )
+      AND c.created_at < NOW() - INTERVAL '1 second' * ${EVAL_CLAIM_SETTLE_SECONDS}
+    ORDER BY c.created_at
+    LIMIT 1
+    ON CONFLICT (session_id) DO NOTHING
+    RETURNING session_id
+  `;
+  return fresh.length > 0 ? (fresh[0].session_id as string) : null;
+}
+
+export async function completeSessionEvalVerdicts(
+  sessionId: string,
+  verdicts: Record<string, unknown>,
+): Promise<void> {
+  await sql`
+    UPDATE session_eval_verdicts
+    SET status = 'done', verdicts = ${verdicts}::jsonb, error = NULL,
+        completed_at = NOW(), updated_at = NOW()
+    WHERE session_id = ${sessionId}
+  `;
+}
+
+/** Terminal failure — deliberately not retried (deterministic errors like a
+ *  provider content-policy rejection would fail identically every time). */
+export async function failSessionEvalVerdicts(sessionId: string, error: string): Promise<void> {
+  await sql`
+    UPDATE session_eval_verdicts
+    SET status = 'error', error = ${error.slice(0, 2000)},
+        completed_at = NOW(), updated_at = NOW()
+    WHERE session_id = ${sessionId}
+  `;
+}
+
+export interface SessionEvalSource {
+  sessionId: string;
+  config: Record<string, unknown>;
+  chatHistory: unknown;
+  rawReport: unknown;
+}
+
+/** Everything the eval sweeper needs to judge one session. */
+export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
+  const rows = await sql`
+    SELECT c.config, s.chat_history, s.raw_report
+    FROM session_agent_config c
+    JOIN agent_transport_sessions s ON s.session_id = c.session_id
+    WHERE c.session_id = ${sessionId}
+  `;
+  if (rows.length === 0) {
+    return null;
+  }
+  const row = rows[0];
+  const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
+  return {
+    sessionId,
+    config: parse(row.config) as Record<string, unknown>,
+    chatHistory: parse(row.chat_history),
+    rawReport: parse(row.raw_report),
+  };
+}
+
+export interface SessionEvalVerdictsRow {
+  status: string;
+  verdicts: Record<string, unknown> | null;
+  error: string | null;
+  completedAt: Date | null;
+}
+
+export async function getSessionEvalVerdicts(sessionId: string): Promise<SessionEvalVerdictsRow | null> {
+  const rows = await sql`
+    SELECT status, verdicts, error, completed_at
+    FROM session_eval_verdicts
+    WHERE session_id = ${sessionId}
+  `;
+  if (rows.length === 0) {
+    return null;
+  }
+  const row = rows[0];
+  return {
+    status: row.status as string,
+    verdicts: typeof row.verdicts === "string" ? JSON.parse(row.verdicts) : row.verdicts,
+    error: row.error as string | null,
+    completedAt: row.completed_at ? new Date(row.completed_at) : null,
+  };
+}
+
+/** Find sessions carrying a tag (exact name match) — how an external system
+ *  locates the session for one of its own identifiers (e.g. a run id it
+ *  attached as a tag at call end). Newest first. */
+export async function findSessionIdsByTag(tagName: string, limit = 10): Promise<string[]> {
+  const rows = await sql`
+    SELECT session_id FROM session_tags
+    WHERE name = ${tagName}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((row: any) => row.session_id as string);
+}

@@ -11,8 +11,6 @@ function defaultConversationMetrics(): SimConversationMetrics {
   return {
     answered: false,
     voicemail_detected: det(),
-    cx_voicemail_detected: 0,
-    cx_call_screening_detected: 0,
     bot_detected: det(),
     call_screening: det(),
     low_engagement: det(),

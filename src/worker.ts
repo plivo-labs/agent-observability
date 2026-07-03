@@ -24,6 +24,7 @@
 
 import { dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
+import { runEvalSweepOnce } from "./evals-engine/eval-sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
@@ -82,6 +83,10 @@ if (dbConfigured) {
   console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
   while (running) {
     await runSweepOnce();
+    // Judge any ingested sessions that carry an agent config (drains its own
+    // backlog per call; safe to run every tick). Isolated so an eval error
+    // never stops alert sweeping.
+    await runEvalSweepOnce();
     // Sleep in small slices so a shutdown signal is honored within ~1s
     // instead of waiting out the full interval.
     for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {

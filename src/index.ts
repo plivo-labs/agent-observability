@@ -24,6 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
+import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
@@ -38,6 +39,13 @@ if (config.AUTO_MIGRATE && dbConfigured) {
 // Gated on dbConfigured: the sweeper is entirely DB-backed, so it's inert in stateless mode.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
   startAlertSweeper();
+}
+
+// Eval sweeper: judges ingested sessions that carry an agent config. Same
+// inline-by-default posture as the alert sweeper (set EVAL_SWEEPER=off on the
+// API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
+if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
+  startEvalSweeper();
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -599,7 +607,7 @@ app.get("/api/sessions/:id", async (c) => {
     return c.json(buildErrorResponse("not_found", "Session not found"), 404);
   }
 
-  const [tagRows, evaluationRows, outcomeRows] = await Promise.all([
+  const [tagRows, evaluationRows, outcomeRows, evalVerdictRows] = await Promise.all([
     sql`
       SELECT name, metadata, source, observed_at, created_at, updated_at
       FROM session_tags
@@ -617,6 +625,12 @@ app.get("/api/sessions/:id", async (c) => {
       FROM session_outcomes
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, updated_at, created_at) DESC
+      LIMIT 1
+    `,
+    sql`
+      SELECT status, verdicts, error, completed_at
+      FROM session_eval_verdicts
+      WHERE session_id = ${sessionId}
       LIMIT 1
     `,
   ]);
@@ -665,9 +679,39 @@ app.get("/api/sessions/:id", async (c) => {
         raw: typeof outcomeRows[0].raw === "string" ? JSON.parse(outcomeRows[0].raw) : outcomeRows[0].raw,
       }
     : null;
+  // Eval verdicts produced by the background sweeper (present only for sessions
+  // that carried an agent config). status: running | done | error.
+  const evalRow = evalVerdictRows?.[0];
+  row.eval = evalRow
+    ? {
+        status: evalRow.status,
+        verdicts: typeof evalRow.verdicts === "string" ? JSON.parse(evalRow.verdicts) : evalRow.verdicts,
+        error: evalRow.error,
+        completed_at: evalRow.completed_at,
+      }
+    : null;
   row.api_id = newApiId();
 
   return c.json(row);
+});
+
+// Look up sessions by an exact tag value — how an external system finds the
+// session(s) for one of its own identifiers (e.g. a run id it attached as a
+// tag at call end), without needing to know AO's internal session id. Returns
+// the newest matches with their eval status so a consumer can fetch verdicts.
+app.get("/api/sessions/by-tag/:tag", async (c) => {
+  const tag = c.req.param("tag");
+  const rows = await sql`
+    SELECT t.session_id, v.status AS eval_status
+    FROM session_tags t
+    LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
+    WHERE t.name = ${tag}
+    ORDER BY t.created_at DESC
+    LIMIT 20
+  `;
+  return c.json({
+    objects: rows.map((r: any) => ({ session_id: r.session_id, eval_status: r.eval_status ?? null })),
+  });
 });
 
 // ── Static file serving (production) ────────────────────────────────────────
@@ -697,6 +741,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
+    stopEvalSweeper();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);
