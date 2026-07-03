@@ -3,10 +3,10 @@
 // The CRITERIA bodies below are ported VERBATIM (wording-for-wording) from the OSS SDK's
 // `plugins/agent-observability-sdk/.../judges/_instructions.py` (line-wrapping unfolded — the Python
 // `\`-continuations join lines with a single space; the words are identical). Those criteria are
-// themselves a faithful port of cx-sqs's MetricPromptConfig, so behavior matches the production engine
+// themselves a faithful port of the reference engine's MetricPromptConfig, so behavior matches the production engine
 // while the source stays open-source.
 //
-// The SDK judges return LiveKit's thin `{verdict, reasoning}`. The console needs cx-sqs's RICH struct
+// The SDK judges return LiveKit's thin `{verdict, reasoning}`. The console needs the reference engine's RICH struct
 // (score + booleans + the 4 adherence sub-metrics). So each system prompt = the SDK criteria body + an
 // OUTPUT section WE author that requests exactly the raw-schema fields (validated by the judge's Zod).
 // `{slot}` placeholders are filled with `fill()`.
@@ -27,6 +27,9 @@ Steps:
 2. For each claim, check valid evidence sources: the conversation history, function call outputs, and the agent's instructions.
 3. A claim is hallucinated ONLY if it appears in NONE of those sources AND contradicts context.
 4. NOT hallucination: opinions, apologies, offers to help, saying "I don't know", or referencing policies/variables from context.
+5. NOT hallucination: process narration and forward commitments ("let me check", "I'll look into that", "we'll get that scheduled") — promises of action are not factual claims. They become hallucination only when the agent then asserts a specific fabricated RESULT (e.g. states a slot was verified/booked when no evidence shows it).
+6. NOT hallucination: unrendered template placeholders (e.g. {name}, {{appointment_time}}) appearing in instructions or transcript — those are rendering artifacts, not fabricated facts.
+7. NOT hallucination: runtime context the platform injects into the live agent (the current date/time/day-of-week, the caller's name or number, account or session parameters). Agents legitimately know these even when they don't appear in the visible instructions — flag a date/identity claim only when it CONTRADICTS the conversation or tool evidence.
 
 Pass if all claims are supported. Fail if any critical fact is fabricated. Maybe if there are minor unsupported details that don't change the meaning.`;
 
@@ -43,20 +46,21 @@ Steps:
 2. For each extracted value: can the value be found in the conversation or provided data? Fabricated values should be penalized.
 3. Was any expected variable's value available in the context but NOT extracted? That's a critical miss.
 4. Omitting a variable is OK if its value is truly not available in context.
+5. Conditional variables: when a variable's recording rule says to leave it empty unless a condition happens (e.g. "record only once the caller explicitly confirms"), its absence is CORRECT behavior when that condition never occurred — do not count it as missing.
 
 Pass if all extracted variables are valid and grounded. Fail for extra or fabricated variables. Maybe for minor issues.`;
 
 export const LOOP_DETECTION = `Does the agent inappropriately repeat its own previous messages without justification? Loops indicate the agent is stuck.
 
 Steps:
-1. Look at the agent's most recent message.
-2. Compare it to the last 2–3 prior agent messages in the conversation.
-3. Is the latest message substantially identical to a recent one?
-4. If similar, does new user input or new context justify repeating?
+1. Scan ALL agent messages in the node transcript, in order — a loop can occur anywhere in the node, not only at the end.
+2. Flag any run of 2 or more agent messages that are substantially identical in content or intent (same substantive question or information restated).
+3. Ignore lines labelled Tool_Call:, Tool_Result:, System_Note:, or Agent_Handoff: — those are internal events, not agent speech.
+4. Repetition is justified when new user input, a mishear/no-response, an error, or a legitimate return to an earlier step explains it.
 
-Pass if the message is new or repetition is justified. Fail for unjustified repetition of the same substantive question or information. Greetings, sign-offs, and short acknowledgements ("Got it", "Sure", "How can I help?") are allowed to repeat.`;
+Pass if no unjustified repetition exists. Fail for unjustified repetition of the same substantive question or information. Greetings, sign-offs, and short acknowledgements ("Got it", "Sure", "How can I help?") are allowed to repeat.`;
 
-export const INSTRUCTION_ADHERENCE = `Evaluate whether the agent followed its instructions for this scenario. Use the cx-style four-part rubric: objective_progress, procedure_compliance, interaction_quality, and policy_boundary_compliance.
+export const INSTRUCTION_ADHERENCE = `Evaluate whether the agent followed its instructions for this scenario. Use the four-part rubric: objective_progress, procedure_compliance, interaction_quality, and policy_boundary_compliance.
 
 Agent instructions:
 {instructions}
@@ -84,6 +88,7 @@ Rules:
 1. intent_not_found=true when the user's intent is valid but not represented in the available intent list.
 2. intent_wrongly_identified=true when the chosen intent does not match the user's actual request.
 3. System intents such as hangup, error, failed, sent, or conversation_complete are acceptable when they match a system interruption.
+4. When the chosen intent is "(none)", the framework did not RECORD one — that is NOT a wrong identification. Judge from the conversation and Tool_Call/handoff evidence instead: set intent_wrongly_identified=true ONLY when the evidence shows an intent that contradicts the user's actual request, and intent_not_found=true ONLY when the user expressed a clear need that is absent from the available list.
 
 Pass when the chosen intent is supported and correct. Fail when not found or wrongly identified. Maybe when the user input is ambiguous.`;
 

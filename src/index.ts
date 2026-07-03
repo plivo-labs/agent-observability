@@ -206,6 +206,12 @@ app.post("/observability/recordings/v0", async (c) => {
 
   console.log(`Session report received: room_id=${sanitizeForLog(sessionId)} account_id=${sanitizeForLog(accountId)}`);
 
+  // A header that yields no session id would insert a junk "" row that tag
+  // replay and eval claiming can never address — reject it up front.
+  if (!sessionId) {
+    return c.json(buildErrorResponse("invalid_header", "header must carry a session_id / room id"), 400);
+  }
+
   // Parse chat history
   let parsed = { chatItems: [] as any[], turnCount: 0, hasStt: false, hasLlm: false, hasTts: false, metrics: [] as any[] };
   let rawReport: any = null;
@@ -396,18 +402,29 @@ app.post("/observability/recordings/v0", async (c) => {
 // ── Native LiveKit OTLP endpoints ───────────────────────────────────────────
 
 app.post("/observability/logs/otlp/v0", async (c) => {
+  // Decode and persist failures must map to different statuses: a malformed
+  // payload is the sender's bug (400, don't retry), but a persistence failure
+  // (DB blip) is ours — return 503 so at-least-once senders retry instead of
+  // dropping the batch. Every OTLP handler is idempotent (tag upserts, event
+  // dedup by item id, eval dedup by raw), so redelivery is safe.
+  let logs;
   try {
     const bytes = new Uint8Array(await c.req.arrayBuffer());
-    const logs = decodeOtlpLogsRequest(
+    logs = decodeOtlpLogsRequest(
       bytes,
       c.req.header("content-encoding"),
       c.req.header("content-type"),
     );
+  } catch (e) {
+    console.error(`Failed to decode LiveKit OTLP logs: ${(e as Error).message}`);
+    return c.json(buildErrorResponse("invalid_otlp_logs", "Could not decode OTLP logs payload"), 400);
+  }
+  try {
     const persisted = await persistLiveKitOtlpLogs(logs);
     return c.json({ api_id: newApiId(), accepted: logs.length, ...persisted });
   } catch (e) {
-    console.error(`Failed to ingest LiveKit OTLP logs: ${(e as Error).message}`);
-    return c.json(buildErrorResponse("invalid_otlp_logs", "Could not decode OTLP logs payload"), 400);
+    console.error(`Failed to persist LiveKit OTLP logs: ${(e as Error).message}`);
+    return c.json(buildErrorResponse("otlp_persist_failed", "Could not persist OTLP logs"), 503);
   }
 });
 
@@ -570,6 +587,25 @@ app.delete("/api/sessions", async (c) => {
      WHERE session_id IN (${placeholders})
      RETURNING session_id`,
     sessionIds,
+  );
+
+  // Cascade to the session's satellite rows. Verdicts embed transcript quotes
+  // and extracted variable values, and the agent config embeds the flow's
+  // prompts — leaving them behind makes an erasure request incomplete, and a
+  // re-ingested session with the same id would be served the STALE verdicts.
+  // These tables have no FKs (the session row can arrive after them), so the
+  // cascade is explicit here.
+  await Promise.all(
+    [
+      "session_agent_config",
+      "session_eval_verdicts",
+      "session_external_evals",
+      "session_tags",
+      "session_outcomes",
+      "session_raw_report_patches",
+    ].map((table) =>
+      sql.unsafe(`DELETE FROM ${table} WHERE session_id IN (${placeholders})`, sessionIds),
+    ),
   );
 
   // Clean up each deleted session's audio so recordings don't outlive the

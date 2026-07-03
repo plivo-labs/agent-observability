@@ -64,6 +64,106 @@ describe("buildSessionEvalInput", () => {
     expect(input.nodes[0].turn_count).toBe(4);
   });
 
+  test("fills extracted_variables from the variable's declared recording tool", () => {
+    const config: AgentConfig = {
+      nodes: [{
+        ref: "node-A",
+        name: "Booking",
+        variables: [
+          { name: "patient_name", rule: "as stated", tool: "record_patient_name" },
+          { name: "visit_type", tool: "record_visit_type" },
+          { name: "missing_one", tool: "record_missing_one" },
+        ],
+      }],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "I am Alex, here for a cleaning"),
+      // string-serialized arguments (how Python workers send them)
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "record_patient_name", arguments: '{"value": "Alex"}' } },
+      // object arguments with multiple keys → kept whole
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "record_visit_type", arguments: { value: "cleaning", source: "user" } } },
+      // unrelated tool never counts as an extraction
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "check_availability", arguments: { day: "Tue" } } },
+    ]);
+    expect(input.nodes[0].extracted_variables).toEqual({
+      patient_name: "Alex",
+      visit_type: { value: "cleaning", source: "user" },
+    });
+    // string args render parsed (not double-encoded) in the evidence line
+    const agentTurns = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agentTurns).toContain('Tool_Call: record_patient_name({"value":"Alex"})');
+  });
+
+  test("derives chosen_intent from the intent's declared tool; handoffs render as evidence", () => {
+    const config: AgentConfig = {
+      nodes: [{
+        ref: "node-A",
+        name: "Booking",
+        intents: [
+          { name: "Booked", description: "confirmed", tool: "handoff_booked" },
+          { name: "Declined", description: "caller declines", tool: "handoff_declined" },
+        ],
+      }],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "yes book it"),
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "handoff_booked", arguments: "{}" } },
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "agent_handoff", name: "closing-agent" } },
+    ]);
+    expect(input.nodes[0].chosen_intent).toBe("Booked");
+    const agentTurns = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agentTurns).toContain("Agent_Handoff: closing-agent");
+  });
+
+  test("system-role messages render as truncated System_Note lines, not agent speech", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "system", content: "x".repeat(700) } },
+      ev("node-A", "assistant", "Hi!"),
+    ]);
+    const agentTurns = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agentTurns[0]!.startsWith("System_Note: ")).toBe(true);
+    expect(agentTurns[0]!.length).toBeLessThanOrEqual("System_Note: ".length + 601);
+    expect(agentTurns[1]).toBe("Hi!");
+  });
+
+  test("speech_transcript drops evidence lines; variables credit cross-node recording calls", () => {
+    const config: AgentConfig = {
+      nodes: [
+        { ref: "visit-1", name: "Booking", variables: [{ name: "patient_name", tool: "record_patient_name" }] },
+        { ref: "visit-2", name: "Booking", variables: [{ name: "patient_name", tool: "record_patient_name" }] },
+      ],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("visit-1", "user", "I am Alex"),
+      { type: "conversation_item_added", node_ref: "visit-1", item: { type: "function_call", name: "record_patient_name", arguments: '{"value": "Alex"}' } },
+      { type: "conversation_item_added", node_ref: "visit-2", item: { type: "message", role: "system", content: "internal steering note" } },
+      ev("visit-2", "user", "back again"),
+    ]);
+    // Revisit (visit-2) credits the variable recorded during visit-1 —
+    // re-recording is not required, so it must not read as missing.
+    expect(input.nodes[1].extracted_variables).toEqual({ patient_name: "Alex" });
+    // Speech-only transcript excludes Tool_Call + System_Note lines but the
+    // full transcript keeps them.
+    expect(input.full_transcript).toContain("Tool_Call: record_patient_name");
+    expect(input.full_transcript).toContain("System_Note:");
+    expect(input.speech_transcript).not.toContain("Tool_Call:");
+    expect(input.speech_transcript).not.toContain("System_Note:");
+    expect(input.speech_transcript).toContain("User: I am Alex");
+  });
+
+  test("full transcript stays chronological across node revisits", () => {
+    const config: AgentConfig = {
+      nodes: [{ ref: "node-A", name: "A" }, { ref: "node-B", name: "B" }],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "first"),
+      ev("node-B", "user", "second"),
+      ev("node-A", "user", "third"),
+    ]);
+    const order = input.full_transcript.split("\n").filter((l) => l.startsWith("User:"));
+    expect(order).toEqual(["User: first", "User: second", "User: third"]);
+  });
+
   test("falls back to the first node when the transcript carries no node_ref", () => {
     const { input } = buildSessionEvalInput(cfg(), [
       ev(undefined, "assistant", "Hello"),

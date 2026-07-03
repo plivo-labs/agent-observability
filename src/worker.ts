@@ -22,7 +22,7 @@
  * the same loop.
  */
 
-import { dbConfigured } from "./config.js";
+import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
 import { runEvalSweepOnce } from "./evals-engine/eval-sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
@@ -85,8 +85,11 @@ if (dbConfigured) {
     await runSweepOnce();
     // Judge any ingested sessions that carry an agent config (drains its own
     // backlog per call; safe to run every tick). Isolated so an eval error
-    // never stops alert sweeping.
-    await runEvalSweepOnce();
+    // never stops alert sweeping. Gated so an inline-API deployment can run
+    // this worker for alerts/SQS without doubling eval sweepers.
+    if (config.EVAL_SWEEPER_WORKER === "on") {
+      await runEvalSweepOnce();
+    }
     // Sleep in small slices so a shutdown signal is honored within ~1s
     // instead of waiting out the full interval.
     for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {

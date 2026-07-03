@@ -34,6 +34,10 @@ export interface NodeEvalInput {
   chosen_intent: string;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
   required_variables: string[];
+  /** Per-variable recording rules (how/when each should be captured) — rendered
+   *  into the variable judge's expected-variables list so conditional rules
+   *  ("leave empty unless…") are judged against, not guessed at. */
+  variable_rules?: Record<string, string>;
   /** Variables actually extracted at this node (`variables_by_node[node_uuid]`). */
   extracted_variables: Record<string, unknown>;
   /** Turns that ran at this node, in order. */
@@ -61,6 +65,13 @@ export interface ConversationInput {
   goals: GoalInput[];
   /** The whole conversation rendered as text (context for hallucination/loop/goal judges). */
   full_transcript: string;
+  /** Speech-only variant of full_transcript: internal evidence lines
+   *  (System_Note/Tool_Call/Tool_Result/Agent_Handoff) removed. Used by the
+   *  conversation-axis detection judges, which must classify what was SAID on
+   *  the call — a config note like "if voicemail, leave a message" rendered as
+   *  an agent line would otherwise skew voicemail/engagement/sentiment.
+   *  Absent (sim path) ⇒ judges fall back to full_transcript. */
+  speech_transcript?: string;
 }
 
 // ── OUTPUT (the stable verdict contract a consumer renders/persists) ─────────

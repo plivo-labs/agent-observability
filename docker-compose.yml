@@ -25,10 +25,11 @@ services:
       AUTO_MIGRATE: "true"
       PORT: "9090"
       NODE_ENV: "production"
-      # The dedicated worker below owns the alert sweeper. Exactly one
-      # sweeper may run — remove the worker service AND this line to fall
-      # back to the zero-config inline sweeper.
+      # The dedicated worker below owns the alert + eval sweepers. Exactly
+      # one of each may run — remove the worker service AND these lines to
+      # fall back to the zero-config inline sweepers.
       ALERT_SWEEPER: "off"
+      EVAL_SWEEPER: "off"
     depends_on:
       postgres:
         condition: service_healthy

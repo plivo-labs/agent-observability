@@ -109,7 +109,11 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
       ${session.rawReport}::jsonb,
       ${session.recordUrl}
     )
+    ON CONFLICT (session_id) DO NOTHING
   `;
+  // At-least-once ingest: a client retry after a timeout the server actually
+  // committed must be a no-op, not a duplicate session (unique index from
+  // migration 021).
 }
 
 export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
@@ -133,10 +137,14 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
 export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput): Promise<void> {
   // Idempotent against at-least-once OTLP redelivery: a redelivered batch
   // carries a byte-identical evaluation payload, so skip the insert when an
-  // identical row (same session/source/judge + exact raw payload) already
-  // exists. Guarding on `raw` equality never drops a genuinely different
-  // evaluation, and needs no unique constraint (so no migration that could
-  // fail on pre-existing duplicates).
+  // identical row (same session/source/judge/tag + exact raw payload) already
+  // exists. `tag` is part of the identity — the eval-sweeper fan-out writes
+  // one row per node per judge with the node ref in `tag`, and two nodes can
+  // legitimately produce byte-identical verdicts (same judge, same short
+  // reason); without tag in the key the second node's row would be dropped
+  // and the node axis undercounted. Guarding on `raw` equality never drops a
+  // genuinely different evaluation, and needs no unique constraint (so no
+  // migration that could fail on pre-existing duplicates).
   await sql`
     INSERT INTO session_external_evals (
       session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw
@@ -156,6 +164,7 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput): Pr
       WHERE session_id = ${input.sessionId}
         AND source = ${input.source}
         AND judge_name = ${input.judgeName}
+        AND tag IS NOT DISTINCT FROM ${input.tag}
         AND raw = ${input.raw}::jsonb
     )
   `;
@@ -589,12 +598,28 @@ export interface SessionEvalSource {
   config: Record<string, unknown>;
   chatHistory: unknown;
   rawReport: unknown;
+  /** When the session row was ingested — lets the sweeper give a young
+   *  session whose transcript hasn't fully landed a grace period instead of
+   *  a terminal "no transcript" error. */
+  sessionCreatedAt: Date | null;
+}
+
+/** Backdate a running claim so stale adoption re-picks it after roughly
+ *  `retryInSeconds` instead of the full stale window. Used when a claimed
+ *  session isn't judgeable YET (transcript still in flight) — without this,
+ *  a "will retry" defer would silently wait the whole EVAL_CLAIM_STALE_MINUTES. */
+export async function deferEvalClaimRetry(sessionId: string, retryInSeconds: number): Promise<void> {
+  await sql`
+    UPDATE session_eval_verdicts
+    SET claimed_at = NOW() - (${EVAL_CLAIM_STALE_MINUTES} * INTERVAL '1 minute') + (${retryInSeconds} * INTERVAL '1 second')
+    WHERE session_id = ${sessionId} AND status = 'running'
+  `;
 }
 
 /** Everything the eval sweeper needs to judge one session. */
 export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report
+    SELECT c.config, s.chat_history, s.raw_report, s.created_at AS session_created_at
     FROM session_agent_config c
     JOIN agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
@@ -609,43 +634,11 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     config: parse(row.config) as Record<string, unknown>,
     chatHistory: parse(row.chat_history),
     rawReport: parse(row.raw_report),
+    sessionCreatedAt: row.session_created_at ? new Date(row.session_created_at) : null,
   };
 }
 
-export interface SessionEvalVerdictsRow {
-  status: string;
-  verdicts: Record<string, unknown> | null;
-  error: string | null;
-  completedAt: Date | null;
-}
-
-export async function getSessionEvalVerdicts(sessionId: string): Promise<SessionEvalVerdictsRow | null> {
-  const rows = await sql`
-    SELECT status, verdicts, error, completed_at
-    FROM session_eval_verdicts
-    WHERE session_id = ${sessionId}
-  `;
-  if (rows.length === 0) {
-    return null;
-  }
-  const row = rows[0];
-  return {
-    status: row.status as string,
-    verdicts: typeof row.verdicts === "string" ? JSON.parse(row.verdicts) : row.verdicts,
-    error: row.error as string | null,
-    completedAt: row.completed_at ? new Date(row.completed_at) : null,
-  };
-}
-
-/** Find sessions carrying a tag (exact name match) — how an external system
- *  locates the session for one of its own identifiers (e.g. a run id it
- *  attached as a tag at call end). Newest first. */
-export async function findSessionIdsByTag(tagName: string, limit = 10): Promise<string[]> {
-  const rows = await sql`
-    SELECT session_id FROM session_tags
-    WHERE name = ${tagName}
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `;
-  return rows.map((row: any) => row.session_id as string);
-}
+// NOTE: the verdict-row and by-tag reads live inline in their routes
+// (src/index.ts session detail + /api/sessions/by-tag) — the by-tag route
+// needs a richer join (verdict status) than a plain-id helper would provide,
+// and keeping one copy per read path avoids helper/inline drift.

@@ -35,10 +35,20 @@ export interface AgentConfigVariable {
   name?: string;
   /** Recording rule for the variable (how/when it should be captured). */
   rule?: string;
+  /** Name of the tool/function the agent calls to record this variable
+   *  (whatever the sender's platform convention is). When present, a
+   *  function_call event with this name counts as that variable's extraction
+   *  and its arguments supply the extracted value. */
+  tool?: string;
 }
 export interface AgentConfigIntent {
   name?: string;
   description?: string;
+  /** Name of the tool/function the agent calls when it selects this intent
+   *  (whatever the sender's platform convention is — handoff/transfer/route
+   *  tools). When present, a matching function_call or agent_handoff event on
+   *  the node marks this intent as the node's chosen intent. */
+  tool?: string;
 }
 export interface AgentConfigNode {
   /** Opaque per-node reference the caller correlates verdicts to (echoed back). */
@@ -83,12 +93,33 @@ function textOf(content: unknown): string {
   return "";
 }
 
+/** Parse a function_call's arguments into an object when possible. Senders
+ *  serialize arguments either as a JSON string or a raw object. */
+function parseToolArguments(args: unknown): Record<string, unknown> | null {
+  if (typeof args === "string") {
+    try {
+      const parsed = JSON.parse(args);
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return isRecord(args) ? args : null;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 /** Render a tool/function event as a labelled evidence line the judges read as
  *  supporting evidence (a grounded value from a tool must not read as fabricated). */
 function toolEvidence(item: NonNullable<StoredEvent["item"]>): string {
   const name = typeof item.name === "string" ? item.name : "tool";
   if (item.type === "function_call") {
-    const args = item.arguments !== undefined ? JSON.stringify(item.arguments) : "";
+    // Prefer the parsed object so string-serialized arguments don't render
+    // double-encoded (`"{\"value\": ...}"`) in the judge's transcript.
+    const parsed = parseToolArguments(item.arguments);
+    const args = parsed ? JSON.stringify(parsed) : item.arguments !== undefined ? JSON.stringify(item.arguments) : "";
     return `Tool_Call: ${name}(${args})`;
   }
   const out = item.output !== undefined ? (typeof item.output === "string" ? item.output : JSON.stringify(item.output)) : "";
@@ -128,17 +159,38 @@ export function buildSessionEvalInput(
   const evs = Array.isArray(events) ? events : [];
 
   // Index config nodes by ref; keep declaration order for the fallback bucket.
+  // A node without a ref gets a synthetic internal grouping key (the sender
+  // then can't correlate verdicts to node identity, but the node axis must
+  // still be judged — with "" the fallback bucket would silently drop every
+  // turn and the session would produce zero node evaluations). The NUL-byte
+  // prefix keeps synthetic keys out of any plausible sender ref space; the
+  // echoed NodeRef.ref is restored to the sender's original value below.
+  const SYNTHETIC_REF = "\u0000node:";
+  const groupKeyFor = (n: AgentConfigNode | undefined, i: number): string =>
+    (typeof n?.ref === "string" && n.ref) ? n.ref : `${SYNTHETIC_REF}${i}`;
   const byRef = new Map<string, AgentConfigNode>();
-  cfgNodes.forEach((n) => { if (typeof n.ref === "string" && n.ref) byRef.set(n.ref, n); });
-  const fallbackRef = typeof cfgNodes[0]?.ref === "string" ? cfgNodes[0].ref : "";
+  cfgNodes.forEach((n, i) => { byRef.set(groupKeyFor(n, i), n); });
+  const fallbackRef = cfgNodes.length > 0 ? groupKeyFor(cfgNodes[0], 0) : "";
 
   // Group each transcript turn under a node ref, preserving chronological order.
   const turnsByRef = new Map<string, EvalTurn[]>();
   const orderedRefs: string[] = [];
+  // Whole-conversation timeline in true event order — per-ref buckets would
+  // scramble the full transcript on node revisits (all A-turns then all
+  // B-turns), misleading the conversation/goal judges.
+  const allTurns: EvalTurn[] = [];
   const pushTurn = (ref: string, turn: EvalTurn) => {
     if (!turnsByRef.has(ref)) { turnsByRef.set(ref, []); orderedRefs.push(ref); }
     turnsByRef.get(ref)!.push(turn);
+    allTurns.push(turn);
   };
+  // Tool calls per node, for extracted_variables (config variables that
+  // declare the tool that records them; see AgentConfigVariable.tool) and
+  // chosen intents (config intents that declare their selection tool).
+  const toolCallsByRef = new Map<string, Array<{ name: string; args: Record<string, unknown> | null }>>();
+  // Session-wide tool-call list, in order — the cross-node fallback for
+  // variable extraction on revisited nodes.
+  const allToolCalls: Array<{ name: string; args: Record<string, unknown> | null }> = [];
 
   for (const ev of evs) {
     if (ev?.type !== "conversation_item_added" || !ev.item) continue;
@@ -146,12 +198,47 @@ export function buildSessionEvalInput(
     if (!ref) continue;
     const item = ev.item;
     if (item.type === "function_call" || item.type === "function_call_output") {
+      if (item.type === "function_call" && typeof item.name === "string" && item.name) {
+        if (!toolCallsByRef.has(ref)) toolCallsByRef.set(ref, []);
+        const call = { name: item.name, args: parseToolArguments(item.arguments) };
+        toolCallsByRef.get(ref)!.push(call);
+        allToolCalls.push(call);
+      }
       pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item), intent: "" });
+      continue;
+    }
+    if (item.type === "agent_handoff") {
+      // Handoffs are the strongest chosen-intent evidence a sender can carry;
+      // dropping them starves the intent judge. Render as a labelled evidence
+      // line and count the handoff name as a tool signal for intent matching.
+      const label = [item.name, (item as Record<string, unknown>).new_agent, (item as Record<string, unknown>).target]
+        .find((v): v is string => typeof v === "string" && v.length > 0) ?? "";
+      if (label) {
+        if (!toolCallsByRef.has(ref)) toolCallsByRef.set(ref, []);
+        const call = { name: label, args: null };
+        toolCallsByRef.get(ref)!.push(call);
+        allToolCalls.push(call);
+      }
+      pushTurn(ref, { node_uuid: ref, user: "", agent: label ? `Agent_Handoff: ${label}` : "Agent_Handoff", intent: "" });
       continue;
     }
     const text = textOf(item.content);
     if (!text) continue;
-    const isUser = USER_ROLES.has((item.role ?? "").toLowerCase());
+    const role = (item.role ?? "").toLowerCase();
+    const isUser = USER_ROLES.has(role);
+    // System/developer messages are runtime-internal steering (prompts, hint
+    // preprocessors, close instructions), not agent speech. Rendering them as
+    // agent turns misleads judges (a buggy hint line reads as an agent claim;
+    // the system prompt reads as something the agent "said"). Label them so
+    // their evidence survives — the adversarial audit showed dropping them
+    // loses intent context — and truncate so a full system prompt can't
+    // dominate the judge's transcript (node instructions already arrive via
+    // node_prompt).
+    if (!isUser && (role === "system" || role === "developer")) {
+      const note = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+      pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "" });
+      continue;
+    }
     pushTurn(ref, isUser
       ? { node_uuid: ref, user: text, agent: "", intent: "" }
       : { node_uuid: ref, user: "", agent: text, intent: "" });
@@ -159,7 +246,6 @@ export function buildSessionEvalInput(
 
   const nodes: NodeEvalInput[] = [];
   const nodeRefs: NodeRef[] = [];
-  const allTurns: EvalTurn[] = [];
 
   for (const ref of orderedRefs) {
     const turns = turnsByRef.get(ref) ?? [];
@@ -172,20 +258,63 @@ export function buildSessionEvalInput(
     for (const v of def.variables ?? []) {
       if (typeof v?.name === "string" && v.name && typeof v.rule === "string" && v.rule.trim()) rules[v.name] = v.rule.trim();
     }
-    allTurns.push(...turns);
+    // Actual extractions: a config variable whose declared `tool` (or, absent
+    // that, its own name) matches a function_call on this node was recorded by
+    // the agent; the call's arguments carry the value. Without this, the
+    // variable judge reads "(none) extracted" and fails runs whose transcript
+    // plainly shows the recording calls.
+    const nodeToolCalls = toolCallsByRef.get(ref) ?? [];
+    const extractedVariables: Record<string, unknown> = {};
+    for (const v of def.variables ?? []) {
+      const varName = typeof v?.name === "string" ? v.name : "";
+      if (!varName) continue;
+      const toolName = typeof v?.tool === "string" && v.tool ? v.tool : varName;
+      // Prefer a recording call on THIS node; fall back to one from any other
+      // node in the session. Node revisits mint a fresh ref per visit while
+      // the recording call is stamped only on the visit where it fired — a
+      // variable recorded on visit 1 must not read as "missing" on visit 2.
+      const call =
+        nodeToolCalls.find((tc) => tc.name === toolName) ??
+        allToolCalls.find((tc) => tc.name === toolName);
+      if (!call) continue;
+      const args = call.args;
+      if (args && Object.keys(args).length === 1) {
+        extractedVariables[varName] = Object.values(args)[0];
+      } else if (args && Object.keys(args).length > 0) {
+        extractedVariables[varName] = args;
+      } else {
+        extractedVariables[varName] = "(recorded)";
+      }
+    }
+    // Chosen intent: a config intent whose declared `tool` (or its own name)
+    // matches a tool/handoff signal on this node was the intent the agent
+    // actually selected — the last matching signal wins. Without this the
+    // intent judge compares against "(none)" and speculates.
+    let chosenIntent = "";
+    for (const tc of nodeToolCalls) {
+      for (const i of def.intents ?? []) {
+        const intentName = typeof i?.name === "string" ? i.name : "";
+        if (!intentName) continue;
+        const toolName = typeof i?.tool === "string" && i.tool ? i.tool : intentName;
+        if (tc.name === toolName) chosenIntent = intentName;
+      }
+    }
     nodes.push({
       node_uuid: ref,
       node_name: typeof def.name === "string" && def.name ? def.name : ref,
       node_prompt: typeof def.instructions === "string" ? def.instructions : "",
       available_intents: Array.isArray(def.intents) ? def.intents.map((i) => ({ intent_name: i?.name, intent_instructions: i?.description })) : [],
-      chosen_intent: "",
+      chosen_intent: chosenIntent,
       required_variables: requiredVariables,
       ...(Object.keys(rules).length ? { variable_rules: rules } : {}),
-      extracted_variables: {},
+      extracted_variables: extractedVariables,
       turns,
       turn_count: turns.length,
     });
-    nodeRefs.push({ ref, name: typeof def.name === "string" ? def.name : ref });
+    // Synthetic grouping keys are internal — echo the sender's original
+    // (empty) ref, never the NUL-prefixed key.
+    const echoedRef = ref.startsWith(SYNTHETIC_REF) ? "" : ref;
+    nodeRefs.push({ ref: echoedRef, name: typeof def.name === "string" ? def.name : echoedRef });
   }
 
   return {
@@ -195,6 +324,14 @@ export function buildSessionEvalInput(
       nodes,
       goals: nodeGoals(config),
       full_transcript: renderFullTranscript(allTurns),
+      // Speech-only variant for the conversation-axis judges: drop the
+      // synthetic evidence lines so config/tool text can't masquerade as
+      // things said on the call.
+      speech_transcript: renderFullTranscript(
+        allTurns.filter(
+          (t) => t.user || !/^(System_Note|Tool_Call|Tool_Result|Agent_Handoff)[:\s]/.test(t.agent),
+        ),
+      ),
     },
     nodeRefs,
   };
@@ -241,7 +378,11 @@ export async function evaluateIngestedSession(
 }
 
 function emptyConversationMetrics(): SimConversationMetrics {
-  const det = () => ({ detected: false, detected_value: 0, reason: "", technical_reason: "" });
+  // technical_reason carries the "judge unavailable" sentinel so the fan-out
+  // and the read-path flatteners SKIP these placeholders — otherwise an
+  // empty-transcript session would fan out six confident "pass" detection
+  // rows for judges that never ran.
+  const det = () => ({ detected: false, detected_value: 0, reason: "", technical_reason: "conversation judge unavailable: empty transcript" });
   return {
     answered: false,
     voicemail_detected: det(),
@@ -250,7 +391,7 @@ function emptyConversationMetrics(): SimConversationMetrics {
     low_engagement: det(),
     wrong_number: det(),
     do_not_disturb: det(),
-    user_sentiment: { sentiment: "", reason: "", technical_reason: "" },
+    user_sentiment: { sentiment: "", reason: "", technical_reason: "conversation judge unavailable: empty transcript" },
     silent_call: false,
     customer_engaged: false,
     conversation_status: { status: "", reason: "", technical_reason: "" },

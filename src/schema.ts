@@ -32,6 +32,10 @@ export const envSchema = z.object({
   // set "off" on the API when the dedicated worker runs it, so exactly one
   // sweeper is active.
   EVAL_SWEEPER: z.enum(["inline", "off"]).default("inline"),
+  // Gates the WORKER's eval sweep loop independently of the API's inline
+  // sweeper — "off" here lets an inline-API deployment run a worker for
+  // alerts/SQS only without doubling eval sweepers.
+  EVAL_SWEEPER_WORKER: z.enum(["on", "off"]).default("on"),
 
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In

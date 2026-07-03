@@ -29,13 +29,14 @@ Criteria:
 3. Bot/IVR menus are NOT voicemail.
 4. Human conversation after an automated prompt means voicemail_detected=false.`;
 
-const BOT = `Detect whether the call was answered by an automated IVR/bot system rather than a human. Pass when no bot/IVR is present. Fail when bot_detected=true.
+const BOT = `Detect whether the answered party is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
 
 Criteria:
 1. Menu prompts such as press 1, say billing, main menu, or repeat options are bot/IVR indicators.
 2. Self-identification as an automated assistant, virtual assistant, AI assistant, or phone system is a bot indicator.
 3. Voicemail and call screening are separate outcomes and should not be marked as bot_detected.
-4. Analyze the answered party's messages, not the agent's own wording.`;
+4. Analyze the answered party's messages, not the agent's own wording.
+5. A conversational AI posing as the answered party is ALSO a bot. Strong signals (require at least one clear instance, not mere politeness): persistent assistant-register speech with reversed roles (the answered party repeatedly offers the agent help or asks what the agent needs, e.g. "I'm here to help with whatever you need", "What's the next step you'd like me to take?"); admitting to being an AI or language model when asked; or template-like responses that restate the agent's question instead of answering as a customer would. A fluent, cooperative human is NOT a bot — do not fire on eloquence alone.`;
 
 const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
 
@@ -102,7 +103,14 @@ const SentimentRawZ = z.object({ sentiment: z.string(), reason: z.string(), tech
 const DETECTION_MAX_TOKENS = 1500;
 
 function payload(ctx: ConversationInput): Record<string, unknown> {
-  return { flow_name: ctx.flow_name, conversation_history: ctx.full_transcript };
+  // Detection judges classify what was SAID on the call, so prefer the
+  // speech-only transcript when the builder provides one — internal evidence
+  // lines (System_Note/Tool_Call/…) rendered as agent turns would let config
+  // text (e.g. voicemail-handling guidance) masquerade as call reality.
+  // `||` (not `??`): a transcript that is ALL evidence lines filters down to
+  // "", and judging detections on an empty string would fabricate passes —
+  // fall back to the full transcript in that case.
+  return { flow_name: ctx.flow_name, conversation_history: ctx.speech_transcript || ctx.full_transcript };
 }
 
 /** Run one boolean detection judge; default to `detected:false` on any failure. */

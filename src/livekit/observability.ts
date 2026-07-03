@@ -15,6 +15,10 @@ interface PersistResult {
   evaluations: number;
   outcomes: number;
   agentConfigs: number;
+  /** Records dropped because persisting them fails deterministically
+   *  (constraint/shape errors) — visible in the ingest response so a sender
+   *  can notice data it thinks was accepted actually wasn't. */
+  skippedRecords: number;
 }
 
 interface RawReportPatch extends Record<string, unknown> {
@@ -340,8 +344,19 @@ const OTLP_HANDLERS: Record<string, OtlpHandler> = {
   "agent config": handleAgentConfig,
 };
 
+/** True when a persist error is environmental (connection/timeout/outage) —
+ *  the batch should abort and 503 so at-least-once senders retry. Everything
+ *  else (constraint violations, invalid input, oversize values) fails the
+ *  same way on every redelivery and is skipped per-record instead. Unknown
+ *  errors default to transient: dropping data needs positive evidence. */
+function isTransientPersistError(e: unknown): boolean {
+  const msg = `${(e as Error)?.message ?? ""} ${(e as { code?: string })?.code ?? ""}`;
+  const deterministic = /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|22P02|23\d{3}/i;
+  return !deterministic.test(msg);
+}
+
 export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<PersistResult> {
-  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0, agentConfigs: 0 };
+  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0, agentConfigs: 0, skippedRecords: 0 };
   const rawReportPatches = new Map<string, RawReportPatch>();
 
   for (const log of logs) {
@@ -357,11 +372,32 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
       continue;
     }
 
-    await handler({ log, sessionId, observedAt, result, rawReportPatches });
+    try {
+      await handler({ log, sessionId, observedAt, result, rawReportPatches });
+    } catch (e) {
+      // Per-record isolation: a DETERMINISTIC persist failure (constraint /
+      // shape / size — would fail identically on every redelivery) must not
+      // poison the whole batch into an endless 503-retry loop; skip that one
+      // record and keep going. Transient failures (connection/timeout) still
+      // abort the batch so the route 503s and at-least-once senders retry.
+      if (isTransientPersistError(e)) {
+        throw e;
+      }
+      result.skippedRecords += 1;
+      console.error(`[otlp] record skipped (deterministic persist error, body=${body}): ${(e as Error).message}`);
+    }
   }
 
   for (const [sessionId, patch] of rawReportPatches) {
-    await mergeSessionRawReport({ sessionId, patch });
+    try {
+      await mergeSessionRawReport({ sessionId, patch });
+    } catch (e) {
+      if (isTransientPersistError(e)) {
+        throw e;
+      }
+      result.skippedRecords += 1;
+      console.error(`[otlp] raw-report patch skipped (deterministic persist error): ${(e as Error).message}`);
+    }
   }
 
   return result;
