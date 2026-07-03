@@ -165,4 +165,12 @@ export const envSchema = z.object({
   // is an expensive multi-call LLM fan-out, so this stops a burst from
   // multiplying into unbounded spend; requests over the limit get 429.
   GEN_MAX_CONCURRENT: z.coerce.number().int().positive().default(2),
+  // Interval (ms) between SSE keep-alive heartbeats emitted while the generator
+  // is silent (planner + writer LLM calls run for tens of seconds with no
+  // events). This MUST stay well UNDER the downstream Redis peer's idle-reset
+  // window: the aiassist relay mirrors each heartbeat into a Redis stream via
+  // XADD, and a gap longer than the peer's idle timeout (~10s on the shared
+  // cluster ELB) gets the connection reset by peer → "Scenario generation
+  // failed." Default 5000 keeps every relay connection active inside that window.
+  SIM_GEN_HEARTBEAT_MS: z.coerce.number().int().positive().default(5000),
 });

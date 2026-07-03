@@ -94,9 +94,15 @@ suite("simulation routes", () => {
     expect(names).toContain("progress");
     expect(names.filter((n) => n === "scenario_saved").length).toBe(2);
     expect(names).toContain("completed");
-    // progress carries event_data.stage
+    // progress carries event_data.stage. The first progress frame is now an immediate keep-alive
+    // heartbeat (primes the aiassist relay's Redis connection before the silent planner gap); the
+    // real planning_started progress follows.
     const firstProgress = events.find((e) => e.event === "progress")!;
-    expect(JSON.parse(firstProgress.data).event_data.stage).toBe("planning_started");
+    expect(JSON.parse(firstProgress.data).event_data.stage).toBe("heartbeat");
+    const planningStarted = events.find(
+      (e) => e.event === "progress" && JSON.parse(e.data).event_data.stage === "planning_started",
+    );
+    expect(planningStarted).toBeTruthy();
 
     // persisted to ao_simulation_scenarios → visible via the list route
     const list = await app.fetch(new Request("http://localhost/api/simulation/scenarios?phlo_uuid=phlo-gen", { headers: H }));
