@@ -87,3 +87,41 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     await expect(run).rejects.toThrow(/Planner failed/);
   });
 });
+
+describe("generateScenarios — G5 all-failed / partial", () => {
+  const scen = (id: string) => ({
+    slot_id: id,
+    scenario: { name: `S ${id}`, persona: { personality: "", emotional_state: "", behavioral_traits: [], details_json: "{}" }, goal: "g", language: "en-US", world_state: [], start_node_params_json: "{}", tags: [] },
+  });
+
+  test("G5a: every slot failing throws (error event, not a completed/partial event)", async () => {
+    const allFail = (): string => JSON.stringify({ agent_flow_description: "x", scenario_items: [] });
+    await expect(
+      collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+          plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([allFail]),
+        }),
+      ),
+    ).rejects.toThrow(/all planned slots/);
+  });
+
+  test("G5a: a partial run keeps partial_success=true with saved>0", async () => {
+    let accept: Set<string> | null = null;
+    const partialWriter = (args: ProviderCompleteArgs): string => {
+      const ids = (JSON.parse(args.user).expected_slot_ids as string[]);
+      if (!accept) accept = new Set(ids.slice(0, Math.ceil(ids.length / 2))); // permanently accept the first half
+      return JSON.stringify({ agent_flow_description: "x", scenario_items: ids.filter((id) => accept!.has(id)).map(scen) });
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([partialWriter]),
+      }),
+    );
+    const meta = events.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(meta.metadata.saved_count).toBeGreaterThan(0);
+    expect(meta.metadata.saved_count).toBeLessThan(meta.metadata.planned_count);
+    expect(meta.metadata.partial_success).toBe(true);
+  });
+});

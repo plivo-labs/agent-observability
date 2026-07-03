@@ -48,10 +48,44 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
     const llm = new MockLLM([goodPlanner]);
     const { planner } = await planCapabilities({ flowJson: canonical, phloUuid: "agent-1", model: "gpt-5.5-1", provider: llm });
     expect(planner.capabilities[0].capability_id).toBe("handle_refund");
-    expect(planner.capabilities[0].route_anchors).toEqual([]); // optional → defaulted
+    // G2: an anchor-less capability is backfilled from the first executable inventory
+    // route (was []), so the allocator gets a real route to expand.
+    const anchors = planner.capabilities[0].route_anchors as Array<Record<string, unknown>>;
+    expect(anchors.length).toBe(1);
+    expect(anchors[0].target_node_id).toBe("n-check");
     // inventory attached for the allocator
     expect(planner.mechanical_inventory.routes.length).toBe(3);
     expect(planner.mechanical_inventory.is_outbound_call).toBe(false);
+  });
+
+  test("G2: merges inventory route targets onto a capability's route_anchor (was empty)", async () => {
+    // The planner emits an anchor with only source_node_id + intent_name (as the LLM does);
+    // capabilitiesWithRoutes must fill target_node_id/target_node_name from the inventory.
+    const plannerWithAnchor = JSON.stringify({
+      agent_flow_description: "Refund agent.",
+      capabilities: [
+        {
+          capability_id: "handle_refund",
+          name: "Handle refund",
+          description: "Process an eligible refund",
+          priority: "core",
+          risk: "high",
+          source_signals: ["refund intent"],
+          success_criteria: ["refund issued"],
+          route_anchors: [
+            // What the LLM emits — note NO target_node_id/target_node_name (the merge fills those).
+            { source_node_id: "n-greet", intent_name: "wants_refund", target_node_type: "branch_v2", support: "fully_executable" },
+          ],
+        },
+      ],
+      planner_rationale: "One core route.",
+    });
+    const llm = new MockLLM([plannerWithAnchor]);
+    const { planner } = await planCapabilities({ flowJson: canonical, phloUuid: "a", model: "m", provider: llm });
+    const anchor = (planner.capabilities[0].route_anchors as Array<Record<string, unknown>>)[0];
+    expect(anchor.source_node_id).toBe("n-greet");
+    expect(anchor.target_node_id).toBe("n-check"); // filled from inventory (was "")
+    expect(anchor.target_node_name).toBe("eligibility_check");
   });
 
   test("the planner payload includes the simulation surface + pattern library", async () => {

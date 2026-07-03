@@ -4,7 +4,7 @@ mock.module("../src/config.js", () => ({
   config: { LLM_PROVIDER: "anthropic", JUDGE_MODEL: undefined, SIMULATOR_MODEL: undefined, GENERATOR_MODEL: undefined, LLM_TIMEOUT_MS: 30000, LLM_MAX_RETRIES: 1 },
 }));
 
-const { validateAndFixScenario, runtimeConfig, normalizeTraits, writeScenarioChunk } = await import("../src/sim-engine/gen/writer.js");
+const { validateAndFixScenario, runtimeConfig, normalizeTraits, writeScenarioChunk, writerContextNodes } = await import("../src/sim-engine/gen/writer.js");
 const { MockLLM } = await import("../src/llm/index.js");
 import type { Slot } from "../src/sim-engine/gen/types.js";
 
@@ -108,5 +108,38 @@ describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
     const res = await writeScenarioChunk({ flowJson: flow, planner, slots: [slot], model: "gpt-5.5-1", generationId: "gen-1", phloUuid: "a", chunkIndex: 0, attempt: 1, provider: llm });
     expect(res.scenarios.length).toBe(0);
     expect(res.failedSlotIds).toEqual(["S001"]);
+  });
+});
+
+describe("writerContextNodes (G1)", () => {
+  test("filters to slot-route nodes + start and hoists config to top level", () => {
+    const flow = {
+      nodes: [
+        { id: "n-start", type: "start", data: { config: { name: "Start" } } },
+        { id: "n-greet", type: "ai_agent_v2", data: { config: { name: "greet", instructions: "say hi" } } },
+        { id: "n-check", type: "branch_v2", data: { config: { name: "check" } } },
+        { id: "n-unrelated", type: "ai_agent_v2", data: { config: { name: "other" } } },
+      ],
+      edges: [],
+    };
+    const s: Slot = {
+      ...slot,
+      expected_route_outcome: {
+        source_node_id: "n-greet",
+        expected_intent_name: "wants_refund",
+        target_node_id: "n-check",
+        target_node_name: "check",
+        target_node_type: "branch_v2",
+      },
+    };
+    const nodes = writerContextNodes(flow, [s]);
+    // route source (n-greet) + target (n-check) + start; the unrelated node is excluded.
+    expect(nodes.map((n) => n.id).sort()).toEqual(["n-check", "n-greet", "n-start"]);
+    const greet = nodes.find((n) => n.id === "n-greet")!;
+    // reshaped to {id,type,name,config} with config HOISTED (the writer prompt reads
+    // nodes[].config.instructions — the G1 bug sent it nested under data).
+    expect(greet).toEqual({ id: "n-greet", type: "ai_agent_v2", name: "greet", config: { name: "greet", instructions: "say hi" } });
+    expect(greet.config.instructions).toBe("say hi");
+    expect((greet as Record<string, unknown>).data).toBeUndefined();
   });
 });
