@@ -14,12 +14,13 @@ export async function runGoalJudge(
   goals: GoalInput[],
   ctx: ConversationInput,
   provider?: LlmProvider,
+  isSimulation = false,
 ): Promise<{ data: GoalEvaluation; usage: LlmUsage }> {
   const goalsText = goals.map((g) => `- ${g.goal_name}: ${g.goal_instructions}`).join("\n");
   const flowHistory = ctx.full_transcript || "(no transcript)";
 
   const res = await runLlmJudge({
-    system: systemForGoal(goalsText, flowHistory),
+    system: systemForGoal(goalsText, flowHistory, isSimulation),
     input: { flow_name: ctx.flow_name, goals: goals.map((g) => ({ goal_name: g.goal_name, goal_instructions: g.goal_instructions })) },
     schema: GoalRawZ,
     jsonSchema: GOAL_JSON,

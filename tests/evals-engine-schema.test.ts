@@ -109,4 +109,17 @@ describe("prompt composition", () => {
     expect(systemForInstructionAdherence("Be nice", "greet the user")).toContain("greet the user");
     expect(systemForGoal("- book a table", "…history…")).toContain("book a table");
   });
+
+  test("goal prompt carries the early-termination rule always, sim rules only for simulation (E1)", () => {
+    const live = systemForGoal("- g", "h"); // isSimulation defaults false
+    const sim = systemForGoal("- g", "h", true);
+    // Early-termination rule is unconditional (cx-sqs system.tmpl) — present in both.
+    expect(live).toContain("Early termination");
+    expect(sim).toContain("Early termination");
+    // The success-proxy / SIMULATION CONTEXT block is sim-only (cx-sqs user.tmpl IsSimulation).
+    expect(live).not.toContain("SIMULATION CONTEXT");
+    expect(live).not.toContain("Success proxy");
+    expect(sim).toContain("SIMULATION CONTEXT");
+    expect(sim).toContain("Success proxy rule");
+  });
 });

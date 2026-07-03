@@ -55,7 +55,7 @@ export async function evaluateSimulation(input: ConversationInput, opts: Evaluat
 
   const result: NodeGoalEvaluation = { node_evaluations };
   if (input.goals.length > 0) {
-    const { data } = await runGoalJudge(input.goals, input, opts.provider);
+    const { data } = await runGoalJudge(input.goals, input, opts.provider, true);
     result.goal_evaluation = data;
   }
   return result;
