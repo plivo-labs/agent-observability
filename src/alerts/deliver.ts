@@ -11,6 +11,8 @@ import { assertPublicUrl } from "../net/public-url.js";
 export const RETRY_BACKOFF_MS = [30_000, 120_000, 600_000, 1_800_000, 7_200_000];
 export const MAX_ATTEMPTS = RETRY_BACKOFF_MS.length + 1;
 export const WEBHOOK_TIMEOUT_MS = 10_000;
+/** Max webhook redirect hops followed (each re-validated by the SSRF guard). */
+const MAX_REDIRECTS = 3;
 
 export interface DeliveryResult {
   ok: boolean;
@@ -55,15 +57,22 @@ async function sendWebhook(req: WebhookRequest): Promise<DeliveryResult> {
   }
   const started = performance.now();
   try {
-    // SSRF guard immediately before the fetch (DNS can change since rule
-    // creation): reject loopback / private / link-local / metadata targets.
-    await assertPublicUrl(req.url);
-    const res = await fetch(req.url, {
-      method: req.method,
-      headers,
-      body: req.body,
-      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-    });
+    // Follow redirects MANUALLY so the SSRF guard runs on every hop — otherwise a
+    // 302 to http://169.254.169.254/ (or any private host) would be auto-followed
+    // and defeat the check. Each URL, including each redirect Location, must pass
+    // assertPublicUrl before we fetch it. Bounded hop count.
+    const signal = AbortSignal.timeout(WEBHOOK_TIMEOUT_MS);
+    let url = req.url;
+    let res: Response;
+    for (let hop = 0; ; hop++) {
+      await assertPublicUrl(url);
+      res = await fetch(url, { method: req.method, headers, body: req.body, redirect: "manual", signal });
+      if (res.status < 300 || res.status >= 400) break;
+      const location = res.headers.get("location");
+      if (!location) break; // 3xx without a target — treat as the final response
+      if (hop >= MAX_REDIRECTS) throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
+      url = new URL(location, url).toString(); // resolve relative Locations
+    }
     return {
       ok: res.status >= 200 && res.status < 300,
       status: res.status,

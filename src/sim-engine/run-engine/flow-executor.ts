@@ -35,6 +35,10 @@ import {
   VariableStore,
 } from "./flow-types.js";
 
+// Hard cap on total node transitions in one run — a cycle-through-mocked-nodes
+// safety net (turnCount only bounds ai_agent_v2 turns). Far above any real flow.
+const MAX_NODE_TRANSITIONS = 1000;
+
 export class FlowOrchestrator {
   private readonly graph: FlowGraph;
   private readonly edgeResolver: EdgeResolver;
@@ -87,11 +91,24 @@ export class FlowOrchestrator {
     };
     let turnCount = 0;
 
+    // Cycle guard: turnCount only advances on ai_agent_v2 nodes, so a flow that
+    // loops through mocked non-AI nodes (e.g. call_forward → … → back) would spin
+    // this synchronous loop forever and wedge the whole worker (SQS drain stops,
+    // SIGTERM ignored). Bound the TOTAL node transitions — far above any real flow,
+    // but finite so a cyclic mocked flow terminates with an error instead of hanging.
+    let transitions = 0;
+
     // The main traversal loop. Each iteration may: (a) `return` directly for
     // terminal nodes; (b) set `result.stop_reason` and break the loop;
     // (c) advance `currentNodeId` and continue; or (d) fall through to the
     // shared post-switch edge resolution.
     loop: for (;;) {
+      if (++transitions > MAX_NODE_TRANSITIONS) {
+        result.stop_reason = StopReasonError;
+        result.error_detail = `flow exceeded ${MAX_NODE_TRANSITIONS} node transitions (possible cycle)`;
+        result.turn_count = turnCount;
+        break;
+      }
       const node = this.graph.nodes.get(currentNodeId);
       if (!node) {
         result.stop_reason = StopReasonError;
