@@ -166,8 +166,18 @@ export function registerSimulationRoutes(app: Hono): void {
         // the ELB reset it after ~60s → the console "stream error". A real progress frame IS forwarded
         // (XADDed), so the stream/connection never idles out. `stage:"heartbeat"` carries no counts,
         // so it is safe for the console (advisory progress; a stage switch hits its default no-op).
-        const HEARTBEAT_MS = 10_000;
+        // The interval MUST stay well under the downstream Redis peer's idle-reset window (~10s on the
+        // shared cluster ELB); 10s was a photo-finish with that window and lost intermittently, so this
+        // is env-tunable via SIM_GEN_HEARTBEAT_MS (default 5s). See src/schema.ts.
+        const HEARTBEAT_MS = simEngineConfig.genHeartbeatMs;
         let hbSeq = 0;
+        // Prime the relay's Redis connection immediately: the planner LLM runs for tens of seconds
+        // right after stream-open, so without a first frame here the connection can idle from open
+        // until the first interval heartbeat and be reset by the peer before any event flows.
+        await stream.writeSSE({
+          event: SSE.PROGRESS,
+          data: envelope("generation_id", genId, { stage: "heartbeat", generation_id: genId, seq: ++hbSeq }),
+        });
         for (;;) {
           const nextEvent = iterator.next();
           let result: Awaited<typeof nextEvent> | undefined;

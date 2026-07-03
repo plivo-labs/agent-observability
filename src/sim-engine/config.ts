@@ -98,4 +98,10 @@ export const simEngineConfig = {
   maxScenariosPerRequest: config.MAX_SCENARIOS_PER_REQUEST,
   /** Concurrent generate requests allowed per process (over the limit → 429). */
   genMaxConcurrent: config.GEN_MAX_CONCURRENT,
+  /**
+   * Interval (ms) between SSE keep-alive heartbeats during generator silence. Kept well under the
+   * downstream Redis peer idle-reset window (~10s) so the aiassist relay's Redis connection never
+   * idles long enough to be reset while the planner/writer LLMs run. See SIM_GEN_HEARTBEAT_MS.
+   */
+  genHeartbeatMs: config.SIM_GEN_HEARTBEAT_MS,
 } as const;
