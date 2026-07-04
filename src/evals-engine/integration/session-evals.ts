@@ -162,15 +162,25 @@ export function buildSessionEvalInput(
   // A node without a ref gets a synthetic internal grouping key (the sender
   // then can't correlate verdicts to node identity, but the node axis must
   // still be judged — with "" the fallback bucket would silently drop every
-  // turn and the session would produce zero node evaluations). The NUL-byte
-  // prefix keeps synthetic keys out of any plausible sender ref space; the
-  // echoed NodeRef.ref is restored to the sender's original value below.
-  const SYNTHETIC_REF = "\u0000node:";
+  // turn and the session would produce zero node evaluations). The prefix is
+  // PRINTABLE on purpose: Postgres jsonb rejects the NUL escape, so a
+  // NUL-based key would make storing the verdicts fail terminally. The echoed
+  // NodeRef.ref is restored to the sender's original value below.
+  const SYNTHETIC_REF = "__ao_unref_";
   const groupKeyFor = (n: AgentConfigNode | undefined, i: number): string =>
     (typeof n?.ref === "string" && n.ref) ? n.ref : `${SYNTHETIC_REF}${i}`;
   const byRef = new Map<string, AgentConfigNode>();
   cfgNodes.forEach((n, i) => { byRef.set(groupKeyFor(n, i), n); });
-  const fallbackRef = cfgNodes.length > 0 ? groupKeyFor(cfgNodes[0], 0) : "";
+  // Ref-less turns fall to the first configured node ONLY when the whole
+  // transcript is ref-less (single-node sender). In a mixed session a missing
+  // ref means the sender failed to attribute that turn (e.g. a config capture
+  // race) — bucketing it under node 0 would judge it against the wrong node,
+  // so it goes to a synthetic unknown bucket (empty config -> neutral skips)
+  // while still appearing in the full transcript.
+  const anyEventHasRef = evs.some((e) => typeof e?.node_ref === "string" && e.node_ref);
+  const fallbackRef = anyEventHasRef
+    ? `${SYNTHETIC_REF}unattributed`
+    : (cfgNodes.length > 0 ? groupKeyFor(cfgNodes[0], 0) : "");
 
   // Group each transcript turn under a node ref, preserving chronological order.
   const turnsByRef = new Map<string, EvalTurn[]>();
@@ -250,7 +260,12 @@ export function buildSessionEvalInput(
   for (const ref of orderedRefs) {
     const turns = turnsByRef.get(ref) ?? [];
     if (turns.length === 0) continue;
-    const def = byRef.get(ref) ?? cfgNodes[0] ?? {};
+    // A ref the config doesn't know (config snapshot gap, or a sender whose
+    // transcript and config refs come from different id spaces) gets an EMPTY
+    // def — the judges' neutral-skip paths then apply. Borrowing another
+    // node's config here would produce confidently-wrong verdicts attributed
+    // to a node that was never configured that way.
+    const def: AgentConfigNode = byRef.get(ref) ?? {};
     const requiredVariables = (def.variables ?? [])
       .map((v) => v?.name)
       .filter((n): n is string => typeof n === "string" && n.length > 0);
@@ -301,7 +316,7 @@ export function buildSessionEvalInput(
     }
     nodes.push({
       node_uuid: ref,
-      node_name: typeof def.name === "string" && def.name ? def.name : ref,
+      node_name: typeof def.name === "string" && def.name ? def.name : (ref.startsWith(SYNTHETIC_REF) ? "node" : ref),
       node_prompt: typeof def.instructions === "string" ? def.instructions : "",
       available_intents: Array.isArray(def.intents) ? def.intents.map((i) => ({ intent_name: i?.name, intent_instructions: i?.description })) : [],
       chosen_intent: chosenIntent,
@@ -329,7 +344,7 @@ export function buildSessionEvalInput(
       // things said on the call.
       speech_transcript: renderFullTranscript(
         allTurns.filter(
-          (t) => t.user || !/^(System_Note|Tool_Call|Tool_Result|Agent_Handoff)[:\s]/.test(t.agent),
+          (t) => t.user || !/^(System_Note|Tool_Call|Tool_Result|Agent_Handoff)(?=[:\s]|$)/.test(t.agent),
         ),
       ),
     },
@@ -360,7 +375,9 @@ export async function evaluateIngestedSession(
 
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()
-      ? evaluateConversationMetrics(input, provider)
+      // Override the sim engine's platform flags: the generic ingest path
+      // makes no claim about which runtime produced the session.
+      ? evaluateConversationMetrics(input, provider).then((cm) => ({ ...cm, is_livekit: false, is_agent_runner: false }))
       : Promise.resolve(emptyConversationMetrics()),
     input.nodes.length
       ? evaluateSimulation(input, { provider })
@@ -395,7 +412,10 @@ function emptyConversationMetrics(): SimConversationMetrics {
     silent_call: false,
     customer_engaged: false,
     conversation_status: { status: "", reason: "", technical_reason: "" },
-    is_livekit: true,
+    // Platform-neutral: the generic ingest path makes no claim about which
+    // runtime produced the session (these legacy flags exist for the sim
+    // engine's own consumers).
+    is_livekit: false,
     is_agent_runner: false,
     stt: { error_count: 0, recovered_count: 0 },
   };

@@ -81,21 +81,38 @@ if (queueDispatchEnabled) {
 // worker is consumer-only: it stays alive for the SQS consumer (started above) until a shutdown signal.
 if (dbConfigured) {
   console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
+  // The eval sweep runs as its OWN loop, never awaited by the alert loop: one
+  // eval tick can spend minutes on provider latency, and serially chaining it
+  // would starve windowed alert-rule evaluation and webhook delivery retries
+  // (the worker's original job). runEvalSweepOnce's internal re-entrancy
+  // guard makes overlapping ticks a no-op. Gated so an inline-API deployment
+  // can run this worker for alerts/SQS without doubling eval sweepers.
+  let evalLoop: Promise<void> = Promise.resolve();
+  if (config.EVAL_SWEEPER_WORKER === "on") {
+    evalLoop = (async () => {
+      while (running) {
+        try {
+          await runEvalSweepOnce();
+        } catch (e) {
+          console.error(`[worker] eval sweep failed: ${(e as Error).message}`);
+        }
+        for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
+          await Bun.sleep(1000);
+        }
+      }
+    })();
+  } else {
+    console.log("[worker] EVAL_SWEEPER_WORKER=off — ingested-session judging disabled on this worker (ensure the API runs EVAL_SWEEPER=inline, or no evals run at all)");
+  }
   while (running) {
     await runSweepOnce();
-    // Judge any ingested sessions that carry an agent config (drains its own
-    // backlog per call; safe to run every tick). Isolated so an eval error
-    // never stops alert sweeping. Gated so an inline-API deployment can run
-    // this worker for alerts/SQS without doubling eval sweepers.
-    if (config.EVAL_SWEEPER_WORKER === "on") {
-      await runEvalSweepOnce();
-    }
     // Sleep in small slices so a shutdown signal is honored within ~1s
     // instead of waiting out the full interval.
     for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
       await Bun.sleep(1000);
     }
   }
+  await evalLoop; // drain the eval loop before exiting
 } else {
   console.log("[worker] DATABASE_URL unset — stateless mode: alert sweeper disabled, consumer-only");
   while (running) {

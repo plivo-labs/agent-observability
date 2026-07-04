@@ -46,6 +46,11 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 // API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
 if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
   startEvalSweeper();
+} else if (process.env.NODE_ENV !== "test" && dbConfigured) {
+  // Loud on purpose: EVAL_SWEEPER=off on the API is only correct when a
+  // worker runs with EVAL_SWEEPER_WORKER=on — if both are off, ingested
+  // sessions are never judged and the gap is silent.
+  console.warn("[evals] EVAL_SWEEPER=off — this API judges nothing; a worker with EVAL_SWEEPER_WORKER=on must be running, or ingested-session evals are disabled entirely");
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -81,6 +86,14 @@ if (basicAuthEnabled) {
   });
   app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
+} else if (liveKitAuthEnabled) {
+  // A LiveKit-JWT-only deployment configured auth for ingest but has no Basic
+  // pair — leaving the dashboard/API surface (sessions, verdicts, by-tag
+  // lookup) open would silently expose every stored transcript. Accept the
+  // same Bearer JWTs on /api/* so "auth configured" always means the read
+  // surface is gated too.
+  app.use("/api/*", nativeLiveKitUploadAuth);
+  app.use("/observability/evals/*", nativeLiveKitUploadAuth);
 }
 
 // Cap ingest body sizes so a giant (or malicious) upload can't be buffered
@@ -737,16 +750,32 @@ app.get("/api/sessions/:id", async (c) => {
 // the newest matches with their eval status so a consumer can fetch verdicts.
 app.get("/api/sessions/by-tag/:tag", async (c) => {
   const tag = c.req.param("tag");
-  const rows = await sql`
-    SELECT t.session_id, v.status AS eval_status
-    FROM session_tags t
-    LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
-    WHERE t.name = ${tag}
-    ORDER BY t.created_at DESC
-    LIMIT 20
-  `;
+  // Optional tenant scope: when the caller passes account_id, only that
+  // account's sessions match — an external system holding one tenant's
+  // credentials must not be able to resolve another tenant's sessions by
+  // guessing tags. Omitting it preserves single-tenant behavior.
+  const accountId = c.req.query("account_id") ?? null;
+  const rows = accountId !== null
+    ? await sql`
+        SELECT t.session_id, v.status AS eval_status, s.account_id
+        FROM session_tags t
+        JOIN agent_transport_sessions s ON s.session_id = t.session_id AND s.account_id = ${accountId}
+        LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
+        WHERE t.name = ${tag}
+        ORDER BY t.created_at DESC
+        LIMIT 20
+      `
+    : await sql`
+        SELECT t.session_id, v.status AS eval_status, s.account_id
+        FROM session_tags t
+        LEFT JOIN agent_transport_sessions s ON s.session_id = t.session_id
+        LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
+        WHERE t.name = ${tag}
+        ORDER BY t.created_at DESC
+        LIMIT 20
+      `;
   return c.json({
-    objects: rows.map((r: any) => ({ session_id: r.session_id, eval_status: r.eval_status ?? null })),
+    objects: rows.map((r: any) => ({ session_id: r.session_id, eval_status: r.eval_status ?? null, account_id: r.account_id ?? null })),
   });
 });
 

@@ -4,7 +4,13 @@
 -- agent_transport_sessions (the busiest table) for its duration — ingest
 -- writes block until it commits. On a large table run this off-peak, or
 -- pre-create the index CONCURRENTLY outside the transactional migration
--- runner and let the IF NOT EXISTS here no-op.
+-- runner and let the IF NOT EXISTS here no-op:
+--   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_transport_sessions_session_id
+--     ON agent_transport_sessions (session_id);
+-- The lock_timeout below makes the migration FAIL FAST (and roll back) if it
+-- cannot take its locks within 10s — a failed migration you retry off-peak
+-- beats one that silently blocks live ingest while it waits.
+SET LOCAL lock_timeout = '10s';
 --
 -- (1) agent_transport_sessions.session_id gains a UNIQUE index so at-least-once
 --     recording uploads (client retries after a timeout the server actually

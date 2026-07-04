@@ -9,6 +9,7 @@ import {
 } from "../db.js";
 import type { DecodedOtlpLog } from "./protobuf.js";
 import { parseJsonValue } from "../raw-report.js";
+import { sanitizeForLog } from "../response.js";
 
 interface PersistResult {
   tags: number;
@@ -248,8 +249,11 @@ async function handleChatItem({ log, sessionId, rawReportPatches }: OtlpHandlerC
 // Reserved tag name: a client may deliver the agent config through the tag
 // channel (name = AGENT_CONFIG_TAG, metadata = the config). The config is the
 // eval opt-in; it's stored as agent config rather than a plain tag so it never
-// pollutes the session's tag list. See handleAgentConfig for the config shape.
-const AGENT_CONFIG_TAG = "agent.config";
+// pollutes the session's tag list. Namespaced ("observability." prefix) so the
+// reserved name can't squat a tag a sender plausibly uses for its own
+// purposes; "agent.config" is accepted as a legacy alias for early senders.
+const AGENT_CONFIG_TAG = "observability.agent_config";
+const AGENT_CONFIG_TAG_LEGACY = "agent.config";
 
 async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
   const tag = asRecord(log.attributes.tag);
@@ -258,27 +262,69 @@ async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx)
     return;
   }
   const metadata = asRecord(tag?.metadata);
-  if (name === AGENT_CONFIG_TAG) {
-    await storeAgentConfig(sessionId, metadata, observedAt, result);
+  if (name === AGENT_CONFIG_TAG || name === AGENT_CONFIG_TAG_LEGACY) {
+    const stored = await storeAgentConfig(sessionId, metadata, observedAt, result);
+    if (!stored) {
+      // Metadata didn't parse as an agent config — keep it as a plain tag
+      // (visible, debuggable) instead of silently swallowing the record.
+      console.warn(`[otlp] ${AGENT_CONFIG_TAG} tag without a valid config (session=${sessionId.slice(0, 64)}) — stored as a plain tag`);
+      await persistTag(sessionId, name, metadata, observedAt);
+      result.tags += 1;
+    }
     return;
   }
   await persistTag(sessionId, name, metadata, observedAt);
   result.tags += 1;
 }
 
+// Caps on the judging surface one config can demand: each judged node costs
+// ~5 LLM calls, so an unbounded config would let a single ingested session
+// trigger an unbounded provider bill. Oversized configs are clamped (never
+// rejected) and the truncation is logged.
+const MAX_CONFIG_NODES = 150;
+const MAX_NODE_LIST_ITEMS = 100; // intents / variables per node
+const MAX_INSTRUCTIONS_CHARS = 50_000;
+
+function clampAgentConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const nodes = Array.isArray(config.nodes) ? config.nodes : [];
+  let clamped = false;
+  const boundedNodes = nodes.slice(0, MAX_CONFIG_NODES).map((n) => {
+    if (typeof n !== "object" || n === null) return n;
+    const node = { ...(n as Record<string, unknown>) };
+    if (typeof node.instructions === "string" && node.instructions.length > MAX_INSTRUCTIONS_CHARS) {
+      node.instructions = node.instructions.slice(0, MAX_INSTRUCTIONS_CHARS);
+      clamped = true;
+    }
+    for (const key of ["intents", "variables"]) {
+      if (Array.isArray(node[key]) && (node[key] as unknown[]).length > MAX_NODE_LIST_ITEMS) {
+        node[key] = (node[key] as unknown[]).slice(0, MAX_NODE_LIST_ITEMS);
+        clamped = true;
+      }
+    }
+    return node;
+  });
+  if (nodes.length > MAX_CONFIG_NODES) clamped = true;
+  if (clamped) {
+    console.warn(`[otlp] agent config clamped to ${MAX_CONFIG_NODES} nodes / ${MAX_NODE_LIST_ITEMS} intents+variables per node / ${MAX_INSTRUCTIONS_CHARS} instruction chars`);
+  }
+  return { ...config, nodes: boundedNodes };
+}
+
 /** Validate + store an agent config (from either the dedicated record or the
- *  reserved tag). Requires at least one node; otherwise ignored. */
+ *  reserved tag). Requires at least one node; otherwise ignored. Returns
+ *  whether a config was stored. */
 async function storeAgentConfig(
   sessionId: string,
   config: Record<string, unknown> | null,
   observedAt: Date | null,
   result: PersistResult,
-): Promise<void> {
+): Promise<boolean> {
   if (!config || !Array.isArray(config.nodes) || config.nodes.length === 0) {
-    return;
+    return false;
   }
-  await upsertSessionAgentConfig({ sessionId, config, source: "livekit_otlp", observedAt });
+  await upsertSessionAgentConfig({ sessionId, config: clampAgentConfig(config), source: "livekit_otlp", observedAt });
   result.agentConfigs += 1;
+  return true;
 }
 
 async function handleEvaluation({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
@@ -351,7 +397,11 @@ const OTLP_HANDLERS: Record<string, OtlpHandler> = {
  *  errors default to transient: dropping data needs positive evidence. */
 function isTransientPersistError(e: unknown): boolean {
   const msg = `${(e as Error)?.message ?? ""} ${(e as { code?: string })?.code ?? ""}`;
-  const deterministic = /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|22P02|23\d{3}/i;
+  // SQLSTATEs are word-boundary anchored so codes can't match digit runs
+  // inside ids; the unicode/byte-sequence markers cover jsonb rejecting NUL
+  // escapes (22P05) and encoding errors — deterministic content failures
+  // that would poison an at-least-once sender if classified transient.
+  const deterministic = /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|unsupported unicode|invalid byte sequence|\b22P0[0-9]\b|\b23\d{3}\b/i;
   return !deterministic.test(msg);
 }
 
@@ -384,7 +434,7 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
         throw e;
       }
       result.skippedRecords += 1;
-      console.error(`[otlp] record skipped (deterministic persist error, body=${body}): ${(e as Error).message}`);
+      console.error(`[otlp] record skipped (deterministic persist error, body=${sanitizeForLog(body ?? "")}): ${sanitizeForLog((e as Error).message)}`);
     }
   }
 
@@ -396,7 +446,7 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
         throw e;
       }
       result.skippedRecords += 1;
-      console.error(`[otlp] raw-report patch skipped (deterministic persist error): ${(e as Error).message}`);
+      console.error(`[otlp] raw-report patch skipped (deterministic persist error): ${sanitizeForLog((e as Error).message)}`);
     }
   }
 

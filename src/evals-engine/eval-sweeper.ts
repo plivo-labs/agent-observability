@@ -1,13 +1,16 @@
 import {
   claimNextEvalSession,
   completeSessionEvalVerdicts,
+  countPendingEvalSessions,
   deferEvalClaimRetry,
   failSessionEvalVerdicts,
   getSessionEvalSource,
+  heartbeatEvalClaim,
   insertLiveKitEvaluation,
+  type EvalClaim,
 } from "../db.js";
 import { sanitizeForLog } from "../response.js";
-import { evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts } from "./integration/session-evals.js";
+import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts } from "./integration/session-evals.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
 //
@@ -23,6 +26,13 @@ import { evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts } f
 
 export const EVAL_SWEEP_INTERVAL_MS = 20_000;
 const MAX_PER_SWEEP = 20; // bound the work per tick so one sweep can't run unbounded
+// Sessions judged concurrently within one sweep. The judge-call semaphore
+// (MAX_CONCURRENT_JUDGE_CALLS) still caps total provider concurrency, so this
+// only overlaps sessions' wall-clock — it can't stack provider load.
+const MAX_CONCURRENT_SESSIONS = 3;
+// Re-assert claim ownership at least this often while judging, so a healthy
+// long-running judge is never stale-adopted (heartbeat interval << stale window).
+const CLAIM_HEARTBEAT_MS = 60_000;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let sweeping = false;
@@ -35,8 +45,14 @@ let sweeping = false;
  *  and can't double-judge (done is terminal). Row shape mirrors the OTLP
  *  "evaluation" records: verdict pass/fail + reasoning, `tag` = the node's
  *  opaque ref so consumers can group by node. */
-export async function fanOutExternalEvals(sessionId: string, verdicts: SessionEvalVerdicts): Promise<void> {
-  const observedAt = new Date();
+export async function fanOutExternalEvals(
+  sessionId: string,
+  verdicts: SessionEvalVerdicts,
+  /** Call-end time. Rows are stamped with CALL time, not judge time — a
+   *  backlog flush of old sessions must not inject its fails into the
+   *  CURRENT alert window. */
+  observedAt: Date = new Date(),
+): Promise<void> {
   const rows: Array<{ judgeName: string; tag: string | null; passed: boolean; reasoning: string; raw: Record<string, unknown> }> = [];
 
   for (const ne of verdicts.node_evaluations) {
@@ -54,7 +70,7 @@ export async function fanOutExternalEvals(sessionId: string, verdicts: SessionEv
   }
   // Conversation-axis judges (whole-transcript, no node tag). Detections read
   // as fail when they fire; sentiment fails when clearly negative or confused
-  // (matching the judge prompt — and the console popup's own tone rule).
+  // (matching the sentiment judge's own pass rule).
   // Judge-unavailable fallbacks (the judges fail open to detected:false with
   // technical_reason "…unavailable") are SKIPPED, not written as passes — a
   // provider outage must not silently bias fail rates to zero.
@@ -142,49 +158,91 @@ function eventsFromChatHistory(chatHistory: unknown): any[] {
   if (!Array.isArray(chatHistory)) return [];
   return chatHistory
     .filter((item) => item && typeof item === "object")
-    .map((item) => ({ type: "conversation_item_added", ...(typeof (item as any).node_run_uuid === "string" && (item as any).node_run_uuid ? { node_ref: (item as any).node_run_uuid } : {}), item }));
+    .map((item) => {
+      // `node_ref` is the generic contract (mirrors the OTLP chat-item field);
+      // `node_run_uuid` is kept as a legacy alias for senders whose recording
+      // serializer predates the generic field name.
+      const anyItem = item as any;
+      const ref = typeof anyItem.node_ref === "string" && anyItem.node_ref
+        ? anyItem.node_ref
+        : (typeof anyItem.node_run_uuid === "string" && anyItem.node_run_uuid ? anyItem.node_run_uuid : "");
+      return { type: "conversation_item_added", ...(ref ? { node_ref: ref } : {}), item };
+    });
 }
 
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
-async function judgeClaimed(sessionId: string): Promise<boolean> {
+async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
+  const sessionId = claim.sessionId;
   const source = await getSessionEvalSource(sessionId);
   if (!source) {
     // Config/session vanished between claim and read — release as error so it
     // isn't reclaimed forever.
-    await failSessionEvalVerdicts(sessionId, "eval source not found");
+    await failSessionEvalVerdicts(claim, "eval source not found");
     return false;
   }
+
+  // Heartbeat: re-assert ownership well inside the stale window so a long
+  // judge run (many nodes x slow provider) is never adopted mid-flight and
+  // double-judged. Losing the heartbeat aborts the run before more spend.
+  let ownershipLost = false;
+  const heartbeat = setInterval(() => {
+    void heartbeatEvalClaim(claim).then((token) => {
+      if (token === null) {
+        ownershipLost = true;
+      } else {
+        claim.token = token;
+      }
+    }).catch(() => { /* transient DB blip — next beat retries */ });
+  }, CLAIM_HEARTBEAT_MS);
+  if (typeof (heartbeat as any).unref === "function") (heartbeat as any).unref();
+
   try {
     const rawReport = (source.rawReport ?? {}) as { events?: unknown };
     let events = Array.isArray(rawReport.events) ? (rawReport.events as any[]) : [];
     if (events.length === 0) {
       events = eventsFromChatHistory(source.chatHistory);
     }
-    if (events.length === 0) {
-      // No transcript at all. A young session may simply have its chat items
-      // still in flight (config can land in an earlier OTLP batch than the
-      // items) — give it a grace window by leaving the claim `running` so the
-      // stale-adoption path re-checks, instead of stamping a premature
-      // terminal error. Only a session that STILL has no transcript after the
-      // grace is recorded as an honest gap (an empty-input eval would store
-      // phantom all-pass detections).
+    // Gate on JUDGEABLE content, not raw array length: an events array of
+    // non-conversation entries (or empty-content items) builds zero turns,
+    // and judging that would store the exact phantom all-pass verdicts this
+    // guard exists to prevent.
+    const built = buildSessionEvalInput(source.config as AgentConfig, events as any[]);
+    if (built.input.nodes.length === 0 || !built.input.full_transcript.trim()) {
+      // No judgeable transcript. A young session may simply have its chat
+      // items still in flight (config can land in an earlier OTLP batch than
+      // the items) — give it a grace window instead of stamping a premature
+      // terminal error.
       const ageMs = source.sessionCreatedAt ? Date.now() - source.sessionCreatedAt.getTime() : Infinity;
       const NO_TRANSCRIPT_GRACE_MS = 10 * 60 * 1000;
       if (ageMs < NO_TRANSCRIPT_GRACE_MS) {
         // Backdate the claim so stale adoption re-picks it in ~2 minutes —
         // without this, "will retry" would silently mean the FULL stale
         // window (15 min), long after the in-flight transcript landed.
-        await deferEvalClaimRetry(sessionId, 120);
-        console.warn(`[evals] session=${sanitizeForLog(sessionId)} has no transcript yet (age ${Math.round(ageMs / 1000)}s) — retrying in ~2min`);
+        await deferEvalClaimRetry(claim, 120);
+        console.warn(`[evals] session=${sanitizeForLog(sessionId)} has no judgeable transcript yet (age ${Math.round(ageMs / 1000)}s) — retrying in ~2min`);
         return false;
       }
-      await failSessionEvalVerdicts(sessionId, "no transcript events to judge");
+      await failSessionEvalVerdicts(claim, "no judgeable transcript to evaluate");
       return false;
     }
+
     const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events);
-    await completeSessionEvalVerdicts(sessionId, verdicts as unknown as Record<string, unknown>);
+    if (ownershipLost) {
+      // Another sweeper adopted the claim mid-judge — its results win; ours
+      // are discarded so the session is never double-completed/fanned out.
+      console.warn(`[evals] claim lost mid-judge session=${sanitizeForLog(sessionId)} — discarding this run`);
+      return false;
+    }
+    const completed = await completeSessionEvalVerdicts(claim, verdicts as unknown as Record<string, unknown>);
+    if (!completed) {
+      // Ownership check failed at the final write (stale adoption or the
+      // session was bulk-deleted mid-judge) — skip fan-out so no rows are
+      // written for work we no longer own or a session that no longer exists.
+      console.warn(`[evals] complete skipped (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
+      return false;
+    }
     try {
-      await fanOutExternalEvals(sessionId, verdicts);
+      await fanOutExternalEvals(sessionId, verdicts, source.sessionEndedAt ?? new Date());
     } catch (e) {
       // Denormalization only — verdicts are already stored; don't fail the claim.
       console.error(`[evals] fan-out failed session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
@@ -196,14 +254,18 @@ async function judgeClaimed(sessionId: string): Promise<boolean> {
     if (!isTerminalEvalError(e)) {
       // Transient (timeout/429/5xx/network): keep the claim `running` so the
       // stale-adoption path retries it instead of poisoning the session.
+      // (claimNextEvalSession retires claims older than the retry budget, so
+      // "retry via stale adoption" can no longer mean "retry forever".)
       console.warn(`[evals] transient eval failure session=${sanitizeForLog(sessionId)} (will retry): ${(e as Error).message}`);
       return false;
     }
     // Deterministic failure (schema/content policy) — the same input would
     // fail identically, so DLQ-style record it and move on.
-    await failSessionEvalVerdicts(sessionId, (e as Error).message);
+    await failSessionEvalVerdicts(claim, (e as Error).message);
     console.error(`[evals] eval_error session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
     return false;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -211,11 +273,24 @@ export async function runEvalSweepOnce(): Promise<void> {
   if (sweeping) return; // re-entrancy guard: a slow sweep can't stack
   sweeping = true;
   try {
-    for (let i = 0; i < MAX_PER_SWEEP; i++) {
-      const sessionId = await claimNextEvalSession();
-      if (!sessionId) break; // backlog drained
-      await judgeClaimed(sessionId);
+    const pending = await countPendingEvalSessions();
+    if (pending > 0) {
+      console.log(`[evals] backlog=${pending} pending sessions`);
     }
+    // N workers each loop claim->judge until the tick budget is spent or the
+    // backlog drains. Concurrency overlaps sessions' wall-clock (provider
+    // concurrency stays capped by the judge semaphore), so one slow session
+    // can't serialize the whole tick.
+    let remaining = MAX_PER_SWEEP;
+    const worker = async (): Promise<void> => {
+      while (remaining > 0) {
+        remaining--;
+        const claim = await claimNextEvalSession();
+        if (!claim) return; // backlog drained
+        await judgeClaimed(claim);
+      }
+    };
+    await Promise.all(Array.from({ length: MAX_CONCURRENT_SESSIONS }, () => worker()));
   } catch (e) {
     console.error(`[evals] sweep failed: ${(e as Error).message}`);
   } finally {
