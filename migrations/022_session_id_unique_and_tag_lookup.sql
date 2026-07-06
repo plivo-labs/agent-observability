@@ -1,4 +1,4 @@
--- 021: idempotent ingest + tag lookup performance.
+-- 022: idempotent ingest + tag lookup performance.
 --
 -- DEPLOY NOTE: the unique-index build below takes a SHARE lock on
 -- agent_transport_sessions (the busiest table) for its duration — ingest

@@ -88,7 +88,7 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
   // latency), not token counts, so computing here would persist a
   // misleading $0 for every voice-agent session.
   // Idempotency via WHERE NOT EXISTS rather than ON CONFLICT: ON CONFLICT
-  // (session_id) THROWS on a database where migration 021's unique index has
+  // (session_id) THROWS on a database where migration 022's unique index has
   // not run yet (AUTO_MIGRATE=false deployments apply migrations manually),
   // which would 500 every recording ingest until the migration lands. The
   // NOT EXISTS guard gives the same retry-is-a-no-op behavior on any schema;
@@ -121,7 +121,7 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
   `;
   // At-least-once ingest: a client retry after a timeout the server actually
   // committed must be a no-op, not a duplicate session (unique index from
-  // migration 021).
+  // migration 022).
 }
 
 export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
