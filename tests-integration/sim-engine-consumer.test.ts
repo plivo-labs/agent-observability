@@ -71,8 +71,9 @@ function makeScenario(index: number): Record<string, unknown> {
   };
 }
 
-/** The aiassist→AO SQS envelope for one scenario. */
-function makeEnvelope(runUuid: string, index: number): string {
+/** The aiassist→AO SQS envelope for one scenario. `extra` merges additional body fields
+ *  (agent_id / scenario_uuid / run_name / … — the persistence-path additions). */
+function makeEnvelope(runUuid: string, index: number, extra: Record<string, unknown> = {}): string {
   return JSON.stringify({
     event_type: "simulation_eval",
     event_name: "run_simulation_scenario",
@@ -87,6 +88,7 @@ function makeEnvelope(runUuid: string, index: number): string {
         agent_flow_description: "Test agent",
         simulation_mode: "stress",
         enqueue_ts: Date.now(),
+        ...extra,
       },
     },
   });
@@ -281,6 +283,103 @@ suite("consumeSimulationQueue — drains the queue + runs the turn loop E2E", ()
     expect(remaining).toBe(0);
 
     // Cleanup the run-scoped keys.
+    await r.del(
+      resultsKey(runUuid),
+      flowJsonKey(runUuid),
+      expectedCountKey(runUuid),
+      `SIM_EVAL:{${runUuid}}:SCENARIO_PROCESSED_COUNT`,
+      `SIM_EVAL:{${runUuid}}:SCENARIO_COMPLETED`,
+    );
+  }, 45_000);
+
+  // Durable persistence path (aodb-write.md): messages carrying agent_id (+ scenario_uuid /
+  // run_name / scenario_count) make the consumer mirror every Redis emit with an ao_sim_* row.
+  // Requires a reachable DATABASE_URL with migrations applied — probed + skipped inline so the
+  // suite still runs Redis-only environments.
+  test("persists ao_sim_run + ao_sim_run_scenario rows and emits scenario_db_ready when agent_id rides the message", async () => {
+    const { sql } = await import("../src/db.js");
+    try {
+      await sql`SELECT 1 FROM ao_sim_run LIMIT 0`;
+    } catch {
+      console.warn("[sim-engine-consumer] DB unreachable or tables missing — skipping persistence test");
+      return;
+    }
+
+    const runUuid = crypto.randomUUID();
+    const AGENT = "it-consumer-phlo-uuid";
+    const scenarioUuids = Array.from({ length: SCENARIO_COUNT }, () => crypto.randomUUID());
+    // Own queue: the previous test's aborted 20s long-polls stay pending server-side in
+    // ElasticMQ and would swallow messages sent to the shared queue into a 300s visibility
+    // window (same reason the concurrency test below uses its own queue).
+    const created = await client.send(new CreateQueueCommand({ QueueName: "sim-eval-persist" }));
+    const persistQueueUrl = created.QueueUrl!;
+    await r.set(flowJsonKey(runUuid), FLOW);
+    await r.set(expectedCountKey(runUuid), String(SCENARIO_COUNT));
+    for (let i = 0; i < SCENARIO_COUNT; i++) {
+      await client.send(
+        new SendMessageCommand({
+          QueueUrl: persistQueueUrl,
+          MessageBody: makeEnvelope(runUuid, i, {
+            agent_id: AGENT,
+            scenario_uuid: scenarioUuids[i],
+            run_name: "IT persistence run (AO)",
+            scenario_count: SCENARIO_COUNT,
+            max_turns: 25,
+          }),
+        }),
+      );
+    }
+
+    const abort = new AbortController();
+    const deps: ConsumerDeps = { redis: r, runnerDeps: { livekit: new LiveKitSimClient({ url: turnBase }) } };
+    const consumer = consumeSimulationQueue(deps, { queueUrl: persistQueueUrl, concurrency: 4, signal: abort.signal, sqs: client });
+    const deadline = Date.now() + 30_000;
+    let entries: { type: string; data: any }[] = [];
+    while (Date.now() < deadline) {
+      entries = await readEntries(r, runUuid);
+      if (entries.some((e) => e.type === "simulation_completed")) break;
+      await Bun.sleep(100);
+    }
+    abort.abort();
+    await consumer;
+
+    // scenario_db_ready emitted once per scenario, echoing the flow_run_uuid as scenario_db_uuid.
+    const dbReady = entries.filter((e) => e.type === "scenario_db_ready");
+    expect(dbReady.length).toBe(SCENARIO_COUNT);
+    const startedByScenario = new Map<string, string>(
+      entries
+        .filter((e) => e.type === "scenario_started")
+        .map((e) => [e.data.event_data.scenario_id as string, e.data.event_data.flow_run_uuid as string]),
+    );
+    for (const e of dbReady) {
+      expect(e.data.event_data.scenario_db_uuid).toBe(startedByScenario.get(e.data.event_data.scenario_id));
+    }
+
+    // Run header: name/count from the message, finalized at the gate, counters bumped per completion.
+    const [run] = await sql`SELECT * FROM ao_sim_run WHERE id = ${runUuid}`;
+    expect(run).toBeDefined();
+    expect((run as Record<string, unknown>).agent_id).toBe(AGENT);
+    expect((run as Record<string, unknown>).tenant_id).toBe("acct-1");
+    expect((run as Record<string, unknown>).name).toBe("IT persistence run (AO)");
+    expect((run as Record<string, unknown>).scenario_count).toBe(SCENARIO_COUNT);
+    expect((run as Record<string, unknown>).status).toBe("completed");
+    expect((run as Record<string, unknown>).completed_count).toBe(SCENARIO_COUNT);
+
+    // Scenario rows: id = flow_run_uuid, scenario_ref = the library uuid from the message,
+    // terminal status + non-empty transcript.
+    const rows = await sql`SELECT * FROM ao_sim_run_scenario WHERE sim_run_id = ${runUuid} ORDER BY scenario_index`;
+    expect(rows.length).toBe(SCENARIO_COUNT);
+    for (let i = 0; i < SCENARIO_COUNT; i++) {
+      const row = rows[i] as Record<string, unknown>;
+      expect(row.scenario_ref).toBe(scenarioUuids[i]);
+      expect(row.status).toBe("completed");
+      expect(row.id).toBe(startedByScenario.get(`s${i}`));
+      expect((row.transcript as unknown[]).length).toBeGreaterThanOrEqual(1);
+    }
+
+    // Cleanup rows + run-scoped keys.
+    await sql`DELETE FROM ao_sim_run_scenario WHERE sim_run_id = ${runUuid}`;
+    await sql`DELETE FROM ao_sim_run WHERE id = ${runUuid}`;
     await r.del(
       resultsKey(runUuid),
       flowJsonKey(runUuid),

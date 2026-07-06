@@ -49,6 +49,15 @@ function shutdown(signal: string) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
+// Sim-persistence table probe (aodb-write.md): the worker writes ao_sim_* rows from the
+// SQS consumer, and on the managed core-DB those tables are pre-created out-of-band
+// (AUTO_MIGRATE stays off — the API entrypoint owns migrations, and never against a
+// shared core DB). Fail fast at boot with remediation instead of erroring per message.
+if (config.SIM_PERSIST && dbConfigured) {
+  const { probeSimTables } = await import("./db-probe.js");
+  await probeSimTables();
+}
+
 // Start the simulation-eval SQS consumer alongside the sweeper when it's configured
 // (SQS + Redis + a /turn endpoint). Otherwise the worker is sweeper-only. Fire-and-forget:
 // the consumer owns its poll loop and exits on the shared abort, so we don't await it below.
