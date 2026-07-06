@@ -38,7 +38,7 @@ const CLAIM_HEARTBEAT_MS = 60_000;
 let timer: ReturnType<typeof setInterval> | null = null;
 let sweeping = false;
 
-/** Fan the stored verdicts out as per-judge rows in session_external_evals so
+/** Fan the stored verdicts out as per-judge rows in ao_session_external_evals so
  *  the existing conversation-evals surfaces (agent tab, session drawer, alert
  *  count rules) render sweeper results with zero extra read paths. Runs AFTER
  *  completeSessionEvalVerdicts — the claim row stays the source of truth; a

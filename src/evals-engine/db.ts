@@ -45,7 +45,7 @@ export interface EvalClaim {
 export async function claimNextEvalSession(): Promise<EvalClaim | null> {
   // Retire claims that exhausted their retry budget before adopting anything.
   await sql`
-    UPDATE session_eval_verdicts
+    UPDATE ao_session_eval_verdicts
     SET status = 'error', error = 'retry budget exhausted (claim older than ${EVAL_CLAIM_MAX_AGE_HOURS}h)',
         completed_at = NOW(), updated_at = NOW()
     WHERE status = 'running'
@@ -54,9 +54,9 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
   `;
 
   const stale = await sql`
-    UPDATE session_eval_verdicts SET claimed_at = NOW(), updated_at = NOW()
+    UPDATE ao_session_eval_verdicts SET claimed_at = NOW(), updated_at = NOW()
     WHERE session_id = (
-      SELECT session_id FROM session_eval_verdicts
+      SELECT session_id FROM ao_session_eval_verdicts
       WHERE status = 'running'
         AND claimed_at < NOW() - INTERVAL '1 minute' * ${EVAL_CLAIM_STALE_MINUTES}
       ORDER BY claimed_at
@@ -78,12 +78,12 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
   // so a race loss is never misread as "backlog drained".
   for (let attempt = 0; attempt < 3; attempt++) {
     const fresh = await sql`
-      INSERT INTO session_eval_verdicts (session_id)
+      INSERT INTO ao_session_eval_verdicts (session_id)
       SELECT c.session_id
-      FROM session_agent_config c
-      JOIN agent_transport_sessions s ON s.session_id = c.session_id
+      FROM ao_session_agent_config c
+      JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
       WHERE NOT EXISTS (
-          SELECT 1 FROM session_eval_verdicts v WHERE v.session_id = c.session_id
+          SELECT 1 FROM ao_session_eval_verdicts v WHERE v.session_id = c.session_id
         )
         AND c.created_at < NOW() - INTERVAL '1 second' * ${EVAL_CLAIM_SETTLE_SECONDS}
       ORDER BY c.created_at DESC
@@ -104,7 +104,7 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
  *  the caller must abort instead of wasting further judge calls. */
 export async function heartbeatEvalClaim(claim: EvalClaim): Promise<string | null> {
   const rows = await sql`
-    UPDATE session_eval_verdicts
+    UPDATE ao_session_eval_verdicts
     SET claimed_at = NOW(), updated_at = NOW()
     WHERE session_id = ${claim.sessionId}
       AND status = 'running'
@@ -122,7 +122,7 @@ export async function completeSessionEvalVerdicts(
   verdicts: Record<string, unknown>,
 ): Promise<boolean> {
   const rows = await sql`
-    UPDATE session_eval_verdicts
+    UPDATE ao_session_eval_verdicts
     SET status = 'done', verdicts = ${verdicts}::jsonb, error = NULL,
         completed_at = NOW(), updated_at = NOW()
     WHERE session_id = ${claim.sessionId}
@@ -137,7 +137,7 @@ export async function completeSessionEvalVerdicts(
  *  provider content-policy rejection would fail identically every time). */
 export async function failSessionEvalVerdicts(claim: EvalClaim, error: string): Promise<boolean> {
   const rows = await sql`
-    UPDATE session_eval_verdicts
+    UPDATE ao_session_eval_verdicts
     SET status = 'error', error = ${error.slice(0, 2000)},
         completed_at = NOW(), updated_at = NOW()
     WHERE session_id = ${claim.sessionId}
@@ -154,12 +154,12 @@ export async function failSessionEvalVerdicts(claim: EvalClaim, error: string): 
 export async function countPendingEvalSessions(): Promise<number> {
   const rows = await sql`
     SELECT
-      (SELECT COUNT(*) FROM session_agent_config c
-        JOIN agent_transport_sessions s ON s.session_id = c.session_id
-        WHERE NOT EXISTS (SELECT 1 FROM session_eval_verdicts v WHERE v.session_id = c.session_id)
+      (SELECT COUNT(*) FROM ao_session_agent_config c
+        JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
+        WHERE NOT EXISTS (SELECT 1 FROM ao_session_eval_verdicts v WHERE v.session_id = c.session_id)
           AND c.created_at < NOW() - INTERVAL '1 second' * ${EVAL_CLAIM_SETTLE_SECONDS})
       +
-      (SELECT COUNT(*) FROM session_eval_verdicts
+      (SELECT COUNT(*) FROM ao_session_eval_verdicts
         WHERE status = 'running'
           AND claimed_at < NOW() - INTERVAL '1 minute' * ${EVAL_CLAIM_STALE_MINUTES}) AS pending
   `;
@@ -187,7 +187,7 @@ export interface SessionEvalSource {
  *  a "will retry" defer would silently wait the whole EVAL_CLAIM_STALE_MINUTES. */
 export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: number): Promise<void> {
   await sql`
-    UPDATE session_eval_verdicts
+    UPDATE ao_session_eval_verdicts
     SET claimed_at = NOW() - (${EVAL_CLAIM_STALE_MINUTES} * INTERVAL '1 minute') + (${retryInSeconds} * INTERVAL '1 second')
     WHERE session_id = ${claim.sessionId} AND status = 'running'
       AND claimed_at::text = ${claim.token}
@@ -198,8 +198,8 @@ export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: numb
 export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
   const rows = await sql`
     SELECT c.config, s.chat_history, s.raw_report, s.created_at AS session_created_at, s.ended_at AS session_ended_at
-    FROM session_agent_config c
-    JOIN agent_transport_sessions s ON s.session_id = c.session_id
+    FROM ao_session_agent_config c
+    JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
   `;
   if (rows.length === 0) {

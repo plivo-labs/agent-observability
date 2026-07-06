@@ -191,7 +191,7 @@ app.get("/deepstatus", async (c) => {
 registerEvalRoutes(app);
 
 // ── Agent endpoints (agent-oriented IA: virtual entity derived from
-//    distinct agent_name across sessions + eval_runs) ─────────────────────────
+//    distinct agent_name across sessions + ao_eval_runs) ─────────────────────────
 
 registerAgentRoutes(app);
 
@@ -397,7 +397,7 @@ app.post("/observability/recordings/v0", async (c) => {
 
   // Save to database. Agent upsert and session insert share one
   // transaction so a session insert failure can't leave an orphan agent
-  // row (the FK on agent_transport_sessions.agent_id otherwise tempts
+  // row (the FK on ao_agent_transport_sessions.agent_id otherwise tempts
   // exactly that race).
   try {
     await sql.begin(async (tx: any) => {
@@ -567,7 +567,7 @@ app.get("/api/sessions", async (c) => {
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
 
   const [countResult] = await sql.unsafe(
-    `SELECT count(*)::int as total FROM agent_transport_sessions ${whereClause}`,
+    `SELECT count(*)::int as total FROM ao_agent_transport_sessions ${whereClause}`,
     params,
   );
 
@@ -586,7 +586,7 @@ app.get("/api/sessions", async (c) => {
   const rows = await sql.unsafe(
     `SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
             turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol}
-     FROM agent_transport_sessions
+     FROM ao_agent_transport_sessions
      ${whereClause}
      ORDER BY ended_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -627,7 +627,7 @@ app.delete("/api/sessions", async (c) => {
   // placeholders via `sql.unsafe` instead, matching the listing endpoints.
   const placeholders = sessionIds.map((_, i) => `$${i + 1}`).join(", ");
   const deleted = await sql.unsafe(
-    `DELETE FROM agent_transport_sessions
+    `DELETE FROM ao_agent_transport_sessions
      WHERE session_id IN (${placeholders})
      RETURNING session_id`,
     sessionIds,
@@ -641,12 +641,12 @@ app.delete("/api/sessions", async (c) => {
   // cascade is explicit here.
   await Promise.all(
     [
-      "session_agent_config",
-      "session_eval_verdicts",
-      "session_external_evals",
-      "session_tags",
-      "session_outcomes",
-      "session_raw_report_patches",
+      "ao_session_agent_config",
+      "ao_session_eval_verdicts",
+      "ao_session_external_evals",
+      "ao_session_tags",
+      "ao_session_outcomes",
+      "ao_session_raw_report_patches",
     ].map((table) =>
       sql.unsafe(`DELETE FROM ${table} WHERE session_id IN (${placeholders})`, sessionIds),
     ),
@@ -678,7 +678,7 @@ app.get("/api/sessions/:id", async (c) => {
     SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
            chat_history, session_metrics, raw_report, record_url, estimated_cost_usd, created_at
-    FROM agent_transport_sessions
+    FROM ao_agent_transport_sessions
     WHERE session_id = ${sessionId}
     LIMIT 1
   `;
@@ -690,26 +690,26 @@ app.get("/api/sessions/:id", async (c) => {
   const [tagRows, evaluationRows, outcomeRows, evalVerdictRows] = await Promise.all([
     sql`
       SELECT name, metadata, source, observed_at, created_at, updated_at
-      FROM session_tags
+      FROM ao_session_tags
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, created_at) ASC, name ASC
     `,
     sql`
       SELECT source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw, created_at
-      FROM session_external_evals
+      FROM ao_session_external_evals
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, created_at) ASC, id ASC
     `,
     sql`
       SELECT source, outcome, reason, observed_at, raw, created_at, updated_at
-      FROM session_outcomes
+      FROM ao_session_outcomes
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, updated_at, created_at) DESC
       LIMIT 1
     `,
     sql`
       SELECT status, verdicts, error, completed_at
-      FROM session_eval_verdicts
+      FROM ao_session_eval_verdicts
       WHERE session_id = ${sessionId}
       LIMIT 1
     `,
@@ -791,9 +791,9 @@ app.get("/api/sessions/by-tag/:tag", async (c) => {
   // otherwise (a LEFT-joined session with no matching account is excluded).
   const rows = await sql`
     SELECT t.session_id, v.status AS eval_status, s.account_id
-    FROM session_tags t
-    LEFT JOIN agent_transport_sessions s ON s.session_id = t.session_id
-    LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
+    FROM ao_session_tags t
+    LEFT JOIN ao_agent_transport_sessions s ON s.session_id = t.session_id
+    LEFT JOIN ao_session_eval_verdicts v ON v.session_id = t.session_id
     WHERE t.name = ${tag}
       AND (${accountId}::text IS NULL OR s.account_id = ${accountId})
     ORDER BY t.created_at DESC

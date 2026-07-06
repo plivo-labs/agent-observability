@@ -3,7 +3,7 @@
  * not stored: a session is a candidate when it has ≥1 goal:<text> tag
  * (from EITHER ingest path), a spoken transcript (transcript_text from
  * migration 018 is non-null exactly when message content exists), and no
- * blocking row in session_goal_analyses (migration 019).
+ * blocking row in ao_session_goal_analyses (migration 019).
  *
  * bun:sql gotchas apply (see src/alerts/engine.ts header): never use the
  * jsonb `?` operator in query text, and pass JS objects raw for ::jsonb
@@ -34,14 +34,14 @@ export interface GoalVerdictInput {
  */
 export async function claimGoalSessions(limit: number): Promise<string[]> {
   const claimed = await sql.unsafe(
-    `INSERT INTO session_goal_analyses (session_id, status, claimed_at)
+    `INSERT INTO ao_session_goal_analyses (session_id, status, claimed_at)
      SELECT c.session_id, 'claimed', NOW() FROM (
        SELECT s.session_id
-       FROM agent_transport_sessions s
+       FROM ao_agent_transport_sessions s
        WHERE s.transcript_text IS NOT NULL
          AND (
            EXISTS (
-             SELECT 1 FROM session_tags st
+             SELECT 1 FROM ao_session_tags st
              WHERE st.session_id = s.session_id AND st.name LIKE 'goal:%'
            )
            OR (
@@ -53,7 +53,7 @@ export async function claimGoalSessions(limit: number): Promise<string[]> {
            )
          )
          AND NOT EXISTS (
-           SELECT 1 FROM session_goal_analyses g
+           SELECT 1 FROM ao_session_goal_analyses g
            WHERE g.session_id = s.session_id
              AND (
                g.status = 'done'
@@ -70,12 +70,12 @@ export async function claimGoalSessions(limit: number): Promise<string[]> {
          -- analysis crashed the process never reached markGoalAnalysisError (which
          -- bumps attempts on the error path), so without this a poison session is
          -- re-claimed forever. The error branch already counted, so don't double-bump.
-         attempts = session_goal_analyses.attempts
-           + (CASE WHEN session_goal_analyses.status = 'claimed' THEN 1 ELSE 0 END)
-     WHERE (session_goal_analyses.status = 'error' AND session_goal_analyses.attempts < ${MAX_ATTEMPTS})
-        OR (session_goal_analyses.status = 'claimed'
-            AND session_goal_analyses.claimed_at < NOW() - interval '${STALE_CLAIM}'
-            AND session_goal_analyses.attempts < ${MAX_ATTEMPTS})
+         attempts = ao_session_goal_analyses.attempts
+           + (CASE WHEN ao_session_goal_analyses.status = 'claimed' THEN 1 ELSE 0 END)
+     WHERE (ao_session_goal_analyses.status = 'error' AND ao_session_goal_analyses.attempts < ${MAX_ATTEMPTS})
+        OR (ao_session_goal_analyses.status = 'claimed'
+            AND ao_session_goal_analyses.claimed_at < NOW() - interval '${STALE_CLAIM}'
+            AND ao_session_goal_analyses.attempts < ${MAX_ATTEMPTS})
      RETURNING session_id`,
     [limit],
   );
@@ -88,12 +88,12 @@ export async function loadGoalSession(
 ): Promise<{ goals: GoalSpec[]; chatHistory: unknown }> {
   const [row] = await sql`
     SELECT chat_history, raw_report->'tags' AS rr_tags
-    FROM agent_transport_sessions
+    FROM ao_agent_transport_sessions
     WHERE session_id = ${sessionId}
     LIMIT 1
   `;
   const tagRows = await sql`
-    SELECT name FROM session_tags
+    SELECT name FROM ao_session_tags
     WHERE session_id = ${sessionId} AND name LIKE 'goal:%'
     ORDER BY id
   `;
@@ -136,7 +136,7 @@ export async function completeGoalAnalysis(
       );
     }
     await tx`
-      UPDATE session_goal_analyses
+      UPDATE ao_session_goal_analyses
       SET status = 'done', analyzed_at = NOW(), last_error = NULL
       WHERE session_id = ${sessionId}
     `;
@@ -145,7 +145,7 @@ export async function completeGoalAnalysis(
 
 export async function markGoalAnalysisError(sessionId: string, message: string): Promise<void> {
   await sql`
-    UPDATE session_goal_analyses
+    UPDATE ao_session_goal_analyses
     SET status = 'error', attempts = attempts + 1, last_error = ${message}
     WHERE session_id = ${sessionId}
   `;

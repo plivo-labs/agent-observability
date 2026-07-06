@@ -313,7 +313,7 @@ describe("POST /observability/recordings/v0", () => {
   //   1. rawReport.agent_id (top-level field)
   //   2. rawReport.tags[] entry matching /^agent_id:.+/
   // When neither is present the route still accepts the upload with
-  // agentId=null — agent_transport_sessions.agent_id is nullable (mig
+  // agentId=null — ao_agent_transport_sessions.agent_id is nullable (mig
   // 014), and the OTLP "tag" body that arrives ~1s later carries
   // `agent_id:<uuid>` which `applySessionTagMetadata` backfills via
   // an UPDATE keyed on session_id. Same shape `account_id` follows.
