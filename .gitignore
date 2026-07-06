@@ -34,3 +34,10 @@ plugins/examples/node/*.js
 tsconfig.tsbuildinfo
 .claude/
 PLANS.md
+
+# stray local artifacts
+builder-state.png
+.playwright-mcp/
+evals-ao/
+.scratch_links/
+.mcp.json
