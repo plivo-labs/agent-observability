@@ -47,7 +47,11 @@ export interface TestRun {
     /** When the per_turn array itself must be malformed (null, scalar…). */
     sessionMetrics?: unknown;
     endedMinutesAgo?: number;
+    /** Recording-path payload — e.g. { tags: ["goal:..."] }. */
+    rawReport?: unknown;
   }) => Promise<string>;
+  /** Insert a session_tags row (OTLP-path tag, e.g. "goal:<text>"). */
+  seedTag: (sessionId: string, name: string) => Promise<void>;
   seedEval: (
     sessionId: string,
     verdict: string,
@@ -87,16 +91,24 @@ export function testRun(prefix: string): TestRun {
       await sql`
         INSERT INTO agent_transport_sessions (
           session_id, account_id, agent_id, started_at, ended_at, duration_ms, turn_count,
-          chat_history, session_metrics
+          chat_history, session_metrics, raw_report
         ) VALUES (
           ${sessionId}, ${opts.accountId}, ${opts.agentId ?? null},
           NOW() - (${endedAgo} || ' minutes')::interval - interval '2 minutes',
           NOW() - (${endedAgo} || ' minutes')::interval, 120000, 1,
           ${opts.chatHistory === undefined ? [] : opts.chatHistory}::jsonb,
-          ${metrics}::jsonb
+          ${metrics}::jsonb,
+          ${opts.rawReport ?? null}::jsonb
         )
       `;
       return sessionId;
+    },
+    async seedTag(sessionId, name) {
+      await sql`
+        INSERT INTO session_tags (session_id, name, source)
+        VALUES (${sessionId}, ${name}, ${run})
+        ON CONFLICT (session_id, name, source) DO NOTHING
+      `;
     },
     async seedEval(sessionId, verdict, judge = "it_judge", createdMinutesAgo = 0) {
       await sql`
@@ -135,6 +147,9 @@ export function testRun(prefix: string): TestRun {
     },
     async cleanup() {
       await sql`DELETE FROM alert_rules WHERE name LIKE ${run + "%"}`;
+      await sql`DELETE FROM session_tags WHERE session_id LIKE ${run + "%"}`;
+      await sql`DELETE FROM session_goal_analyses WHERE session_id LIKE ${run + "%"}`;
+      await sql`DELETE FROM session_external_evals WHERE session_id LIKE ${run + "%"}`;
       await sql`DELETE FROM session_external_evals WHERE source = ${run}`;
       await sql`DELETE FROM session_outcomes WHERE source = ${run}`;
       await sql`DELETE FROM agent_transport_sessions WHERE account_id LIKE ${run + "%"}`;

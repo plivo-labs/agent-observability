@@ -5,6 +5,8 @@ import type {
   AgentStatsRange,
   AgentsFilters,
   ConversationEvalSummary,
+  GoalResultsSummary,
+  GoalSessionResult,
   EvalCaseRow,
   EvalRunDetail,
   EvalRunRow,
@@ -88,6 +90,19 @@ export function createObservabilityApi(baseUrl: string) {
       if (filters?.failedOnly) params.set('failed', 'true')
       return fetchJson<PlivoListResponse<ConversationEvalSummary>>(
         `/agents/${encodeURIComponent(agentId)}/conversation-evals?${params}`,
+      )
+    },
+
+    listGoalResults: (
+      agentId: string,
+      limit = 50,
+      offset = 0,
+      filters?: { accountId?: string | null },
+    ) => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (filters?.accountId) params.set('account_id', filters.accountId)
+      return fetchJson<PlivoListResponse<GoalSessionResult> & { summary: GoalResultsSummary }>(
+        `/agents/${encodeURIComponent(agentId)}/goal-results?${params}`,
       )
     },
 

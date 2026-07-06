@@ -1,0 +1,26 @@
+{
+  "flow_name": "unknown-and-blocked-flow",
+  "systemPrompt": "flow with a brand-new node type and a blocked node on the happy path",
+  "nodes": [
+    { "id": "n-start", "type": "start", "data": { "config": { "name": "Start", "triggers": ["voice"] } } },
+    {
+      "id": "n-greet",
+      "type": "ai_agent_v2",
+      "data": {
+        "config": {
+          "name": "greet",
+          "intents": [{ "id": "i-route", "intent_name": "route" }]
+        }
+      }
+    },
+    { "id": "n-mystery", "type": "brand_new_node_type", "data": { "config": { "name": "mystery" } } },
+    { "id": "n-queue", "type": "queue_and_route", "data": { "config": { "name": "queue" } } },
+    { "id": "n-bye", "type": "end_conversation", "data": { "config": { "name": "bye" } } }
+  ],
+  "edges": [
+    { "source": "n-start", "target": "n-greet", "sourceHandle": "voice" },
+    { "source": "n-greet", "target": "n-mystery", "sourceHandle": "i-route" },
+    { "source": "n-mystery", "target": "n-queue", "sourceHandle": "default" },
+    { "source": "n-queue", "target": "n-bye", "sourceHandle": "default" }
+  ]
+}

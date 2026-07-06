@@ -7,6 +7,15 @@ export const envSchema = z.object({
   AGENT_OBSERVABILITY_USER: z.string().optional(),
   AGENT_OBSERVABILITY_PASS: z.string().optional(),
 
+  // Escape hatch: allow the server to boot with NO authentication configured
+  // (neither basic nor LiveKit). Off by default so a misconfigured deploy
+  // fails fast instead of silently exposing every route; set true only for
+  // local dev / a trusted private network.
+  ALLOW_UNAUTHENTICATED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+
   // LiveKit native observability upload auth. The SDK signs Bearer JWTs with
   // these values and includes an observability.write grant.
   LIVEKIT_API_KEY: z.string().optional(),
@@ -38,6 +47,13 @@ export const envSchema = z.object({
   EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
   // Gates the WORKER's eval sweep loop independently of the API's inline
   // sweeper — "off" here lets an inline-API deployment run a worker for
+
+  // Goal analyzer (post-session LLM judging of goal: tags). Placement
+  // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
+  // configured LLM provider has a key. It judges through the shared LLM stack
+  // (runGoalJudge → completeJSON) on the "judge" role, so the judge model comes
+  // from JUDGE_MODEL (below) — there is no goals-specific model knob.
+  GOAL_ANALYZER: z.enum(["inline", "off"]).default("inline"),
 
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In
@@ -111,11 +127,12 @@ export const envSchema = z.object({
   // non-Azure deploy, override + point OPENAI_BASE_URL at the endpoint.
   SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5-1"),
 
-  // Scenario-library persistence mode. Selects whether AO owns its own scenario store:
-  //   • true  (default) — SELF-CONTAINED (OSS): each generated scenario is written to AO's
-  //     own Postgres (ao_simulation_scenarios) and the library routes serve it. Needs DATABASE_URL.
-  //   • false           — STATELESS generator (the managed deployment / bring-your-own-backend): AO streams
-  //     scenarios but writes NO database; the host (the orchestrator service) persists what it relays. No DB needed.
+  // Sim persistence mode. Selects whether AO writes its ao_sim_* tables:
+  //   • true  (default) — PERSISTENT: generated scenarios land in ao_sim_scenario, run results
+  //     in ao_sim_run / ao_sim_run_scenario (OSS: AO's own Postgres via AUTO_MIGRATE; managed:
+  //     pre-created tables in the shared core DB — see src/db-probe.ts). Needs DATABASE_URL.
+  //   • false           — STATELESS engine: AO streams scenarios + emits run events to Redis but
+  //     writes NO database. No DB needed.
   // This is the DEFAULT; the per-request `?persist=true|false` query param overrides it. Persistence
   // is impossible without a DB, so the effective value is always ANDed with DATABASE_URL being set.
   SIM_PERSIST: z
@@ -147,6 +164,30 @@ export const envSchema = z.object({
   // same as unset, so it falls back cleanly via `??` instead of slipping through as "" (which
   // would otherwise be sent as an empty model id). Mirrors DATABASE_URL above.
   USER_SIMULATOR_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
-  // Scenarios one worker process runs concurrently (SQS consumer fan-out).
-  SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  // SQS consumer fan-out: the number of independent worker loops the consumer runs, i.e. the max
+  // scenarios processed concurrently per worker process. Each worker polls SQS independently and
+  // processes one message at a time (see src/sim-engine/queue/consumer.ts), so N scenarios stay in
+  // flight regardless of how SQS batches deliveries — the analogue of cx-sqs-worker's N goroutines.
+  // Size against downstream capacity: each concurrent scenario is a full /turn loop + LLM eval, so
+  // raise this (per deploy) only as far as the agent runtime + LLM/judge endpoints can absorb.
+  SIM_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(8),
+
+  // Hard ceiling on scenarios one generate request may ask for. The request
+  // schema allows up to 100, but the default policy caps it at 50 (a single
+  // request fans out to ~max_scenarios parallel writer LLM calls, so this bounds
+  // the per-request LLM cost). A request over the cap is rejected with 400.
+  // Raise via env up to 100 if a deployment needs it.
+  MAX_SCENARIOS_PER_REQUEST: z.coerce.number().int().positive().max(100).default(50),
+  // Concurrent scenario-generation requests allowed per process. Each request
+  // is an expensive multi-call LLM fan-out, so this stops a burst from
+  // multiplying into unbounded spend; requests over the limit get 429.
+  GEN_MAX_CONCURRENT: z.coerce.number().int().positive().default(2),
+  // Interval (ms) between SSE keep-alive heartbeats emitted while the generator
+  // is silent (planner + writer LLM calls run for tens of seconds with no
+  // events). This MUST stay well UNDER the downstream Redis peer's idle-reset
+  // window: the aiassist relay mirrors each heartbeat into a Redis stream via
+  // XADD, and a gap longer than the peer's idle timeout (~10s on the shared
+  // cluster ELB) gets the connection reset by peer → "Scenario generation
+  // failed." Default 5000 keeps every relay connection active inside that window.
+  SIM_GEN_HEARTBEAT_MS: z.coerce.number().int().positive().default(5000),
 });

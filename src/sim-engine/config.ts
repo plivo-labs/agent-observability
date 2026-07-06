@@ -65,12 +65,6 @@ export const simFeatureEnabled = generationEnabled || runEnabled;
  */
 export const scenarioPersistDefault = config.SIM_PERSIST && dbConfigured;
 
-/**
- * Legacy gate: queue-dispatch prerequisites present (SQS + Redis). Superseded by the capability
- * gates above; retained for back-compat with callers/tests that referenced the old all-or-nothing gate.
- */
-export const simEngineEnabled = isSimEngineEnabled(config.SIM_EVAL_SQS_QUEUE_URL, config.REDIS_URL);
-
 /** Focused, typed view of the sim-engine settings, read once at startup. */
 export const simEngineConfig = {
   /** SQS queue the worker drains (per environment). */
@@ -98,6 +92,17 @@ export const simEngineConfig = {
    * model would be wrong here.
    */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
-  /** Scenarios run concurrently per worker process / per in-process run (fan-out bound). */
+  /** Number of independent SQS worker loops = max scenarios run concurrently per worker process
+   *  (fan-out bound). See SIM_WORKER_CONCURRENCY + src/sim-engine/queue/consumer.ts. */
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,
+  /** Hard per-request scenario ceiling (a generate request over this is rejected 400). */
+  maxScenariosPerRequest: config.MAX_SCENARIOS_PER_REQUEST,
+  /** Concurrent generate requests allowed per process (over the limit → 429). */
+  genMaxConcurrent: config.GEN_MAX_CONCURRENT,
+  /**
+   * Interval (ms) between SSE keep-alive heartbeats during generator silence. Kept well under the
+   * downstream Redis peer idle-reset window (~10s) so the aiassist relay's Redis connection never
+   * idles long enough to be reset while the planner/writer LLMs run. See SIM_GEN_HEARTBEAT_MS.
+   */
+  genHeartbeatMs: config.SIM_GEN_HEARTBEAT_MS,
 } as const;

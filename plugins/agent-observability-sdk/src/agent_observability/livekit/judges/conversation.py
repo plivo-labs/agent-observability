@@ -1,4 +1,4 @@
-"""Conversation-level judges ported from cx-sqs-worker eval metrics."""
+"""Conversation-level evaluation judges."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def user_sentiment_judge(llm: LLM | None = None) -> _LLMJudge:
 
 
 def conversation_status_judge(llm: LLM | None = None) -> _LLMJudge:
-    """Derive the final conversation status using cx-sqs-worker's priority order."""
+    """Derive the final conversation status using a fixed priority order."""
     return static_judge("conversation_status", llm=llm)
 
 

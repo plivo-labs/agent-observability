@@ -22,6 +22,7 @@ mock.module("../src/config.js", () => ({
   s3Enabled: false,
   basicAuthEnabled: true,
   liveKitAuthEnabled: false,
+  dbConfigured: true,
 }));
 
 mock.module("../src/db.js", () => ({

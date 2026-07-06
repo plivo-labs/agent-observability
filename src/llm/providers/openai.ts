@@ -81,18 +81,21 @@ function extractResponsesText(r: ResponsesResult): string {
 }
 
 /**
- * Responses API wire format: POST {base}/responses with `input` + `text.format`.
- * Raw fetch (not the SDK) so the path + auth header are exactly what api-key gateways
- * expect — the SDK's baseURL override assumes Chat Completions + Bearer, which 404s on
- * Responses-only gateways. Honors the abort signal for the per-attempt timeout.
+ * Build the shared { url, headers, body } for a Responses API POST. Both the
+ * non-streaming and streaming callers differ only by `stream:true`, so the
+ * key check, base-URL normalize, auth header, and body assembly (model / input /
+ * max_output_tokens / temperature / top_p / strict json_schema) live here once.
+ * `maxTokens === 0` means "no cap" → the field is omitted.
  */
-async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawCompletion> {
-  const { system, user, model, maxTokens, temperature, topP, jsonSchema, signal } = args;
+function buildResponsesRequest(
+  args: ProviderCompleteArgs,
+  opts: { stream: boolean },
+): { url: string; headers: Record<string, string>; body: Record<string, unknown> } {
+  const { system, user, model, maxTokens, temperature, topP, jsonSchema } = args;
   if (!config.OPENAI_API_KEY) {
     throw new Error("LLM_PROVIDER=openai but OPENAI_API_KEY is not set");
   }
   const base = (config.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
-  const url = `${base}/responses`;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (config.OPENAI_AUTH_STYLE === "api-key") headers["api-key"] = config.OPENAI_API_KEY;
@@ -112,7 +115,21 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
     ...(jsonSchema
       ? { text: { format: { type: "json_schema", name: jsonSchema.name, strict: jsonSchema.strict ?? true, schema: jsonSchema.schema } } }
       : {}),
+    ...(opts.stream ? { stream: true } : {}),
   };
+
+  return { url: `${base}/responses`, headers, body };
+}
+
+/**
+ * Responses API wire format: POST {base}/responses with `input` + `text.format`.
+ * Raw fetch (not the SDK) so the path + auth header are exactly what api-key gateways
+ * expect — the SDK's baseURL override assumes Chat Completions + Bearer, which 404s on
+ * Responses-only gateways. Honors the abort signal for the per-attempt timeout.
+ */
+async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawCompletion> {
+  const { signal } = args;
+  const { url, headers, body } = buildResponsesRequest(args, { stream: false });
 
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
   if (!res.ok) {
@@ -144,32 +161,8 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
  * (same event names, same no-cap body). Honors the abort signal for the per-attempt timeout.
  */
 async function completeViaResponsesStream(args: ProviderCompleteArgs): Promise<RawCompletion> {
-  const { system, user, model, maxTokens, temperature, topP, jsonSchema, signal } = args;
-  if (!config.OPENAI_API_KEY) {
-    throw new Error("LLM_PROVIDER=openai but OPENAI_API_KEY is not set");
-  }
-  const base = (config.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
-  const url = `${base}/responses`;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (config.OPENAI_AUTH_STYLE === "api-key") headers["api-key"] = config.OPENAI_API_KEY;
-  else headers["Authorization"] = `Bearer ${config.OPENAI_API_KEY}`;
-
-  const body: Record<string, unknown> = {
-    model,
-    input: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    // maxTokens === 0 means "no cap" → omit (aiassist's streaming writer sends none).
-    ...(maxTokens ? { max_output_tokens: maxTokens } : {}),
-    ...(temperature !== undefined ? { temperature } : {}),
-    ...(topP !== undefined ? { top_p: topP } : {}),
-    ...(jsonSchema
-      ? { text: { format: { type: "json_schema", name: jsonSchema.name, strict: jsonSchema.strict ?? true, schema: jsonSchema.schema } } }
-      : {}),
-    stream: true,
-  };
+  const { signal } = args;
+  const { url, headers, body } = buildResponsesRequest(args, { stream: true });
 
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
   if (!res.ok || !res.body) {

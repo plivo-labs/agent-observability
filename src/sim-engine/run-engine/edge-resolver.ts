@@ -115,11 +115,6 @@ export class EdgeResolver {
   }
 }
 
-/** Factory mirroring Go's `NewEdgeResolver`. */
-export function newEdgeResolver(graph: FlowGraph): EdgeResolver {
-  return new EdgeResolver(graph);
-}
-
 /** Prompt nodes prefer the `prompt_completed` handle, falling back to `success`. */
 export function resolvePromptEdge(graph: FlowGraph, nodeId: string): FlowEdge | null {
   const edges = graph.nodeEdges.get(nodeId) ?? [];
@@ -134,20 +129,6 @@ export function resolvePromptEdge(graph: FlowGraph, nodeId: string): FlowEdge | 
     }
   }
   return null;
-}
-
-/** True when any outgoing edge from `nodeId` targets an `ai_agent_v2` node. */
-export function hasOutgoingAIConversationTarget(graph: FlowGraph | null, nodeId: string): boolean {
-  if (!graph) {
-    return false;
-  }
-  for (const edge of graph.nodeEdges.get(nodeId) ?? []) {
-    const target = graph.nodes.get(edge.target);
-    if (target && target.type === "ai_agent_v2") {
-      return true;
-    }
-  }
-  return false;
 }
 
 /** Read the trigger type from `config.triggers[0]`, defaulting to `"http"`. */

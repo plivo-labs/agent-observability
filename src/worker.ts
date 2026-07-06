@@ -29,6 +29,7 @@ import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
 import { makeLiveKitSimClient } from "./sim-engine/run-engine/livekit-client.js";
+import { runGoalSweepOnce } from "./goals/analyzer.js";
 
 let running = true;
 
@@ -48,6 +49,15 @@ function shutdown(signal: string) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+// Sim-persistence table probe (aodb-write.md): the worker writes ao_sim_* rows from the
+// SQS consumer, and on the managed core-DB those tables are pre-created out-of-band
+// (AUTO_MIGRATE stays off — the API entrypoint owns migrations, and never against a
+// shared core DB). Fail fast at boot with remediation instead of erroring per message.
+if (config.SIM_PERSIST && dbConfigured) {
+  const { probeSimTables } = await import("./db-probe.js");
+  await probeSimTables();
+}
 
 // Start the simulation-eval SQS consumer alongside the sweeper when it's configured
 // (SQS + Redis + a /turn endpoint). Otherwise the worker is sweeper-only. Fire-and-forget:
@@ -117,6 +127,12 @@ if (dbConfigured) {
   }
   while (running) {
     await runSweepOnce();
+    // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
+    // Honor GOAL_ANALYZER=off so an AO deploy that is the sim/eval engine (not the goals instance)
+    // doesn't run goal sweeps in the worker either — parity with the API-side inline gate.
+    if (config.GOAL_ANALYZER !== "off") {
+      await runGoalSweepOnce();
+    }
     await sleepInSlices(SWEEP_INTERVAL_MS);
   }
   await evalLoop; // drain the eval loop before exiting

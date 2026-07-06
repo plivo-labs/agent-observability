@@ -20,7 +20,10 @@ import type { CanonicalFlow } from "../simulation/flow/flow-schema.js";
 //      (the WRITER) and later enqueues them for that worker to unmarshal.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Simulation difficulty mode. "stress" is the default; "smoke" is the capped, fast path. */
+/** Simulation difficulty mode. Only "stress" is implemented; "smoke" was never
+ *  built (its allocator path throws) so it is COERCED to "stress" at the request
+ *  boundary (see GenerateScenariosRequest) — a caller that still sends "smoke"
+ *  (e.g. an upstream default) gets a stress run instead of an error. */
 export const SimulationMode = z.enum(["smoke", "stress"]);
 export type SimulationMode = z.infer<typeof SimulationMode>;
 
@@ -33,8 +36,8 @@ const FlowJsonInput = z.record(z.string(), z.unknown());
 /**
  * POST .../scenarios/generate — mirror of the orchestrator service's `GenerateScenariosRequest`.
  * `phlo_uuid` is the agent id (stored as `agent_id` in AO's own tables).
- * `account_id` is NOT in the body: like the orchestrator service (which reads the API-gateway-injected
- * `auth-id` header) AO resolves the account from the auth context at the route
+ * `tenant_id` is NOT in the body: like the orchestrator service (which reads the API-gateway-injected
+ * `auth-id` header) AO resolves the tenant from the auth context at the route
  * layer (Phase 4), so this body stays byte-compatible with the console's.
  */
 export const GenerateScenariosRequest = z.object({
@@ -42,35 +45,17 @@ export const GenerateScenariosRequest = z.object({
   phlo_uuid: z.string().min(1),
   max_scenarios: z.number().int().min(1).max(100).default(50),
   test_case_generation_instructions: z.string().default(""),
-  simulation_mode: SimulationMode.default("stress"),
+  // "smoke" is unimplemented — coerce it to "stress" here so an upstream caller
+  // that defaults to "smoke" gets a working run rather than a generation error.
+  simulation_mode: z.preprocess((m) => (m === "smoke" ? "stress" : m), SimulationMode.default("stress")),
 });
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
-
-/**
- * POST .../scenarios/run — mirror of the orchestrator service's `RunScenariosRequest`. Selects
- * already-generated scenarios by id. (Phase 4 may also accept inline scenario
- * dicts for AO-native callers; that's an additive superset, not a change here.)
- */
-export const RunScenariosRequest = z.object({
-  flow_json: FlowJsonInput,
-  phlo_uuid: z.string().min(1),
-  scenario_uuids: z.array(z.string()).min(1).max(100),
-  max_turns: z.number().int().min(1).max(200).default(25),
-  simulation_mode: SimulationMode.default("stress"),
-});
-export type RunScenariosRequest = z.infer<typeof RunScenariosRequest>;
 
 /** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`. */
 export const DeleteScenariosRequest = z.object({
   uuids: z.array(z.string()).min(1).max(200),
 });
 export type DeleteScenariosRequest = z.infer<typeof DeleteScenariosRequest>;
-
-/** PATCH .../runs/:run_uuid/rename — mirror of the orchestrator service's `RenameSimulationRunRequest`. */
-export const RenameSimulationRunRequest = z.object({
-  name: z.string().min(1).max(255),
-});
-export type RenameSimulationRunRequest = z.infer<typeof RenameSimulationRunRequest>;
 
 // ── Scenario (matches the worker's SimulationScenario, models.go L44-64) ───────
 

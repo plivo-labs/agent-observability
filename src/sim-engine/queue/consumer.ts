@@ -20,13 +20,18 @@
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import type { Message } from "@aws-sdk/client-sqs";
 import { simEngineConfig } from "../config.js";
-import { getFlowJson, incrementAndCheckCompletion, type RedisClient } from "./redis.js";
+import { config, dbConfigured } from "../../config.js";
+import { expectedCountKey, getFlowJson, incrementAndCheckCompletion, type RedisClient } from "./redis.js";
 import { emitScenarioCompleted, emitSimulationCompleted } from "../run-engine/stream.js";
-import { runScenario, type ScenarioRunnerDeps } from "../run-engine/orchestrator.js";
+import { runScenario, type DbPersistContext, type ScenarioRunnerDeps } from "../run-engine/orchestrator.js";
+import { upsertRun, finalizeRun } from "../db.js";
 import { Scenario } from "../schema.js";
 
 /** SQS receive/visibility tuning (mirrors the worker's long-poll consumer). */
-const MAX_MESSAGES_PER_RECEIVE = 10;
+// One message per receive: each worker in the pool is an independent poller that fully processes
+// its message before pulling the next, so the number of concurrent scenarios is exactly the pool
+// size — no in-batch fan-out to reason about, and no "wait for the whole batch" head-of-line stall.
+const MAX_MESSAGES_PER_RECEIVE = 1;
 const WAIT_TIME_SECONDS = 20; // long-poll: one held connection instead of a hot spin
 const VISIBILITY_TIMEOUT_SECONDS = 300; // matches the message's own visibility_timeout
 
@@ -55,12 +60,18 @@ interface SimulationEnvelope {
  * Advance the completion gate for a FAILED scenario and emit scenario_completed(error).
  * Faithful to the Go `failScenario`: even a failure advances the gate, so a run whose last
  * scenario fails still emits simulation_completed (the dashboard never hangs "in progress").
+ *
+ * NO ao_sim_run_scenario row is written here — deliberately mirrors the orchestrator
+ * service's persist behavior, which skips the DB when a scenario_completed event carries
+ * no per-execution uuid (these envelope-level drops never produced a row today either).
+ * The run header IS finalized at the gate so the durable status matches the stream.
  */
 async function failScenario(
   redis: RedisClient,
   simRunUuid: string,
   scenarioId: string,
   msg: string,
+  dbPersist?: DbPersistContext | null,
 ): Promise<void> {
   await emitScenarioCompleted(redis, simRunUuid, {
     scenario_id: scenarioId,
@@ -70,6 +81,13 @@ async function failScenario(
   const { completedByThisCall } = await incrementAndCheckCompletion(redis, simRunUuid);
   if (completedByThisCall) {
     await emitSimulationCompleted(redis, simRunUuid, {});
+    if (dbPersist) {
+      try {
+        await finalizeRun(simRunUuid);
+      } catch (err) {
+        console.error(`[sim-db] finalizeRun failed (run ${simRunUuid}): ${(err as Error).message}`);
+      }
+    }
   }
 }
 
@@ -128,10 +146,48 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     return;
   }
 
+  // ── Durable persistence context (aodb-write.md). `agent_id` is the opaque caller-supplied
+  //    agent identifier; `auth_id` doubles as the tenant. Persistence is gated ONLY on
+  //    SIM_PERSIST && dbConfigured (never migration state) + the message actually carrying
+  //    agent_id — a legacy message without it runs fine, it just isn't persisted. ──
+  const agentId = typeof body.agent_id === "string" && body.agent_id !== "" ? body.agent_id : null;
+  const dbPersist: DbPersistContext | null =
+    config.SIM_PERSIST && dbConfigured && agentId ? { tenantId: authId, agentId } : null;
+  if (config.SIM_PERSIST && dbConfigured && !agentId) {
+    console.warn(`[sim-db] run ${simRunUuid}: agent_id missing from message — skipping DB persistence for this scenario`);
+  }
+  // Durable scenario reference: the library row uuid when the sender supplies one (globally
+  // unique), else the scenario JSONB id (unique only within a generation). Events always echo
+  // scenario_id; this only affects what ao_sim_run_scenario.scenario_ref stores.
+  const scenarioRef =
+    typeof body.scenario_uuid === "string" && body.scenario_uuid !== "" ? body.scenario_uuid : scenarioId;
+
   // From here on we HAVE a run uuid + scenario id — every failure routes through
   // failScenario so the gate advances and simulation_completed still fires.
   // Emits go straight to the live Redis :RESULTS stream (the managed deployment; the orchestrator service relays it).
   try {
+    // ── Idempotent run-header upsert (first message of the run inserts; the rest no-op).
+    //    Placed BEFORE any failure path so even an all-failed run has a durable header. A DB
+    //    error here downgrades to unpersisted (log) — persistence never blocks the run. ──
+    if (dbPersist) {
+      try {
+        let scenarioCount = typeof body.scenario_count === "number" ? body.scenario_count : null;
+        if (scenarioCount == null) {
+          const raw = await redis.get(expectedCountKey(simRunUuid)).catch(() => null);
+          scenarioCount = raw != null ? Number(raw) || 0 : 0;
+        }
+        await upsertRun({
+          id: simRunUuid,
+          tenantId: dbPersist.tenantId,
+          agentId: dbPersist.agentId,
+          name: typeof body.run_name === "string" ? body.run_name : null,
+          scenarioCount,
+          maxTurns: typeof body.max_turns === "number" ? body.max_turns : 25,
+        });
+      } catch (err) {
+        console.error(`[sim-db] upsertRun failed (run ${simRunUuid}): ${(err as Error).message}`);
+      }
+    }
     // ── Read the flow JSON the orchestrator service seeded for this run. A miss is fatal for the scenario
     //    (we can't run the flow), but not for the run — fail the scenario, advance the gate. ──
     let flowJson: string;
@@ -139,7 +195,7 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
       flowJson = await getFlowJson(redis, simRunUuid);
     } catch (err) {
       console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: ${(err as Error).message}`);
-      await failScenario(redis, simRunUuid, scenarioId, "failed to retrieve flow JSON");
+      await failScenario(redis, simRunUuid, scenarioId, "failed to retrieve flow JSON", dbPersist);
       return;
     }
 
@@ -147,7 +203,7 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     const parsed = Scenario.safeParse(body.scenario);
     if (!parsed.success) {
       console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: scenario deserialize failed — ${parsed.error.message}`);
-      await failScenario(redis, simRunUuid, scenarioId, "failed to deserialize scenario");
+      await failScenario(redis, simRunUuid, scenarioId, "failed to deserialize scenario", dbPersist);
       return;
     }
     const scenario = parsed.data;
@@ -165,6 +221,8 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
         agentFlowDescription,
         flowJson,
         maxTurns: scenario.max_turns ?? 25,
+        dbPersist,
+        scenarioRef,
       },
     );
 
@@ -173,6 +231,13 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     const { processed, completedByThisCall } = await incrementAndCheckCompletion(redis, simRunUuid);
     if (completedByThisCall) {
       await emitSimulationCompleted(redis, simRunUuid, { scenarios_processed: processed });
+      if (dbPersist) {
+        try {
+          await finalizeRun(simRunUuid);
+        } catch (err) {
+          console.error(`[sim-db] finalizeRun failed (run ${simRunUuid}): ${(err as Error).message}`);
+        }
+      }
     }
   } catch (err) {
     // Panic-recovery equivalent: runScenario + the gate shouldn't throw, but if anything
@@ -181,7 +246,7 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: unexpected error — ${message}`);
     try {
-      await failScenario(redis, simRunUuid, scenarioId, `panic: ${message}`);
+      await failScenario(redis, simRunUuid, scenarioId, `panic: ${message}`, dbPersist);
     } catch (failErr) {
       // Even failScenario failed (Redis fully down). Nothing left to do but log + delete.
       console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: failScenario also failed — ${(failErr as Error).message}`);
@@ -189,67 +254,39 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
   }
 }
 
-/** Options for the poll loop. */
+/** Options for the consumer. */
 export interface ConsumeOptions {
   /** SQS queue URL to drain. */
   queueUrl: string;
-  /** Max scenarios processed concurrently within a received batch (the fan-out bound). */
+  /** Number of independent worker loops = max scenarios processed concurrently (the fan-out). */
   concurrency: number;
-  /** Abort to stop the loop cleanly (wired to SIGTERM/SIGINT in the worker). */
+  /** Abort to stop every worker cleanly (wired to SIGTERM/SIGINT in the worker). */
   signal: AbortSignal;
   /** Injectable SQS client (tests pass one pointed at ElasticMQ; prod builds one from config). */
   sqs?: SQSClient;
 }
 
 /**
- * Process a received batch with a bounded number of in-flight handlers. A fixed pool of
- * `min(concurrency, batch.length)` workers each pulls the next message off a shared cursor,
- * runs the handler, and DELETES the message on handler success. handleSimulationMessage
- * never rethrows (it always means "delete"), so a handler rejection here would be a genuine
- * infra fault (e.g. the delete call) — we log it and leave the message for redelivery rather
- * than deleting work that didn't complete.
+ * One autonomous worker: long-poll receive → handle → delete → repeat, until the signal aborts.
+ * Running `concurrency` of these against a shared SQS + Redis client is the fan-out — the direct
+ * analogue of cx-sqs-worker's N independent worker goroutines (poller.go StartWorkers). Because
+ * each worker polls independently, N scenarios stay in flight regardless of how SQS batches
+ * deliveries (SQS often returns 1 message per receive for a small queue), and a slow scenario in
+ * one worker never blocks the others — the head-of-line stall of the old single batch-blocking
+ * loop is gone.
+ *
+ * handleSimulationMessage never rethrows (it always means "delete"), so a throw reaching here is a
+ * genuine infra fault (e.g. the DeleteMessage call) — log it and leave the message for redelivery
+ * rather than deleting work that didn't complete. At-least-once redelivery is safe: the run-level
+ * Lua gate (SETNX) fires simulation_completed exactly once even if a scenario re-runs.
  */
-async function processBatch(
+async function runWorkerLoop(
   deps: ConsumerDeps,
   sqs: SQSClient,
   queueUrl: string,
-  messages: Message[],
-  concurrency: number,
+  signal: AbortSignal,
+  workerId: number,
 ): Promise<void> {
-  let cursor = 0;
-  const next = (): Message | undefined => (cursor < messages.length ? messages[cursor++] : undefined);
-
-  const worker = async (): Promise<void> => {
-    for (let msg = next(); msg !== undefined; msg = next()) {
-      if (!msg.Body || !msg.ReceiptHandle) continue; // SQS guarantees both on a real message
-      try {
-        await handleSimulationMessage(deps, msg.Body);
-        // Handler resolved → "complete" → delete so it isn't redelivered.
-        await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: msg.ReceiptHandle }));
-      } catch (err) {
-        // handleSimulationMessage never rethrows, so reaching here means the DeleteMessage
-        // call failed. Don't delete — let the visibility timeout lapse + SQS redeliver.
-        console.error(`[sim-consumer] failed to delete message ${msg.MessageId ?? "<unknown>"}: ${(err as Error).message}`);
-      }
-    }
-  };
-
-  const poolSize = Math.max(1, Math.min(concurrency, messages.length));
-  await Promise.all(Array.from({ length: poolSize }, () => worker()));
-}
-
-/**
- * The long-poll consumer loop. Receives up to 10 messages with a 20s long poll, processes
- * the batch with bounded concurrency, deletes each completed message, and repeats until the
- * signal aborts. The 20s WaitTimeSeconds also bounds shutdown latency: an in-flight receive
- * returns within ~20s of the abort, then the loop's `signal.aborted` check exits cleanly.
- */
-export async function consumeSimulationQueue(deps: ConsumerDeps, opts: ConsumeOptions): Promise<void> {
-  const { queueUrl, concurrency, signal } = opts;
-  const sqs = opts.sqs ?? new SQSClient({ region: simEngineConfig.awsRegion });
-
-  console.log(`[sim-consumer] started — draining ${queueUrl} (concurrency ${concurrency})`);
-
   while (!signal.aborted) {
     let messages: Message[];
     try {
@@ -267,14 +304,42 @@ export async function consumeSimulationQueue(deps: ConsumerDeps, opts: ConsumeOp
     } catch (err) {
       if (signal.aborted) break; // the abort cancelled the receive — clean exit
       // Transient SQS error: log + back off briefly so we don't hot-spin on a persistent fault.
-      console.error(`[sim-consumer] ReceiveMessage failed: ${(err as Error).message}`);
+      console.error(`[sim-consumer] worker ${workerId} ReceiveMessage failed: ${(err as Error).message}`);
       await Bun.sleep(1000);
       continue;
     }
 
-    if (messages.length === 0) continue; // long poll expired with nothing — loop
-    await processBatch(deps, sqs, queueUrl, messages, concurrency);
+    for (const msg of messages) {
+      if (!msg.Body || !msg.ReceiptHandle) continue; // SQS guarantees both on a real message
+      try {
+        await handleSimulationMessage(deps, msg.Body);
+        // Handler resolved → "complete" → delete so it isn't redelivered.
+        await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: msg.ReceiptHandle }));
+      } catch (err) {
+        // handleSimulationMessage never rethrows, so reaching here means the DeleteMessage call
+        // failed. Don't delete — let the visibility timeout lapse + SQS redeliver.
+        console.error(`[sim-consumer] worker ${workerId} failed to delete message ${msg.MessageId ?? "<unknown>"}: ${(err as Error).message}`);
+      }
+    }
   }
+}
+
+/**
+ * Drain the queue with a fixed pool of `concurrency` independent worker loops (see runWorkerLoop),
+ * all sharing one SQS + Redis client. Returns when every worker has exited on the shared abort
+ * signal. The 20s WaitTimeSeconds bounds shutdown latency: each in-flight receive cancels on abort
+ * (or returns within ~20s), then that worker's `signal.aborted` check exits.
+ */
+export async function consumeSimulationQueue(deps: ConsumerDeps, opts: ConsumeOptions): Promise<void> {
+  const { queueUrl, concurrency, signal } = opts;
+  const sqs = opts.sqs ?? new SQSClient({ region: simEngineConfig.awsRegion });
+  const poolSize = Math.max(1, concurrency);
+
+  console.log(`[sim-consumer] started — draining ${queueUrl} with ${poolSize} workers`);
+
+  await Promise.all(
+    Array.from({ length: poolSize }, (_, i) => runWorkerLoop(deps, sqs, queueUrl, signal, i)),
+  );
 
   console.log("[sim-consumer] stopped");
 }

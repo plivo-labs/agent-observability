@@ -1,12 +1,11 @@
 """Tool-correctness judge (programmatic).
 
-Ported line-for-line from cx-sqs-worker
-`usecases/vibe_eval/evaluator/metrics/programmatic.go:65-163` — set-membership
-scoring of expected vs. actual tool calls with a configurable pass threshold.
+Set-membership scoring of expected vs. actual tool calls with a
+configurable pass threshold.
 
-Unlike its Go cousin, this one auto-extracts the actual tools called from
-`chat_ctx.items` (LiveKit's `function_call` events). Users only need to
-supply the expected set.
+This judge auto-extracts the actual tools called from `chat_ctx.items`
+(LiveKit's `function_call` events). Users only need to supply the
+expected set.
 """
 
 from __future__ import annotations
@@ -21,14 +20,14 @@ class ToolCorrectnessJudge:
     """Compare the set of tools the agent actually called against the
     expected set.
 
-    Scoring (from programmatic.go:144-152):
+    Scoring:
       - both sets empty                            → 1.0 (pass)
       - expected_count > 0                         → matched / expected_count
       - expected_count == 0 and unexpected_count>0 → 0.0
       - else                                       → 1.0
 
-    `verdict = "pass"` when `score >= threshold` (default 1.0 — strict
-    parity with cx-sqs-worker's typical config).
+    `verdict = "pass"` when `score >= threshold` (default 1.0 — strict:
+    every expected tool must be present).
     """
 
     def __init__(
