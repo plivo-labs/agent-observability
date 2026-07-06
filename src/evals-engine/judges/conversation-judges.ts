@@ -119,7 +119,7 @@ async function runDetection(
   json: ReturnType<typeof strict>,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ detected: boolean; reason: string; technical_reason: string }> {
+): Promise<{ detected: boolean; reason: string; technical_reason: string; available: boolean }> {
   try {
     const { data } = await runLlmJudge({
       system: criteria + OUT_DETECTION,
@@ -129,16 +129,16 @@ async function runDetection(
       maxTokens: DETECTION_MAX_TOKENS,
       provider,
     });
-    return data;
+    return { ...data, available: true };
   } catch {
-    return { detected: false, reason: "", technical_reason: "conversation judge unavailable" };
+    return { detected: false, reason: "", technical_reason: "conversation judge unavailable", available: false };
   }
 }
 
 async function runSentiment(
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ sentiment: string; reason: string; technical_reason: string }> {
+): Promise<{ sentiment: string; reason: string; technical_reason: string; available: boolean }> {
   try {
     const { data } = await runLlmJudge({
       system: USER_SENTIMENT + OUT_SENTIMENT,
@@ -148,10 +148,17 @@ async function runSentiment(
       maxTokens: DETECTION_MAX_TOKENS,
       provider,
     });
-    return data;
+    return { ...data, available: true };
   } catch {
-    return { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable" };
+    return { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable", available: false };
   }
+}
+
+/** The single source of truth for the sentiment pass/fail rule: a sentiment
+ *  fails only when it is clearly negative or confused. Fan-out, config-service,
+ *  and the console read the emitted `passed` rather than re-implementing this. */
+export function sentimentPassed(sentiment: string): boolean {
+  return !/negativ|confus/i.test(sentiment);
 }
 
 /** True if the transcript has any non-empty user utterance. */
@@ -159,11 +166,12 @@ function isAnswered(ctx: ConversationInput): boolean {
   return /(^|\n)User:\s*\S/.test(ctx.full_transcript);
 }
 
-const det = (v: { detected: boolean; reason: string; technical_reason: string }) => ({
+const det = (v: { detected: boolean; reason: string; technical_reason: string; available?: boolean }) => ({
   detected: v.detected,
   detected_value: v.detected ? 1 : 0,
   reason: v.reason,
   technical_reason: v.technical_reason,
+  available: v.available !== false,
 });
 
 /**
@@ -172,6 +180,26 @@ const det = (v: { detected: boolean; reason: string; technical_reason: string })
  * (voicemail / bot / call-screening) are gated to voice; the rest apply cross-channel.
  * `conversation_status` is derived in code (fixed priority order).
  */
+/** All-zero conversation metrics with every axis marked unavailable — the
+ *  placeholder for an empty transcript (ingest) or a skipped conversation eval
+ *  (sim). `available:false` is how consumers tell "the judge did not run" from
+ *  a real "not detected" verdict, so these are never fanned out as passes. */
+export function zeroConversationMetrics(): SimConversationMetrics {
+  const d = () => ({ detected: false, detected_value: 0, reason: "", technical_reason: "", available: false });
+  return {
+    answered: false,
+    voicemail_detected: d(), bot_detected: d(), call_screening: d(),
+    low_engagement: d(), wrong_number: d(), do_not_disturb: d(),
+    user_sentiment: { sentiment: "", reason: "", technical_reason: "", available: false },
+    silent_call: false,
+    customer_engaged: false,
+    conversation_status: { status: "", reason: "", technical_reason: "" },
+    is_livekit: false,
+    is_agent_runner: false,
+    stt: { error_count: 0, recovered_count: 0 },
+  };
+}
+
 export async function evaluateConversationMetrics(
   ctx: ConversationInput,
   provider?: LlmProvider,
@@ -209,11 +237,15 @@ export async function evaluateConversationMetrics(
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,
       technical_reason: sentiment.technical_reason,
+      available: sentiment.available,
+      passed: sentiment.available ? sentimentPassed(sentiment.sentiment) : undefined,
     },
     silent_call: !answered,
     customer_engaged: customerEngaged,
     conversation_status: { status, reason: "", technical_reason: "" },
-    is_livekit: true,
+    // Platform-neutral: the ingest path makes no runtime claim (was hardcoded
+    // true here and overridden to false by the only caller).
+    is_livekit: false,
     is_agent_runner: false,
     stt: { error_count: 0, recovered_count: 0 },
   };

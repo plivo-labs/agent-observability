@@ -29,10 +29,10 @@ services:
       # one of each may run — remove the worker service AND these lines to
       # fall back to the zero-config inline sweepers.
       ALERT_SWEEPER: "off"
-      # The worker judges ingested sessions (EVAL_SWEEPER_WORKER defaults to
-      # "on"). Setting EVAL_SWEEPER_WORKER=off in .env with this topology
-      # disables evals entirely — both processes log a warning if they boot
-      # with their sweeper off.
+      # Single flag, read by both processes: "off" here keeps the API from
+      # judging; the worker below sets it to "worker" so exactly one sweeper
+      # runs. (Set this to "inline" and drop the worker for a single-container
+      # deploy.)
       EVAL_SWEEPER: "off"
     depends_on:
       postgres:
@@ -47,6 +47,8 @@ services:
     environment:
       DATABASE_URL: postgres://observability:observability@postgres:5432/agent_observability
       NODE_ENV: "production"
+      # This worker owns the eval sweep (the API sets EVAL_SWEEPER=off above).
+      EVAL_SWEEPER: "worker"
     depends_on:
       postgres:
         condition: service_healthy

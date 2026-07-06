@@ -46,11 +46,10 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 // API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
 if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
   startEvalSweeper();
-} else if (process.env.NODE_ENV !== "test" && dbConfigured) {
-  // Loud on purpose: EVAL_SWEEPER=off on the API is only correct when a
-  // worker runs with EVAL_SWEEPER_WORKER=on — if both are off, ingested
-  // sessions are never judged and the gap is silent.
-  console.warn("[evals] EVAL_SWEEPER=off — this API judges nothing; a worker with EVAL_SWEEPER_WORKER=on must be running, or ingested-session evals are disabled entirely");
+} else if (process.env.NODE_ENV !== "test" && dbConfigured && config.EVAL_SWEEPER === "off") {
+  // Loud on purpose: with EVAL_SWEEPER=off nobody judges ingested sessions.
+  // ("worker" is the normal non-inline value — the dedicated worker handles it.)
+  console.warn("[evals] EVAL_SWEEPER=off — ingested-session judging is disabled everywhere; set it to \"inline\" (API) or \"worker\" (worker) to enable.");
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -755,25 +754,19 @@ app.get("/api/sessions/by-tag/:tag", async (c) => {
   // credentials must not be able to resolve another tenant's sessions by
   // guessing tags. Omitting it preserves single-tenant behavior.
   const accountId = c.req.query("account_id") ?? null;
-  const rows = accountId !== null
-    ? await sql`
-        SELECT t.session_id, v.status AS eval_status, s.account_id
-        FROM session_tags t
-        JOIN agent_transport_sessions s ON s.session_id = t.session_id AND s.account_id = ${accountId}
-        LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
-        WHERE t.name = ${tag}
-        ORDER BY t.created_at DESC
-        LIMIT 20
-      `
-    : await sql`
-        SELECT t.session_id, v.status AS eval_status, s.account_id
-        FROM session_tags t
-        LEFT JOIN agent_transport_sessions s ON s.session_id = t.session_id
-        LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
-        WHERE t.name = ${tag}
-        ORDER BY t.created_at DESC
-        LIMIT 20
-      `;
+  // One query for both scoped and unscoped: the account predicate is a no-op
+  // when account_id is absent (single-tenant), and filters to the account
+  // otherwise (a LEFT-joined session with no matching account is excluded).
+  const rows = await sql`
+    SELECT t.session_id, v.status AS eval_status, s.account_id
+    FROM session_tags t
+    LEFT JOIN agent_transport_sessions s ON s.session_id = t.session_id
+    LEFT JOIN session_eval_verdicts v ON v.session_id = t.session_id
+    WHERE t.name = ${tag}
+      AND (${accountId}::text IS NULL OR s.account_id = ${accountId})
+    ORDER BY t.created_at DESC
+    LIMIT 20
+  `;
   return c.json({
     objects: rows.map((r: any) => ({ session_id: r.session_id, eval_status: r.eval_status ?? null, account_id: r.account_id ?? null })),
   });

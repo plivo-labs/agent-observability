@@ -15,7 +15,7 @@
 import type { LlmProvider } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
-import { evaluateConversationMetrics } from "../judges/conversation-judges.js";
+import { evaluateConversationMetrics, zeroConversationMetrics } from "../judges/conversation-judges.js";
 import type {
   ConversationInput,
   EvalTurn,
@@ -70,7 +70,7 @@ export interface AgentConfig {
 }
 
 // ── ingested transcript shape (raw_report.events, as AO stores them) ─────────
-interface StoredEvent {
+export interface StoredEvent {
   type?: string;
   node_ref?: string;
   item?: {
@@ -214,7 +214,7 @@ export function buildSessionEvalInput(
         toolCallsByRef.get(ref)!.push(call);
         allToolCalls.push(call);
       }
-      pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item), intent: "" });
+      pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item), intent: "", evidence: true });
       continue;
     }
     if (item.type === "agent_handoff") {
@@ -229,7 +229,7 @@ export function buildSessionEvalInput(
         toolCallsByRef.get(ref)!.push(call);
         allToolCalls.push(call);
       }
-      pushTurn(ref, { node_uuid: ref, user: "", agent: label ? `Agent_Handoff: ${label}` : "Agent_Handoff", intent: "" });
+      pushTurn(ref, { node_uuid: ref, user: "", agent: label ? `Agent_Handoff: ${label}` : "Agent_Handoff", intent: "", evidence: true });
       continue;
     }
     const text = textOf(item.content);
@@ -246,7 +246,7 @@ export function buildSessionEvalInput(
     // node_prompt).
     if (!isUser && (role === "system" || role === "developer")) {
       const note = text.length > 600 ? `${text.slice(0, 600)}…` : text;
-      pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "" });
+      pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
     }
     pushTurn(ref, isUser
@@ -279,41 +279,8 @@ export function buildSessionEvalInput(
     // variable judge reads "(none) extracted" and fails runs whose transcript
     // plainly shows the recording calls.
     const nodeToolCalls = toolCallsByRef.get(ref) ?? [];
-    const extractedVariables: Record<string, unknown> = {};
-    for (const v of def.variables ?? []) {
-      const varName = typeof v?.name === "string" ? v.name : "";
-      if (!varName) continue;
-      const toolName = typeof v?.tool === "string" && v.tool ? v.tool : varName;
-      // Prefer a recording call on THIS node; fall back to one from any other
-      // node in the session. Node revisits mint a fresh ref per visit while
-      // the recording call is stamped only on the visit where it fired — a
-      // variable recorded on visit 1 must not read as "missing" on visit 2.
-      const call =
-        nodeToolCalls.find((tc) => tc.name === toolName) ??
-        allToolCalls.find((tc) => tc.name === toolName);
-      if (!call) continue;
-      const args = call.args;
-      if (args && Object.keys(args).length === 1) {
-        extractedVariables[varName] = Object.values(args)[0];
-      } else if (args && Object.keys(args).length > 0) {
-        extractedVariables[varName] = args;
-      } else {
-        extractedVariables[varName] = "(recorded)";
-      }
-    }
-    // Chosen intent: a config intent whose declared `tool` (or its own name)
-    // matches a tool/handoff signal on this node was the intent the agent
-    // actually selected — the last matching signal wins. Without this the
-    // intent judge compares against "(none)" and speculates.
-    let chosenIntent = "";
-    for (const tc of nodeToolCalls) {
-      for (const i of def.intents ?? []) {
-        const intentName = typeof i?.name === "string" ? i.name : "";
-        if (!intentName) continue;
-        const toolName = typeof i?.tool === "string" && i.tool ? i.tool : intentName;
-        if (tc.name === toolName) chosenIntent = intentName;
-      }
-    }
+    const extractedVariables = deriveExtractedVariables(def, nodeToolCalls, allToolCalls);
+    const chosenIntent = deriveChosenIntent(def, nodeToolCalls);
     nodes.push({
       node_uuid: ref,
       node_name: typeof def.name === "string" && def.name ? def.name : (ref.startsWith(SYNTHETIC_REF) ? "node" : ref),
@@ -344,7 +311,7 @@ export function buildSessionEvalInput(
       // things said on the call.
       speech_transcript: renderFullTranscript(
         allTurns.filter(
-          (t) => t.user || !/^(System_Note|Tool_Call|Tool_Result|Agent_Handoff)(?=[:\s]|$)/.test(t.agent),
+          (t) => !t.evidence,
         ),
       ),
     },
@@ -375,10 +342,8 @@ export async function evaluateIngestedSession(
 
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()
-      // Override the sim engine's platform flags: the generic ingest path
-      // makes no claim about which runtime produced the session.
-      ? evaluateConversationMetrics(input, provider).then((cm) => ({ ...cm, is_livekit: false, is_agent_runner: false }))
-      : Promise.resolve(emptyConversationMetrics()),
+      ? evaluateConversationMetrics(input, provider)
+      : Promise.resolve(zeroConversationMetrics()),
     input.nodes.length
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
@@ -394,29 +359,43 @@ export async function evaluateIngestedSession(
   };
 }
 
-function emptyConversationMetrics(): SimConversationMetrics {
-  // technical_reason carries the "judge unavailable" sentinel so the fan-out
-  // and the read-path flatteners SKIP these placeholders — otherwise an
-  // empty-transcript session would fan out six confident "pass" detection
-  // rows for judges that never ran.
-  const det = () => ({ detected: false, detected_value: 0, reason: "", technical_reason: "conversation judge unavailable: empty transcript" });
-  return {
-    answered: false,
-    voicemail_detected: det(),
-    bot_detected: det(),
-    call_screening: det(),
-    low_engagement: det(),
-    wrong_number: det(),
-    do_not_disturb: det(),
-    user_sentiment: { sentiment: "", reason: "", technical_reason: "conversation judge unavailable: empty transcript" },
-    silent_call: false,
-    customer_engaged: false,
-    conversation_status: { status: "", reason: "", technical_reason: "" },
-    // Platform-neutral: the generic ingest path makes no claim about which
-    // runtime produced the session (these legacy flags exist for the sim
-    // engine's own consumers).
-    is_livekit: false,
-    is_agent_runner: false,
-    stt: { error_count: 0, recovered_count: 0 },
-  };
+type ToolCall = { name: string; args: Record<string, unknown> | null };
+
+/** Variables the agent actually recorded on a node: a config variable whose
+ *  declared `tool` (or its own name) matches a function_call. Prefers a call on
+ *  this node, then any call in the session — a node revisit mints a fresh ref,
+ *  but a variable recorded on an earlier visit must still count. */
+function deriveExtractedVariables(
+  def: AgentConfigNode,
+  nodeToolCalls: ToolCall[],
+  allToolCalls: ToolCall[],
+): Record<string, unknown> {
+  const extracted: Record<string, unknown> = {};
+  for (const v of def.variables ?? []) {
+    const varName = typeof v?.name === "string" ? v.name : "";
+    if (!varName) continue;
+    const toolName = typeof v?.tool === "string" && v.tool ? v.tool : varName;
+    const call = nodeToolCalls.find((tc) => tc.name === toolName) ?? allToolCalls.find((tc) => tc.name === toolName);
+    if (!call) continue;
+    const args = call.args;
+    if (args && Object.keys(args).length === 1) extracted[varName] = Object.values(args)[0];
+    else if (args && Object.keys(args).length > 0) extracted[varName] = args;
+    else extracted[varName] = "(recorded)";
+  }
+  return extracted;
+}
+
+/** The intent the agent selected on a node: a config intent whose declared
+ *  `tool` (or its own name) matches a tool/handoff signal. Last match wins. */
+function deriveChosenIntent(def: AgentConfigNode, nodeToolCalls: ToolCall[]): string {
+  let chosen = "";
+  for (const tc of nodeToolCalls) {
+    for (const i of def.intents ?? []) {
+      const intentName = typeof i?.name === "string" ? i.name : "";
+      if (!intentName) continue;
+      const toolName = typeof i?.tool === "string" && i.tool ? i.tool : intentName;
+      if (tc.name === toolName) chosen = intentName;
+    }
+  }
+  return chosen;
 }

@@ -396,12 +396,16 @@ const OTLP_HANDLERS: Record<string, OtlpHandler> = {
  *  same way on every redelivery and is skipped per-record instead. Unknown
  *  errors default to transient: dropping data needs positive evidence. */
 function isTransientPersistError(e: unknown): boolean {
-  const msg = `${(e as Error)?.message ?? ""} ${(e as { code?: string })?.code ?? ""}`;
-  // SQLSTATEs are word-boundary anchored so codes can't match digit runs
-  // inside ids; the unicode/byte-sequence markers cover jsonb rejecting NUL
-  // escapes (22P05) and encoding errors — deterministic content failures
-  // that would poison an at-least-once sender if classified transient.
-  const deterministic = /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|unsupported unicode|invalid byte sequence|\b22P0[0-9]\b|\b23\d{3}\b/i;
+  // Prefer the structured SQLSTATE that Postgres attaches to the error. Classes
+  // 22 (data exception — incl. 22P05 jsonb NUL), 23 (integrity constraint) and
+  // 42 (syntax/access) are DETERMINISTIC: the same record fails identically on
+  // every redelivery, so it's skipped rather than 503-looping the batch.
+  const code = (e as { code?: string })?.code ?? "";
+  if (/^(22|23|42)/.test(code)) return false;
+  if (code) return true; // any other coded error (e.g. class 08 connection) is transient
+  // No SQLSTATE (non-Postgres throw) — fall back to matching the message text.
+  const msg = (e as Error)?.message ?? "";
+  const deterministic = /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|unsupported unicode|invalid byte sequence/i;
   return !deterministic.test(msg);
 }
 

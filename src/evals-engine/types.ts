@@ -20,6 +20,10 @@ export interface EvalTurn {
   agent: string;
   /** Intent the agent/framework selected on this turn ("" when none). */
   intent: string;
+  /** True for synthetic evidence lines (tool calls, handoffs, system notes)
+   *  that are NOT spoken words. The speech-only transcript filters on this
+   *  flag instead of re-matching the rendered label strings. */
+  evidence?: boolean;
 }
 
 /** A single AI node the scenario visited, with the config + turns needed to score it. */
@@ -193,6 +197,10 @@ interface CmDetection {
   detected_value: number;
   reason: string;
   technical_reason: string;
+  /** False when the judge could not run (provider outage). Consumers skip
+   *  unavailable detections rather than reading `detected:false` as a real
+   *  "not detected" verdict. Optional so the sim path need not set it. */
+  available?: boolean;
 }
 export interface SimConversationMetrics {
   answered: boolean;
@@ -202,7 +210,16 @@ export interface SimConversationMetrics {
   low_engagement: CmDetection;
   wrong_number: CmDetection;
   do_not_disturb: CmDetection;
-  user_sentiment: { sentiment: string; reason: string; technical_reason: string };
+  user_sentiment: {
+    sentiment: string;
+    reason: string;
+    technical_reason: string;
+    /** False when the sentiment judge could not run. */
+    available?: boolean;
+    /** Code-derived pass/fail, emitted once here so consumers (fan-out,
+     *  config-service, console) read it instead of re-deriving the rule. */
+    passed?: boolean;
+  };
   silent_call: boolean;
   customer_engaged: boolean;
   conversation_status: { status: string; reason: string; technical_reason: string };

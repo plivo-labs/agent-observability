@@ -79,6 +79,28 @@ if (queueDispatchEnabled) {
 
 // The alert sweeper is entirely DB-backed. In STATELESS mode (no DATABASE_URL) it can't run, so the
 // worker is consumer-only: it stays alive for the SQS consumer (started above) until a shutdown signal.
+/** Sleep in ~1s slices so a shutdown signal is honored within a second
+ *  instead of waiting out the full interval. */
+async function sleepInSlices(totalMs: number): Promise<void> {
+  for (let waited = 0; running && waited < totalMs; waited += 1000) {
+    await Bun.sleep(1000);
+  }
+}
+
+/** The eval sweep as its own loop — never awaited by the alert loop, so a slow
+ *  eval tick (minutes of provider latency) can't starve alert evaluation or
+ *  webhook retries. runEvalSweepOnce's re-entrancy guard makes overlap a no-op. */
+async function runEvalLoop(): Promise<void> {
+  while (running) {
+    try {
+      await runEvalSweepOnce();
+    } catch (e) {
+      console.error(`[worker] eval sweep failed: ${(e as Error).message}`);
+    }
+    await sleepInSlices(SWEEP_INTERVAL_MS);
+  }
+}
+
 if (dbConfigured) {
   console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
   // The eval sweep runs as its OWN loop, never awaited by the alert loop: one
@@ -88,29 +110,14 @@ if (dbConfigured) {
   // guard makes overlapping ticks a no-op. Gated so an inline-API deployment
   // can run this worker for alerts/SQS without doubling eval sweepers.
   let evalLoop: Promise<void> = Promise.resolve();
-  if (config.EVAL_SWEEPER_WORKER === "on") {
-    evalLoop = (async () => {
-      while (running) {
-        try {
-          await runEvalSweepOnce();
-        } catch (e) {
-          console.error(`[worker] eval sweep failed: ${(e as Error).message}`);
-        }
-        for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
-          await Bun.sleep(1000);
-        }
-      }
-    })();
+  if (config.EVAL_SWEEPER === "worker") {
+    evalLoop = runEvalLoop();
   } else {
-    console.log("[worker] EVAL_SWEEPER_WORKER=off — ingested-session judging disabled on this worker (ensure the API runs EVAL_SWEEPER=inline, or no evals run at all)");
+    console.log(`[worker] EVAL_SWEEPER=${config.EVAL_SWEEPER} — this worker does not judge ingested sessions (set EVAL_SWEEPER=worker here, or "inline" on the API).`);
   }
   while (running) {
     await runSweepOnce();
-    // Sleep in small slices so a shutdown signal is honored within ~1s
-    // instead of waiting out the full interval.
-    for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
-      await Bun.sleep(1000);
-    }
+    await sleepInSlices(SWEEP_INTERVAL_MS);
   }
   await evalLoop; // drain the eval loop before exiting
 } else {

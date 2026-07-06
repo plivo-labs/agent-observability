@@ -1,3 +1,4 @@
+import { insertLiveKitEvaluation } from "../db.js";
 import {
   claimNextEvalSession,
   completeSessionEvalVerdicts,
@@ -6,11 +7,11 @@ import {
   failSessionEvalVerdicts,
   getSessionEvalSource,
   heartbeatEvalClaim,
-  insertLiveKitEvaluation,
   type EvalClaim,
-} from "../db.js";
+} from "./db.js";
 import { sanitizeForLog } from "../response.js";
-import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts } from "./integration/session-evals.js";
+import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
+import { sentimentPassed } from "./judges/conversation-judges.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
 //
@@ -76,7 +77,7 @@ export async function fanOutExternalEvals(
   // provider outage must not silently bias fail rates to zero.
   const cm = verdicts.conversation_metrics;
   if (cm) {
-    const detections: Array<[string, { detected: boolean; reason: string; technical_reason?: string } | undefined]> = [
+    const detections: Array<[string, { detected: boolean; reason: string; technical_reason?: string; available?: boolean } | undefined]> = [
       ["voicemail_detection", cm.voicemail_detected],
       ["bot_detection", cm.bot_detected],
       ["call_screening", cm.call_screening],
@@ -86,17 +87,23 @@ export async function fanOutExternalEvals(
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
-      if (/judge unavailable/i.test(det.technical_reason ?? "")) continue;
+      // Skip a judge that didn't run: prefer the explicit `available` flag,
+      // fall back to the legacy sentinel string only when it's absent.
+      if (det.available === false || (det.available === undefined && /judge unavailable/i.test(det.technical_reason ?? ""))) continue;
       rows.push({ judgeName, tag: null, passed: !det.detected, reasoning: det.reason, raw: det as any });
     }
-    const sentiment = cm.user_sentiment;
+    const sentiment = cm.user_sentiment as { sentiment?: string; reason?: string; technical_reason?: string; available?: boolean; passed?: boolean } | undefined;
     const sentimentValue = sentiment?.sentiment ?? "";
-    if (sentimentValue && sentimentValue !== "unknown" && !/judge unavailable/i.test((sentiment as { technical_reason?: string })?.technical_reason ?? "")) {
+    const sentimentUnavailable = sentiment?.available === false
+      || (sentiment?.available === undefined && /judge unavailable/i.test(sentiment?.technical_reason ?? ""));
+    if (sentimentValue && sentimentValue !== "unknown" && !sentimentUnavailable) {
       rows.push({
         judgeName: "user_sentiment",
         tag: null,
-        passed: !/negativ|frustrat|angry|confus/i.test(sentimentValue),
-        reasoning: sentiment.reason ? `${sentimentValue}: ${sentiment.reason}` : sentimentValue,
+        // The verdict carries the derived pass/fail; only fall back to the
+        // rule (via sentimentPassed) for payloads that predate the field.
+        passed: sentiment?.passed ?? sentimentPassed(sentimentValue),
+        reasoning: sentiment?.reason ? `${sentimentValue}: ${sentiment.reason}` : sentimentValue,
         raw: sentiment as any,
       });
     }
@@ -154,7 +161,7 @@ function isTerminalEvalError(e: unknown): boolean {
 /** Synthesize builder events from stored chat_history items when the OTLP
  *  event channel was lost — judging the recording's transcript beats marking
  *  a fully transcribed call "done" with phantom empty-input verdicts. */
-function eventsFromChatHistory(chatHistory: unknown): any[] {
+function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
   if (!Array.isArray(chatHistory)) return [];
   return chatHistory
     .filter((item) => item && typeof item === "object")
@@ -198,7 +205,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
 
   try {
     const rawReport = (source.rawReport ?? {}) as { events?: unknown };
-    let events = Array.isArray(rawReport.events) ? (rawReport.events as any[]) : [];
+    let events: StoredEvent[] = Array.isArray(rawReport.events) ? (rawReport.events as StoredEvent[]) : [];
     if (events.length === 0) {
       events = eventsFromChatHistory(source.chatHistory);
     }
@@ -206,7 +213,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
     // non-conversation entries (or empty-content items) builds zero turns,
     // and judging that would store the exact phantom all-pass verdicts this
     // guard exists to prevent.
-    const built = buildSessionEvalInput(source.config as AgentConfig, events as any[]);
+    const built = buildSessionEvalInput(source.config as AgentConfig, events);
     if (built.input.nodes.length === 0 || !built.input.full_transcript.trim()) {
       // No judgeable transcript. A young session may simply have its chat
       // items still in flight (config can land in an earlier OTLP batch than
@@ -233,19 +240,27 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       console.warn(`[evals] claim lost mid-judge session=${sanitizeForLog(sessionId)} — discarding this run`);
       return false;
     }
-    const completed = await completeSessionEvalVerdicts(claim, verdicts as unknown as Record<string, unknown>);
-    if (!completed) {
-      // Ownership check failed at the final write (stale adoption or the
-      // session was bulk-deleted mid-judge) — skip fan-out so no rows are
-      // written for work we no longer own or a session that no longer exists.
-      console.warn(`[evals] complete skipped (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
-      return false;
-    }
+    // Fan out BEFORE marking the session done. insertLiveKitEvaluation is
+    // idempotent (dedup on session/source/judge/tag/raw), so a crash between
+    // here and completion just re-judges and re-fans on retry — no duplicates.
+    // Marking done first would strand these rows: 'done' is terminal and the
+    // fan-out has no retry, so a fan-out crash after completion would lose the
+    // only rows the evals tab, session drawer, and alert rules read.
     try {
       await fanOutExternalEvals(sessionId, verdicts, source.sessionEndedAt ?? new Date());
     } catch (e) {
-      // Denormalization only — verdicts are already stored; don't fail the claim.
-      console.error(`[evals] fan-out failed session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
+      // Leave the claim running so the stale-adoption retry re-fans; don't
+      // complete on top of a partial fan-out.
+      console.error(`[evals] fan-out failed (will retry) session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
+      return false;
+    }
+    const completed = await completeSessionEvalVerdicts(claim, verdicts as unknown as Record<string, unknown>);
+    if (!completed) {
+      // Lost the claim at the final write (stale adoption / bulk delete). The
+      // fan-out above was idempotent, so the winner's identical rows dedup
+      // against ours — nothing to undo; just don't double-complete.
+      console.warn(`[evals] complete skipped (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
+      return false;
     }
     const nodes = verdicts.node_evaluations.length;
     console.log(`[evals] judged session=${sanitizeForLog(sessionId)} nodes=${nodes}`);
