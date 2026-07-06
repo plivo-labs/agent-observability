@@ -104,12 +104,21 @@ suite("simulation routes", () => {
     );
     expect(planningStarted).toBeTruthy();
 
-    // persisted to ao_simulation_scenarios → visible via the list route
+    // persisted to ao_sim_scenario → visible via the list route
     const list = await app.fetch(new Request("http://localhost/api/simulation/scenarios?phlo_uuid=phlo-gen", { headers: H }));
     const body = await list.json();
     expect(body.total).toBe(2);
     expect(body.scenarios.length).toBe(2);
     expect(body.scenarios[0].uuid).toBeTruthy();
+
+    // persisted scenario_saved events carry the durable row uuid (scenario_uuid) so a stateless
+    // relayer (the orchestrator service) can surface the library id without its own DB write.
+    const savedUuids = events
+      .filter((e) => e.event === "scenario_saved")
+      .map((e) => JSON.parse(e.data).event_data.scenario_uuid)
+      .sort();
+    const listedUuids = body.scenarios.map((s: { uuid: string }) => s.uuid).sort();
+    expect(savedUuids).toEqual(listedUuids);
   });
 
   test("generate ?persist=false: streams scenarios (full payload) but writes NO DB rows", async () => {
@@ -123,6 +132,7 @@ suite("simulation routes", () => {
     const saved = events.filter((e) => e.event === "scenario_saved");
     expect(saved.length).toBe(2); // scenarios still stream — aiassist persists them
     expect(JSON.parse(saved[0]!.data).event_data.scenario).toBeTruthy(); // full scenario rides the event
+    expect(JSON.parse(saved[0]!.data).event_data.scenario_uuid).toBeUndefined(); // no row → no durable uuid
     expect(events.map((e) => e.event)).toContain("completed");
 
     // AO wrote nothing to its own table under persist=false

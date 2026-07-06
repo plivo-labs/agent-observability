@@ -47,8 +47,9 @@ import {
   normalizedTurnType,
   type LiveKitSimRequest,
 } from "./livekit-client.js";
-import { emitScenarioStarted, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
+import { emitScenarioStarted, emitScenarioDbReady, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
+import { insertRunScenario, completeRunScenario } from "../db.js";
 import { evaluateSimulationForRun } from "../../evals-engine/integration/sim-adapter.js";
 import type { EvalTurn } from "../../evals-engine/index.js";
 
@@ -70,6 +71,13 @@ export interface ScenarioRunnerDeps {
   llmModel?: string;
 }
 
+/** Durable-persistence context (aodb-write.md): both ids are opaque caller-supplied strings.
+ *  null/absent = do not write ao_sim_* rows for this scenario (stateless / legacy message). */
+export interface DbPersistContext {
+  tenantId: string;
+  agentId: string;
+}
+
 /** One scenario to run — the inline scenario dict + the per-run identifiers (from the SQS message). */
 export interface RunScenarioJob {
   simRunUuid: string;
@@ -81,6 +89,12 @@ export interface RunScenarioJob {
   /** Raw flow JSON (the FLOW_JSON the orchestrator service seeded; the engine reads it via getFlowJson). */
   flowJson: string;
   maxTurns: number;
+  /** When set, runScenario mirrors each Redis emit with an ao_sim_run_scenario write. */
+  dbPersist?: DbPersistContext | null;
+  /** Durable scenario reference for the DB row (`scenario_ref`): the library row uuid when the
+   *  message carries one (`scenario_uuid`), else the scenario JSONB id. Events always echo
+   *  `scenarioId` (the JSONB id) — this field affects ONLY what the row stores. */
+  scenarioRef?: string | null;
 }
 
 /** schema.ts world_state (snake_case `action_mocks`) → the executor's Map (camelCase `actionMocks`). */
@@ -126,6 +140,7 @@ class ScenarioRunner implements AINodeExecutor {
   // Eval transcript: the per-turn slice the eval engine consumes (node_uuid, user, agent, intent),
   // accumulated across the loop so runScenario can score the scenario before emitting scenario_completed.
   private readonly evalTurns: EvalTurn[] = [];
+  private readonly transcriptTurns: unknown[] = [];
 
   // Per-turn latency samples (ms), mirroring the reference worker's userSimDurations / livekitDurations
   // so we can log a scenario timing summary and compare against cx-sqs (scenario_runner.go:683-701).
@@ -320,7 +335,9 @@ class ScenarioRunner implements AINodeExecutor {
     const variablesByNodeSnapshot = deepCopy(this.variablesByNode);
 
     // 8. Emit turn_completed (byte-identical payload to scenario_runner.go:486-505, incl. turn_type/is_spoken).
-    await emitTurnCompleted(this.redis, this.job.simRunUuid, {
+    //    The same payload object is accumulated as the durable transcript — ao_sim_run_scenario.transcript
+    //    stores exactly what rode the stream (the orchestrator service buffers these events verbatim today).
+    const turnPayload = {
       scenario_id: this.job.scenarioId,
       turn: turnIndex,
       node_uuid: node.id,
@@ -337,7 +354,9 @@ class ScenarioRunner implements AINodeExecutor {
       is_non_answer: isNonAnswer,
       non_answer_type: nonAnswerType,
       partial_assistant_msg: partialAssistantMsg,
-    });
+    };
+    this.transcriptTurns.push(turnPayload);
+    await emitTurnCompleted(this.redis, this.job.simRunUuid, turnPayload);
 
     // 9. (SaveTranscriptTurn skipped — V1 has no inline evaluator.)
 
@@ -378,6 +397,11 @@ class ScenarioRunner implements AINodeExecutor {
     return this.evalTurns;
   }
 
+  /** The turn_completed payloads exactly as emitted — the durable ao_sim_run_scenario.transcript. */
+  getTranscript(): unknown[] {
+    return this.transcriptTurns;
+  }
+
   /** Latest per-node extracted variables (for the variable-extraction judge). */
   getVariablesByNode(): Record<string, Record<string, unknown>> {
     return this.variablesByNode;
@@ -410,6 +434,17 @@ class ScenarioRunner implements AINodeExecutor {
 export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<OrchestratorResult> {
   const flowRunUuid = crypto.randomUUID();
 
+  // Durable-write helper: a DB failure downgrades to unpersisted (log) — persistence must
+  // never break the emit path, which stays the live source of truth for the SSE relay.
+  const persistSafe = async (label: string, fn: () => Promise<void>): Promise<void> => {
+    if (!job.dbPersist) return;
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`[sim-db] ${label} failed (run ${job.simRunUuid} scenario ${job.scenarioId}): ${(err as Error).message}`);
+    }
+  };
+
   await emitScenarioStarted(deps.redis, job.simRunUuid, {
     scenario_id: job.scenarioId,
     scenario_index: job.scenarioIndex,
@@ -417,7 +452,24 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     goal: job.scenario.goal,
     flow_run_uuid: flowRunUuid,
   });
+  // Row id = flowRunUuid (the per-execution uuid the orchestrator service tracks). Insert next to
+  // the emit; completeRunScenario upserts anyway, so a lost insert cannot orphan the terminal write.
+  // scenario_db_ready follows the successful insert (same order as the orchestrator service's own
+  // persist path) so the console can map the live scenario to its durable row uuid.
+  await persistSafe("insertRunScenario", async () => {
+    await insertRunScenario({
+      id: flowRunUuid,
+      simRunId: job.simRunUuid,
+      scenarioRef: job.scenarioRef ?? job.scenarioId,
+      scenarioIndex: job.scenarioIndex,
+    });
+    await emitScenarioDbReady(deps.redis, job.simRunUuid, {
+      scenario_id: job.scenarioId,
+      scenario_db_uuid: flowRunUuid,
+    });
+  });
 
+  let runnerRef: ScenarioRunner | null = null;
   try {
     // Parse the flow ONCE, then hand the object to both parseFlowGraph and buildHandoffGraph
     // (parseFlowGraph now accepts an already-parsed object). The try wrapper keeps the exact
@@ -435,6 +487,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const isOutboundCall = Array.from(graph.nodes.values()).some((n) => n.type === "initiate_call");
 
     const runner = new ScenarioRunner(deps, job, flowObj, handoffGraph, flowRunUuid, isOutboundCall);
+    runnerRef = runner;
     const orchestrator = new FlowOrchestrator(graph, worldState, job.maxTurns, runner);
     orchestrator.seedStartNodeParams((job.scenario.start_node_params ?? {}) as Record<string, unknown>);
 
@@ -467,6 +520,23 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
       ...(evalOutcome.evaluation ? { evaluation: evalOutcome.evaluation } : {}),
       ...(evalOutcome.eval_error ? { eval_error: true } : {}),
     });
+    // Terminal row write mirrors the emit exactly: status mapping matches the orchestrator
+    // service's persist (`error if event.error else completed`), counters use the tri-state
+    // any-goal rule inside completeRunScenario.
+    await persistSafe("completeRunScenario", () =>
+      completeRunScenario({
+        id: flowRunUuid,
+        simRunId: job.simRunUuid,
+        scenarioRef: job.scenarioRef ?? job.scenarioId,
+        scenarioIndex: job.scenarioIndex,
+        status: "completed",
+        stopReason: result.stop_reason || "end_conversation",
+        turnCount: result.turn_count,
+        evaluation: evalOutcome.evaluation ?? null,
+        evalError: evalOutcome.eval_error ?? false,
+        transcript: runner.getTranscript(),
+      }),
+    );
 
     return result;
   } catch (err) {
@@ -477,6 +547,19 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
       stop_reason: "error",
       error: message,
     });
+    await persistSafe("completeRunScenario(error)", () =>
+      completeRunScenario({
+        id: flowRunUuid,
+        simRunId: job.simRunUuid,
+        scenarioRef: job.scenarioRef ?? job.scenarioId,
+        scenarioIndex: job.scenarioIndex,
+        status: "error",
+        stopReason: "error",
+        turnCount: 0,
+        error: message,
+        transcript: runnerRef?.getTranscript() ?? [],
+      }),
+    );
     return {
       stop_reason: "error",
       nodes_visited: [],

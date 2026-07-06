@@ -116,11 +116,12 @@ export const envSchema = z.object({
   // non-Azure deploy, override + point OPENAI_BASE_URL at the endpoint.
   SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5-1"),
 
-  // Scenario-library persistence mode. Selects whether AO owns its own scenario store:
-  //   • true  (default) — SELF-CONTAINED (OSS): each generated scenario is written to AO's
-  //     own Postgres (ao_simulation_scenarios) and the library routes serve it. Needs DATABASE_URL.
-  //   • false           — STATELESS generator (the managed deployment / bring-your-own-backend): AO streams
-  //     scenarios but writes NO database; the host (the orchestrator service) persists what it relays. No DB needed.
+  // Sim persistence mode. Selects whether AO writes its ao_sim_* tables:
+  //   • true  (default) — PERSISTENT: generated scenarios land in ao_sim_scenario, run results
+  //     in ao_sim_run / ao_sim_run_scenario (OSS: AO's own Postgres via AUTO_MIGRATE; managed:
+  //     pre-created tables in the shared core DB — see src/db-probe.ts). Needs DATABASE_URL.
+  //   • false           — STATELESS engine: AO streams scenarios + emits run events to Redis but
+  //     writes NO database. No DB needed.
   // This is the DEFAULT; the per-request `?persist=true|false` query param overrides it. Persistence
   // is impossible without a DB, so the effective value is always ANDed with DATABASE_URL being set.
   SIM_PERSIST: z

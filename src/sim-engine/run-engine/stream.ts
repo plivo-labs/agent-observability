@@ -10,6 +10,7 @@ import type { EvaluationResult } from "../../evals-engine/index.js";
 
 export const SIM_EVENT = {
   SCENARIO_STARTED: "scenario_started",
+  SCENARIO_DB_READY: "scenario_db_ready",
   TURN_COMPLETED: "turn_completed",
   SCENARIO_COMPLETED: "scenario_completed",
   SIMULATION_COMPLETED: "simulation_completed",
@@ -81,6 +82,16 @@ export interface SimulationErrorEvent {
 
 export const emitScenarioStarted = (redis: RedisClient, runUuid: string, p: ScenarioStartedEvent) =>
   xaddEvent(redis, runUuid, SIM_EVENT.SCENARIO_STARTED, p);
+
+/** scenario_db_ready — emitted right after the ao_sim_run_scenario row insert (persistence on),
+ *  mirroring the orchestrator service's own emit: the console stores `scenario_db_uuid` as the
+ *  live scenario's dbUuid and uses it to open the run-scenario detail. The value IS the
+ *  flow_run_uuid (the row id). */
+export const emitScenarioDbReady = (
+  redis: RedisClient,
+  runUuid: string,
+  p: { scenario_id: string; scenario_db_uuid: string },
+) => xaddEvent(redis, runUuid, SIM_EVENT.SCENARIO_DB_READY, p);
 
 export const emitTurnCompleted = (redis: RedisClient, runUuid: string, p: TurnCompletedEvent) =>
   xaddEvent(redis, runUuid, SIM_EVENT.TURN_COMPLETED, p);

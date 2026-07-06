@@ -20,9 +20,11 @@
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import type { Message } from "@aws-sdk/client-sqs";
 import { simEngineConfig } from "../config.js";
-import { getFlowJson, incrementAndCheckCompletion, type RedisClient } from "./redis.js";
+import { config, dbConfigured } from "../../config.js";
+import { expectedCountKey, getFlowJson, incrementAndCheckCompletion, type RedisClient } from "./redis.js";
 import { emitScenarioCompleted, emitSimulationCompleted } from "../run-engine/stream.js";
-import { runScenario, type ScenarioRunnerDeps } from "../run-engine/orchestrator.js";
+import { runScenario, type DbPersistContext, type ScenarioRunnerDeps } from "../run-engine/orchestrator.js";
+import { upsertRun, finalizeRun } from "../db.js";
 import { Scenario } from "../schema.js";
 
 /** SQS receive/visibility tuning (mirrors the worker's long-poll consumer). */
@@ -58,12 +60,18 @@ interface SimulationEnvelope {
  * Advance the completion gate for a FAILED scenario and emit scenario_completed(error).
  * Faithful to the Go `failScenario`: even a failure advances the gate, so a run whose last
  * scenario fails still emits simulation_completed (the dashboard never hangs "in progress").
+ *
+ * NO ao_sim_run_scenario row is written here — deliberately mirrors the orchestrator
+ * service's persist behavior, which skips the DB when a scenario_completed event carries
+ * no per-execution uuid (these envelope-level drops never produced a row today either).
+ * The run header IS finalized at the gate so the durable status matches the stream.
  */
 async function failScenario(
   redis: RedisClient,
   simRunUuid: string,
   scenarioId: string,
   msg: string,
+  dbPersist?: DbPersistContext | null,
 ): Promise<void> {
   await emitScenarioCompleted(redis, simRunUuid, {
     scenario_id: scenarioId,
@@ -73,6 +81,13 @@ async function failScenario(
   const { completedByThisCall } = await incrementAndCheckCompletion(redis, simRunUuid);
   if (completedByThisCall) {
     await emitSimulationCompleted(redis, simRunUuid, {});
+    if (dbPersist) {
+      try {
+        await finalizeRun(simRunUuid);
+      } catch (err) {
+        console.error(`[sim-db] finalizeRun failed (run ${simRunUuid}): ${(err as Error).message}`);
+      }
+    }
   }
 }
 
@@ -131,10 +146,48 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     return;
   }
 
+  // ── Durable persistence context (aodb-write.md). `agent_id` is the opaque caller-supplied
+  //    agent identifier; `auth_id` doubles as the tenant. Persistence is gated ONLY on
+  //    SIM_PERSIST && dbConfigured (never migration state) + the message actually carrying
+  //    agent_id — a legacy message without it runs fine, it just isn't persisted. ──
+  const agentId = typeof body.agent_id === "string" && body.agent_id !== "" ? body.agent_id : null;
+  const dbPersist: DbPersistContext | null =
+    config.SIM_PERSIST && dbConfigured && agentId ? { tenantId: authId, agentId } : null;
+  if (config.SIM_PERSIST && dbConfigured && !agentId) {
+    console.warn(`[sim-db] run ${simRunUuid}: agent_id missing from message — skipping DB persistence for this scenario`);
+  }
+  // Durable scenario reference: the library row uuid when the sender supplies one (globally
+  // unique), else the scenario JSONB id (unique only within a generation). Events always echo
+  // scenario_id; this only affects what ao_sim_run_scenario.scenario_ref stores.
+  const scenarioRef =
+    typeof body.scenario_uuid === "string" && body.scenario_uuid !== "" ? body.scenario_uuid : scenarioId;
+
   // From here on we HAVE a run uuid + scenario id — every failure routes through
   // failScenario so the gate advances and simulation_completed still fires.
   // Emits go straight to the live Redis :RESULTS stream (the managed deployment; the orchestrator service relays it).
   try {
+    // ── Idempotent run-header upsert (first message of the run inserts; the rest no-op).
+    //    Placed BEFORE any failure path so even an all-failed run has a durable header. A DB
+    //    error here downgrades to unpersisted (log) — persistence never blocks the run. ──
+    if (dbPersist) {
+      try {
+        let scenarioCount = typeof body.scenario_count === "number" ? body.scenario_count : null;
+        if (scenarioCount == null) {
+          const raw = await redis.get(expectedCountKey(simRunUuid)).catch(() => null);
+          scenarioCount = raw != null ? Number(raw) || 0 : 0;
+        }
+        await upsertRun({
+          id: simRunUuid,
+          tenantId: dbPersist.tenantId,
+          agentId: dbPersist.agentId,
+          name: typeof body.run_name === "string" ? body.run_name : null,
+          scenarioCount,
+          maxTurns: typeof body.max_turns === "number" ? body.max_turns : 25,
+        });
+      } catch (err) {
+        console.error(`[sim-db] upsertRun failed (run ${simRunUuid}): ${(err as Error).message}`);
+      }
+    }
     // ── Read the flow JSON the orchestrator service seeded for this run. A miss is fatal for the scenario
     //    (we can't run the flow), but not for the run — fail the scenario, advance the gate. ──
     let flowJson: string;
@@ -142,7 +195,7 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
       flowJson = await getFlowJson(redis, simRunUuid);
     } catch (err) {
       console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: ${(err as Error).message}`);
-      await failScenario(redis, simRunUuid, scenarioId, "failed to retrieve flow JSON");
+      await failScenario(redis, simRunUuid, scenarioId, "failed to retrieve flow JSON", dbPersist);
       return;
     }
 
@@ -150,7 +203,7 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     const parsed = Scenario.safeParse(body.scenario);
     if (!parsed.success) {
       console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: scenario deserialize failed — ${parsed.error.message}`);
-      await failScenario(redis, simRunUuid, scenarioId, "failed to deserialize scenario");
+      await failScenario(redis, simRunUuid, scenarioId, "failed to deserialize scenario", dbPersist);
       return;
     }
     const scenario = parsed.data;
@@ -168,6 +221,8 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
         agentFlowDescription,
         flowJson,
         maxTurns: scenario.max_turns ?? 25,
+        dbPersist,
+        scenarioRef,
       },
     );
 
@@ -176,6 +231,13 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     const { processed, completedByThisCall } = await incrementAndCheckCompletion(redis, simRunUuid);
     if (completedByThisCall) {
       await emitSimulationCompleted(redis, simRunUuid, { scenarios_processed: processed });
+      if (dbPersist) {
+        try {
+          await finalizeRun(simRunUuid);
+        } catch (err) {
+          console.error(`[sim-db] finalizeRun failed (run ${simRunUuid}): ${(err as Error).message}`);
+        }
+      }
     }
   } catch (err) {
     // Panic-recovery equivalent: runScenario + the gate shouldn't throw, but if anything
@@ -184,7 +246,7 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: unexpected error — ${message}`);
     try {
-      await failScenario(redis, simRunUuid, scenarioId, `panic: ${message}`);
+      await failScenario(redis, simRunUuid, scenarioId, `panic: ${message}`, dbPersist);
     } catch (failErr) {
       // Even failScenario failed (Redis fully down). Nothing left to do but log + delete.
       console.error(`[sim-consumer] run ${simRunUuid} scenario ${scenarioId}: failScenario also failed — ${(failErr as Error).message}`);

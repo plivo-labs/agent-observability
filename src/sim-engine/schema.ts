@@ -36,8 +36,8 @@ const FlowJsonInput = z.record(z.string(), z.unknown());
 /**
  * POST .../scenarios/generate — mirror of the orchestrator service's `GenerateScenariosRequest`.
  * `phlo_uuid` is the agent id (stored as `agent_id` in AO's own tables).
- * `account_id` is NOT in the body: like the orchestrator service (which reads the API-gateway-injected
- * `auth-id` header) AO resolves the account from the auth context at the route
+ * `tenant_id` is NOT in the body: like the orchestrator service (which reads the API-gateway-injected
+ * `auth-id` header) AO resolves the tenant from the auth context at the route
  * layer (Phase 4), so this body stays byte-compatible with the console's.
  */
 export const GenerateScenariosRequest = z.object({

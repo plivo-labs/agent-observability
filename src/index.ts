@@ -32,6 +32,15 @@ if (config.AUTO_MIGRATE && dbConfigured) {
   await migrate(sql);
 }
 
+// Sim-persistence table probe (aodb-write.md): with SIM_PERSIST on, the ao_sim_* tables
+// must exist — locally AUTO_MIGRATE creates them; on the managed core-DB they are
+// pre-created out-of-band and this probe is the only boot-time check (AO never gates
+// writes on migration state). Fail fast with remediation instead of erroring mid-run.
+if (process.env.NODE_ENV !== "test" && config.SIM_PERSIST && dbConfigured) {
+  const { probeSimTables } = await import("./db-probe.js");
+  await probeSimTables();
+}
+
 // Alert sweeper: windowed metric-threshold alert rules + webhook delivery
 // retries. Runs inline by default so single-container deploys work with
 // zero config; set ALERT_SWEEPER=off when running the dedicated worker

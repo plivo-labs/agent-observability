@@ -10,7 +10,7 @@
 // These routes live under AO's `/api/simulation` prefix, behind AO's existing `/api/*` basic
 // auth. The library routes are Postgres-backed. Generation streams an error event if no LLM is
 // configured rather than pre-blocking. Tenant id comes from the `auth-id` header (= the API gateway's
-// injected org account id → AO `account_id`); `phlo_uuid` → AO `agent_id`.
+// injected org account id → AO `tenant_id`); `phlo_uuid` → AO `agent_id`.
 
 import type { Hono, Context } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -41,7 +41,7 @@ import { newApiId, buildErrorResponse } from "../response.js";
 // AO runs ONLY behind the API gateway on a private network, never exposed directly. A direct caller could
 // spoof this header, so if AO is ever fronted by anything other than the API gateway, add real auth here
 // (validate the account) before using it. Null (no header) = unscoped, single-tenant/no-auth mode.
-const accountIdOf = (c: Context): string | null => c.req.header("auth-id") || null;
+const tenantIdOf = (c: Context): string | null => c.req.header("auth-id") || null;
 
 function pageParams(c: Context, defaultPageSize: number): { page: number; pageSize: number; limit: number; offset: number } {
   const page = Math.max(1, Number(c.req.query("page")) || 1);
@@ -73,7 +73,7 @@ function rejectionDetail(e: unknown): string {
 
 const toPersistedScenario = (r: SimScenarioRow) => ({
   uuid: r.id,
-  account_id: r.account_id,
+  tenant_id: r.tenant_id,
   agent_id: r.agent_id,
   name: r.name,
   scenario: r.scenario,
@@ -93,7 +93,7 @@ export function registerSimulationRoutes(app: Hono): void {
     const { page, pageSize, limit, offset } = pageParams(c, 50);
     // STATELESS mode: AO owns no scenario store — the library is empty by definition.
     if (!dbConfigured) return c.json({ api_id: newApiId(), scenarios: [], total: 0, page, page_size: pageSize });
-    const { objects, total } = await listScenarios({ accountId: accountIdOf(c), agentId, limit, offset });
+    const { objects, total } = await listScenarios({ tenantId: tenantIdOf(c), agentId, limit, offset });
     return c.json({ api_id: newApiId(), scenarios: objects.map(toPersistedScenario), total, page, page_size: pageSize });
   });
 
@@ -127,7 +127,7 @@ export function registerSimulationRoutes(app: Hono): void {
       console.warn(`[sim-gen] 400 invalid_flow_json phlo_uuid=${body.phlo_uuid}: ${detail}`);
       return c.json(buildErrorResponse("invalid_flow_json", detail), 400);
     }
-    const accountId = accountIdOf(c);
+    const tenantId = tenantIdOf(c);
     // `persist` (default true): standalone/OSS AO owns the scenario library, so it
     // writes each generated scenario to its own table. Behind the orchestrator service in the managed deployment, AO
     // runs as a STATELESS generator (`?persist=false`) — it streams scenarios but
@@ -202,19 +202,28 @@ export function registerSimulationRoutes(app: Hono): void {
           const ev = result.value;
           if (ev.type === "scenario") {
             const s = ev.scenario;
+            // When persisted, the event also carries the durable row uuid (`scenario_uuid`) so a
+            // stateless relayer (the orchestrator service) can surface the library id without
+            // writing its own DB row — it echoes this event as its scenario_saved.
+            let persistedId: string | null = null;
             if (persist) {
-              await createScenario({
-                accountId,
+              const row = await createScenario({
+                tenantId,
                 agentId: body.phlo_uuid,
                 name: s.name,
                 scenario: s,
                 tags: s.tags,
                 coverageKey: s.eval_metadata?.coverage_key ?? null,
               });
+              persistedId = row.id;
             }
             await stream.writeSSE({
               event: SSE.SCENARIO_SAVED,
-              data: envelope("generation_id", genId, { scenario: s, agent_flow_description: s.agent_flow_description ?? "" }),
+              data: envelope("generation_id", genId, {
+                scenario: s,
+                agent_flow_description: s.agent_flow_description ?? "",
+                ...(persistedId ? { scenario_uuid: persistedId } : {}),
+              }),
             });
           } else if (ev.type === "metadata") {
             await stream.writeSSE({
@@ -244,7 +253,7 @@ export function registerSimulationRoutes(app: Hono): void {
   //    uuid owned by another account is a no-op → 404 (so existence isn't leaked).
   app.delete("/api/simulation/scenarios/:scenario_uuid", async (c) => {
     if (!dbConfigured) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
-    const deleted = await deleteScenarios([c.req.param("scenario_uuid")], accountIdOf(c));
+    const deleted = await deleteScenarios([c.req.param("scenario_uuid")], tenantIdOf(c));
     if (deleted === 0) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
     return c.json({ api_id: newApiId(), deleted });
   });
@@ -254,7 +263,7 @@ export function registerSimulationRoutes(app: Hono): void {
     const parsed = await readJson(c, (v) => DeleteScenariosRequest.parse(v));
     if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body must be { uuids: string[] (1-200) }"), 400);
     if (!dbConfigured) return c.json({ api_id: newApiId(), deleted_count: 0 });
-    const deleted = await deleteScenarios(parsed.value.uuids, accountIdOf(c));
+    const deleted = await deleteScenarios(parsed.value.uuids, tenantIdOf(c));
     return c.json({ api_id: newApiId(), deleted_count: deleted });
   });
 
@@ -263,7 +272,7 @@ export function registerSimulationRoutes(app: Hono): void {
     const agentId = c.req.query("phlo_uuid");
     if (!agentId) return c.json(buildErrorResponse("invalid_request", "phlo_uuid query param is required"), 400);
     if (!dbConfigured) return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: 0 });
-    const deleted = await deleteScenariosByAgent(agentId, accountIdOf(c));
+    const deleted = await deleteScenariosByAgent(agentId, tenantIdOf(c));
     return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: deleted });
   });
 }
