@@ -199,8 +199,9 @@ interface CmDetection {
   technical_reason: string;
   /** False when the judge could not run (provider outage). Consumers skip
    *  unavailable detections rather than reading `detected:false` as a real
-   *  "not detected" verdict. Optional so the sim path need not set it. */
-  available?: boolean;
+   *  "not detected" verdict. Always set: real judges set true, the zero
+   *  placeholder (zeroConversationMetrics) sets false. */
+  available: boolean;
 }
 export interface SimConversationMetrics {
   answered: boolean;
@@ -214,8 +215,8 @@ export interface SimConversationMetrics {
     sentiment: string;
     reason: string;
     technical_reason: string;
-    /** False when the sentiment judge could not run. */
-    available?: boolean;
+    /** False when the sentiment judge could not run. Always set. */
+    available: boolean;
     /** Code-derived pass/fail, emitted once here so consumers (fan-out,
      *  config-service, console) read it instead of re-deriving the rule. */
     passed?: boolean;

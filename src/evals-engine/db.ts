@@ -46,7 +46,7 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
   // Retire claims that exhausted their retry budget before adopting anything.
   await sql`
     UPDATE ao_session_eval_verdicts
-    SET status = 'error', error = 'retry budget exhausted (claim older than ${EVAL_CLAIM_MAX_AGE_HOURS}h)',
+    SET status = 'error', error = ${`retry budget exhausted (claim older than ${EVAL_CLAIM_MAX_AGE_HOURS}h)`},
         completed_at = NOW(), updated_at = NOW()
     WHERE status = 'running'
       AND created_at < NOW() - INTERVAL '1 hour' * ${EVAL_CLAIM_MAX_AGE_HOURS}

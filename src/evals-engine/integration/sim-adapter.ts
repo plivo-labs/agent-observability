@@ -2,13 +2,9 @@ import type { LlmProvider } from "../../llm/index.js";
 import type { FlowGraph } from "../../sim-engine/run-engine/flow-types.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { fromSimTranscript } from "../conversation-input.js";
-import type { EvalTurn, EvaluationResult, SimConversationMetrics, SimEvalOutcome } from "../types.js";
+import type { EvalTurn, EvaluationResult, SimEvalOutcome } from "../types.js";
 import { zeroConversationMetrics } from "../judges/conversation-judges.js";
 
-/** The all-default conversation_metrics cx-sqs emits for sim (zero-valued ConversationLevelMetrics{}). Cosmetic
- *  raw-JSON parity — no sim consumer reads it; Phase 2 live eval populates the real values. */
-// Conversation metrics for the skip-eval sim path — the shared all-zero,
-// all-unavailable placeholder (see conversation-judges.zeroConversationMetrics).
 // AO Eval Engine — the run-path adapter (mirrors cx-sqs's EvaluatorAdapter, SkipConversationEval=true).
 // Builds the ConversationInput from the accumulated transcript, runs the node+goal evaluator, and NEVER
 // throws: a scoring failure becomes `{ eval_error: true }` so the scenario always completes (cx-sqs sets

@@ -626,31 +626,37 @@ app.delete("/api/sessions", async (c) => {
   // then complains the value isn't a valid array literal. Build positional
   // placeholders via `sql.unsafe` instead, matching the listing endpoints.
   const placeholders = sessionIds.map((_, i) => `$${i + 1}`).join(", ");
-  const deleted = await sql.unsafe(
-    `DELETE FROM ao_agent_transport_sessions
-     WHERE session_id IN (${placeholders})
-     RETURNING session_id`,
-    sessionIds,
-  );
-
-  // Cascade to the session's satellite rows. Verdicts embed transcript quotes
-  // and extracted variable values, and the agent config embeds the flow's
-  // prompts — leaving them behind makes an erasure request incomplete, and a
-  // re-ingested session with the same id would be served the STALE verdicts.
-  // These tables have no FKs (the session row can arrive after them), so the
-  // cascade is explicit here.
-  await Promise.all(
-    [
+  // Parent + satellites in ONE transaction: the parent delete and the satellite
+  // cleanup must commit together, or a mid-cascade failure would leave the
+  // session row gone but its PII satellites (verdicts, config, transcript
+  // patches) behind — the exact incomplete erasure this cascade exists to
+  // prevent. Satellite deletes run sequentially (one connection per tx).
+  const deleted = await sql.begin(async (tx: typeof sql) => {
+    const del = await tx.unsafe(
+      `DELETE FROM ao_agent_transport_sessions
+       WHERE session_id IN (${placeholders})
+       RETURNING session_id`,
+      sessionIds,
+    );
+    // Cascade to the session's satellite rows. Verdicts embed transcript quotes
+    // and extracted variable values, the agent config embeds the flow's prompts,
+    // and the goal-analysis claim (no FK, keyed by session_id) must go too — a
+    // surviving 'done' row makes claimGoalSessions skip a re-ingested session
+    // with the same id forever. These tables have no FKs (the session row can
+    // arrive after them), so the cascade is explicit here.
+    for (const table of [
       "ao_session_agent_config",
       "ao_session_eval_verdicts",
       "ao_session_external_evals",
       "ao_session_tags",
       "ao_session_outcomes",
       "ao_session_raw_report_patches",
-    ].map((table) =>
-      sql.unsafe(`DELETE FROM ${table} WHERE session_id IN (${placeholders})`, sessionIds),
-    ),
-  );
+      "ao_session_goal_analyses",
+    ]) {
+      await tx.unsafe(`DELETE FROM ${table} WHERE session_id IN (${placeholders})`, sessionIds);
+    }
+    return del;
+  });
 
   // Clean up each deleted session's audio so recordings don't outlive the
   // row (orphaned objects = retention/privacy gap). Best-effort and
@@ -781,10 +787,11 @@ app.get("/api/sessions/:id", async (c) => {
 // the newest matches with their eval status so a consumer can fetch verdicts.
 app.get("/api/sessions/by-tag/:tag", async (c) => {
   const tag = c.req.param("tag");
-  // Optional tenant scope: when the caller passes account_id, only that
-  // account's sessions match — an external system holding one tenant's
-  // credentials must not be able to resolve another tenant's sessions by
-  // guessing tags. Omitting it preserves single-tenant behavior.
+  // Optional result filter: when the caller passes account_id, only that
+  // account's sessions are returned. This narrows results, it does NOT isolate
+  // tenants — /api auth is a single global credential and the caller supplies
+  // the account_id itself, so it can't enforce an access boundary. Omitting it
+  // returns matches across all accounts (single-tenant behavior).
   const accountId = c.req.query("account_id") ?? null;
   // One query for both scoped and unscoped: the account predicate is a no-op
   // when account_id is absent (single-tenant), and filters to the account

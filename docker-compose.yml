@@ -29,11 +29,13 @@ services:
       # one of each may run — remove the worker service AND these lines to
       # fall back to the zero-config inline sweepers.
       ALERT_SWEEPER: "off"
-      # Single flag, read by both processes: "off" here keeps the API from
-      # judging; the worker below sets it to "worker" so exactly one sweeper
-      # runs. (Set this to "inline" and drop the worker for a single-container
-      # deploy.)
-      EVAL_SWEEPER: "off"
+      # Single flag, read by both processes: "worker" means "the worker judges".
+      # On the API that branch is a silent no-op (only "inline" starts the API
+      # sweeper) — so the worker owns the eval sweep and the API doesn't emit the
+      # "disabled everywhere" warning that "off" would (which would be false here,
+      # since the worker judges). Set this to "inline" and drop the worker for a
+      # single-container deploy.
+      EVAL_SWEEPER: "worker"
     depends_on:
       postgres:
         condition: service_healthy

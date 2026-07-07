@@ -6,9 +6,13 @@
 --     now queries `ao_`-prefixed names) would break against the old tables.
 --   • A RENAME upgrades an existing database in place AND leaves a fresh
 --     database (001→023) at the same end state.
---   • RENAME preserves every constraint / index / sequence name, so the
---     resulting schema is byte-for-byte the shape the core-db migration
---     (contacto-core-db #509) creates directly. The two DBs stay identical.
+--   • RENAME changes only the RELATION name — its constraints, indexes and
+--     sequences keep their original (unprefixed) names (e.g. the pkey stays
+--     `agent_transport_sessions_pkey`). The core-db migration (#509) was
+--     generated from a pg_dump of this schema, so it deliberately keeps those
+--     same unprefixed sub-object names too — the two DBs therefore converge on
+--     identical object names (verified with a pg_dump diff). No runtime code
+--     depends on those names (every ON CONFLICT is column-inferred).
 --
 -- The `ao_sim_*` tables (migrations 019/020) are already prefixed and are
 -- intentionally excluded. Idempotent: only renames when the unprefixed table

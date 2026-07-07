@@ -1,4 +1,4 @@
-import { insertLiveKitEvaluation } from "../db.js";
+import { insertLiveKitEvaluation, sql } from "../db.js";
 import {
   claimNextEvalSession,
   completeSessionEvalVerdicts,
@@ -10,6 +10,7 @@ import {
   type EvalClaim,
 } from "./db.js";
 import { sanitizeForLog } from "../response.js";
+import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
 import { sentimentPassed } from "./judges/conversation-judges.js";
 
@@ -35,17 +36,19 @@ const MAX_CONCURRENT_SESSIONS = 3;
 // long-running judge is never stale-adopted (heartbeat interval << stale window).
 const CLAIM_HEARTBEAT_MS = 60_000;
 
-let timer: ReturnType<typeof setInterval> | null = null;
+let handle: SweeperHandle | null = null;
 let sweeping = false;
 
 /** Fan the stored verdicts out as per-judge rows in ao_session_external_evals so
  *  the existing conversation-evals surfaces (agent tab, session drawer, alert
- *  count rules) render sweeper results with zero extra read paths. Runs AFTER
- *  completeSessionEvalVerdicts — the claim row stays the source of truth; a
- *  crash between the two loses only the denormalized rows, never the verdicts,
- *  and can't double-judge (done is terminal). Row shape mirrors the OTLP
- *  "evaluation" records: verdict pass/fail + reasoning, `tag` = the node's
- *  opaque ref so consumers can group by node. */
+ *  count rules) render sweeper results with zero extra read paths. Runs BEFORE
+ *  completeSessionEvalVerdicts (a fan-out crash after 'done' — terminal, no
+ *  retry — would strand the only rows those surfaces read). Idempotent on
+ *  IDENTITY: it clears this session's prior eval_sweeper rows and rewrites the
+ *  current set in one transaction, so a retry re-judge (which yields fresh
+ *  reasoning text) can't leave duplicate rows for alert count-rules to
+ *  double-weight. Row shape mirrors the OTLP "evaluation" records: verdict
+ *  pass/fail + reasoning, `tag` = the node's opaque ref so consumers group by node. */
 export async function fanOutExternalEvals(
   sessionId: string,
   verdicts: SessionEvalVerdicts,
@@ -77,7 +80,7 @@ export async function fanOutExternalEvals(
   // provider outage must not silently bias fail rates to zero.
   const cm = verdicts.conversation_metrics;
   if (cm) {
-    const detections: Array<[string, { detected: boolean; reason: string; technical_reason?: string; available?: boolean } | undefined]> = [
+    const detections: Array<[string, { detected: boolean; reason: string; available: boolean } | undefined]> = [
       ["voicemail_detection", cm.voicemail_detected],
       ["bot_detection", cm.bot_detected],
       ["call_screening", cm.call_screening],
@@ -87,16 +90,15 @@ export async function fanOutExternalEvals(
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
-      // Skip a judge that didn't run: prefer the explicit `available` flag,
-      // fall back to the legacy sentinel string only when it's absent.
-      if (det.available === false || (det.available === undefined && /judge unavailable/i.test(det.technical_reason ?? ""))) continue;
+      // Skip a judge that couldn't run (provider outage) — never fan an
+      // unavailable detection out as a `pass`. `available` is always set on
+      // this path (real judges and the zero placeholder both set it).
+      if (det.available === false) continue;
       rows.push({ judgeName, tag: null, passed: !det.detected, reasoning: det.reason, raw: det as any });
     }
-    const sentiment = cm.user_sentiment as { sentiment?: string; reason?: string; technical_reason?: string; available?: boolean; passed?: boolean } | undefined;
+    const sentiment = cm.user_sentiment;
     const sentimentValue = sentiment?.sentiment ?? "";
-    const sentimentUnavailable = sentiment?.available === false
-      || (sentiment?.available === undefined && /judge unavailable/i.test(sentiment?.technical_reason ?? ""));
-    if (sentimentValue && sentimentValue !== "unknown" && !sentimentUnavailable) {
+    if (sentimentValue && sentimentValue !== "unknown" && sentiment?.available !== false) {
       rows.push({
         judgeName: "user_sentiment",
         tag: null,
@@ -119,19 +121,28 @@ export async function fanOutExternalEvals(
     });
   }
 
-  for (const row of rows) {
-    await insertLiveKitEvaluation({
-      sessionId,
-      source: "eval_sweeper",
-      judgeName: row.judgeName,
-      tag: row.tag,
-      verdict: row.passed ? "pass" : "fail",
-      reasoning: row.reasoning || null,
-      instructions: null,
-      observedAt,
-      raw: row.raw,
-    });
-  }
+  // Idempotent on IDENTITY, not payload. A retry re-judge produces fresh
+  // reasoning text (new `raw`), so a payload-keyed dedup would let the retry's
+  // rows sit alongside the first run's and alert count-rules would double-weight
+  // the session. Instead, clear this session's prior eval_sweeper rows and write
+  // the current set in ONE transaction: a crash rolls the whole set back (never
+  // a partial fan-out), and a retry (or a stale-adoption re-judge) re-fans cleanly.
+  await sql.begin(async (tx: typeof sql) => {
+    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
+    for (const row of rows) {
+      await insertLiveKitEvaluation({
+        sessionId,
+        source: "eval_sweeper",
+        judgeName: row.judgeName,
+        tag: row.tag,
+        verdict: row.passed ? "pass" : "fail",
+        reasoning: row.reasoning || null,
+        instructions: null,
+        observedAt,
+        raw: row.raw,
+      }, tx);
+    }
+  });
 }
 
 /** True when the error would fail identically on retry (schema/content
@@ -240,9 +251,10 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       console.warn(`[evals] claim lost mid-judge session=${sanitizeForLog(sessionId)} — discarding this run`);
       return false;
     }
-    // Fan out BEFORE marking the session done. insertLiveKitEvaluation is
-    // idempotent (dedup on session/source/judge/tag/raw), so a crash between
-    // here and completion just re-judges and re-fans on retry — no duplicates.
+    // Fan out BEFORE marking the session done. fanOutExternalEvals is
+    // idempotent on identity (it clears + rewrites this session's eval_sweeper
+    // rows in one transaction), so a crash between here and completion just
+    // re-judges and re-fans on retry — no duplicate rows.
     // Marking done first would strand these rows: 'done' is terminal and the
     // fan-out has no retry, so a fan-out crash after completion would lose the
     // only rows the evals tab, session drawer, and alert rules read.
@@ -257,8 +269,8 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
     const completed = await completeSessionEvalVerdicts(claim, verdicts as unknown as Record<string, unknown>);
     if (!completed) {
       // Lost the claim at the final write (stale adoption / bulk delete). The
-      // fan-out above was idempotent, so the winner's identical rows dedup
-      // against ours — nothing to undo; just don't double-complete.
+      // fan-out above is identity-idempotent, so the winner's re-fan clears +
+      // rewrites our rows — nothing to undo; just don't double-complete.
       console.warn(`[evals] complete skipped (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
       return false;
     }
@@ -314,16 +326,11 @@ export async function runEvalSweepOnce(): Promise<void> {
 }
 
 export function startEvalSweeper(): void {
-  if (timer) return;
-  void runEvalSweepOnce();
-  timer = setInterval(() => void runEvalSweepOnce(), EVAL_SWEEP_INTERVAL_MS);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  console.log(`[evals] sweeper started (every ${EVAL_SWEEP_INTERVAL_MS / 1000}s)`);
+  if (handle) return; // idempotent — never stack two timers
+  handle = startSweeper(() => runEvalSweepOnce(), EVAL_SWEEP_INTERVAL_MS, "evals");
 }
 
 export function stopEvalSweeper(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
+  handle?.stop();
+  handle = null;
 }

@@ -24,7 +24,7 @@
 
 import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
-import { runEvalSweepOnce } from "./evals-engine/eval-sweeper.js";
+import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
@@ -97,31 +97,17 @@ async function sleepInSlices(totalMs: number): Promise<void> {
   }
 }
 
-/** The eval sweep as its own loop — never awaited by the alert loop, so a slow
- *  eval tick (minutes of provider latency) can't starve alert evaluation or
- *  webhook retries. runEvalSweepOnce's re-entrancy guard makes overlap a no-op. */
-async function runEvalLoop(): Promise<void> {
-  while (running) {
-    try {
-      await runEvalSweepOnce();
-    } catch (e) {
-      console.error(`[worker] eval sweep failed: ${(e as Error).message}`);
-    }
-    await sleepInSlices(SWEEP_INTERVAL_MS);
-  }
-}
-
 if (dbConfigured) {
   console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
-  // The eval sweep runs as its OWN loop, never awaited by the alert loop: one
-  // eval tick can spend minutes on provider latency, and serially chaining it
-  // would starve windowed alert-rule evaluation and webhook delivery retries
-  // (the worker's original job). runEvalSweepOnce's internal re-entrancy
-  // guard makes overlapping ticks a no-op. Gated so an inline-API deployment
-  // can run this worker for alerts/SQS without doubling eval sweepers.
-  let evalLoop: Promise<void> = Promise.resolve();
+  // The eval sweep runs on its OWN timer (the shared startSweeper harness — the
+  // same one the API uses in inline mode), never chained into the alert loop:
+  // one eval tick can spend minutes on provider latency, and serially chaining
+  // it would starve windowed alert-rule evaluation and webhook delivery retries
+  // (the worker's original job). Its internal re-entrancy guard makes
+  // overlapping ticks a no-op. Gated so an inline-API deployment can run this
+  // worker for alerts/SQS without doubling eval sweepers.
   if (config.EVAL_SWEEPER === "worker") {
-    evalLoop = runEvalLoop();
+    startEvalSweeper();
   } else {
     console.log(`[worker] EVAL_SWEEPER=${config.EVAL_SWEEPER} — this worker does not judge ingested sessions (set EVAL_SWEEPER=worker here, or "inline" on the API).`);
   }
@@ -135,7 +121,7 @@ if (dbConfigured) {
     }
     await sleepInSlices(SWEEP_INTERVAL_MS);
   }
-  await evalLoop; // drain the eval loop before exiting
+  stopEvalSweeper(); // stop the eval timer on shutdown
 } else {
   console.log("[worker] DATABASE_URL unset — stateless mode: alert sweeper disabled, consumer-only");
   while (running) {

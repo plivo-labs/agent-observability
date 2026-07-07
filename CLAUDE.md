@@ -41,14 +41,14 @@ in query text (bun rewrites it as a placeholder; use `jsonb_exists()`).
 
 - `src/index.ts` — Hono HTTP server. Health check at `/health`. Session report at `POST /observability/recordings/v0`. OTLP ingest at `/observability/{logs,traces,metrics}/otlp/v0`. Dashboard API at `/api/sessions*`. In production, serves frontend static files.
 - `src/config.ts` — Zod-validated env config. All env vars are read here.
-- `src/db.ts` — Bun SQL client (`bun:sql`). `insertSession()` writes to `agent_transport_sessions`; `upsertSessionTag` / `insertLiveKitEvaluation` / `upsertSessionOutcome` / `mergeSessionRawReport` populate the LiveKit OTLP-derived tables.
+- `src/db.ts` — Bun SQL client (`bun:sql`). `insertSession()` writes to `ao_agent_transport_sessions`; `upsertSessionTag` / `insertLiveKitEvaluation` / `upsertSessionOutcome` / `mergeSessionRawReport` populate the LiveKit OTLP-derived tables. (All AO tables carry an `ao_` prefix — see migration `023`.)
 - `src/metrics.ts` — Transforms raw `chat_history` and `session_metrics` JSONB into structured `SessionMetrics` format with per-turn data and summary statistics.
 - `src/migrate.ts` — Raw SQL migration runner. Reads `migrations/*.sql`, tracks applied ones in `_migrations` table.
 - `src/s3.ts` — Optional S3 upload for audio recordings using Bun's built-in S3 client.
 - `src/raw-report.ts` — Generic `voice.SessionReport` JSON normalizer (parses stringified JSON attrs, hoists function_call / function_call_output / agent_handoff payloads, merges multi-fragment arrays).
 - `src/livekit/auth.ts` — Dual-auth middleware: accepts Basic credentials (`AGENT_OBSERVABILITY_USER`/`_PASS`) **or** LiveKit-issued HS256 Bearer JWTs. The JWT issuer claim must equal the LiveKit API key env value; the signature is verified against the matching API secret env value (see `.env.example` for the full pair). Payload must carry `observability.write === true`. Mounted on every native ingest path.
 - `src/livekit/protobuf.ts` — Hand-rolled decoders for `MetricsRecordingHeader` (recording multipart `header.binpb` part) and OTLP logs (handles JSON, protobuf, and gzip).
-- `src/livekit/observability.ts` — `persistLiveKitOtlpLogs(logs)`. Branches on each record's `body` field: `"session report"` (merge into raw_report patch), `"chat item"` (append events), `"tag"` (upsert `session_tags`), `"evaluation"` (insert `session_external_evals`), `"outcome"` (upsert `session_outcomes`).
+- `src/livekit/observability.ts` — `persistLiveKitOtlpLogs(logs)`. Branches on each record's `body` field: `"session report"` (merge into raw_report patch), `"chat item"` (append events), `"tag"` (upsert `ao_session_tags`), `"evaluation"` (insert `ao_session_external_evals`), `"outcome"` (upsert `ao_session_outcomes`).
 
 ### Frontend (`frontend/`)
 
@@ -82,15 +82,15 @@ The dashboard (`frontend/`) and the published registry (`packages/ui/`) share ru
 2. Parses the `header` part as JSON first (`session_id`, `start_time`, `room_tags.account_id`, `transport`); falls back to `decodeMetricsRecordingHeader` (protobuf `MetricsRecordingHeader`, native LiveKit shape) when JSON parse fails. Chat history JSON carries per-turn metrics + usage; audio is OGG.
 3. Extracts turn count and STT/LLM/TTS flags from chat history items.
 4. Optionally uploads audio to S3 (when `S3_BUCKET` and credentials are set).
-5. Saves to `agent_transport_sessions` table.
+5. Saves to `ao_agent_transport_sessions` table.
 
-Native LiveKit observability also accepts OTLP log records at `POST /observability/logs/otlp/v0` (JSON or protobuf, gzip optional). `persistLiveKitOtlpLogs` branches on each record's `body` field — `"session report"` merges into raw_report patches, `"chat item"` appends events, `"tag"` upserts `session_tags`, `"evaluation"` inserts `session_external_evals`, `"outcome"` upserts `session_outcomes`. The `traces` and `metrics` OTLP routes return 200 without persisting (per-turn agent metrics ride on the recording's `chat_history` payload, not OTLP metrics).
+Native LiveKit observability also accepts OTLP log records at `POST /observability/logs/otlp/v0` (JSON or protobuf, gzip optional). `persistLiveKitOtlpLogs` branches on each record's `body` field — `"session report"` merges into raw_report patches, `"chat item"` appends events, `"tag"` upserts `ao_session_tags`, `"evaluation"` inserts `ao_session_external_evals`, `"outcome"` upserts `ao_session_outcomes`. The `traces` and `metrics` OTLP routes return 200 without persisting (per-turn agent metrics ride on the recording's `chat_history` payload, not OTLP metrics).
 
 ## Dashboard API
 
 - `GET /api/sessions?limit=20&offset=0` — List sessions (paginated; `limit` clamps to [1, 50], default 20, optional `account_id` filter). Returns `{ objects, meta: { total_count, limit, offset, next, previous } }`.
 - `GET /api/sessions/:id` — Session detail: includes `chat_history`, `session_metrics` (computed on the fly from raw data), `raw_report`, `events`, `options`.
-- `DELETE /api/sessions` — Bulk delete. JSON body `{ session_ids: string[] }`, max 200 ids. Returns `{ deleted: <count> }`. Mirror endpoint `DELETE /api/evals` accepts `{ run_ids: string[] }` (UUID format) and cascades to `eval_cases`.
+- `DELETE /api/sessions` — Bulk delete. JSON body `{ session_ids: string[] }`, max 200 ids. Returns `{ deleted: <count> }`. Mirror endpoint `DELETE /api/evals` accepts `{ run_ids: string[] }` (UUID format) and cascades to `ao_eval_cases`.
 
 ### Filter semantics
 

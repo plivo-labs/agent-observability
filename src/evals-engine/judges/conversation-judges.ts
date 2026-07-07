@@ -93,11 +93,17 @@ const strict = (name: string, schema: JsonSchema) => ({ name, schema, strict: tr
 const STR = { type: "string" } as const;
 const BOOL = { type: "boolean" } as const;
 
+// Sentiment is enum-constrained (strict JSON schema + Zod) so the model can't
+// emit an off-enum value that the producer's pass rule and the console's
+// fallback would classify differently — with only these five values, both
+// reduce to the same result and the emitted user_sentiment.passed is the
+// single source of truth.
+const SENTIMENT_VALUES = ["positive", "neutral", "negative", "confused", "not_applicable"] as const;
 const DETECTION_JSON = strict("eval_detection", strObj({ detected: BOOL, reason: STR, technical_reason: STR }));
-const SENTIMENT_JSON = strict("eval_sentiment", strObj({ sentiment: STR, reason: STR, technical_reason: STR }));
+const SENTIMENT_JSON = strict("eval_sentiment", strObj({ sentiment: { type: "string", enum: SENTIMENT_VALUES }, reason: STR, technical_reason: STR }));
 
 const DetectionRawZ = z.object({ detected: z.boolean(), reason: z.string(), technical_reason: z.string() });
-const SentimentRawZ = z.object({ sentiment: z.string(), reason: z.string(), technical_reason: z.string() });
+const SentimentRawZ = z.object({ sentiment: z.enum(SENTIMENT_VALUES), reason: z.string(), technical_reason: z.string() });
 
 // ── judge execution ──────────────────────────────────────────────────────────
 const DETECTION_MAX_TOKENS = 1500;
@@ -176,8 +182,8 @@ const det = (v: { detected: boolean; reason: string; technical_reason: string; a
 
 /**
  * Score the conversation axis over the full transcript and return real
- * `conversation_metrics` (SimConversationMetrics). Only voice-relevant detections
- * (voicemail / bot / call-screening) are gated to voice; the rest apply cross-channel.
+ * `conversation_metrics` (SimConversationMetrics). All six detections + sentiment
+ * run on every transcript (there is no channel field to gate on).
  * `conversation_status` is derived in code (fixed priority order).
  */
 /** All-zero conversation metrics with every axis marked unavailable — the

@@ -45,8 +45,6 @@ export const envSchema = z.object({
   // dedicated worker runs it; "off" → neither. Exactly one (or zero) sweepers,
   // no cross-process coordination needed.
   EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
-  // Gates the WORKER's eval sweep loop independently of the API's inline
-  // sweeper — "off" here lets an inline-API deployment run a worker for
 
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the

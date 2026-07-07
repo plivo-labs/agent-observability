@@ -4,8 +4,17 @@
 -- agent_transport_sessions (the busiest table) for its duration — ingest
 -- writes block until it commits. On a large table run this off-peak, or
 -- pre-create the index CONCURRENTLY outside the transactional migration
--- runner and let the IF NOT EXISTS here no-op:
---   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_transport_sessions_session_id
+-- runner and let the IF NOT EXISTS here no-op. The pre-created index MUST use
+-- the SAME name as below (uq_…) — IF NOT EXISTS matches by name, so a
+-- differently-named pre-build would not be seen and the migration would still
+-- run the in-transaction full-lock build (and leave a duplicate index). And it
+-- MUST be run AFTER the de-dupe DELETE (lines below), otherwise CONCURRENTLY
+-- leaves an INVALID index on any pre-existing session_id duplicates:
+--   -- 1. remove pre-existing dupes first (same as the DELETE below)
+--   DELETE FROM agent_transport_sessions a USING agent_transport_sessions b
+--     WHERE a.session_id = b.session_id AND a.id > b.id;
+--   -- 2. then build the index off-transaction, matching name:
+--   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_agent_transport_sessions_session_id
 --     ON agent_transport_sessions (session_id);
 -- The lock_timeout below makes the migration FAIL FAST (and roll back) if it
 -- cannot take its locks within 10s — a failed migration you retry off-peak
