@@ -99,6 +99,35 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
   return null;
 }
 
+/**
+ * Event-kick claim: claim ONE named session immediately, bypassing the
+ * `EVAL_CLAIM_SETTLE_SECONDS` window. Safe to skip the settle because the
+ * caller only fires this from an ingest-completion point where BOTH rows the
+ * JOIN requires (agent config + transport session) are already present — which
+ * is exactly the condition the poller's settle window was waiting out. Fully
+ * race-safe with the poller and other kicks via INSERT … ON CONFLICT DO
+ * NOTHING: if any of them already claimed the session, this returns 0 rows.
+ * Returns null when the session is already claimed/judged, or when its config
+ * or transport row hasn't landed yet (the poller will pick it up on settle).
+ */
+export async function claimEvalSessionNow(sessionId: string): Promise<EvalClaim | null> {
+  const rows = await sql`
+    INSERT INTO ao_session_eval_verdicts (session_id)
+    SELECT c.session_id
+    FROM ao_session_agent_config c
+    JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
+    WHERE c.session_id = ${sessionId}
+      AND NOT EXISTS (
+        SELECT 1 FROM ao_session_eval_verdicts v WHERE v.session_id = c.session_id
+      )
+    ON CONFLICT (session_id) DO NOTHING
+    RETURNING session_id, claimed_at::text AS token
+  `;
+  return rows.length > 0
+    ? { sessionId: rows[0].session_id as string, token: rows[0].token as string }
+    : null;
+}
+
 /** Re-assert ownership mid-judge (call between judge phases). Returns the
  *  refreshed token, or null when the claim was adopted by another sweeper —
  *  the caller must abort instead of wasting further judge calls. */

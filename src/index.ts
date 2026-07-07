@@ -24,7 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
-import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
+import { startEvalSweeper, stopEvalSweeper, kickEvalForSession } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
@@ -427,6 +427,12 @@ app.post("/observability/recordings/v0", async (c) => {
       await applyStoredSessionTags(sessionId);
       // Replay any OTLP raw_report patches that beat this recording row.
       await drainStagedRawReportPatches(sessionId);
+      // Push, not poll: if the OTLP config (eval opt-in) already landed, judge
+      // now instead of waiting for the sweep tick. No-op until both the config
+      // and this transport row exist — whichever ingest lands last wins the
+      // claim; the poller covers anything skipped. Fire-and-forget: never delay
+      // the recording 200 behind a judge run.
+      void kickEvalForSession(sessionId);
     }
     console.log(`Session saved: room_id=${sanitizeForLog(sessionId)} turns=${turnCount} duration=${durationMs}ms usage=${JSON.stringify(rawReport?.usage ?? 'none')}`);
   } catch (e) {
@@ -465,6 +471,10 @@ app.post("/observability/logs/otlp/v0", async (c) => {
   }
   try {
     const persisted = await persistLiveKitOtlpLogs(logs);
+    // Push, not poll: event-kick every session that just became eval-eligible
+    // (received an agent config in this batch). Fire-and-forget — no-op unless
+    // the transport row has also landed; the poller is the safety net.
+    for (const sid of persisted.evalSessions) void kickEvalForSession(sid);
     return c.json({ api_id: newApiId(), accepted: logs.length, ...persisted });
   } catch (e) {
     console.error(`Failed to persist LiveKit OTLP logs: ${(e as Error).message}`);

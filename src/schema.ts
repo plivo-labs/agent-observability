@@ -46,6 +46,14 @@ export const envSchema = z.object({
   // no cross-process coordination needed.
   EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
 
+  // Event-kick: judge a session the instant its ingest completes instead of
+  // waiting for the next EVAL_SWEEP poll tick + settle window. Only fires in
+  // the process that runs the sweeper inline (EVAL_SWEEPER=inline); the 20s
+  // poller remains the safety net and covers anything the kick skips. "off"
+  // reverts to poll-only without redeploying (a latency-optimization kill
+  // switch; it never changes WHAT gets judged, only HOW SOON).
+  EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
+
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
   // configured LLM provider has a key. It judges through the shared LLM stack

@@ -16,6 +16,10 @@ interface PersistResult {
   evaluations: number;
   outcomes: number;
   agentConfigs: number;
+  /** Session ids that received an agent config in this batch — i.e. became
+   *  eval-eligible (the opt-in). The route event-kicks these so they're judged
+   *  immediately instead of on the next sweep tick. */
+  evalSessions: string[];
   /** Records dropped because persisting them fails deterministically
    *  (constraint/shape errors) — visible in the ingest response so a sender
    *  can notice data it thinks was accepted actually wasn't. */
@@ -324,6 +328,7 @@ async function storeAgentConfig(
   }
   await upsertSessionAgentConfig({ sessionId, config: clampAgentConfig(config), source: "livekit_otlp", observedAt });
   result.agentConfigs += 1;
+  if (!result.evalSessions.includes(sessionId)) result.evalSessions.push(sessionId);
   return true;
 }
 
@@ -410,7 +415,7 @@ function isTransientPersistError(e: unknown): boolean {
 }
 
 export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<PersistResult> {
-  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0, agentConfigs: 0, skippedRecords: 0 };
+  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0, agentConfigs: 0, evalSessions: [], skippedRecords: 0 };
   const rawReportPatches = new Map<string, RawReportPatch>();
 
   for (const log of logs) {

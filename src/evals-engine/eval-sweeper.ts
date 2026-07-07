@@ -1,5 +1,7 @@
 import { insertLiveKitEvaluation, sql } from "../db.js";
+import { config } from "../config.js";
 import {
+  claimEvalSessionNow,
   claimNextEvalSession,
   completeSessionEvalVerdicts,
   countPendingEvalSessions,
@@ -322,6 +324,43 @@ export async function runEvalSweepOnce(): Promise<void> {
     console.error(`[evals] sweep failed: ${(e as Error).message}`);
   } finally {
     sweeping = false;
+  }
+}
+
+// Event-kick concurrency: bound how many sessions a burst of call-endings can
+// judge at once from the ingest path. The judge-call semaphore
+// (MAX_CONCURRENT_JUDGE_CALLS) still caps provider concurrency; this only
+// bounds how many full-session judges the ingest hot path spawns before it
+// defers the rest to the poller. Mirrors the sweep's MAX_CONCURRENT_SESSIONS.
+const MAX_CONCURRENT_KICKS = 3;
+let activeKicks = 0;
+
+/**
+ * Push, not poll: judge ONE session the instant its ingest completes, instead
+ * of waiting for the next 20s poll tick + settle window. Best-effort and fully
+ * covered by the poller — a no-op here (kick disabled, sweeper not in this
+ * process, burst backpressure, session not yet complete, or already claimed)
+ * just means the poller judges it on its normal schedule.
+ *
+ * MUST NOT be awaited on the ingest hot path — call as `void
+ * kickEvalForSession(id)` so a slow judge run never delays the ingest 200.
+ */
+export async function kickEvalForSession(sessionId: string): Promise<void> {
+  if (config.EVAL_EVENT_KICK === "off") return;
+  // Only the inline-sweeper process both ingests AND judges; in worker mode the
+  // API ingests but the worker's poller judges, so an in-process kick here
+  // would judge in the wrong process (or not at all). Poller covers it.
+  if (config.EVAL_SWEEPER !== "inline") return;
+  if (activeKicks >= MAX_CONCURRENT_KICKS) return; // burst backpressure → poller covers it
+  activeKicks++;
+  try {
+    const claim = await claimEvalSessionNow(sessionId);
+    if (!claim) return; // already claimed/judged, or data not fully landed → poller covers it
+    await judgeClaimed(claim);
+  } catch (e) {
+    console.warn(`[evals] event-kick failed session=${sanitizeForLog(sessionId)} (poller will retry): ${(e as Error).message}`);
+  } finally {
+    activeKicks--;
   }
 }
 
