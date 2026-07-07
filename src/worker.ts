@@ -89,18 +89,46 @@ if (queueDispatchEnabled) {
 // The alert sweeper is entirely DB-backed. In STATELESS mode (no DATABASE_URL) it can't run, so the
 // worker is consumer-only: it stays alive for the SQS consumer (started above) until a shutdown signal.
 if (dbConfigured) {
-  console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
-  while (running) {
-    await runSweepOnce();
-    // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
-    // Honor GOAL_ANALYZER=off so an AO deploy that is the sim/eval engine (not the goals instance)
-    // doesn't run goal sweeps in the worker either — parity with the API-side inline gate.
-    if (config.GOAL_ANALYZER !== "off") {
-      await runGoalSweepOnce();
+  // A sim-persistence deploy points DATABASE_URL at a shared core DB that carries ONLY the
+  // ao_sim_* tables — the AO-product tables (alerts, goals) deliberately don't exist there.
+  // Probe once at boot instead of erroring every sweep interval; ALERT_SWEEPER=off must not
+  // gate the worker (off on the API means the worker owns sweeping), so table existence is
+  // the only signal that distinguishes a full AO deploy from a sim-only one.
+  const { sql } = await import("./db.js");
+  const [alertTables] = await sql`SELECT to_regclass('alert_rules') IS NOT NULL AS present`;
+  const goalAnalyzerOn = config.GOAL_ANALYZER !== "off";
+  const [goalTables] = goalAnalyzerOn
+    ? await sql`SELECT to_regclass('session_goal_analyses') IS NOT NULL AS present`
+    : [{ present: false }];
+  const sweepAlerts = alertTables.present === true;
+  const sweepGoals = goalAnalyzerOn && goalTables.present === true;
+  if (!sweepAlerts) {
+    console.log("[worker] alert tables absent — alert sweeper disabled (sim-only deployment)");
+  }
+  if (goalAnalyzerOn && !sweepGoals) {
+    console.log("[worker] goal tables absent — goal analyzer disabled (sim-only deployment)");
+  }
+  if (sweepAlerts || sweepGoals) {
+    console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
+    while (running) {
+      if (sweepAlerts) {
+        await runSweepOnce();
+      }
+      // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
+      // Honor GOAL_ANALYZER=off so an AO deploy that is the sim/eval engine (not the goals instance)
+      // doesn't run goal sweeps in the worker either — parity with the API-side inline gate.
+      if (sweepGoals) {
+        await runGoalSweepOnce();
+      }
+      // Sleep in small slices so a shutdown signal is honored within ~1s
+      // instead of waiting out the full interval.
+      for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
+        await Bun.sleep(1000);
+      }
     }
-    // Sleep in small slices so a shutdown signal is honored within ~1s
-    // instead of waiting out the full interval.
-    for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
+  } else {
+    // DB reachable but no AO-product tables to sweep — stay alive for the SQS consumer.
+    while (running) {
       await Bun.sleep(1000);
     }
   }
