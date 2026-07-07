@@ -1,16 +1,13 @@
 // AO Eval Engine — public types.
 //
 // Two contracts live here:
-//   1. The INPUT the engine consumes (`ConversationInput`) — assembled from a simulation transcript
-//      (conversation-input.ts::fromSimTranscript). Mirrors what cx-sqs's transcript_builder.go feeds
-//      its ConversationEvaluator: per-AI-node config + the turns that ran at that node + the flow goals.
-//   2. The OUTPUT the engine emits (`EvaluationResult`) — byte-compatible with the `evaluation` JSONB
-//      the console renders and aiassist persists verbatim. Field names/keys are copied from cx-sqs's
-//      `models/eval.go` (ConversationEvaluation / NodeLevelMetrics / GoalEvaluation) so the CXSQS|AO
-//      engine toggle shows AO's scores in the same UI with zero downstream changes.
+//   1. The INPUT the engine consumes (`ConversationInput`) — one entry per AI node
+//      (its config + the turns that ran at that node) plus the flow goals.
+//   2. The OUTPUT the engine emits (`EvaluationResult`) — a stable JSON shape a consumer can
+//      render or persist verbatim (node-level metrics + goal results).
 //
-// Phase 1 = node axis + goal axis only (cx-sqs sim sets SkipConversationEval=true). The conversation
-// axis (sentiment/bot/voicemail/STT/TD) is Phase 2 (live) and intentionally absent here.
+// evaluateSimulation scores the node axis + goal axis. The conversation axis
+// (sentiment/bot/voicemail/...) is scored separately by the conversation judges.
 
 // ── INPUT ───────────────────────────────────────────────────────────────────────
 
@@ -23,6 +20,10 @@ export interface EvalTurn {
   agent: string;
   /** Intent the agent/framework selected on this turn ("" when none). */
   intent: string;
+  /** True for synthetic evidence lines (tool calls, handoffs, system notes)
+   *  that are NOT spoken words. The speech-only transcript filters on this
+   *  flag instead of re-matching the rendered label strings. */
+  evidence?: boolean;
 }
 
 /** A single AI node the scenario visited, with the config + turns needed to score it. */
@@ -37,6 +38,10 @@ export interface NodeEvalInput {
   chosen_intent: string;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
   required_variables: string[];
+  /** Per-variable recording rules (how/when each should be captured) — rendered
+   *  into the variable judge's expected-variables list so conditional rules
+   *  ("leave empty unless…") are judged against, not guessed at. */
+  variable_rules?: Record<string, string>;
   /** Variables actually extracted at this node (`variables_by_node[node_uuid]`). */
   extracted_variables: Record<string, unknown>;
   /** Turns that ran at this node, in order. */
@@ -64,9 +69,16 @@ export interface ConversationInput {
   goals: GoalInput[];
   /** The whole conversation rendered as text (context for hallucination/loop/goal judges). */
   full_transcript: string;
+  /** Speech-only variant of full_transcript: internal evidence lines
+   *  (System_Note/Tool_Call/Tool_Result/Agent_Handoff) removed. Used by the
+   *  conversation-axis detection judges, which must classify what was SAID on
+   *  the call — a config note like "if voicemail, leave a message" rendered as
+   *  an agent line would otherwise skew voicemail/engagement/sentiment.
+   *  Absent (sim path) ⇒ judges fall back to full_transcript. */
+  speech_transcript?: string;
 }
 
-// ── OUTPUT (the console contract — keys copied from cx-sqs models/eval.go) ─────────
+// ── OUTPUT (the stable verdict contract a consumer renders/persists) ─────────
 
 export interface ObjectiveProgressMetrics {
   achieved: boolean;
@@ -176,28 +188,39 @@ export interface GoalEvaluation {
   goals: GoalResult[];
 }
 
-// ── conversation-level metrics (empty for sim — cx-sqs parity wrapper) ────────────
-// cx-sqs emits a zero-valued `ConversationLevelMetrics{}` on the sim path (SkipConversationEval skips the LLM
-// call but still returns the struct), wrapped in ConversationEvaluation. AO mirrors that all-default shape for
-// exact download-JSON parity. Cosmetic only — no consumer reads these for sim (Phase 2 live eval populates them).
+// ── conversation-level metrics ────────────────────────────────────────────────
+// The node/goal path leaves these zero-valued; the conversation judges populate
+// the real values when scoring the whole-transcript axis.
 
 interface CmDetection {
   detected: boolean;
   detected_value: number;
   reason: string;
   technical_reason: string;
+  /** False when the judge could not run (provider outage). Consumers skip
+   *  unavailable detections rather than reading `detected:false` as a real
+   *  "not detected" verdict. Always set: real judges set true, the zero
+   *  placeholder (zeroConversationMetrics) sets false. */
+  available: boolean;
 }
 export interface SimConversationMetrics {
   answered: boolean;
   voicemail_detected: CmDetection;
-  cx_voicemail_detected: number;
-  cx_call_screening_detected: number;
   bot_detected: CmDetection;
   call_screening: CmDetection;
   low_engagement: CmDetection;
   wrong_number: CmDetection;
   do_not_disturb: CmDetection;
-  user_sentiment: { sentiment: string; reason: string; technical_reason: string };
+  user_sentiment: {
+    sentiment: string;
+    reason: string;
+    technical_reason: string;
+    /** False when the sentiment judge could not run. Always set. */
+    available: boolean;
+    /** Code-derived pass/fail, emitted once here so consumers (fan-out,
+     *  config-service, console) read it instead of re-deriving the rule. */
+    passed?: boolean;
+  };
   silent_call: boolean;
   customer_engaged: boolean;
   conversation_status: { status: string; reason: string; technical_reason: string };
@@ -206,7 +229,7 @@ export interface SimConversationMetrics {
   stt: { error_count: number; recovered_count: number };
 }
 
-/** What `evaluateSimulation` returns: the node + goal axes only (cx-sqs SkipConversationEval).
+/** What `evaluateSimulation` returns: the node + goal axes only.
  *  The run-path adapter wraps this into the emitted `EvaluationResult`. */
 export interface NodeGoalEvaluation {
   node_evaluations: NodeEvaluation[];
@@ -214,21 +237,21 @@ export interface NodeGoalEvaluation {
   goal_evaluation?: GoalEvaluation;
 }
 
-/** The `evaluation` payload attached to `scenario_completed`. Mirrors cx-sqs `ConversationEvaluation`
- *  (models/eval.go): the wrapper header + conversation_metrics (empty for sim) + the node/goal axes.
+/** The `evaluation` payload attached to `scenario_completed`: a wrapper header +
+ *  conversation_metrics (zero-valued on the node/goal path) + the node/goal axes.
  *  The adapter always sets every header field, so they are required (no producer emits a partial wrapper). */
 export interface EvaluationResult extends NodeGoalEvaluation {
-  /** cx-sqs wrapper header — cosmetic (no consumer reads them); present for exact raw-JSON parity. */
+  /** Wrapper header — cosmetic identifiers echoed for consumers; no judge reads them. */
   flow_uuid: string;
   flow_name: string;
   run_uuid: string;
-  /** Empty/default for sim (SkipConversationEval); populated only by Phase 2 live eval. */
+  /** Zero-valued on the node/goal path; populated by the conversation judges. */
   conversation_metrics: SimConversationMetrics;
 }
 
 /** What the run path receives back: either an evaluation, or an error flag (never both, never throws). */
 export interface SimEvalOutcome {
   evaluation?: EvaluationResult;
-  /** Set (as `true`) instead of `evaluation` when scoring failed; mirrors cx-sqs `eval_error`. */
+  /** Set (as `true`) instead of `evaluation` when scoring failed. */
   eval_error?: boolean;
 }

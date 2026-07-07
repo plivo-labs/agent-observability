@@ -21,7 +21,7 @@ import { HALLUCINATION_JSON, NODE_LOOP_JSON, VARIABLE_EXTRACTION_JSON, INSTRUCTI
 
 // AO Eval Engine — the four LLM node judges (per AI node). Each returns its RAW output (Zod-validated);
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
-// cx-sqs token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.
+// reference-engine token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.
 
 /** Render a node's turns as "User: …\nAgent: …" lines (the node transcript the judges read). */
 export function renderNodeTranscript(node: NodeEvalInput): string {
@@ -36,7 +36,7 @@ export function renderNodeTranscript(node: NodeEvalInput): string {
     .join("\n");
 }
 
-/** Shared user payload for the node judges (superset; each judge reads what it needs, like cx-sqs). */
+/** Shared user payload for the node judges (superset; each judge reads what it needs, like the reference engine). */
 function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
   return {
     global_prompt: ctx.global_prompt,
@@ -70,7 +70,32 @@ export async function runVariableExtractionJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: VariableExtractionRaw; usage: LlmUsage }> {
-  const expected = node.required_variables.length ? node.required_variables.map((v) => `- ${v}`).join("\n") : "(none)";
+  // No variables configured and none extracted → nothing to judge; a neutral
+  // pass avoids the model speculating about variables that don't exist.
+  if (node.required_variables.length === 0 && Object.keys(node.extracted_variables ?? {}).length === 0) {
+    return {
+      data: {
+        extraction_successful: true,
+        score: 1.0,
+        reason: "No variables configured on this node — extraction not applicable.",
+        technical_reason: "skipped: empty required_variables and extracted_variables",
+        missing_variables: [],
+        incorrect_variables: [],
+      } as VariableExtractionRaw,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+  }
+  // Render each variable with its recording rule so conditional rules
+  // ("leave empty unless the caller confirms…") are judged against, not
+  // guessed at — prompt step 5 depends on the rule being visible here.
+  const expected = node.required_variables.length
+    ? node.required_variables
+        .map((v) => {
+          const rule = node.variable_rules?.[v];
+          return rule ? `- ${v} — recording rule: ${rule}` : `- ${v}`;
+        })
+        .join("\n")
+    : "(none)";
   const actualEntries = Object.entries(node.extracted_variables ?? {});
   const actual = actualEntries.length ? actualEntries.map(([k, v]) => `- ${k}: ${JSON.stringify(v)}`).join("\n") : "(none)";
   return runLlmJudge({
@@ -88,10 +113,26 @@ export async function runInstructionAdherenceJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: InstructionAdherenceRaw; usage: LlmUsage }> {
+  // No instructions configured → there is nothing to adhere to. Judging
+  // against "(none)" makes the model invent an objective and often fail it —
+  // a false adherence fail on routing/greeting nodes. Neutral pass, no LLM
+  // call (same pattern as the intent judge's empty-intents skip).
+  if (!node.node_prompt || !node.node_prompt.trim()) {
+    const sub = (reason: string) => ({ score: 1.0, reason_code: "not_applicable", reason, technical_reason: "skipped: node has no instructions" });
+    return {
+      data: {
+        objective_progress: { achieved: true, ...sub("No instructions configured on this node — adherence not applicable.") },
+        procedure_compliance: { ...sub("No procedure defined."), missed_steps: [] },
+        interaction_quality: { ...sub("Not evaluated."), issues: [] },
+        policy_boundary_compliance: { passed: true, ...sub("No policy boundaries defined.") },
+      } as InstructionAdherenceRaw,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+  }
   // AO has no per-node scenario "objective", so leave that slot "(none)" (the prompt marks it Optional).
   // Filling it with a copy of the instructions would tell the model objective==instructions — noise.
   return runLlmJudge({
-    system: systemForInstructionAdherence(node.node_prompt || "(none)", "(none)"),
+    system: systemForInstructionAdherence(node.node_prompt, "(none)"),
     input: nodePayload(node, ctx),
     schema: InstructionAdherenceRawZ,
     jsonSchema: INSTRUCTION_ADHERENCE_JSON,

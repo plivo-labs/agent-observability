@@ -36,6 +36,15 @@ export const envSchema = z.object({
   // the dedicated worker entrypoint (bun src/worker.ts) so exactly one
   // sweeper is active.
   ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
+  // Eval sweeper: judges ingested sessions that carry an agent config.
+  // "inline" runs it in the API process (zero-config single container);
+  // set "off" on the API when the dedicated worker runs it, so exactly one
+  // sweeper is active.
+  // One flag, read by BOTH processes, so the "who runs the eval sweep" state is
+  // unrepresentable-if-invalid: "inline" → the API runs it; "worker" → the
+  // dedicated worker runs it; "off" → neither. Exactly one (or zero) sweepers,
+  // no cross-process coordination needed.
+  EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
 
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the

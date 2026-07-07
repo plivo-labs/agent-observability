@@ -24,6 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
+import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
@@ -48,6 +49,17 @@ if (process.env.NODE_ENV !== "test" && config.SIM_PERSIST && dbConfigured) {
 // Gated on dbConfigured: the sweeper is entirely DB-backed, so it's inert in stateless mode.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
   startAlertSweeper();
+}
+
+// Eval sweeper: judges ingested sessions that carry an agent config. Same
+// inline-by-default posture as the alert sweeper (set EVAL_SWEEPER=off on the
+// API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
+if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
+  startEvalSweeper();
+} else if (process.env.NODE_ENV !== "test" && dbConfigured && config.EVAL_SWEEPER === "off") {
+  // Loud on purpose: with EVAL_SWEEPER=off nobody judges ingested sessions.
+  // ("worker" is the normal non-inline value — the dedicated worker handles it.)
+  console.warn("[evals] EVAL_SWEEPER=off — ingested-session judging is disabled everywhere; set it to \"inline\" (API) or \"worker\" (worker) to enable.");
 }
 
 // Goal analyzer: post-session LLM judging of goal:<text> tags. Same
@@ -106,6 +118,11 @@ if (basicAuthEnabled) {
   app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
 } else if (liveKitAuthEnabled) {
+  // A LiveKit-JWT-only deployment configured auth for ingest but has no Basic
+  // pair — leaving the dashboard/API surface (sessions, verdicts, by-tag
+  // lookup) open would silently expose every stored transcript. Accept the
+  // same Bearer JWTs on /api/* so "auth configured" always means the read
+  // surface is gated too.
   app.use("/observability/evals/*", nativeLiveKitUploadAuth);
   app.use("/api/*", nativeLiveKitUploadAuth);
 }
@@ -174,7 +191,7 @@ app.get("/deepstatus", async (c) => {
 registerEvalRoutes(app);
 
 // ── Agent endpoints (agent-oriented IA: virtual entity derived from
-//    distinct agent_name across sessions + eval_runs) ─────────────────────────
+//    distinct agent_name across sessions + ao_eval_runs) ─────────────────────────
 
 registerAgentRoutes(app);
 
@@ -232,6 +249,12 @@ app.post("/observability/recordings/v0", async (c) => {
   }
 
   console.log(`Session report received: room_id=${sanitizeForLog(sessionId)} account_id=${sanitizeForLog(accountId)}`);
+
+  // A header that yields no session id would insert a junk "" row that tag
+  // replay and eval claiming can never address — reject it up front.
+  if (!sessionId) {
+    return c.json(buildErrorResponse("invalid_header", "header must carry a session_id / room id"), 400);
+  }
 
   // Parse chat history
   let parsed = { chatItems: [] as any[], turnCount: 0, hasStt: false, hasLlm: false, hasTts: false, metrics: [] as any[] };
@@ -374,7 +397,7 @@ app.post("/observability/recordings/v0", async (c) => {
 
   // Save to database. Agent upsert and session insert share one
   // transaction so a session insert failure can't leave an orphan agent
-  // row (the FK on agent_transport_sessions.agent_id otherwise tempts
+  // row (the FK on ao_agent_transport_sessions.agent_id otherwise tempts
   // exactly that race).
   try {
     await sql.begin(async (tx: any) => {
@@ -423,18 +446,29 @@ app.post("/observability/recordings/v0", async (c) => {
 // ── Native LiveKit OTLP endpoints ───────────────────────────────────────────
 
 app.post("/observability/logs/otlp/v0", async (c) => {
+  // Decode and persist failures must map to different statuses: a malformed
+  // payload is the sender's bug (400, don't retry), but a persistence failure
+  // (DB blip) is ours — return 503 so at-least-once senders retry instead of
+  // dropping the batch. Every OTLP handler is idempotent (tag upserts, event
+  // dedup by item id, eval dedup by raw), so redelivery is safe.
+  let logs;
   try {
     const bytes = new Uint8Array(await c.req.arrayBuffer());
-    const logs = decodeOtlpLogsRequest(
+    logs = decodeOtlpLogsRequest(
       bytes,
       c.req.header("content-encoding"),
       c.req.header("content-type"),
     );
+  } catch (e) {
+    console.error(`Failed to decode LiveKit OTLP logs: ${(e as Error).message}`);
+    return c.json(buildErrorResponse("invalid_otlp_logs", "Could not decode OTLP logs payload"), 400);
+  }
+  try {
     const persisted = await persistLiveKitOtlpLogs(logs);
     return c.json({ api_id: newApiId(), accepted: logs.length, ...persisted });
   } catch (e) {
-    console.error(`Failed to ingest LiveKit OTLP logs: ${(e as Error).message}`);
-    return c.json(buildErrorResponse("invalid_otlp_logs", "Could not decode OTLP logs payload"), 400);
+    console.error(`Failed to persist LiveKit OTLP logs: ${(e as Error).message}`);
+    return c.json(buildErrorResponse("otlp_persist_failed", "Could not persist OTLP logs"), 503);
   }
 });
 
@@ -533,7 +567,7 @@ app.get("/api/sessions", async (c) => {
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
 
   const [countResult] = await sql.unsafe(
-    `SELECT count(*)::int as total FROM agent_transport_sessions ${whereClause}`,
+    `SELECT count(*)::int as total FROM ao_agent_transport_sessions ${whereClause}`,
     params,
   );
 
@@ -552,7 +586,7 @@ app.get("/api/sessions", async (c) => {
   const rows = await sql.unsafe(
     `SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
             turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol}
-     FROM agent_transport_sessions
+     FROM ao_agent_transport_sessions
      ${whereClause}
      ORDER BY ended_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -592,12 +626,50 @@ app.delete("/api/sessions", async (c) => {
   // then complains the value isn't a valid array literal. Build positional
   // placeholders via `sql.unsafe` instead, matching the listing endpoints.
   const placeholders = sessionIds.map((_, i) => `$${i + 1}`).join(", ");
-  const deleted = await sql.unsafe(
-    `DELETE FROM agent_transport_sessions
-     WHERE session_id IN (${placeholders})
-     RETURNING session_id`,
-    sessionIds,
-  );
+  // Parent + satellites in ONE transaction: the parent delete and the satellite
+  // cleanup must commit together, or a mid-cascade failure would leave the
+  // session row gone but its PII satellites (verdicts, config, transcript
+  // patches) behind — the exact incomplete erasure this cascade exists to
+  // prevent. Satellite deletes run sequentially (one connection per tx).
+  const deleted = await sql.begin(async (tx: typeof sql) => {
+    const del = await tx.unsafe(
+      `DELETE FROM ao_agent_transport_sessions
+       WHERE session_id IN (${placeholders})
+       RETURNING session_id`,
+      sessionIds,
+    );
+    // Cascade to the session's satellite rows. Verdicts embed transcript quotes
+    // and extracted variable values, the agent config embeds the flow's prompts,
+    // and the goal-analysis claim (no FK, keyed by session_id) must go too — a
+    // surviving 'done' row makes claimGoalSessions skip a re-ingested session
+    // with the same id forever. These tables have no FKs (the session row can
+    // arrive after them), so the cascade is explicit here.
+    //
+    // Delete only from the satellites that EXIST in this deployment: a
+    // feature-scoped core DB (e.g. the eval-only schema) omits the
+    // goal-analyzer / alert / CI-eval tables, and a hardcoded DELETE against a
+    // missing table would abort the whole erasure transaction. The names are a
+    // fixed allow-list resolved against pg_tables, so the interpolation below is
+    // never user-controlled.
+    const satellites = [
+      "ao_session_agent_config",
+      "ao_session_eval_verdicts",
+      "ao_session_external_evals",
+      "ao_session_tags",
+      "ao_session_outcomes",
+      "ao_session_raw_report_patches",
+      "ao_session_goal_analyses",
+    ];
+    const satPlaceholders = satellites.map((_, i) => `$${i + 1}`).join(", ");
+    const present = (await tx.unsafe(
+      `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename IN (${satPlaceholders})`,
+      satellites,
+    )) as Array<{ tablename: string }>;
+    for (const { tablename } of present) {
+      await tx.unsafe(`DELETE FROM ${tablename} WHERE session_id IN (${placeholders})`, sessionIds);
+    }
+    return del;
+  });
 
   // Clean up each deleted session's audio so recordings don't outlive the
   // row (orphaned objects = retention/privacy gap). Best-effort and
@@ -625,7 +697,7 @@ app.get("/api/sessions/:id", async (c) => {
     SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
            chat_history, session_metrics, raw_report, record_url, estimated_cost_usd, created_at
-    FROM agent_transport_sessions
+    FROM ao_agent_transport_sessions
     WHERE session_id = ${sessionId}
     LIMIT 1
   `;
@@ -634,24 +706,30 @@ app.get("/api/sessions/:id", async (c) => {
     return c.json(buildErrorResponse("not_found", "Session not found"), 404);
   }
 
-  const [tagRows, evaluationRows, outcomeRows] = await Promise.all([
+  const [tagRows, evaluationRows, outcomeRows, evalVerdictRows] = await Promise.all([
     sql`
       SELECT name, metadata, source, observed_at, created_at, updated_at
-      FROM session_tags
+      FROM ao_session_tags
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, created_at) ASC, name ASC
     `,
     sql`
       SELECT source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw, created_at
-      FROM session_external_evals
+      FROM ao_session_external_evals
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, created_at) ASC, id ASC
     `,
     sql`
       SELECT source, outcome, reason, observed_at, raw, created_at, updated_at
-      FROM session_outcomes
+      FROM ao_session_outcomes
       WHERE session_id = ${sessionId}
       ORDER BY COALESCE(observed_at, updated_at, created_at) DESC
+      LIMIT 1
+    `,
+    sql`
+      SELECT status, verdicts, error, completed_at
+      FROM ao_session_eval_verdicts
+      WHERE session_id = ${sessionId}
       LIMIT 1
     `,
   ]);
@@ -700,9 +778,50 @@ app.get("/api/sessions/:id", async (c) => {
         raw: typeof outcomeRows[0].raw === "string" ? JSON.parse(outcomeRows[0].raw) : outcomeRows[0].raw,
       }
     : null;
+  // Eval verdicts produced by the background sweeper (present only for sessions
+  // that carried an agent config). status: running | done | error.
+  const evalRow = evalVerdictRows?.[0];
+  row.eval = evalRow
+    ? {
+        status: evalRow.status,
+        verdicts: typeof evalRow.verdicts === "string" ? JSON.parse(evalRow.verdicts) : evalRow.verdicts,
+        error: evalRow.error,
+        completed_at: evalRow.completed_at,
+      }
+    : null;
   row.api_id = newApiId();
 
   return c.json(row);
+});
+
+// Look up sessions by an exact tag value — how an external system finds the
+// session(s) for one of its own identifiers (e.g. a run id it attached as a
+// tag at call end), without needing to know AO's internal session id. Returns
+// the newest matches with their eval status so a consumer can fetch verdicts.
+app.get("/api/sessions/by-tag/:tag", async (c) => {
+  const tag = c.req.param("tag");
+  // Optional result filter: when the caller passes account_id, only that
+  // account's sessions are returned. This narrows results, it does NOT isolate
+  // tenants — /api auth is a single global credential and the caller supplies
+  // the account_id itself, so it can't enforce an access boundary. Omitting it
+  // returns matches across all accounts (single-tenant behavior).
+  const accountId = c.req.query("account_id") ?? null;
+  // One query for both scoped and unscoped: the account predicate is a no-op
+  // when account_id is absent (single-tenant), and filters to the account
+  // otherwise (a LEFT-joined session with no matching account is excluded).
+  const rows = await sql`
+    SELECT t.session_id, v.status AS eval_status, s.account_id
+    FROM ao_session_tags t
+    LEFT JOIN ao_agent_transport_sessions s ON s.session_id = t.session_id
+    LEFT JOIN ao_session_eval_verdicts v ON v.session_id = t.session_id
+    WHERE t.name = ${tag}
+      AND (${accountId}::text IS NULL OR s.account_id = ${accountId})
+    ORDER BY t.created_at DESC
+    LIMIT 20
+  `;
+  return c.json({
+    objects: rows.map((r: any) => ({ session_id: r.session_id, eval_status: r.eval_status ?? null, account_id: r.account_id ?? null })),
+  });
 });
 
 // ── Static file serving (production) ────────────────────────────────────────
@@ -732,6 +851,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
+    stopEvalSweeper();
     stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();

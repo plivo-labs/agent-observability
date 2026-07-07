@@ -24,6 +24,7 @@
 
 import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
+import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
@@ -88,8 +89,28 @@ if (queueDispatchEnabled) {
 
 // The alert sweeper is entirely DB-backed. In STATELESS mode (no DATABASE_URL) it can't run, so the
 // worker is consumer-only: it stays alive for the SQS consumer (started above) until a shutdown signal.
+/** Sleep in ~1s slices so a shutdown signal is honored within a second
+ *  instead of waiting out the full interval. */
+async function sleepInSlices(totalMs: number): Promise<void> {
+  for (let waited = 0; running && waited < totalMs; waited += 1000) {
+    await Bun.sleep(1000);
+  }
+}
+
 if (dbConfigured) {
   console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
+  // The eval sweep runs on its OWN timer (the shared startSweeper harness — the
+  // same one the API uses in inline mode), never chained into the alert loop:
+  // one eval tick can spend minutes on provider latency, and serially chaining
+  // it would starve windowed alert-rule evaluation and webhook delivery retries
+  // (the worker's original job). Its internal re-entrancy guard makes
+  // overlapping ticks a no-op. Gated so an inline-API deployment can run this
+  // worker for alerts/SQS without doubling eval sweepers.
+  if (config.EVAL_SWEEPER === "worker") {
+    startEvalSweeper();
+  } else {
+    console.log(`[worker] EVAL_SWEEPER=${config.EVAL_SWEEPER} — this worker does not judge ingested sessions (set EVAL_SWEEPER=worker here, or "inline" on the API).`);
+  }
   while (running) {
     await runSweepOnce();
     // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
@@ -98,12 +119,9 @@ if (dbConfigured) {
     if (config.GOAL_ANALYZER !== "off") {
       await runGoalSweepOnce();
     }
-    // Sleep in small slices so a shutdown signal is honored within ~1s
-    // instead of waiting out the full interval.
-    for (let waited = 0; running && waited < SWEEP_INTERVAL_MS; waited += 1000) {
-      await Bun.sleep(1000);
-    }
+    await sleepInSlices(SWEEP_INTERVAL_MS);
   }
+  stopEvalSweeper(); // stop the eval timer on shutdown
 } else {
   console.log("[worker] DATABASE_URL unset — stateless mode: alert sweeper disabled, consumer-only");
   while (running) {

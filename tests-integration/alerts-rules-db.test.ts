@@ -126,7 +126,7 @@ describeDb("alert rule persistence against real Postgres", () => {
 
     expect(await deleteAlertRule(rule.id)).toBe(true);
     expect(await t.firingsFor(rule.id)).toHaveLength(0);
-    const attempts = await sql`SELECT id FROM alert_webhook_attempts WHERE rule_id = ${rule.id}`;
+    const attempts = await sql`SELECT id FROM ao_alert_webhook_attempts WHERE rule_id = ${rule.id}`;
     expect(attempts).toHaveLength(0);
     expect(await deleteAlertRule(rule.id)).toBe(false); // already gone
   });
