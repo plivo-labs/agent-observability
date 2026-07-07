@@ -28,7 +28,9 @@ export interface GoalSpec {
  * Parse `goal:<name>:<description>` tag strings. The split is at the
  * FIRST colon after the prefix — names cannot contain colons,
  * descriptions can. `goal:<name>` alone self-describes (description =
- * name). Deduped by name, first occurrence wins.
+ * name). Deduped by name CASE-INSENSITIVELY, first occurrence wins:
+ * the goal judge reconciles verdicts by lowercased name, so "Refund"
+ * and "refund" surviving here would collapse onto one verdict downstream.
  */
 export function parseGoalTags(tags: unknown[]): GoalSpec[] {
   const seen = new Set<string>();
@@ -40,10 +42,10 @@ export function parseGoalTags(tags: unknown[]): GoalSpec[] {
     const rawName = sep === -1 ? body : body.slice(0, sep);
     const rawDescription = sep === -1 ? body : body.slice(sep + 1);
     const name = rawName.trim().slice(0, NAME_MAX_CHARS);
-    if (!name || seen.has(name)) continue;
+    if (!name || seen.has(name.toLowerCase())) continue;
     const description =
       rawDescription.trim().slice(0, DESCRIPTION_MAX_CHARS) || name;
-    seen.add(name);
+    seen.add(name.toLowerCase());
     goals.push({ name, description });
   }
   return goals;

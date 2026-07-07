@@ -97,6 +97,9 @@ export interface CompleteJSONOptions<T> {
   maxRetries?: number;
   /** Inject a provider (tests pass MockLLM; prod resolves from env). */
   provider?: LlmProvider;
+  /** Caller-supplied abort (e.g. the SSE client disconnected). Combined with the per-attempt
+   *  timeout; an abort stops retries immediately so abandoned requests stop burning LLM spend. */
+  signal?: AbortSignal;
 }
 
 export interface LlmResult<T> {

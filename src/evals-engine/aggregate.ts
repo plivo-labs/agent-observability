@@ -44,7 +44,9 @@ export function mapNodeLoop(raw: NodeLoopRaw): NodeLoopMetrics {
 
 export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): InstructionsAdherenceMetrics {
   const objective = { ...raw.objective_progress, score: clamp01(raw.objective_progress.score) };
-  const procedurePassed = !raw.procedure_compliance.missed_steps.some((s) => s.severity === "critical");
+  // Severity is normalized + enum'd by MissedStepZ; the toLowerCase here is belt-and-braces so
+  // this gate can never be defeated by casing even if the schema changes.
+  const procedurePassed = !raw.procedure_compliance.missed_steps.some((s) => s.severity.trim().toLowerCase() === "critical");
   const procedure = { ...raw.procedure_compliance, passed: procedurePassed, score: clamp01(raw.procedure_compliance.score) };
   const interaction = { ...raw.interaction_quality, score: clamp01(raw.interaction_quality.score) };
   const policy = { ...raw.policy_boundary_compliance, score: clamp01(raw.policy_boundary_compliance.score) };

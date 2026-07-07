@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this?
 
-Agent Observability is a Bun/Hono server that receives session report callbacks from agent-transport (Python and Node SDKs). It parses the multipart session report (JSON header, chat history JSON, audio OGG), stores session data in Postgres, and serves a dashboard UI for viewing session metrics. All routes except `/health` can be gated with optional HTTP basic auth (`AGENT_OBSERVABILITY_USER` / `AGENT_OBSERVABILITY_PASS`).
+Agent Observability is a Bun/Hono server with two halves: (1) session observability — it receives session report callbacks from agent-transport (Python and Node SDKs), parses the multipart session report (JSON header, chat history JSON, audio OGG), stores session data in Postgres, and serves a dashboard UI; (2) a simulation + eval engine — LLM-planned scenario generation (`/api/simulation/*`, SSE), an SQS-driven scenario runner that plays conversations against an agent `/turn` endpoint, and LLM judges that score the results.
+
+Auth is required by default: configure Basic auth (`AGENT_OBSERVABILITY_USER` / `AGENT_OBSERVABILITY_PASS`) and/or the LiveKit Bearer pair, or the server refuses to boot unless `ALLOW_UNAUTHENTICATED=true` is set explicitly. The unauthenticated exceptions are the liveness/readiness probes only: `/health`, `/status`, and `/deepstatus` (the last returns a DB up/down boolean for load-balancer checks).
 
 ## Commands
 
@@ -20,8 +22,10 @@ docker compose up postgres -d  # Postgres only for local dev
 ```
 
 Two entrypoints share the codebase: `src/index.ts` (REST API) and
-`src/worker.ts` (background job loop — alert sweeper + webhook delivery
-retries; no ports). Alert rules are windowed triggers: count rules
+`src/worker.ts` (no ports — alert sweeper + webhook delivery retries +
+goal analyzer + the SQS simulation consumer when SQS/Redis/turn-URL are
+configured; each loop table-probes at boot via `to_regclass` and disables
+itself when its tables are absent). Alert rules are windowed triggers: count rules
 (≥ N matching verdicts/outcomes) and metric thresholds (eval/outcome
 fail rates, latency p95s, interruption rate — fire above X). Integration suites in `tests-integration/` run
 every trigger and the delivery pipeline against real Postgres
@@ -49,6 +53,12 @@ in query text (bun rewrites it as a placeholder; use `jsonb_exists()`).
 - `src/livekit/auth.ts` — Dual-auth middleware: accepts Basic credentials (`AGENT_OBSERVABILITY_USER`/`_PASS`) **or** LiveKit-issued HS256 Bearer JWTs. The JWT issuer claim must equal the LiveKit API key env value; the signature is verified against the matching API secret env value (see `.env.example` for the full pair). Payload must carry `observability.write === true`. Mounted on every native ingest path.
 - `src/livekit/protobuf.ts` — Hand-rolled decoders for `MetricsRecordingHeader` (recording multipart `header.binpb` part) and OTLP logs (handles JSON, protobuf, and gzip).
 - `src/livekit/observability.ts` — `persistLiveKitOtlpLogs(logs)`. Branches on each record's `body` field: `"session report"` (merge into raw_report patch), `"chat item"` (append events), `"tag"` (upsert `session_tags`), `"evaluation"` (insert `session_external_evals`), `"outcome"` (upsert `session_outcomes`).
+- `src/sim-engine/` — the simulation engine: `gen/` (planner → deterministic allocator → writer LLM pipeline, streamed over SSE), `run-engine/` (flow executor + user simulator + `/turn` client, a faithful port of the reference Go worker), `queue/` (SQS consumer + the Redis `:RESULTS` stream and Lua completion gate), `routes.ts` (`/api/simulation/*`), `db.ts` (the `ao_sim_*` tables).
+- `src/evals-engine/` — post-conversation LLM judges (node metrics, instruction adherence, intent, loop, goal) ported from cx-sqs's ConversationEvaluator; `aggregate.ts` derives pass/fail + weighted scores from raw judge output.
+- `src/llm/` — provider-neutral LLM layer: `completeJSON` (Zod-validated structured calls with retry/timeout/usage), `providers/openai.ts` (chat + responses APIs, strict json_schema, streaming), `providers/anthropic.ts` (tool-forced schema enforcement, streaming).
+- `src/goals/` — the goal analyzer (post-session judging of `goal:<name>` tags; DB-backed sweep).
+- `src/net/public-url.ts` — SSRF guard for user-supplied webhook URLs (resolve + block private ranges; `WEBHOOK_URL_ALLOWLIST` is the explicit opt-out for internal receivers).
+- `src/db-probe.ts` — boot-time probe that the `ao_sim_*` tables exist AND are INSERT+UPDATE-writable (managed deploys pre-create them out-of-band with AUTO_MIGRATE off).
 
 ### Frontend (`frontend/`)
 
@@ -92,6 +102,13 @@ Native LiveKit observability also accepts OTLP log records at `POST /observabili
 - `GET /api/sessions/:id` — Session detail: includes `chat_history`, `session_metrics` (computed on the fly from raw data), `raw_report`, `events`, `options`.
 - `DELETE /api/sessions` — Bulk delete. JSON body `{ session_ids: string[] }`, max 200 ids. Returns `{ deleted: <count> }`. Mirror endpoint `DELETE /api/evals` accepts `{ run_ids: string[] }` (UUID format) and cascades to `eval_cases`.
 
+### Simulation API (`/api/simulation/*`, behind the same `/api/*` auth)
+
+- `GET /api/simulation/scenarios` — paginated scenario library (`phlo_uuid` filter; tenant-scoped by the gateway-injected `auth-id` header).
+- `POST /api/simulation/scenarios/generate` — SSE stream: planner → allocator → writer events, one `scenario_saved` per scenario, `completed` with metadata. `?persist=` overrides the SIM_PERSIST default; concurrency-capped (`GEN_MAX_CONCURRENT`, 429 over the limit).
+- `DELETE .../scenarios/:uuid`, `POST .../scenarios/batch-delete`, `DELETE .../scenarios?phlo_uuid=` — tenant-scoped deletes (UUIDs validated; `SIM_REQUIRE_TENANT_HEADER=true` makes the `auth-id` header mandatory on these).
+- Simulation runs are dispatched via SQS (the worker), not HTTP — results stream to Redis `:RESULTS` and persist to `ao_sim_run` / `ao_sim_run_scenario` when `SIM_PERSIST=true`.
+
 ### Filter semantics
 
 - Free-text filters (`account_id` on sessions; `account_id` and `agent_id` on evals) match via `LOWER(col) LIKE '%lower(input)%'` — case-insensitive substring. User input is escaped for `%` / `_` / `\` before being wrapped in wildcards. The wrap defeats the existing btree index and falls back to a sequential scan; acceptable at current row counts. If filter latency becomes a bottleneck, add a `pg_trgm` GIN index on `LOWER(col)` rather than dialing the match back to exact equality.
@@ -103,7 +120,7 @@ SQL files in `migrations/` folder, named `001_description.sql`, `002_description
 
 ## Environment Variables
 
-See `.env.example` for all variables. Only `DATABASE_URL` is required. Basic auth (`AGENT_OBSERVABILITY_USER`/`_PASS`), LiveKit Bearer auth (`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`), and S3 upload (`S3_BUCKET` + credentials) are all opt-in — both env vars in each pair must be set to enable that feature. Either auth mode is sufficient on its own; configure both during a migration window if you have mixed clients.
+See `.env.example` for all variables. `DATABASE_URL` is required unless `SIM_PERSIST=false` (explicit stateless mode). Authentication is required: set Basic auth (`AGENT_OBSERVABILITY_USER`/`_PASS`) and/or LiveKit Bearer auth (`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`) — with neither pair set the server exits at boot unless `ALLOW_UNAUTHENTICATED=true` (local dev / trusted network only). Whichever auth mode is configured also protects `/api/*`. S3 upload (`S3_BUCKET` + credentials) stays opt-in. Either auth mode is sufficient on its own; configure both during a migration window if you have mixed clients.
 
 ## Releasing
 

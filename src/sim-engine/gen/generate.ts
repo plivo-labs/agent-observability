@@ -33,6 +33,10 @@ export interface GenMetadata {
   saved_count: number;
   failed_count: number;
   failed_slot_ids: string[];
+  /** Scenarios written but dropped as coverage_key duplicates (the allocator's feasibility
+   *  fallback can legitimately reuse a key). Keeps the ledger self-consistent:
+   *  planned = saved + failed + deduped. */
+  deduped_count: number;
   partial_success: boolean;
   planner_usage: LlmUsage | null;
   writer_usages: LlmUsage[];
@@ -48,6 +52,9 @@ export interface GenerateInput {
   testCaseGenerationInstructions?: string;
   existingSummaries?: ExistingScenarioSummary[];
   smokeCap?: number;
+  /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
+   *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */
+  signal?: AbortSignal;
   // Test injection.
   plannerProvider?: LlmProvider;
   writerProvider?: LlmProvider;
@@ -64,7 +71,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 /** One chunk through the writer with chunk-level + per-slot fallback retries. */
 async function runChunkWithRetry(
-  base: { flowJson: Dict; planner: PlannerWithInventory; model: string; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider },
+  base: { flowJson: Dict; planner: PlannerWithInventory; model: string; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider; signal?: AbortSignal },
   slots: Slot[],
 ): Promise<{ scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] }> {
   const scenarios: RuntimeScenario[] = [];
@@ -107,6 +114,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   let planner: PlannerWithInventory | null = null;
   let plannerUsage: LlmUsage | null = null;
   for (let attempt = 1; attempt <= PLANNER_RETRIES; attempt++) {
+    input.signal?.throwIfAborted();
     yield { type: "planning_started", attempt, existing_summary_count: existing.length };
     try {
       const out = await planCapabilities({
@@ -118,6 +126,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         simulationMode: mode,
         smokeCap: input.smokeCap,
         provider: input.plannerProvider,
+        signal: input.signal,
       });
       planner = out.planner;
       plannerUsage = out.usage;
@@ -151,6 +160,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         simulationMode: mode,
         smokeCap: input.smokeCap,
         provider: input.plannerProvider,
+        signal: input.signal,
       });
       planner = out.planner;
     }
@@ -158,15 +168,25 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   if (!slots) throw new Error("Allocator produced no slots");
 
   // ── WRITER (parallel chunks + retries) ─────────────────────────────────────────
+  input.signal?.throwIfAborted();
   const chunks = chunk(slots, WRITER_CHUNK_SIZE);
   yield { type: "writing_started", planned_count: slots.length, chunk_count: chunks.length, chunk_size: WRITER_CHUNK_SIZE };
 
+  // Each chunk is isolated: a thrown chunk (LlmError after completeJSON's own retries —
+  // sustained 429, timeout, twice-invalid JSON) degrades to "all its slots failed" instead of
+  // rejecting Promise.all, which would discard every OTHER chunk's already-written scenarios
+  // and turn a partial success into a total failure.
   const results = await Promise.all(
     chunks.map((c, i) =>
       runChunkWithRetry(
-        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider },
+        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
         c,
-      ),
+      ).catch((err): { scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] } => {
+        // A caller abort is not a chunk failure — rethrow so the whole generation stops.
+        if (input.signal?.aborted) throw err;
+        console.error(`[sim-gen] writer chunk ${i} failed (generation ${generationId}): ${(err as Error).message}`);
+        return { scenarios: [], failedSlotIds: c.map((s) => s.slot_id), usages: [] };
+      }),
     ),
   );
 
@@ -175,6 +195,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const failedSlotIds: string[] = [];
   const seenCoverage = new Set<string>();
   let saved = 0;
+  let deduped = 0;
   for (let chunkIndex = 0; chunkIndex < results.length; chunkIndex++) {
     const r = results[chunkIndex];
     writerUsages.push(...r.usages);
@@ -183,7 +204,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     for (let i = 0; i < r.scenarios.length; i++) {
       const scenario = r.scenarios[i];
       const key = scenario.eval_metadata?.coverage_key ?? "";
-      if (key && seenCoverage.has(key)) continue; // dedup
+      if (key && seenCoverage.has(key)) {
+        deduped += 1; // counted so the shortfall is visible in metadata, not silent
+        continue;
+      }
       if (key) seenCoverage.add(key);
       saved += 1;
       chunkSaved += 1;
@@ -210,6 +234,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       saved_count: saved,
       failed_count: failedSlotIds.length,
       failed_slot_ids: failedSlotIds,
+      deduped_count: deduped,
       // Partial success requires at least one saved scenario (aiassist parity).
       partial_success: saved > 0 && saved < slots.length,
       planner_usage: plannerUsage,

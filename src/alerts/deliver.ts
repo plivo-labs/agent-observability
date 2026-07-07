@@ -63,15 +63,25 @@ async function sendWebhook(req: WebhookRequest): Promise<DeliveryResult> {
     // assertPublicUrl before we fetch it. Bounded hop count.
     const signal = AbortSignal.timeout(WEBHOOK_TIMEOUT_MS);
     let url = req.url;
+    let hopHeaders = headers;
     let res: Response;
     for (let hop = 0; ; hop++) {
       await assertPublicUrl(url);
-      res = await fetch(url, { method: req.method, headers, body: req.body, redirect: "manual", signal });
+      res = await fetch(url, { method: req.method, headers: hopHeaders, body: req.body, redirect: "manual", signal });
       if (res.status < 300 || res.status >= 400) break;
       const location = res.headers.get("location");
       if (!location) break; // 3xx without a target — treat as the final response
       if (hop >= MAX_REDIRECTS) throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
-      url = new URL(location, url).toString(); // resolve relative Locations
+      const next = new URL(location, url); // resolve relative Locations
+      // Strip credentials when the redirect crosses origin — the rule's extraHeaders
+      // (commonly an Authorization bearer for the receiver) and our HMAC signature must
+      // never be re-sent to a different host. Spec-compliant auto-follow strips
+      // Authorization/Cookie cross-origin; this manual loop must match it, and goes
+      // further by dropping ALL rule-supplied headers (any of them may be a credential).
+      if (next.origin !== new URL(url).origin) {
+        hopHeaders = { "content-type": "application/json", ...req.idHeaders };
+      }
+      url = next.toString();
     }
     return {
       ok: res.status >= 200 && res.status < 300,

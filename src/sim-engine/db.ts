@@ -296,6 +296,8 @@ export async function failRun(id: string, errorMessage: string): Promise<void> {
   `;
 }
 
+/** No production caller yet — reserved for the run-cancellation API (aodb-write.md); kept
+ *  because it completes the status-transition set and is exercised by the integration suite. */
 export async function cancelRun(id: string): Promise<void> {
   await sql`
     UPDATE ao_sim_run SET status = 'cancelled', completed_at = NOW(), updated_at = NOW()

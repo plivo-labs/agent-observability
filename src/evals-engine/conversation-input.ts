@@ -17,17 +17,23 @@ function readGlobalPrompt(flowObj: Record<string, unknown>): string {
   return "";
 }
 
-/** Tolerant read of `agent_settings.conversation_goals` (either camel/snake key). */
+/** Tolerant read of `agent_settings.conversation_goals` (either camel/snake key).
+ *  Deduped case-insensitively (first wins) — the goal judge reconciles verdicts by
+ *  lowercased name, so case-duplicate names would collapse onto a single verdict. */
 function readGoals(flowObj: Record<string, unknown>): GoalInput[] {
   const settings = (flowObj.agentSettings ?? flowObj.agent_settings) as Record<string, unknown> | undefined;
   const raw = settings?.conversation_goals;
   if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
   return raw
     .map((g): GoalInput | null => {
       if (!g || typeof g !== "object") return null;
       const o = g as Record<string, unknown>;
       const name = typeof o.goal_name === "string" ? o.goal_name : "";
       if (!name) return null;
+      const key = name.trim().toLowerCase();
+      if (seen.has(key)) return null;
+      seen.add(key);
       return {
         goal_name: name,
         goal_instructions: typeof o.goal_instructions === "string" ? o.goal_instructions : "",

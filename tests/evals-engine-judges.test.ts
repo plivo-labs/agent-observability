@@ -18,6 +18,7 @@ const { runHallucinationJudge, runLoopJudge, runVariableExtractionJudge, runInst
 );
 const { runIntentJudge } = await import("../src/evals-engine/judges/intent-judge.js");
 const { runGoalJudge } = await import("../src/evals-engine/judges/goal-judge.js");
+const { deriveInstructionAdherence } = await import("../src/evals-engine/aggregate.js");
 type NodeEvalInput = import("../src/evals-engine/types.js").NodeEvalInput;
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
@@ -88,6 +89,47 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.objective_progress.achieved).toBe(true);
     expect(data.procedure_compliance.missed_steps).toEqual([]);
   });
+
+  test('instruction adherence: a "Critical" missed step (any casing) fails procedure compliance', async () => {
+    const raw = {
+      objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+      procedure_compliance: {
+        score: 0.5,
+        reason_code: "",
+        missed_steps: [{ step: "verify identity", severity: "Critical", reason_code: "skipped", details: "" }],
+        reason: "",
+        technical_reason: "",
+      },
+      interaction_quality: { score: 0.9, reason_code: "", issues: [], reason: "", technical_reason: "" },
+      policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+    };
+    const llm = new MockLLM([JSON.stringify(raw)]);
+    const { data } = await runInstructionAdherenceJudge(node(), ctx(), llm);
+    // severity is normalized to lowercase by the schema
+    expect(data.procedure_compliance.missed_steps[0]!.severity).toBe("critical");
+    const derived = deriveInstructionAdherence(data);
+    expect(derived.procedure_compliance.passed).toBe(false);
+    expect(derived.adherence_passed).toBe(false);
+  });
+
+  test("instruction adherence: an unknown severity value coerces to minor (does not fail procedure)", async () => {
+    const raw = {
+      objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+      procedure_compliance: {
+        score: 0.9,
+        reason_code: "",
+        missed_steps: [{ step: "s", severity: "catastrophic", reason_code: "", details: "" }],
+        reason: "",
+        technical_reason: "",
+      },
+      interaction_quality: { score: 0.9, reason_code: "", issues: [], reason: "", technical_reason: "" },
+      policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+    };
+    const llm = new MockLLM([JSON.stringify(raw)]);
+    const { data } = await runInstructionAdherenceJudge(node(), ctx(), llm);
+    expect(data.procedure_compliance.missed_steps[0]!.severity).toBe("minor");
+    expect(deriveInstructionAdherence(data).procedure_compliance.passed).toBe(true);
+  });
 });
 
 describe("intent judge (LLM, cx-sqs MetricIntent)", () => {
@@ -125,6 +167,20 @@ describe("goal judge (MockLLM)", () => {
     expect(data.goals).toHaveLength(2);
     expect(data.goals[0]).toMatchObject({ goal_name: "confirm_order", flow_goal_id: 7, achieved: true });
     expect(data.goals[1]).toMatchObject({ goal_name: "offer_help", flow_goal_id: 8, achieved: false, reason: "Goal not evaluated by LLM" });
+  });
+
+  test("a shapeless reply ({} / empty goals) triggers a retry instead of silent all-unmet", async () => {
+    const goals = [{ goal_name: "confirm_order", goal_instructions: "confirm", flow_goal_id: 7 }];
+    // First reply is valid JSON but the wrong shape ({}); second is empty goals (also
+    // rejected by min(1)); third is correct. completeJSON must re-prompt through both.
+    const llm = new MockLLM([
+      JSON.stringify({}),
+      JSON.stringify({ goals: [] }),
+      JSON.stringify({ goals: [{ goal_name: "confirm_order", achieved: true, reason: "did", technical_reason: "" }] }),
+    ]);
+    const { data } = await runGoalJudge(goals, ctx(), llm);
+    expect(data.goals[0]).toMatchObject({ goal_name: "confirm_order", achieved: true });
+    expect(llm.calls).toHaveLength(3); // proves the wrong shapes were retried, not accepted
   });
 });
 

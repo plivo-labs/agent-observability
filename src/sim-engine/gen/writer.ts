@@ -345,6 +345,8 @@ export interface WriteScenarioChunkArgs {
   chunkIndex: number;
   attempt: number;
   provider?: LlmProvider;
+  /** Caller abort (SSE client disconnect) — stops the LLM call + its retries. */
+  signal?: AbortSignal;
 }
 
 export interface WriteScenarioChunkResult {
@@ -390,6 +392,7 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
     maxTokens: null,
     jsonSchema: { name: WRITER_SCHEMA_NAME, schema: WRITER_JSON_SCHEMA },
     provider: args.provider,
+    signal: args.signal,
   });
 
   const slotById = new Map(slots.map((s) => [s.slot_id, s]));

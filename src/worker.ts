@@ -59,15 +59,19 @@ if (config.SIM_PERSIST && dbConfigured) {
 }
 
 // Start the simulation-eval SQS consumer alongside the sweeper when it's configured
-// (SQS + Redis + a /turn endpoint). Otherwise the worker is sweeper-only. Fire-and-forget:
-// the consumer owns its poll loop and exits on the shared abort, so we don't await it below.
+// (SQS + Redis + a /turn endpoint). Otherwise the worker is sweeper-only. The promise is
+// HELD (not void-ed): each poll loop finishes its in-flight scenario before honoring the
+// abort, and the exit path below awaits this so a deploy's SIGTERM drains running scenarios
+// instead of killing them mid-turn (which would orphan their rows at status='running' and
+// hand the message back to SQS for a full re-run).
+let consumerDone: Promise<void> = Promise.resolve();
 if (queueDispatchEnabled) {
   consumerRedis = makeRedis();
   const livekit = makeLiveKitSimClient({
     username: simEngineConfig.livekitSimTurnUser,
     password: simEngineConfig.livekitSimTurnPass,
   });
-  void consumeSimulationQueue(
+  consumerDone = consumeSimulationQueue(
     { redis: consumerRedis, runnerDeps: { livekit } },
     {
       // queueDispatchEnabled guarantees sqsQueueUrl is set (isSimEngineEnabled checks it).
@@ -138,6 +142,17 @@ if (dbConfigured) {
     await Bun.sleep(1000);
   }
 }
+
+// Drain: wait for in-flight scenarios to finish before exiting (each poll loop completes its
+// current message after the abort). Bounded so a wedged scenario can't stall shutdown past the
+// container's stop-timeout — pick a deadline safely under typical ECS stopTimeout budgets.
+const DRAIN_DEADLINE_MS = 110_000;
+await Promise.race([
+  consumerDone,
+  Bun.sleep(DRAIN_DEADLINE_MS).then(() =>
+    console.warn(`[worker] drain deadline (${DRAIN_DEADLINE_MS / 1000}s) hit — exiting with scenarios possibly in flight`),
+  ),
+]);
 
 console.log("[worker] stopped");
 process.exit(0);

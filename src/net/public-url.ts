@@ -12,6 +12,7 @@
  */
 import { lookup } from "node:dns/promises";
 import net from "node:net";
+import { config } from "../config.js";
 
 export class SsrfError extends Error {
   constructor(message: string) {
@@ -21,16 +22,13 @@ export class SsrfError extends Error {
 }
 
 /** Resolve a hostname to its IP addresses. Injectable so tests exercise the
- *  real resolve→block path with a fake resolver (no network, no prod/test fork
- *  in assertPublicUrl itself). Returns the list of resolved IP strings. */
+ *  real resolve→block path with a fake resolver (no network). Returns the list
+ *  of resolved IP strings. NO NODE_ENV fork here: an env value must never be
+ *  able to disable a security check in a deployed artifact — tests that need a
+ *  fake resolver inject one via __setResolverForTest. */
 export type HostResolver = (host: string) => Promise<string[]>;
 
 let resolver: HostResolver = async (host) => {
-  // In tests, resolve any hostname to a benign public IP so suites that
-  // legitimately deliver to `localhost` receivers stay green and network-free.
-  // The resolve→block path is exercised by injecting a resolver via
-  // __setResolverForTest (see public-url.test.ts); IP-literal blocking always runs.
-  if (process.env.NODE_ENV === "test") return ["93.184.216.34"];
   const results = await lookup(host, { all: true });
   return results.map((r) => r.address);
 };
@@ -81,23 +79,57 @@ function isBlockedIpv4(ip: string): boolean {
   );
 }
 
+/** Expand an IPv6 string into its 8 16-bit groups, resolving `::` and a dotted
+ *  IPv4 tail (`::ffff:1.2.3.4`). Returns null if malformed. */
+function ipv6Groups(addr: string): number[] | null {
+  let head = addr;
+  // Dotted IPv4 tail → two trailing hex groups.
+  const dotted = addr.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const v4 = ipv4ToInt(dotted[2]);
+    if (v4 === null) return null;
+    head = `${dotted[1]}${((v4 >>> 16) & 0xffff).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+  }
+  const halves = head.split("::");
+  if (halves.length > 2) return null;
+  const parse = (s: string): number[] | null => {
+    if (s === "") return [];
+    const out: number[] = [];
+    for (const g of s.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const left = parse(halves[0]);
+  const right = halves.length === 2 ? parse(halves[1]) : [];
+  if (left === null || right === null) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+  const missing = 8 - left.length - right.length;
+  if (missing < 1) return null;
+  return [...left, ...Array(missing).fill(0), ...right];
+}
+
 function isBlockedIpv6(ip: string): boolean {
   const addr = ip.toLowerCase().split("%")[0]; // strip any zone id
-  if (addr === "::1" || addr === "::") return true; // loopback / unspecified
-  // IPv4-mapped, dotted form (::ffff:a.b.c.d) — check the embedded v4.
-  const mappedDotted = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mappedDotted) return isBlockedIpv4(mappedDotted[1]);
-  // IPv4-mapped, normalized hex form (URL parsers fold ::ffff:127.0.0.1 → ::ffff:7f00:1).
-  const mappedHex = addr.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mappedHex) {
-    const hi = parseInt(mappedHex[1], 16);
-    const lo = parseInt(mappedHex[2], 16);
-    return isBlockedIpv4(`${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`);
+  const groups = ipv6Groups(addr);
+  if (!groups) return true; // unparseable → treat as unsafe
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+  if (groups.every((g) => g === 0)) return true; // :: unspecified
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0 && g6 === 0 && g7 === 1) return true; // ::1 loopback
+  // IPv4-mapped ::ffff:a.b.c.d — check the embedded v4.
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
+    return isBlockedIpv4(`${(g6 >> 8) & 0xff}.${g6 & 0xff}.${(g7 >> 8) & 0xff}.${g7 & 0xff}`);
+  }
+  // NAT64 64:ff9b::/96 — the last 32 bits embed an IPv4 (e.g. 64:ff9b::a9fe:a9fe
+  // re-encodes the 169.254.169.254 metadata endpoint on NAT64 networks).
+  if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    return isBlockedIpv4(`${(g6 >> 8) & 0xff}.${g6 & 0xff}.${(g7 >> 8) & 0xff}.${g7 & 0xff}`);
   }
   return (
-    addr.startsWith("fe80") || // link-local
-    addr.startsWith("fc") || // unique-local fc00::/7
-    addr.startsWith("fd")
+    (g0 & 0xffc0) === 0xfe80 || // link-local fe80::/10 (fe80–febf, mask not string prefix)
+    (g0 & 0xffc0) === 0xfec0 || // site-local fec0::/10 (deprecated but routable internally)
+    (g0 & 0xfe00) === 0xfc00 // unique-local fc00::/7
   );
 }
 
@@ -106,6 +138,53 @@ function isBlockedAddress(ip: string): boolean {
   if (kind === 4) return isBlockedIpv4(ip);
   if (kind === 6) return isBlockedIpv6(ip);
   return true; // not a recognizable IP → unsafe
+}
+
+// ── operator allowlist (WEBHOOK_URL_ALLOWLIST) ──────────────────────────────────
+// Explicit opt-in for legitimately-internal webhook receivers (the pre-guard behavior
+// delivered anywhere). Comma-separated entries: an exact hostname ("hooks.internal.corp"),
+// an IP literal ("10.1.2.3"), or an IPv4 CIDR ("10.1.0.0/16"). Empty (the default) = the
+// strict guard applies to everything. Parsed per call — the list is tiny and this keeps
+// test/config reloads coherent.
+interface AllowRule {
+  host?: string;
+  ip?: string;
+  cidr?: { base: number; maskBits: number };
+}
+
+function parseAllowlist(raw: string): AllowRule[] {
+  const rules: AllowRule[] = [];
+  for (const entry of raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
+    const cidr = entry.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d{1,2})$/);
+    if (cidr && ipv4ToInt(cidr[1]) !== null && Number(cidr[2]) <= 32) {
+      rules.push({ cidr: { base: ipv4ToInt(cidr[1])!, maskBits: Number(cidr[2]) } });
+    } else if (net.isIP(entry)) {
+      rules.push({ ip: entry });
+    } else {
+      rules.push({ host: entry });
+    }
+  }
+  return rules;
+}
+
+function isAllowlisted(host: string, addresses: string[], rules: AllowRule[]): boolean {
+  if (rules.length === 0) return false;
+  const hostLower = host.toLowerCase();
+  for (const rule of rules) {
+    if (rule.host && rule.host === hostLower) return true;
+    if (rule.ip && addresses.some((a) => a.toLowerCase() === rule.ip)) return true;
+    if (rule.cidr) {
+      const { base, maskBits } = rule.cidr;
+      const mask = maskBits === 0 ? 0 : (0xffffffff << (32 - maskBits)) >>> 0;
+      if (addresses.some((a) => {
+        const n = ipv4ToInt(a);
+        return n !== null && (n & mask) === (base & mask);
+      })) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export async function assertPublicUrl(rawUrl: string): Promise<void> {
@@ -131,6 +210,10 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
     }
     if (addresses.length === 0) throw new SsrfError(`host "${host}" resolved to no addresses`);
   }
+
+  // Operator opt-in escape hatch for known-internal receivers (see parseAllowlist).
+  const allowRules = parseAllowlist(config.WEBHOOK_URL_ALLOWLIST ?? "");
+  if (isAllowlisted(host, addresses, allowRules)) return;
 
   // The block loop ALWAYS runs — an IP literal is checked directly, a hostname is
   // resolved (via the injectable `resolver`) and every returned address checked.

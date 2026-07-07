@@ -70,6 +70,44 @@ describe("allocateCapabilityQuotas", () => {
     expect(quotas.handle_a).toBe(6);
     expect(quotas.handle_b).toBe(4);
   });
+
+  test("core capabilities survive the top-n weight cut (audit requires all core covered)", () => {
+    // Weights: boundary-high-anchored (2+2+3·0.25+0.10=5.35) and secondary-high (1+2+0.85)
+    // both outweigh a plain low-risk core (3+0+0.10=3.10). With n=2 a pure weight slice
+    // would cut the core cap — and auditAllocation throws whenever n ≥ coreCount and a core
+    // cap has no coverage. Core must be seated first.
+    const caps = [
+      cap("core_plain", "low"),
+      cap("boundary_hot", "high", { priority: "boundary", action_anchors: ["a1", "a2", "a3"] }),
+      cap("secondary_hot", "high", { priority: "secondary", action_anchors: ["a1", "a2", "a3"] }),
+    ];
+    const quotas = allocateCapabilityQuotas(caps, 2, existingCoverage([]));
+    expect(quotas.core_plain ?? 0).toBeGreaterThanOrEqual(1);
+    expect(Object.values(quotas).reduce((a, b) => a + b, 0)).toBe(2);
+  });
+
+  test("n < coreCount keeps the original pure weight slice (audit waives core coverage there)", () => {
+    // 3 plain core caps (weight 3.10 each) + one heavy boundary cap (2+2+0.75+0.10 = 4.85).
+    // With n=2 < coreCount=3 the audit does NOT require core coverage, so the pre-fix
+    // behavior — top-n by weight, boundary cap seated — must be preserved exactly.
+    const caps = [
+      cap("core_a", "low"),
+      cap("core_b", "low"),
+      cap("core_c", "low"),
+      cap("boundary_hot", "high", { priority: "boundary", action_anchors: ["a1", "a2", "a3"] }),
+    ];
+    const quotas = allocateCapabilityQuotas(caps, 2, existingCoverage([]));
+    expect(quotas.boundary_hot ?? 0).toBeGreaterThanOrEqual(1); // the weight winner keeps its seat
+    expect(Object.values(quotas).reduce((a, b) => a + b, 0)).toBe(2);
+  });
+
+  test("an empty capability_id is keyed by slug(name) consistently (no orphan quota bucket)", () => {
+    const caps = [cap("handle_a", "high"), cap("", "low", { name: "Weird Cap" })];
+    const quotas = allocateCapabilityQuotas(caps, 4, existingCoverage([]));
+    // The empty-id cap gets a slug bucket, not an empty-string key.
+    expect(quotas["weird_cap"] ?? quotas["weird-cap"]).toBeGreaterThanOrEqual(1);
+    expect(quotas[""]).toBeUndefined();
+  });
 });
 
 describe("allocateScenarioSlots — deterministic", () => {

@@ -70,7 +70,35 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     const meta = events.find((e) => e.type === "metadata") as any;
     expect(meta.metadata.saved_count).toBe(4);
     expect(meta.metadata.failed_slot_ids).toEqual([]);
+    expect(meta.metadata.deduped_count).toBe(0);
     expect(meta.metadata.partial_success).toBe(false);
+  });
+
+  test("one chunk's thrown LlmError degrades to failed slots — other chunks' scenarios survive", async () => {
+    // 12 slots → 2 chunks (10 + 2). The 2-slot chunk's writer call throws (sustained 429 /
+    // timeout after completeJSON's retries); chunk 1's 10 scenarios must still stream, with
+    // the 2 slots reported failed — previously the rejection discarded everything.
+    const throwingWriter = (args: ProviderCompleteArgs): string => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length <= 2) throw new Error("429 rate limited");
+      return writerResponder(args);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical,
+        phloUuid: "agent-1",
+        maxScenarios: 12,
+        model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]),
+        writerProvider: new MockLLM([throwingWriter]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario");
+    expect(scenarios.length).toBe(10);
+    const meta = events.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(meta.metadata.saved_count).toBe(10);
+    expect(meta.metadata.failed_count).toBe(2);
+    expect(meta.metadata.partial_success).toBe(true);
   });
 
   test("throws after the planner fails twice", async () => {

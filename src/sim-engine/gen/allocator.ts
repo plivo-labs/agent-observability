@@ -90,7 +90,25 @@ export function allocateCapabilityQuotas(
   });
   weighted.sort((a, b) => (a.weight !== b.weight ? b.weight - a.weight : cmpStr(a.capId, b.capId)));
 
-  const selected = n < weighted.length ? weighted.slice(0, n) : weighted;
+  // Core capabilities are guaranteed a seat before the weight cut — but ONLY in the regime
+  // the audit enforces: auditAllocation requires EVERY core cap covered when n >= coreCount,
+  // so there a high-weight boundary cap outweighing a low-weight core cap would make the
+  // audit throw deterministically (and the replan retry fail the same way). When n < coreCount
+  // the audit waives core coverage entirely, and the original pure weight slice is the correct
+  // (and previously shipped) behavior — do not reshape small allocations. Both lists keep the
+  // weight order, so determinism is preserved either way.
+  let selected: typeof weighted;
+  if (n < weighted.length) {
+    const core = weighted.filter((w) => w.cap.priority === "core");
+    if (n >= core.length) {
+      const rest = weighted.filter((w) => w.cap.priority !== "core");
+      selected = [...core, ...rest.slice(0, n - core.length)];
+    } else {
+      selected = weighted.slice(0, n);
+    }
+  } else {
+    selected = weighted;
+  }
   const quotas: Record<string, number> = {};
   for (const { capId } of selected) quotas[capId] = 0;
 
@@ -280,7 +298,11 @@ function buildCandidates(
 ): Candidate[] {
   const candidates: Candidate[] = [];
   for (const cap of capabilities) {
-    const capId = cap.capability_id;
+    // MUST match allocateCapabilityQuotas' key derivation exactly: the planner runs
+    // strict:false, so a capability can arrive with capability_id="" — quotas key it under
+    // slug(name), and skipping it here would leave that quota bucket with zero candidates
+    // (→ "could not satisfy exact count" for the whole run).
+    const capId = cap.capability_id || slug(cap.name || "capability");
     if (!capId || (capabilityQuotas[capId] ?? 0) <= 0) continue;
     const routes: Dict[] =
       cap.route_anchors && cap.route_anchors.length
@@ -399,7 +421,8 @@ export function allocateScenarioSlots(
 
   const isOutbound = !!inv.is_outbound_call;
   const capPriority: Record<string, string> = {};
-  for (const cap of capabilities) capPriority[cap.capability_id] = cap.priority;
+  // Same key derivation as quotas/candidates (slug fallback for empty capability_id).
+  for (const cap of capabilities) capPriority[cap.capability_id || slug(cap.name || "capability")] = cap.priority;
 
   const capRem: Record<string, number> = { ...capabilityQuotas };
   const typeRem: Record<string, number> = { ...typeQuotas };
@@ -535,7 +558,9 @@ export function auditAllocation(
   for (const s of slots) scenarioTypeCounts[s.scenario_type] = (scenarioTypeCounts[s.scenario_type] ?? 0) + 1;
 
   const coveredCaps = new Set(slots.map((s) => s.capability_id));
-  const coreCaps = capabilities.filter((c) => c.priority === "core").map((c) => c.capability_id);
+  // Slug fallback matches the quota/candidate key derivation — slots carry the derived key,
+  // so the audit must compare against the same one.
+  const coreCaps = capabilities.filter((c) => c.priority === "core").map((c) => c.capability_id || slug(c.name || "capability"));
   const missingCore = requestedCount >= coreCaps.length ? coreCaps.filter((id) => !coveredCaps.has(id)) : [];
 
   const quotasMatch = (Object.keys(typeQuotas) as Array<keyof ScenarioTypeQuotas>).every(

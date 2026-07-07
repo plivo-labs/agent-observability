@@ -17,7 +17,7 @@
 // deleted. At-least-once redelivery is safe — the gate's SETNX fires simulation_completed
 // only once even if a scenario re-runs.
 
-import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
+import { ChangeMessageVisibilityCommand, DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import type { Message } from "@aws-sdk/client-sqs";
 import { simEngineConfig } from "../config.js";
 import { config, dbConfigured } from "../../config.js";
@@ -34,6 +34,16 @@ import { Scenario } from "../schema.js";
 const MAX_MESSAGES_PER_RECEIVE = 1;
 const WAIT_TIME_SECONDS = 20; // long-poll: one held connection instead of a hot spin
 const VISIBILITY_TIMEOUT_SECONDS = 300; // matches the message's own visibility_timeout
+// While a message is being processed, re-extend its visibility every 2 minutes (well inside
+// the 300s window). Without this, any scenario slower than 5 minutes (long turn loops + judge
+// fan-out) becomes visible again mid-run: a second worker re-runs it from scratch, double-
+// emitting events and double-advancing the completion gate.
+const VISIBILITY_HEARTBEAT_MS = 120_000;
+// The completion gate is one Lua INCR — a transient Redis blip here must not strand the run
+// (a lost increment means `processed` never reaches `expected` and the run hangs 'running').
+// Retry in-process before giving up; the message is still deleted either way ("always
+// complete") because redelivery would re-run the whole scenario, which is worse.
+const GATE_ADVANCE_ATTEMPTS = 3;
 
 const EXPECTED_EVENT_NAME = "run_simulation_scenario";
 
@@ -54,6 +64,20 @@ interface SimulationEnvelope {
   event_name?: string;
   visibility_timeout?: number;
   payload?: { body?: Record<string, unknown> };
+}
+
+/** incrementAndCheckCompletion with bounded in-process retries (see GATE_ADVANCE_ATTEMPTS). */
+async function advanceGateWithRetry(redis: RedisClient, simRunUuid: string) {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= GATE_ADVANCE_ATTEMPTS; attempt++) {
+    try {
+      return await incrementAndCheckCompletion(redis, simRunUuid);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < GATE_ADVANCE_ATTEMPTS) await Bun.sleep(200 * attempt);
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -78,7 +102,7 @@ async function failScenario(
     stop_reason: "error",
     error: msg,
   });
-  const { completedByThisCall } = await incrementAndCheckCompletion(redis, simRunUuid);
+  const { completedByThisCall } = await advanceGateWithRetry(redis, simRunUuid);
   if (completedByThisCall) {
     await emitSimulationCompleted(redis, simRunUuid, {});
     if (dbPersist) {
@@ -227,8 +251,23 @@ export async function handleSimulationMessage(deps: ConsumerDeps, bodyString: st
     );
 
     // ── Advance the run-level completion gate; the single call that reaches the expected
-    //    count emits simulation_completed (SETNX inside the Lua makes this exactly-once). ──
-    const { processed, completedByThisCall } = await incrementAndCheckCompletion(redis, simRunUuid);
+    //    count emits simulation_completed (SETNX inside the Lua makes this exactly-once).
+    //    Guarded separately from the run itself: the scenario SUCCEEDED, so a gate failure
+    //    must not route through failScenario (that would emit a bogus scenario_completed
+    //    error event for a scenario that finished cleanly). Retries happen inside; if Redis
+    //    is down past that, log loud — the run may need a manual finalize. ──
+    let gate: { processed: number; completedByThisCall: boolean };
+    try {
+      gate = await advanceGateWithRetry(redis, simRunUuid);
+    } catch (err) {
+      console.error(
+        `[sim-consumer] CRITICAL: completion gate advance failed after ${GATE_ADVANCE_ATTEMPTS} attempts ` +
+          `(run ${simRunUuid}, scenario ${scenarioId}) — the run may stay 'running' and needs manual ` +
+          `finalization: ${(err as Error).message}`,
+      );
+      return;
+    }
+    const { processed, completedByThisCall } = gate;
     if (completedByThisCall) {
       await emitSimulationCompleted(redis, simRunUuid, { scenarios_processed: processed });
       if (dbPersist) {
@@ -311,14 +350,33 @@ async function runWorkerLoop(
 
     for (const msg of messages) {
       if (!msg.Body || !msg.ReceiptHandle) continue; // SQS guarantees both on a real message
+      // Visibility heartbeat: keep re-extending the message's invisibility while the scenario
+      // runs, so a slow scenario (>300s) is never redelivered to a second worker mid-run.
+      // Best-effort — a failed extend just risks the old redelivery behavior, never the run.
+      const receiptHandle = msg.ReceiptHandle;
+      const heartbeat = setInterval(() => {
+        sqs
+          .send(
+            new ChangeMessageVisibilityCommand({
+              QueueUrl: queueUrl,
+              ReceiptHandle: receiptHandle,
+              VisibilityTimeout: VISIBILITY_TIMEOUT_SECONDS,
+            }),
+          )
+          .catch((err) =>
+            console.warn(`[sim-consumer] worker ${workerId} visibility extend failed: ${(err as Error).message}`),
+          );
+      }, VISIBILITY_HEARTBEAT_MS);
       try {
         await handleSimulationMessage(deps, msg.Body);
         // Handler resolved → "complete" → delete so it isn't redelivered.
-        await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: msg.ReceiptHandle }));
+        await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: receiptHandle }));
       } catch (err) {
         // handleSimulationMessage never rethrows, so reaching here means the DeleteMessage call
         // failed. Don't delete — let the visibility timeout lapse + SQS redeliver.
         console.error(`[sim-consumer] worker ${workerId} failed to delete message ${msg.MessageId ?? "<unknown>"}: ${(err as Error).message}`);
+      } finally {
+        clearInterval(heartbeat);
       }
     }
   }

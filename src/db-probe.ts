@@ -28,8 +28,12 @@ export async function probeSimTables(): Promise<void> {
           `hand-apply the DDL + grants), or set SIM_PERSIST=false to run without persistence.`,
       );
     }
+    // Each privilege checked separately: a comma list ('INSERT, UPDATE') is OR semantics in
+    // Postgres, so an INSERT-only grant would pass the probe and then every UPDATE (counter
+    // bumps, finalizeRun) would fail silently — the exact under-grant this probe exists to catch.
     const [row] = await sql`
-      SELECT has_table_privilege(current_user, ${table}, 'INSERT, UPDATE') AS writable
+      SELECT has_table_privilege(current_user, ${table}, 'INSERT')
+         AND has_table_privilege(current_user, ${table}, 'UPDATE') AS writable
     `;
     if (!(row as { writable: boolean }).writable) {
       throw new Error(

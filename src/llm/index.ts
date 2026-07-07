@@ -92,6 +92,10 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    // Caller abort (client disconnected): stop immediately — no retry, no backoff.
+    if (opts.signal?.aborted) {
+      throw new LlmError("completeJSON aborted by caller", opts.signal.reason);
+    }
     // Back off before a retry so a transient rate-limit (429) / timeout isn't hit
     // again immediately. Exponential, capped; skipped on the first attempt. This
     // matters under simulation concurrency (many simulator calls hit the LLM at once).
@@ -108,7 +112,8 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         jsonSchema: opts.jsonSchema,
         stream: opts.stream,
         apiMode: opts.apiMode,
-        signal: AbortSignal.timeout(timeoutMs),
+        // Per-attempt timeout, raced with the caller's abort when one is supplied.
+        signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
       // Network error / timeout / non-2xx (e.g. a 404 from a misconfigured LLM endpoint).

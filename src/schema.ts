@@ -129,6 +129,23 @@ export const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false" && v !== "0"),
 
+  // Multi-tenant hardening for the scenario-library MUTATING routes (delete single/batch/
+  // by-agent). Tenant scope comes from the gateway-injected `auth-id` header; when this flag
+  // is true a request WITHOUT that header is rejected (400) instead of running unscoped —
+  // unscoped means the delete matches rows across every tenant. Default false preserves
+  // single-tenant/OSS behavior (no gateway, no header, no scoping). Set "true" on
+  // multi-tenant deploys where AO's tables live in a shared database.
+  SIM_REQUIRE_TENANT_HEADER: z
+    .string()
+    .default("false")
+    .transform((v) => v !== "false" && v !== "0"),
+
+  // SSRF-guard escape hatch for alert webhooks (src/net/public-url.ts). Comma-separated
+  // entries, each an exact hostname, an IP literal, or an IPv4 CIDR — receivers matching an
+  // entry skip the public-address requirement (delivery to internal hosts, the pre-guard
+  // behavior, but by explicit operator opt-in only). Empty (default) = strict guard for all.
+  WEBHOOK_URL_ALLOWLIST: z.string().optional(),
+
   // ── Run engine (the ported reference-worker simulation loop) ───────────────────
   // Runs are dispatched via the SQS consumer (src/worker.ts), which drains run
   // messages produced by the orchestrator service; AO stays stateless (Redis-only, no Postgres run

@@ -51,9 +51,11 @@ export const GenerateScenariosRequest = z.object({
 });
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
 
-/** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`. */
+/** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`.
+ *  `.uuid()` because the delete SQL casts each id with `::uuid` — one malformed entry would
+ *  otherwise throw Postgres 22P02 and 500 the whole batch. */
 export const DeleteScenariosRequest = z.object({
-  uuids: z.array(z.string()).min(1).max(200),
+  uuids: z.array(z.string().uuid()).min(1).max(200),
 });
 export type DeleteScenariosRequest = z.infer<typeof DeleteScenariosRequest>;
 

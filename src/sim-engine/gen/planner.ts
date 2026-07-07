@@ -55,6 +55,8 @@ export interface PlanCapabilitiesArgs {
   smokeCap?: number;
   /** Test injection — when set, completeJSON uses this instead of the real provider. */
   provider?: LlmProvider;
+  /** Caller abort (SSE client disconnect) — stops the LLM call + its retries. */
+  signal?: AbortSignal;
 }
 
 /** LLM 1: flow → capabilities (loose; json_object + Zod validation). Attaches the
@@ -85,6 +87,7 @@ export async function planCapabilities(
     // planner exactly (PLANNER_OUTPUT_SCHEMA, strict:false); we still re-validate with Zod.
     jsonSchema: { name: PLANNER_SCHEMA_NAME, schema: PLANNER_JSON_SCHEMA, strict: false },
     provider: args.provider,
+    signal: args.signal,
   });
   const planner = { ...res.data, mechanical_inventory: inventory } as PlannerWithInventory;
   // Merge the LLM's route_anchors with the mechanical inventory (fills target_node_id/name,

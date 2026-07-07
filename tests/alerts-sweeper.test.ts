@@ -46,6 +46,11 @@ mock.module("../src/alerts/db.js", () => ({
 const { runSweepOnce } = await import("../src/alerts/sweeper.js");
 const { MAX_ATTEMPTS } = await import("../src/alerts/deliver.js");
 
+// The SSRF guard resolves hostnames for real (no NODE_ENV fork in prod code) — inject a
+// benign public resolver so delivery paths in the sweep stay network-free.
+const { __setResolverForTest } = await import("../src/net/public-url.js");
+__setResolverForTest(async () => ["93.184.216.34"]);
+
 const firing = (overrides: Record<string, unknown> = {}) => ({
   id: "f-1",
   rule_id: "r-1",

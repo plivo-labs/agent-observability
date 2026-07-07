@@ -46,8 +46,16 @@ if (process.env.NODE_ENV !== "test" && config.SIM_PERSIST && dbConfigured) {
 // zero config; set ALERT_SWEEPER=off when running the dedicated worker
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
 // Gated on dbConfigured: the sweeper is entirely DB-backed, so it's inert in stateless mode.
+// Table-probed like the worker (to_regclass): a sim-only deploy points DATABASE_URL at a
+// shared DB carrying ONLY ao_sim_* tables — without the probe, the default-inline sweeps
+// would log `relation "alert_rules" does not exist` every interval, forever.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
-  startAlertSweeper();
+  const [alertTables] = await sql`SELECT to_regclass('alert_rules') IS NOT NULL AS present`;
+  if (alertTables.present === true) {
+    startAlertSweeper();
+  } else {
+    console.log("[alerts] alert tables absent — inline sweeper disabled (sim-only deployment)");
+  }
 }
 
 // Goal analyzer: post-session LLM judging of goal:<text> tags. Same
@@ -55,7 +63,12 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 // too (inert in stateless mode); additionally a no-op (with one startup log)
 // unless an LLM provider key is configured.
 if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
-  startGoalAnalyzer();
+  const [goalTables] = await sql`SELECT to_regclass('session_goal_analyses') IS NOT NULL AS present`;
+  if (goalTables.present === true) {
+    startGoalAnalyzer();
+  } else {
+    console.log("[goals] goal tables absent — inline analyzer disabled (sim-only deployment)");
+  }
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
