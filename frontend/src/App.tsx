@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
-import { BarChart3, BellRing, Bot, Moon, RefreshCw, Sun } from 'lucide-react'
+import { BarChart3, BellRing, Bot, Gavel, Moon, RefreshCw, Sun } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -25,6 +25,8 @@ import { AgentsPage } from '@/components/agents-page'
 import { AgentDetailPage } from '@/components/agent-detail-page'
 import { AnalyticsPage } from '@/components/analytics-page'
 import { AlertRulesPage } from '@/components/alert-rules-page'
+import { SupervisorPage } from '@/components/supervisor-page'
+import { SupervisorAxisPage } from '@/components/supervisor-axis-page'
 import { NotFoundPage } from '@/components/not-found-page'
 
 const useDarkMode = () => {
@@ -58,6 +60,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Agents', icon: Bot, isActive: (p: string) => p === '/' || p.startsWith('/agents') },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, isActive: (p: string) => p.startsWith('/analytics') },
   { to: '/alerts', label: 'Alerts', icon: BellRing, isActive: (p: string) => p.startsWith('/alerts') },
+  { to: '/supervisor', label: 'Supervisor', icon: Gavel, isActive: (p: string) => p.startsWith('/supervisor') },
 ]
 
 const AppSidebar = () => {
@@ -193,6 +196,18 @@ function EvalRunCompareRoute() {
   )
 }
 
+function SupervisorRoute() {
+  const navigate = useNavigate()
+  return <SupervisorPage onAxisClick={(axis) => navigate(`/supervisor/${encodeURIComponent(axis)}`)} />
+}
+
+function SupervisorAxisRoute() {
+  const { axis } = useParams<{ axis: string }>()
+  const navigate = useNavigate()
+  if (!axis) return null
+  return <SupervisorAxisPage axis={decodeURIComponent(axis)} onBack={() => navigate('/supervisor')} />
+}
+
 function SessionDetailRoute() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const params = new URLSearchParams(useLocation().search)
@@ -238,6 +253,8 @@ export default function App() {
               <Route path="/agents" element={<AgentsRoute />} />
               <Route path="/analytics" element={<AnalyticsRoute />} />
               <Route path="/alerts" element={<AlertRulesPage />} />
+              <Route path="/supervisor" element={<SupervisorRoute />} />
+              <Route path="/supervisor/:axis" element={<SupervisorAxisRoute />} />
               <Route path="/agents/:agentId" element={<AgentDetailRoute />} />
               <Route path="/agents/:agentId/sessions/:sessionId" element={<SessionDetailRoute />} />
               <Route path="/agents/:agentId/simulation-evals/compare" element={<EvalRunCompareRoute />} />

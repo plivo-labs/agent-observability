@@ -54,6 +54,24 @@ export const envSchema = z.object({
   // switch; it never changes WHAT gets judged, only HOW SOON).
   EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
 
+  // Supervisor layer: a second-pass model re-judges stored verdicts and records
+  // disagreements (misflags) + suggested judge-prompt fixes for the Supervisor
+  // tab. "off" = disabled; "inline" = run in the API process (local/dev single
+  // container); "worker" = run in the dedicated worker. Heavier than the primary
+  // judges, so default off.
+  EVAL_REVIEW: z.enum(["off", "inline", "worker"]).default("off"),
+  // Model the supervisor re-judges with. Blank → falls back to JUDGE_MODEL. Set
+  // to a stronger/different model for a more independent second opinion.
+  EVAL_REVIEW_MODEL: z.string().default(""),
+  // N-vote self-consistency: re-decide each axis this many times; the majority
+  // verdict wins (catches flaky judges).
+  EVAL_REVIEW_VOTES: z.coerce.number().int().min(1).max(9).default(3),
+  // Fraction of NON-fired axes (judge passed / detected nothing) to sample for
+  // review, so under-fires (e.g. a bot the judge missed) are still caught.
+  // Fired axes are always reviewed.
+  EVAL_REVIEW_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.2),
+  EVAL_REVIEW_INTERVAL_MS: z.coerce.number().int().min(1000).default(30000),
+
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
   // configured LLM provider has a key. It judges through the shared LLM stack

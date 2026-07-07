@@ -76,6 +76,10 @@ Rules:
 4. confused: repeated uncertainty or requests for clarification.
 5. not_applicable: no human interaction, voicemail, screening, or bot/IVR.`;
 
+// Re-exported so the supervisor layer can show/critique the exact judge prompt
+// when it suggests prompt fixes for a misflag.
+export { VOICEMAIL, BOT, CALL_SCREENING, LOW_ENGAGEMENT, WRONG_NUMBER, DO_NOT_DISTURB, USER_SENTIMENT };
+
 const OUT_DETECTION =
   '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
 const OUT_SENTIMENT =

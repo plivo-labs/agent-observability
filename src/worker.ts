@@ -25,6 +25,7 @@
 import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
+import { startSupervisorSweeper, stopSupervisorSweeper } from "./evals-engine/supervisor/supervisor-sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
@@ -111,6 +112,10 @@ if (dbConfigured) {
   } else {
     console.log(`[worker] EVAL_SWEEPER=${config.EVAL_SWEEPER} — this worker does not judge ingested sessions (set EVAL_SWEEPER=worker here, or "inline" on the API).`);
   }
+  // Supervisor sweeper (re-judge verdicts → misflags). Own timer, DB-backed.
+  if (config.EVAL_REVIEW === "worker") {
+    startSupervisorSweeper();
+  }
   while (running) {
     await runSweepOnce();
     // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
@@ -122,6 +127,7 @@ if (dbConfigured) {
     await sleepInSlices(SWEEP_INTERVAL_MS);
   }
   stopEvalSweeper(); // stop the eval timer on shutdown
+  stopSupervisorSweeper();
 } else {
   console.log("[worker] DATABASE_URL unset — stateless mode: alert sweeper disabled, consumer-only");
   while (running) {

@@ -174,7 +174,7 @@ function isTerminalEvalError(e: unknown): boolean {
 /** Synthesize builder events from stored chat_history items when the OTLP
  *  event channel was lost — judging the recording's transcript beats marking
  *  a fully transcribed call "done" with phantom empty-input verdicts. */
-function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
+export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
   if (!Array.isArray(chatHistory)) return [];
   return chatHistory
     .filter((item) => item && typeof item === "object")
