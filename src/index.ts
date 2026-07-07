@@ -644,7 +644,14 @@ app.delete("/api/sessions", async (c) => {
     // surviving 'done' row makes claimGoalSessions skip a re-ingested session
     // with the same id forever. These tables have no FKs (the session row can
     // arrive after them), so the cascade is explicit here.
-    for (const table of [
+    //
+    // Delete only from the satellites that EXIST in this deployment: a
+    // feature-scoped core DB (e.g. the eval-only schema) omits the
+    // goal-analyzer / alert / CI-eval tables, and a hardcoded DELETE against a
+    // missing table would abort the whole erasure transaction. The names are a
+    // fixed allow-list resolved against pg_tables, so the interpolation below is
+    // never user-controlled.
+    const satellites = [
       "ao_session_agent_config",
       "ao_session_eval_verdicts",
       "ao_session_external_evals",
@@ -652,8 +659,14 @@ app.delete("/api/sessions", async (c) => {
       "ao_session_outcomes",
       "ao_session_raw_report_patches",
       "ao_session_goal_analyses",
-    ]) {
-      await tx.unsafe(`DELETE FROM ${table} WHERE session_id IN (${placeholders})`, sessionIds);
+    ];
+    const satPlaceholders = satellites.map((_, i) => `$${i + 1}`).join(", ");
+    const present = (await tx.unsafe(
+      `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename IN (${satPlaceholders})`,
+      satellites,
+    )) as Array<{ tablename: string }>;
+    for (const { tablename } of present) {
+      await tx.unsafe(`DELETE FROM ${tablename} WHERE session_id IN (${placeholders})`, sessionIds);
     }
     return del;
   });
