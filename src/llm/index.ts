@@ -1,0 +1,154 @@
+import { config } from "../config.js";
+import type {
+  CompleteJSONOptions,
+  LlmProvider,
+  LlmResult,
+  LlmRole,
+  LlmUsage,
+} from "./types.js";
+import { LlmError } from "./types.js";
+
+export type { LlmProvider, LlmResult, LlmUsage, LlmRole, CompleteJSONOptions } from "./types.js";
+export { LlmError } from "./types.js";
+export { MockLLM } from "./mock.js";
+
+const DEFAULT_MAX_TOKENS = 4096;
+
+// Provider default models when no per-role / explicit model is configured.
+// claude-opus-4-8 is the current most-capable Anthropic model; gpt-4.1-mini
+// matches the Python SDK judges' fallback. Override per role via env.
+const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
+  anthropic: "claude-opus-4-8",
+  openai: "gpt-4.1-mini",
+};
+
+// Lazily import the provider SDK only for the configured provider, so unit
+// tests (which inject MockLLM) never load @anthropic-ai/sdk or openai.
+async function resolveProvider(): Promise<LlmProvider> {
+  if (config.LLM_PROVIDER === "openai") {
+    return (await import("./providers/openai.js")).openaiProvider;
+  }
+  return (await import("./providers/anthropic.js")).anthropicProvider;
+}
+
+function resolveModel(role: LlmRole | undefined, explicit: string | undefined, providerName: string): string {
+  if (explicit) return explicit;
+  const roleModel =
+    role === "simulator" ? config.SIMULATOR_MODEL
+    : role === "generator" ? config.GENERATOR_MODEL
+    : config.JUDGE_MODEL;
+  return roleModel || PROVIDER_DEFAULT_MODEL[providerName] || "claude-opus-4-8";
+}
+
+/** Strip markdown code fences and parse. Models sometimes wrap JSON in ```. */
+function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  try {
+    return { ok: true, value: JSON.parse(cleaned) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function addUsage(into: LlmUsage, from: LlmUsage): void {
+  into.promptTokens += from.promptTokens;
+  into.completionTokens += from.completionTokens;
+  into.totalTokens += from.totalTokens;
+}
+
+const JSON_ONLY_HINT =
+  "Respond with ONLY a single JSON object that satisfies the required schema. " +
+  "No prose, no explanation, no markdown code fences.";
+
+/**
+ * Provider-neutral structured LLM call. Sends the prompt, parses the response
+ * as JSON, validates it against `schema`, and on a parse/validation failure
+ * re-prompts (up to `maxRetries`) with the specific error appended. Times each
+ * attempt out via AbortSignal and accumulates token usage across attempts.
+ *
+ * Providers are thin (return raw text); this function is the single place the
+ * validate/retry/timeout/usage logic lives, so it can be exhaustively tested
+ * against MockLLM without any network or API key.
+ */
+export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<LlmResult<T>> {
+  const provider = opts.provider ?? (await resolveProvider());
+  const model = resolveModel(opts.role, opts.model, provider.name);
+  // undefined → the default cap; explicit null → 0, which the provider reads as
+  // "omit max_output_tokens" (no cap — used by the streaming writer).
+  const maxTokens = opts.maxTokens === undefined ? DEFAULT_MAX_TOKENS : (opts.maxTokens ?? 0);
+  const timeoutMs = opts.timeoutMs ?? config.LLM_TIMEOUT_MS;
+  const maxRetries = opts.maxRetries ?? config.LLM_MAX_RETRIES;
+
+  // noJsonHint sends `system` verbatim (the simulator passes the bare template, mirroring cx-sqs
+  // which relies on strict json_schema alone). Otherwise append the JSON-only instruction.
+  const system = opts.noJsonHint
+    ? (opts.system ?? "")
+    : opts.system
+      ? `${opts.system}\n\n${JSON_ONLY_HINT}`
+      : JSON_ONLY_HINT;
+  let user = opts.prompt;
+
+  const usage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    // Caller abort (client disconnected): stop immediately — no retry, no backoff.
+    if (opts.signal?.aborted) {
+      throw new LlmError("completeJSON aborted by caller", opts.signal.reason);
+    }
+    // Back off before a retry so a transient rate-limit (429) / timeout isn't hit
+    // again immediately. Exponential, capped; skipped on the first attempt. This
+    // matters under simulation concurrency (many simulator calls hit the LLM at once).
+    if (attempt > 1) await Bun.sleep(Math.min(4000, 400 * 2 ** (attempt - 2)));
+    let raw: { text: string; usage: LlmUsage };
+    try {
+      raw = await provider.complete({
+        system,
+        user,
+        model,
+        maxTokens,
+        temperature: opts.temperature,
+        topP: opts.topP,
+        jsonSchema: opts.jsonSchema,
+        stream: opts.stream,
+        apiMode: opts.apiMode,
+        // Per-attempt timeout, raced with the caller's abort when one is supplied.
+        signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) {
+      // Network error / timeout / non-2xx (e.g. a 404 from a misconfigured LLM endpoint).
+      // Log it on AO's own stdout so failures are visible here, not only in the caller that
+      // re-raises the streamed error. No secret/api-key is in the message; the prompt is omitted.
+      lastError = e;
+      console.error(
+        `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${model}): ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
+      continue;
+    }
+    addUsage(usage, raw.usage);
+
+    const parsed = tryParseJson(raw.text);
+    if (!parsed.ok) {
+      lastError = new Error(`invalid JSON: ${parsed.error}`);
+      user = `${opts.prompt}\n\nYour previous response was not valid JSON (${parsed.error}). Return a single JSON object only.`;
+      continue;
+    }
+
+    const result = opts.schema.safeParse(parsed.value);
+    if (result.success) {
+      return { data: result.data, usage, raw: raw.text, attempts: attempt };
+    }
+    lastError = result.error;
+    const issues = result.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("; ");
+    user = `${opts.prompt}\n\nYour previous response failed schema validation: ${issues}. Return corrected JSON only.`;
+  }
+
+  // Surface the underlying cause (429 / timeout / validation) in the message so a
+  // failed simulation result says WHY, not just "failed".
+  const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+  throw new LlmError(`completeJSON failed after ${maxRetries + 1} attempt(s): ${detail}`, lastError);
+}

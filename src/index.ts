@@ -6,7 +6,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
-import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled } from "./config.js";
+import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled, dbConfigured } from "./config.js";
 import { uploadRecording, deleteRecording } from "./s3.js";
 import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
@@ -24,26 +24,51 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
+import { registerSimulationRoutes } from "./sim-engine/routes.js";
 import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
-// Run migrations on startup if enabled
-if (config.AUTO_MIGRATE) {
+// Run migrations on startup if enabled (skipped in stateless mode — no database).
+if (config.AUTO_MIGRATE && dbConfigured) {
   await migrate(sql);
+}
+
+// Sim-persistence table probe (aodb-write.md): with SIM_PERSIST on, the ao_sim_* tables
+// must exist — locally AUTO_MIGRATE creates them; on the managed core-DB they are
+// pre-created out-of-band and this probe is the only boot-time check (AO never gates
+// writes on migration state). Fail fast with remediation instead of erroring mid-run.
+if (process.env.NODE_ENV !== "test" && config.SIM_PERSIST && dbConfigured) {
+  const { probeSimTables } = await import("./db-probe.js");
+  await probeSimTables();
 }
 
 // Alert sweeper: windowed metric-threshold alert rules + webhook delivery
 // retries. Runs inline by default so single-container deploys work with
 // zero config; set ALERT_SWEEPER=off when running the dedicated worker
 // entrypoint (src/worker.ts). Skipped under test — suites mock timers/DB.
-if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline") {
-  startAlertSweeper();
+// Gated on dbConfigured: the sweeper is entirely DB-backed, so it's inert in stateless mode.
+// Table-probed like the worker (to_regclass): a sim-only deploy points DATABASE_URL at a
+// shared DB carrying ONLY ao_sim_* tables — without the probe, the default-inline sweeps
+// would log `relation "alert_rules" does not exist` every interval, forever.
+if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
+  const [alertTables] = await sql`SELECT to_regclass('alert_rules') IS NOT NULL AS present`;
+  if (alertTables.present === true) {
+    startAlertSweeper();
+  } else {
+    console.log("[alerts] alert tables absent — inline sweeper disabled (sim-only deployment)");
+  }
 }
 
 // Goal analyzer: post-session LLM judging of goal:<text> tags. Same
-// placement model as the alert sweeper; additionally a no-op (with one
-// startup log) unless OPENAI_API_KEY is set.
-if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline") {
-  startGoalAnalyzer();
+// placement model as the alert sweeper — DB-backed, so gate on dbConfigured
+// too (inert in stateless mode); additionally a no-op (with one startup log)
+// unless an LLM provider key is configured.
+if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
+  const [goalTables] = await sql`SELECT to_regclass('session_goal_analyses') IS NOT NULL AS present`;
+  if (goalTables.present === true) {
+    startGoalAnalyzer();
+  } else {
+    console.log("[goals] goal tables absent — inline analyzer disabled (sim-only deployment)");
+  }
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -52,10 +77,20 @@ if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline") {
 // slip would otherwise expose all session data with no signal.
 const authEnabled = basicAuthEnabled || liveKitAuthEnabled;
 if (!authEnabled) {
+  // Zero-auth exposes every ingest route AND the whole dashboard API. Refuse to
+  // boot in that state unless it's an explicit, deliberate choice — a silent
+  // env slip must never open all session data with no signal.
+  if (!config.ALLOW_UNAUTHENTICATED && process.env.NODE_ENV !== "test") {
+    console.error(
+      "[security] No authentication configured — refusing to start. Set " +
+        "AGENT_OBSERVABILITY_USER/_PASS or the LiveKit API key pair, or set " +
+        "ALLOW_UNAUTHENTICATED=true to run intentionally open (local dev / trusted network).",
+    );
+    process.exit(1);
+  }
   console.warn(
-    "[security] No authentication configured — ingest and /api are OPEN to " +
-      "anyone who can reach this port. Set AGENT_OBSERVABILITY_USER/_PASS or " +
-      "the LiveKit API key pair to require credentials.",
+    "[security] ALLOW_UNAUTHENTICATED=true — ingest and /api are OPEN to anyone " +
+      "who can reach this port. Intended only for local dev / a trusted private network.",
   );
 }
 
@@ -71,7 +106,11 @@ app.use("*", logger());
 const corsOrigins = (config.CORS_ALLOWED_ORIGINS ?? "*").split(",").map((o) => o.trim()).filter(Boolean);
 app.use("/api/*", cors({ origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins }));
 
-// Basic auth (all routes except /health, only when configured)
+// Auth on the eval-ingest + dashboard API (all routes except /health) whenever
+// ANY auth mode is enabled. Basic auth gets the hono middleware (so a browser
+// sees the WWW-Authenticate prompt). LiveKit-only deploys — which have no basic
+// credential — fall back to the dual Bearer/Basic middleware so these routes are
+// never left silently open (the bug: previously only basicAuthEnabled gated them).
 if (basicAuthEnabled) {
   const auth = basicAuth({
     username: config.AGENT_OBSERVABILITY_USER!,
@@ -79,6 +118,9 @@ if (basicAuthEnabled) {
   });
   app.use("/observability/evals/*", auth);
   app.use("/api/*", auth);
+} else if (liveKitAuthEnabled) {
+  app.use("/observability/evals/*", nativeLiveKitUploadAuth);
+  app.use("/api/*", nativeLiveKitUploadAuth);
 }
 
 // Cap ingest body sizes so a giant (or malicious) upload can't be buffered
@@ -88,6 +130,9 @@ if (basicAuthEnabled) {
 const MB = 1024 * 1024;
 const RECORDING_BODY_LIMIT = 100 * MB;
 const OTLP_BODY_LIMIT = 16 * MB;
+// Simulation generate/library requests carry a flow_json (no audio) — 10 MB is ample for a
+// large flow while bounding a malicious/misconfigured oversized body (DoS guard).
+const SIM_BODY_LIMIT = 10 * MB;
 const tooLarge = (c: Context) =>
   c.json(buildErrorResponse("payload_too_large", "Request body exceeds the allowed size"), 413);
 
@@ -95,6 +140,9 @@ app.use("/observability/recordings/v0", bodyLimit({ maxSize: RECORDING_BODY_LIMI
 app.use("/observability/logs/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
 app.use("/observability/traces/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
 app.use("/observability/metrics/otlp/v0", bodyLimit({ maxSize: OTLP_BODY_LIMIT, onError: tooLarge }));
+// Cap simulation request bodies too (flow_json can be large but not unbounded). Registered
+// before registerSimulationRoutes so it runs ahead of the /api/simulation handlers.
+app.use("/api/simulation/*", bodyLimit({ maxSize: SIM_BODY_LIMIT, onError: tooLarge }));
 
 app.use("/observability/recordings/v0", nativeLiveKitUploadAuth);
 app.use("/observability/logs/otlp/v0", nativeLiveKitUploadAuth);
@@ -105,6 +153,33 @@ app.use("/observability/metrics/otlp/v0", nativeLiveKitUploadAuth);
 
 app.get("/health", (c) => {
   return c.json({ status: "ok", s3Enabled, authEnabled });
+});
+
+// Liveness: the process is up and serving. Cheap, dependency-free — this is what the
+// container HEALTHCHECK and the load-balancer target group poll. Alias of /health.
+app.get("/status", (c) => {
+  return c.json({ status: "ok" });
+});
+
+// Readiness: verify the backing dependency this process actually holds — Postgres, via the
+// persistent `sql` client — when a database is configured. In stateless mode (no DATABASE_URL)
+// there is no DB to check, so it reports "not_configured" and stays healthy. (Redis liveness
+// belongs to the worker, which owns the Redis connection; the API holds no Redis client to poll.)
+app.get("/deepstatus", async (c) => {
+  const checks: Record<string, string> = {};
+  let ok = true;
+  if (dbConfigured) {
+    try {
+      await sql`SELECT 1`;
+      checks.database = "ok";
+    } catch {
+      checks.database = "error";
+      ok = false;
+    }
+  } else {
+    checks.database = "not_configured";
+  }
+  return c.json({ status: ok ? "ok" : "degraded", ...checks }, ok ? 200 : 503);
 });
 
 // ── Eval run endpoints (ingest + dashboard queries) ─────────────────────────
@@ -123,6 +198,12 @@ registerAnalyticsRoutes(app);
 // ── Alert rules (windowed metric/count triggers + webhooks) ─────────────────
 
 registerAlertRoutes(app);
+
+// ── Simulation engine (scenario generation + scenario library CRUD) ──────────
+//    Routes under /api/simulation; 404s when the engine is unconfigured (no
+//    Redis). Registered after the /api/* auth middleware.
+
+registerSimulationRoutes(app);
 
 // ── Session report endpoint ─────────────────────────────────────────────────
 
@@ -648,6 +729,11 @@ if (process.env.NODE_ENV === "production") {
 const serveConfig = {
   port: config.PORT,
   fetch: app.fetch,
+  // Bun's default idleTimeout is 10s, which kills long-lived SSE responses (the
+  // scenario-generation stream stays open for the planner + writer LLM calls).
+  // The generate route also sends a `: keepalive` comment every ~10s, so this is
+  // a backstop; 60s leaves comfortable margin above that heartbeat interval.
+  idleTimeout: 60,
 };
 
 // Run as the entrypoint: serve explicitly so SIGTERM/SIGINT can stop

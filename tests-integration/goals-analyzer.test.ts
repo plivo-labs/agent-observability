@@ -1,10 +1,10 @@
 /**
  * End-to-end goal-analyzer sweep against real Postgres with an injected
- * fake LLM: seed → sweep → verdict rows + tracking; idempotent re-sweep;
+ * MockLLM: seed → sweep → verdict rows + tracking; idempotent re-sweep;
  * failure marks attempts and a later sweep retries to success.
  */
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { MockLanguageModelV3 } from "ai/test";
+import { MockLLM } from "../src/llm/mock.js";
 import { sql } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { runGoalSweepOnce } from "../src/goals/analyzer.js";
@@ -16,23 +16,6 @@ const CHAT = [
   { type: "message", role: "user", content: ["I want to cancel my subscription."] },
   { type: "message", role: "assistant", content: "Cancelled it for you." },
 ];
-
-function fakeJudge(payloads: Array<unknown | Error>) {
-  let calls = 0;
-  const model = new MockLanguageModelV3({
-    doGenerate: async () => {
-      const payload = payloads[Math.min(calls++, payloads.length - 1)];
-      if (payload instanceof Error) throw payload;
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-        finishReason: "stop" as const,
-        usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
-        warnings: [],
-      };
-    },
-  });
-  return { model, calls: () => calls };
-}
 
 describeDb("goal analyzer end to end", () => {
   beforeAll(async () => {
@@ -46,11 +29,13 @@ describeDb("goal analyzer end to end", () => {
   test("sweep judges a goal-tagged session and a re-sweep is a no-op", async () => {
     const s = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
     await t.seedTag(s, "goal:cancellation:Cancel the subscription");
-    const judge = fakeJudge([
-      { goals: [{ met: true, reasoning: "Agent cancelled it.", what_went_wrong: null }] },
+    const provider = new MockLLM([
+      JSON.stringify({
+        goals: [{ goal_name: "cancellation", achieved: true, reason: "Agent cancelled it.", technical_reason: "" }],
+      }),
     ]);
 
-    await runGoalSweepOnce({ model: judge.model });
+    await runGoalSweepOnce({ provider });
 
     const rows = await sql`
       SELECT verdict, tag, instructions, reasoning FROM session_external_evals
@@ -61,9 +46,10 @@ describeDb("goal analyzer end to end", () => {
     expect(rows[0].tag).toBe("cancellation");
     expect(rows[0].instructions).toBe("Cancel the subscription");
 
-    const callsAfterFirst = judge.calls();
-    await runGoalSweepOnce({ model: judge.model });
-    expect(judge.calls()).toBe(callsAfterFirst);
+    const callsAfterFirst = provider.calls.length;
+    await runGoalSweepOnce({ provider });
+    // Session is 'done' → not re-claimed → no further LLM call.
+    expect(provider.calls.length).toBe(callsAfterFirst);
 
     const dup = await sql`
       SELECT count(*)::int AS n FROM session_external_evals
@@ -75,19 +61,26 @@ describeDb("goal analyzer end to end", () => {
   test("a failing model marks an attempt; a later sweep retries to success", async () => {
     const s = await t.seedSession({ accountId: t.uid("acct"), chatHistory: CHAT });
     await t.seedTag(s, "goal:retried:Be retried");
-    const judge = fakeJudge([
-      new Error("rate limited"),
-      { goals: [{ met: false, reasoning: "Nope.", what_went_wrong: "Caller hung up" }] },
+    // Three unparseable responses exhaust completeJSON's retries (1 call + 2
+    // reprompts) → LlmError on the first sweep; the fourth (valid) is consumed
+    // by the retry sweep.
+    const provider = new MockLLM([
+      "not json",
+      "not json",
+      "not json",
+      JSON.stringify({
+        goals: [{ goal_name: "retried", achieved: false, reason: "Nope.", technical_reason: "Caller hung up" }],
+      }),
     ]);
 
-    await runGoalSweepOnce({ model: judge.model });
+    await runGoalSweepOnce({ provider });
     const [afterFail] = await sql`
       SELECT status, attempts FROM session_goal_analyses WHERE session_id = ${s}
     `;
     expect(afterFail.status).toBe("error");
     expect(afterFail.attempts).toBe(1);
 
-    await runGoalSweepOnce({ model: judge.model });
+    await runGoalSweepOnce({ provider });
     const [afterRetry] = await sql`
       SELECT status, attempts FROM session_goal_analyses WHERE session_id = ${s}
     `;

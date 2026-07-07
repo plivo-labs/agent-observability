@@ -104,9 +104,12 @@ describe("envSchema", () => {
     }
   });
 
-  test("fails when DATABASE_URL is missing", () => {
+  test("DATABASE_URL is optional (stateless mode — SIM_PERSIST=false deploys run with no DB)", () => {
     const result = envSchema.safeParse({});
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.DATABASE_URL).toBeUndefined();
+    }
   });
 
   test("accepts full S3 config", () => {

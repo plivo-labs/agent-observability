@@ -10,6 +10,11 @@ mock.module("../src/alerts/db.js", () => ({
 const { deliverFiring, deliverTest, buildFiringPayload, RETRY_BACKOFF_MS, MAX_ATTEMPTS } =
   await import("../src/alerts/deliver.js");
 
+// The SSRF guard resolves hostnames for real (no NODE_ENV fork in prod code) — inject a
+// benign public resolver so these delivery tests stay network-free and hostname-agnostic.
+const { __setResolverForTest } = await import("../src/net/public-url.js");
+__setResolverForTest(async () => ["93.184.216.34"]);
+
 const baseDue: any = {
   id: "f1f1f1f1-0000-0000-0000-000000000001",
   rule_id: "r1r1r1r1-0000-0000-0000-000000000001",
@@ -155,6 +160,47 @@ describe("alerts/deliver", () => {
     const headers = fetchCalls[0].init.headers as Record<string, string>;
     expect(headers["x-alert-firing-id"]).toBe(baseDue.id);
     expect(headers["x-alert-rule-id"]).toBe(baseDue.rule_id);
+  });
+
+  test("cross-origin redirects strip rule headers + signature; same-origin keeps them", async () => {
+    // Hop 0 → 302 to a DIFFERENT origin → hop 1 must not carry the rule's Authorization
+    // or the HMAC signature (an open redirect on the receiver must not leak credentials).
+    let call = 0;
+    globalThis.fetch = mock(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), init });
+      call += 1;
+      if (call === 1) return new Response(null, { status: 302, headers: { location: "https://attacker.example.net/steal" } });
+      return new Response("ok", { status: 200 });
+    }) as any;
+    const result = await deliverFiring({
+      ...baseDue,
+      secret: "s3cret",
+      headers: { authorization: "Bearer receiver-token" },
+    });
+    expect(result.ok).toBe(true);
+    expect(fetchCalls).toHaveLength(2);
+    const first = fetchCalls[0].init.headers as Record<string, string>;
+    expect(first["authorization"]).toBe("Bearer receiver-token");
+    expect(first["x-alert-signature"]).toBeDefined();
+    const second = fetchCalls[1].init.headers as Record<string, string>;
+    expect(second["authorization"]).toBeUndefined();
+    expect(second["x-alert-signature"]).toBeUndefined();
+    // Identifying headers survive (not credentials), and content-type stays.
+    expect(second["x-alert-firing-id"]).toBe(baseDue.id);
+    expect(second["content-type"]).toBe("application/json");
+  });
+
+  test("same-origin redirects keep the rule headers", async () => {
+    let call = 0;
+    globalThis.fetch = mock(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), init });
+      call += 1;
+      if (call === 1) return new Response(null, { status: 302, headers: { location: "/moved" } });
+      return new Response("ok", { status: 200 });
+    }) as any;
+    await deliverFiring({ ...baseDue, headers: { authorization: "Bearer receiver-token" } });
+    const second = fetchCalls[1].init.headers as Record<string, string>;
+    expect(second["authorization"]).toBe("Bearer receiver-token");
   });
 
   test("a failed audit insert does not break the delivery", async () => {

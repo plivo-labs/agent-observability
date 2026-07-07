@@ -1,4 +1,7 @@
-FROM oven/bun:latest AS base
+# Pin the runtime image to a specific Bun version (not :latest) so builds are
+# reproducible and a surprise base-image change can't alter behavior. Bump
+# deliberately; CI may further pin this to an immutable @sha256 digest.
+FROM oven/bun:1.3.10 AS base
 WORKDIR /app
 
 # Install backend dependencies
@@ -36,5 +39,12 @@ COPY --from=frontend-build /app/frontend/dist frontend/dist
 
 ENV NODE_ENV=production
 EXPOSE 9090
+
+# Run as the non-root `bun` user shipped by the base image.
+USER bun
+
+# Liveness probe — the base image has no curl, so use a Bun fetch one-liner.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD bun -e "fetch('http://localhost:9090/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["bun", "run", "src/index.ts"]

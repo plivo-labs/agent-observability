@@ -1,0 +1,63 @@
+{
+  "phlo": {
+    "id": "phlo-real",
+    "name": "real-shape-flow",
+    "voice_ai_config": { "language": "en-US", "allow_greeting_interruption": true }
+  },
+  "global_meta": {
+    "system_prompt": "You are Acme support. Be concise.",
+    "stt_guidance": "Expect spoken order numbers."
+  },
+  "nodes": [
+    { "id": "n-start", "type": "start", "config": { "name": "Start", "triggers": ["voice"], "auth_token": "SECRET_START_TOKEN" }, "position": { "x": 0, "y": 0 }, "measured": { "width": 100, "height": 40 }, "selected": false },
+    {
+      "id": "n-greet",
+      "type": "ai_agent_v2",
+      "config": {
+        "name": "greet",
+        "instructions": "Greet the caller and find out why they're calling.",
+        "intents": [
+          { "id": "11111111-1111-1111-1111-111111111111", "intent_name": "wants_refund", "intent_instructions": "caller wants a refund" },
+          { "id": "22222222-2222-2222-2222-222222222222", "intent_name": "other", "intent_instructions": "anything else" }
+        ],
+        "extract_variables": [
+          { "variable_name": "order_id", "variable_instructions": "the caller's order number" }
+        ]
+      },
+      "position": { "x": 200, "y": 0 }
+    },
+    { "id": "n-check", "type": "branch_v2", "config": { "name": "eligibility_check" } },
+    { "id": "n-notify", "type": "prompt", "config": { "name": "notify" } },
+    {
+      "id": "n-http",
+      "type": "http_request",
+      "config": {
+        "name": "lookup_order",
+        "password": "hunter2"
+      }
+    },
+    {
+      "id": "n-refund",
+      "type": "ai_agent_v2",
+      "config": {
+        "name": "refund",
+        "instructions": "Process the refund for order {{greet.order_id}} and confirm.",
+        "knowledge_base_ids": ["kb-acme"],
+        "intents": [
+          { "id": "33333333-3333-3333-3333-333333333333", "intent_name": "done", "intent_instructions": "refund handled" }
+        ]
+      }
+    },
+    { "id": "n-bye", "type": "end_conversation", "config": { "name": "bye" } }
+  ],
+  "connections": [
+    { "source": "n-start.voice", "target": "n-greet.Input", "data": { "id": "e1" } },
+    { "source": "n-greet.11111111-1111-1111-1111-111111111111", "target": "n-check.Input", "data": { "id": "e2" } },
+    { "source": "n-greet.22222222-2222-2222-2222-222222222222", "target": "n-bye.Input", "data": { "id": "e3" } },
+    { "source": "n-check.eligible", "target": "n-notify.Input", "data": { "id": "e4" } },
+    { "source": "n-check.no_match", "target": "n-bye.Input", "data": { "id": "e5" } },
+    { "source": "n-notify.success", "target": "n-http.Input", "data": { "id": "e6" } },
+    { "source": "n-http.success", "target": "n-refund.Input", "data": { "id": "e7" } },
+    { "source": "n-refund.33333333-3333-3333-3333-333333333333", "target": "n-bye.Input", "data": { "id": "e8" } }
+  ]
+}

@@ -22,6 +22,7 @@ mock.module("../src/config.js", () => ({
   s3Enabled: false,
   basicAuthEnabled: true,
   liveKitAuthEnabled: false,
+  dbConfigured: true,
 }));
 
 mock.module("../src/db.js", () => ({
@@ -82,6 +83,11 @@ mock.module("../src/alerts/db.js", () => ({
 // never starts because bun test runs with NODE_ENV=test.
 
 const { default: server } = await import("../src/index.js");
+
+// The SSRF guard resolves hostnames for real (no NODE_ENV fork in prod code) — inject a
+// benign public resolver so webhook-url validation/delivery stays network-free here.
+const { __setResolverForTest } = await import("../src/net/public-url.js");
+__setResolverForTest(async () => ["93.184.216.34"]);
 
 const RULE_ID = "22222222-2222-2222-2222-222222222222";
 

@@ -1,0 +1,47 @@
+name: Publish image
+
+# Builds the Docker image and publishes it to GHCR.
+#   - push to dev or main  → build AND push
+#   - tag v*               → build AND push (pinned release)
+#   - pull_request          → build ONLY (never pushes)
+# Auth uses the auto-generated GITHUB_TOKEN (repo-scoped, ephemeral — no secret to manage).
+on:
+  push:
+    branches: [dev, main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/plivo-labs/agent-observability
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

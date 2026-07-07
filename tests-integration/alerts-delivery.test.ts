@@ -6,6 +6,7 @@
  */
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { createHmac } from "node:crypto";
+import { config } from "../src/config.js";
 import { sql } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { runSweepOnce } from "../src/alerts/sweeper.js";
@@ -26,8 +27,16 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
   let receiverUrl = "";
   const received: ReceivedRequest[] = [];
   let respondWith = 200;
+  // The SSRF guard (src/net/public-url.ts) blocks loopback receivers by default; this test
+  // delivers to a real in-process server on localhost, which is a legitimate internal receiver.
+  // Opt in via WEBHOOK_URL_ALLOWLIST exactly as a real operator would — this also gives the
+  // integration suite real coverage of the allowlist escape hatch. Saved + restored so the
+  // mutation can't leak to sibling suites sharing this process.
+  let prevAllowlist: string | undefined;
 
   beforeAll(async () => {
+    prevAllowlist = config.WEBHOOK_URL_ALLOWLIST;
+    config.WEBHOOK_URL_ALLOWLIST = "localhost,127.0.0.1,::1";
     await migrate(sql);
     receiver = Bun.serve({
       port: 0, // OS-assigned — no collisions with dev servers
@@ -44,6 +53,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
   });
 
   afterAll(async () => {
+    config.WEBHOOK_URL_ALLOWLIST = prevAllowlist;
     await t.cleanup();
     receiver.stop(true);
   });

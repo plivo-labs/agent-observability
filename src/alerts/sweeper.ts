@@ -1,6 +1,7 @@
 import { claimDueFirings, markDelivered, markFailed, markRetry } from "./db.js";
 import { deliverFiring, MAX_ATTEMPTS, RETRY_BACKOFF_MS } from "./deliver.js";
 import { evaluateRules } from "./engine.js";
+import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 
 // ── Alert sweeper ───────────────────────────────────────────────────────────
 //
@@ -14,7 +15,6 @@ import { evaluateRules } from "./engine.js";
 export const SWEEP_INTERVAL_MS = 30_000;
 const DELIVERY_CONCURRENCY = 5;
 
-let timer: ReturnType<typeof setInterval> | null = null;
 let sweeping = false;
 
 export async function runSweepOnce(): Promise<void> {
@@ -65,19 +65,14 @@ export async function runSweepOnce(): Promise<void> {
   }
 }
 
+let handle: SweeperHandle | null = null;
+
 export function startAlertSweeper(): void {
-  if (timer) return;
-  // Immediate first run, then the steady interval. unref() keeps the
-  // timer from holding the process open on shutdown.
-  void runSweepOnce();
-  timer = setInterval(() => void runSweepOnce(), SWEEP_INTERVAL_MS);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  console.log(`[alerts] sweeper started (every ${SWEEP_INTERVAL_MS / 1000}s)`);
+  if (handle) return;
+  handle = startSweeper(runSweepOnce, SWEEP_INTERVAL_MS, "alerts");
 }
 
 export function stopAlertSweeper(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
+  handle?.stop();
+  handle = null;
 }
