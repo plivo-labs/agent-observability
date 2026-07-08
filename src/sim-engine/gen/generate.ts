@@ -1,6 +1,6 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
-import { allocateScenarioSlots } from "./allocator.js";
+import { allocateScenarioSlots, allocateSmokeSlots } from "./allocator.js";
 import { writeScenarioChunk } from "./writer.js";
 import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -40,6 +40,12 @@ export interface GenMetadata {
   partial_success: boolean;
   planner_usage: LlmUsage | null;
   writer_usages: LlmUsage[];
+  /** Smoke-mode only (aiassist metadata parity): the effective unit cap, the stable
+   *  hash over the surviving unit_ids (coverage-drift detection), and any planner
+   *  units dropped as over-cap overflow. Absent for stress runs. */
+  smoke_cap?: number;
+  smoke_units_hash?: string;
+  dropped_unit_ids?: string[];
 }
 
 export interface GenerateInput {
@@ -105,7 +111,10 @@ async function runChunkWithRetry(
 
 export async function* generateScenarios(input: GenerateInput): AsyncGenerator<GenEvent> {
   const mode: SimulationMode = input.simulationMode ?? "stress";
-  if (mode === "smoke") throw new Error("smoke mode allocation is not yet implemented (Phase 1.4 deferred allocateSmokeSlots)");
+  // Effective smoke-unit cap. The route resolves it from the request/env (clamped to
+  // SMOKE_CAP_HARD); the `?? 20` is a safe default for direct callers/tests so the
+  // planner is never told "emit at most 0 units". Stays 0 for stress (unused there).
+  const smokeCap = mode === "smoke" ? Math.max(1, input.smokeCap ?? 20) : 0;
   const existing = input.existingSummaries ?? [];
   const generationId = crypto.randomUUID();
   let instructions = input.testCaseGenerationInstructions ?? "";
@@ -124,7 +133,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
-        smokeCap: input.smokeCap,
+        smokeCap,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -140,17 +149,32 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
 
   // ── ALLOCATOR (2 attempts; replan on the 2nd) ──────────────────────────────────
   let slots: Slot[] | null = null;
+  // Smoke-mode metadata extras (aiassist parity) — captured from the smoke allocation.
+  let smokeUnitsHashOut: string | undefined;
+  let droppedUnitIds: string[] | undefined;
   for (let attempt = 1; attempt <= ALLOCATION_RETRIES; attempt++) {
     yield { type: "allocation_started", attempt, capability_count: planner.capabilities.length };
     try {
-      const result = allocateScenarioSlots(planner, input.maxScenarios, existing);
-      slots = result.slots;
+      if (mode === "smoke") {
+        const result = allocateSmokeSlots({ planner, smokeCap, existingScenarios: existing });
+        slots = result.slots;
+        smokeUnitsHashOut = result.smoke_units_hash;
+        droppedUnitIds = result.dropped_unit_ids;
+      } else {
+        const result = allocateScenarioSlots(planner, input.maxScenarios, existing);
+        slots = result.slots;
+      }
       yield { type: "allocation_done", attempt, planned_count: slots.length };
       break;
     } catch (e) {
       if (attempt >= ALLOCATION_RETRIES) throw new Error(`Allocator failed after ${ALLOCATION_RETRIES} attempts: ${(e as Error).message}`);
-      // Replan with the allocator error appended to the instructions.
-      instructions = `${instructions}\n\n[allocator retry] ${(e as Error).message}`.trim();
+      // Replan with the allocator error appended to the instructions. In smoke mode the
+      // dominant failure is a planner that omitted smoke_units — say so explicitly (aiassist parity).
+      const retryHint =
+        mode === "smoke"
+          ? `[allocator retry] ${(e as Error).message}. You MUST emit smoke_units under each capability.`
+          : `[allocator retry] ${(e as Error).message}`;
+      instructions = `${instructions}\n\n${retryHint}`.trim();
       const out = await planCapabilities({
         flowJson: input.flowJson,
         phloUuid: input.phloUuid,
@@ -158,7 +182,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
-        smokeCap: input.smokeCap,
+        smokeCap,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -239,6 +263,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       partial_success: saved > 0 && saved < slots.length,
       planner_usage: plannerUsage,
       writer_usages: writerUsages,
+      ...(mode === "smoke"
+        ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds ?? [] }
+        : {}),
     },
   };
 }

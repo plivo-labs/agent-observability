@@ -37,6 +37,22 @@ describe("GenerateScenariosRequest (mirrors aiassist)", () => {
     expect(GenerateScenariosRequest.safeParse({ flow_json: realShape, phlo_uuid: "a", max_scenarios: 101 }).success).toBe(false);
     expect(GenerateScenariosRequest.safeParse({ flow_json: realShape }).success).toBe(false);
   });
+
+  test('accepts simulation_mode "smoke" VERBATIM (the old smoke→stress coercion is gone)', () => {
+    const r = GenerateScenariosRequest.parse({ flow_json: realShape, phlo_uuid: "a", simulation_mode: "smoke" });
+    expect(r.simulation_mode).toBe("smoke");
+    expect(r.smoke_cap).toBeUndefined(); // optional — the route applies SMOKE_CAP_DEFAULT
+  });
+
+  test("smoke_cap is optional, bounded to [1,100]", () => {
+    expect(GenerateScenariosRequest.parse({ flow_json: realShape, phlo_uuid: "a", simulation_mode: "smoke", smoke_cap: 5 }).smoke_cap).toBe(5);
+    expect(GenerateScenariosRequest.safeParse({ flow_json: realShape, phlo_uuid: "a", smoke_cap: 0 }).success).toBe(false);
+    expect(GenerateScenariosRequest.safeParse({ flow_json: realShape, phlo_uuid: "a", smoke_cap: 101 }).success).toBe(false);
+  });
+
+  test("rejects an unknown simulation_mode", () => {
+    expect(GenerateScenariosRequest.safeParse({ flow_json: realShape, phlo_uuid: "a", simulation_mode: "chaos" }).success).toBe(false);
+  });
 });
 
 describe("parseFlowJson — boundary gate via normalizeFlow", () => {

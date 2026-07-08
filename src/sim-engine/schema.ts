@@ -20,10 +20,10 @@ import type { CanonicalFlow } from "../simulation/flow/flow-schema.js";
 //      (the WRITER) and later enqueues them for that worker to unmarshal.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Simulation difficulty mode. Only "stress" is implemented; "smoke" was never
- *  built (its allocator path throws) so it is COERCED to "stress" at the request
- *  boundary (see GenerateScenariosRequest) — a caller that still sends "smoke"
- *  (e.g. an upstream default) gets a stress run instead of an error. */
+/** Simulation difficulty mode. "stress" is the broad-coverage allocation; "smoke"
+ *  is the Vibe-Agent build-loop mode — one minimal scenario per planner-emitted
+ *  smoke unit (happy-path + guardrail checks, always M_SUCCESS mocks + R00 runtime).
+ *  Both are fully implemented (see gen/allocator.ts allocateSmokeSlots). */
 export const SimulationMode = z.enum(["smoke", "stress"]);
 export type SimulationMode = z.infer<typeof SimulationMode>;
 
@@ -45,9 +45,13 @@ export const GenerateScenariosRequest = z.object({
   phlo_uuid: z.string().min(1),
   max_scenarios: z.number().int().min(1).max(100).default(50),
   test_case_generation_instructions: z.string().default(""),
-  // "smoke" is unimplemented — coerce it to "stress" here so an upstream caller
-  // that defaults to "smoke" gets a working run rather than a generation error.
-  simulation_mode: z.preprocess((m) => (m === "smoke" ? "stress" : m), SimulationMode.default("stress")),
+  simulation_mode: SimulationMode.default("stress"),
+  // Smoke-mode unit cap override. Optional: when absent the route applies
+  // SMOKE_CAP_DEFAULT (20), always clamped to SMOKE_CAP_HARD (50). Ignored for
+  // stress. aiassist's relay doesn't send it today — this is the forward hook so
+  // it can, without another AO release. For smoke, `max_scenarios` is a hint at
+  // most (aiassist parity): the unit count governs the scenario count.
+  smoke_cap: z.number().int().min(1).max(100).optional(),
 });
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
 
