@@ -5,8 +5,8 @@ import {
   RISK_WEIGHT,
 } from "./combos.js";
 import { createHash } from "node:crypto"; // deterministic builtin (units hash) — the config-free contract holds
-import type { SmokeUnit } from "./schemas.js";
-import type { Slot, ExistingScenarioSummary, PlannerWithInventory } from "./types.js";
+import type { Capability, SmokeUnit } from "./schemas.js";
+import type { Slot, PlannerWithInventory } from "./types.js";
 import { slug } from "./text.js"; // pure leaf — keeps the allocator config-free (no planner/llm/config)
 import {
   cmpStr,
@@ -49,6 +49,28 @@ export interface EnrichedSmokeUnit extends SmokeUnit {
   route_anchors: Dict[];
 }
 
+/** The capability-context enrichment shared by the flatten + fallback paths (one
+ *  TS-only helper for the block the Python reference duplicates verbatim at
+ *  scenario_generator.py:2118-2140 / :2175-2205 — deliberate layout divergence).
+ *  `defaultPriority` differs on purpose (reference parity: :2130 vs :2197): a
+ *  fallback unit is its capability's ONLY smoke coverage, so it defaults to "core"
+ *  to survive cap-overflow ordering; planner-emitted units default to "secondary".
+ *  Inert today (CapabilityZ requires priority) but load-bearing if that loosens. */
+function capabilityContext(cap: Capability, capId: string, defaultPriority: "secondary" | "core") {
+  const routeAnchors: Dict[] = cap.route_anchors ?? [];
+  return {
+    capability_id: capId,
+    capability_name: cap.name || capId,
+    capability_priority: cap.priority || defaultPriority,
+    capability_risk: cap.risk || "medium",
+    action_anchors: cap.action_anchors ?? [],
+    variable_anchors: cap.variable_anchors ?? [],
+    recommended_patterns: cap.recommended_conversation_patterns ?? [],
+    boundary_patterns: cap.boundary_patterns ?? [],
+    route_anchors: routeAnchors,
+  };
+}
+
 /** Pull smoke_units out of each capability and attach capability context.
  *  Units without a `unit_id` are skipped (planner contract violation); uniqueness
  *  of unit_id is the planner's job and re-checked by the smoke audit. */
@@ -61,18 +83,7 @@ export function flattenSmokeUnits(planner: PlannerWithInventory): EnrichedSmokeU
     const capId = cap.capability_id || slug(cap.name || "capability");
     for (const unit of cap.smoke_units ?? []) {
       if (!unit || typeof unit !== "object" || !unit.unit_id) continue;
-      units.push({
-        ...unit,
-        capability_id: capId,
-        capability_name: cap.name || capId,
-        capability_priority: cap.priority || "secondary",
-        capability_risk: cap.risk || "medium",
-        action_anchors: cap.action_anchors ?? [],
-        variable_anchors: cap.variable_anchors ?? [],
-        recommended_patterns: cap.recommended_conversation_patterns ?? [],
-        boundary_patterns: cap.boundary_patterns ?? [],
-        route_anchors: cap.route_anchors ?? [],
-      });
+      units.push({ ...unit, ...capabilityContext(cap, capId, "secondary") });
     }
   }
   return units;
@@ -86,8 +97,9 @@ export function smokeFallbackUnits(planner: PlannerWithInventory): EnrichedSmoke
     if (!cap || typeof cap !== "object") continue;
     const capId = cap.capability_id || slug(cap.name || "capability");
     if (!capId) continue;
-    const routeAnchors: Dict[] = cap.route_anchors ?? [];
-    const firstRoute = routeAnchors.length && typeof routeAnchors[0] === "object" ? routeAnchors[0] : {};
+    const context = capabilityContext(cap, capId, "core");
+    const firstRoute =
+      context.route_anchors.length && typeof context.route_anchors[0] === "object" ? context.route_anchors[0] : {};
     if (firstRoute.support === "blocked") continue;
     fallback.push({
       unit_id: `${capId}__happy_path__001`,
@@ -95,15 +107,7 @@ export function smokeFallbackUnits(planner: PlannerWithInventory): EnrichedSmoke
       scenario_type: "clean_baseline",
       route_id: firstRoute.route_id || routeId(firstRoute),
       description: `Fallback smoke unit for ${capId}`,
-      capability_id: capId,
-      capability_name: cap.name || capId,
-      capability_priority: cap.priority || "core",
-      capability_risk: cap.risk || "medium",
-      action_anchors: cap.action_anchors ?? [],
-      variable_anchors: cap.variable_anchors ?? [],
-      recommended_patterns: cap.recommended_conversation_patterns ?? [],
-      boundary_patterns: cap.boundary_patterns ?? [],
-      route_anchors: routeAnchors,
+      ...context,
     });
   }
   return fallback;
@@ -219,13 +223,10 @@ export interface SmokeAllocationResult extends Omit<AllocationResult, "audit"> {
 }
 
 /** One slot per smoke unit; R00 runtime; M_SUCCESS mock; route fixed from the unit
- *  when pinned. `existingScenarios` is accepted for signature parity but unused —
- *  smoke has no cross-batch dedup (the unit list IS the coverage contract). */
-export function allocateSmokeSlots(args: {
-  planner: PlannerWithInventory;
-  smokeCap: number;
-  existingScenarios?: ExistingScenarioSummary[];
-}): SmokeAllocationResult {
+ *  when pinned. The Python signature also accepts (and ignores) existing_scenarios;
+ *  dropped here — smoke has no cross-batch dedup (the unit list IS the coverage
+ *  contract). */
+export function allocateSmokeSlots(args: { planner: PlannerWithInventory; smokeCap: number }): SmokeAllocationResult {
   const { planner, smokeCap } = args;
   let units = flattenSmokeUnits(planner);
   if (units.length === 0) units = smokeFallbackUnits(planner);

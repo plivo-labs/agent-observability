@@ -47,8 +47,9 @@ export const GenerateScenariosRequest = z.object({
   test_case_generation_instructions: z.string().default(""),
   simulation_mode: SimulationMode.default("stress"),
   // Smoke-mode unit cap override. Optional: when absent the route applies
-  // SMOKE_CAP_DEFAULT (20), always clamped to SMOKE_CAP_HARD (50). Ignored for
-  // stress. aiassist's relay doesn't send it today — this is the forward hook so
+  // SMOKE_CAP_DEFAULT (20), min-clamped to SMOKE_CAP_HARD (50); an explicit value
+  // over the hard cap is rejected with 400 (same contract as max_scenarios). Ignored
+  // for stress. aiassist's relay doesn't send it today — this is the forward hook so
   // it can, without another AO release. For smoke, `max_scenarios` is a hint at
   // most (aiassist parity): the unit count governs the scenario count.
   smoke_cap: z.number().int().min(1).max(100).optional(),

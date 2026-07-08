@@ -133,6 +133,13 @@ export function registerSimulationRoutes(app: Hono): void {
       console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
       return c.json(buildErrorResponse("invalid_request", detail), 400);
     }
+    // Same contract for the smoke-unit cap: an explicit over-hard request is rejected,
+    // not silently clamped (zod's static max is 100; the runtime ceiling is env-tunable).
+    if (body.smoke_cap != null && body.smoke_cap > simEngineConfig.smokeCapHard) {
+      const detail = `smoke_cap ${body.smoke_cap} exceeds the hard cap of ${simEngineConfig.smokeCapHard}`;
+      console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
+      return c.json(buildErrorResponse("invalid_request", detail), 400);
+    }
     let canonical: Record<string, unknown>;
     try {
       canonical = parseFlowJson(body.flow_json) as unknown as Record<string, unknown>;
@@ -173,10 +180,12 @@ export function registerSimulationRoutes(app: Hono): void {
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
           simulationMode: body.simulation_mode,
-          // Effective smoke-unit cap: request override else SMOKE_CAP_DEFAULT, clamped
-          // to SMOKE_CAP_HARD (aiassist cap semantics). Every input is zod-guaranteed
-          // >= 1 (smoke_cap min(1); both env caps .positive()). Unused for stress.
-          smokeCap: Math.min(body.smoke_cap ?? simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
+          // Effective smoke-unit cap: an explicit request passes through verbatim (the
+          // 400 guard above already enforces <= SMOKE_CAP_HARD); the env DEFAULT stays
+          // min-clamped against the hard cap (env-misconfig guard — no caller to inform).
+          // Every input is zod-guaranteed >= 1 (smoke_cap min(1); both env caps
+          // .positive()). Unused for stress.
+          smokeCap: body.smoke_cap ?? Math.min(simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
           testCaseGenerationInstructions: body.test_case_generation_instructions,
           // Client disconnect propagates into the LLM fan-out: an abandoned request stops
           // burning tokens and releases its concurrency slot instead of running to completion.

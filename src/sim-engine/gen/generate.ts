@@ -162,7 +162,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     yield { type: "allocation_started", attempt, capability_count: planner.capabilities.length };
     try {
       if (mode === "smoke") {
-        const result = allocateSmokeSlots({ planner, smokeCap, existingScenarios: existing });
+        const result = allocateSmokeSlots({ planner, smokeCap });
         slots = result.slots;
         smokeUnitsHashOut = result.smoke_units_hash;
         droppedUnitIds = result.dropped_unit_ids;
