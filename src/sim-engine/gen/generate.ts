@@ -33,9 +33,10 @@ export interface GenMetadata {
   saved_count: number;
   failed_count: number;
   failed_slot_ids: string[];
-  /** Scenarios written but dropped as coverage_key duplicates (the allocator's feasibility
-   *  fallback can legitimately reuse a key). Keeps the ledger self-consistent:
-   *  planned = saved + failed + deduped. */
+  /** Scenarios written but dropped as duplicates — coverage_key for stress (the
+   *  allocator's feasibility fallback can legitimately reuse a key), smoke_unit_id for
+   *  smoke (units under one capability legitimately share all coverage axes). Keeps the
+   *  ledger self-consistent: planned = saved + failed + deduped. */
   deduped_count: number;
   partial_success: boolean;
   planner_usage: LlmUsage | null;
@@ -214,7 +215,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     ),
   );
 
-  // Emit per-chunk + per-scenario events, dedup by coverage_key.
+  // Emit per-chunk + per-scenario events, dedup by smoke_unit_id (smoke) / coverage_key (stress).
   const writerUsages: LlmUsage[] = [];
   const failedSlotIds: string[] = [];
   const seenCoverage = new Set<string>();
@@ -227,7 +228,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     let chunkSaved = 0;
     for (let i = 0; i < r.scenarios.length; i++) {
       const scenario = r.scenarios[i];
-      const key = scenario.eval_metadata?.coverage_key ?? "";
+      // Smoke units under one capability legitimately share all 8 coverage axes (same
+      // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
+      // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
+      const key = scenario.eval_metadata?.smoke_unit_id || scenario.eval_metadata?.coverage_key || "";
       if (key && seenCoverage.has(key)) {
         deduped += 1; // counted so the shortfall is visible in metadata, not silent
         continue;

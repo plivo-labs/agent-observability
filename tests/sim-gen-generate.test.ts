@@ -181,6 +181,45 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     expect(meta.dropped_unit_ids).toEqual(["handle_status__happy_path__001"]); // lowest priority dropped
   });
 
+  test("same-kind units under one capability (identical coverage_key) are NOT deduped away", async () => {
+    // The dev E2E bug: units of the same capability + kind + route share all 8 coverage
+    // axes; the within-run dedup (keyed by coverage_key) silently dropped 10/17 units.
+    // Dedup must key on the audit-unique smoke_unit_id for smoke scenarios.
+    const collidingPlanner = JSON.parse(PLANNER_JSON);
+    collidingPlanner.capabilities = collidingPlanner.capabilities.map((c: any) => ({
+      ...c,
+      smoke_units:
+        c.capability_id === "handle_refund"
+          ? [
+              { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "collects order id" },
+              { unit_id: "handle_refund__happy_path__002", kind: "happy_path", scenario_type: "clean_baseline", description: "confirms refund amount" },
+            ]
+          : [],
+    }));
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 20,
+        plannerProvider: new MockLLM([JSON.stringify(collidingPlanner)]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    // Both colliding handle_refund units survive — nothing collapsed.
+    const unitIds = scenarios.map((s: any) => s.eval_metadata.smoke_unit_id).sort();
+    expect(unitIds).toContain("handle_refund__happy_path__001");
+    expect(unitIds).toContain("handle_refund__happy_path__002");
+    // The two colliding units really do share a coverage key (the bug's precondition).
+    const keys = scenarios
+      .filter((s: any) => s.eval_metadata.smoke_unit_id.startsWith("handle_refund__happy_path"))
+      .map((s: any) => s.eval_metadata.coverage_key);
+    expect(keys.length).toBe(2);
+    expect(keys[0]).toBe(keys[1]);
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.deduped_count).toBe(0);
+    expect(meta.saved_count).toBe(scenarios.length);
+  });
+
   test("planner that omits smoke_units degrades to one fallback unit per capability", async () => {
     // PLANNER_JSON has no smoke_units — allocateSmokeSlots synthesizes {capId}__happy_path__001.
     const events = await collect(
