@@ -5,14 +5,17 @@
  * the classic traps the SDK-compressed prompts got wrong. Each case is a scenario
  * a well-calibrated judge should PASS; a fail here = the judge over-fired.
  *
- * Run from the agent-observability repo root (auto-loads .env):
- *   OPENAI_API_KEY=... JUDGE_LLM_MODEL=gpt-5.4 LLM_PROVIDER=openai \
+ * Provider config comes from env. In dev/prod it is set via consul; the vars
+ * below are only for running this harness manually from the repo root (auto-loads .env):
+ *   OPENAI_API_KEY=... JUDGE_MODEL=gpt-5.4 LLM_PROVIDER=openai \
  *   OPENAI_API_MODE=responses OPENAI_BASE_URL=... \
  *   bun run scripts/overfire-smoke.ts
- * (Anthropic: ANTHROPIC_API_KEY=... LLM_PROVIDER=anthropic JUDGE_LLM_MODEL=claude-opus-4-8)
+ * (Anthropic: ANTHROPIC_API_KEY=... LLM_PROVIDER=anthropic JUDGE_MODEL=claude-opus-4-8)
+ * NOTE: the var is JUDGE_MODEL, not JUDGE_LLM_MODEL — the judge role reads JUDGE_MODEL
+ * (else it defaults to gpt-4.1-mini → Azure DeploymentNotFound).
  *
  * Uses the real provider resolved from env — no provider is injected, so this
- * exercises the exact path production uses. Read-only; makes ~5 judge calls.
+ * exercises the exact path production uses. Read-only; makes ~4 judge calls.
  */
 import { runInstructionAdherenceJudge, runHallucinationJudge, runLoopJudge, runVariableExtractionJudge } from "../src/evals-engine/judges/node-judges.js";
 import type { ConversationInput, NodeEvalInput } from "../src/evals-engine/types.js";
