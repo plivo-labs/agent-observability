@@ -1,6 +1,7 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
-import { allocateScenarioSlots, allocateSmokeSlots } from "./allocator.js";
+import { allocateScenarioSlots } from "./allocator.js";
+import { allocateSmokeSlots } from "./smoke-allocator.js";
 import { writeScenarioChunk } from "./writer.js";
 import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, SMOKE_CAP_FALLBACK } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -41,9 +42,10 @@ export interface GenMetadata {
   partial_success: boolean;
   planner_usage: LlmUsage | null;
   writer_usages: LlmUsage[];
-  /** Smoke-mode only (aiassist metadata parity): the effective unit cap, the stable
-   *  hash over the surviving unit_ids (coverage-drift detection), and any planner
-   *  units dropped as over-cap overflow. Absent for stress runs. */
+  /** Smoke-mode only (aiassist metadata parity, minus its unconsumed
+   *  expected_smoke_unit_ids): the effective unit cap, the stable hash over the
+   *  surviving unit_ids (coverage-drift detection), and any planner units dropped
+   *  as over-cap overflow. Absent for stress runs. */
   smoke_cap?: number;
   smoke_units_hash?: string;
   dropped_unit_ids?: string[];
@@ -58,6 +60,9 @@ export interface GenerateInput {
   simulationMode?: SimulationMode;
   testCaseGenerationInstructions?: string;
   existingSummaries?: ExistingScenarioSummary[];
+  /** Callers must pre-clamp to SMOKE_CAP_HARD — only the HTTP route does (the gen
+   *  pipeline is config-free by design, so the env-tunable hard cap can't live here;
+   *  the Python reference clamps inside the generator instead). */
   smokeCap?: number;
   /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
    *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */

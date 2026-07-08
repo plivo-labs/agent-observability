@@ -4,13 +4,15 @@ import {
   allocateScenarioSlots,
   allocateCapabilityQuotas,
   existingCoverage,
+} from "../src/sim-engine/gen/allocator.js";
+import {
   allocateSmokeSlots,
   flattenSmokeUnits,
   smokeFallbackUnits,
   smokeUnitsHash,
   modeQuotasSmoke,
   auditSmokeAllocation,
-} from "../src/sim-engine/gen/allocator.js";
+} from "../src/sim-engine/gen/smoke-allocator.js";
 import type { PlannerWithInventory, Slot } from "../src/sim-engine/gen/types.js";
 import type { Capability, SmokeUnit } from "../src/sim-engine/gen/schemas.js";
 
