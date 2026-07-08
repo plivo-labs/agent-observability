@@ -67,6 +67,13 @@ export interface AgentConfig {
   global_prompt?: string;
   goals?: AgentConfigGoal[];
   nodes?: AgentConfigNode[];
+  /** Runtime context the platform supplied to the agent — trigger inputs +
+   *  mid-flow HTTP/tool outputs. Grounding evidence for the hallucination judge
+   *  (see ConversationInput.global_variables). Accepted loosely; coerced to a
+   *  flat string map. Absent when the sender didn't attach it. */
+  global_variables?: Record<string, unknown>;
+  /** TTS pronunciation map (word→guide) — see ConversationInput.pronunciation_guides. */
+  pronunciation_guides?: Record<string, unknown>;
 }
 
 // ── ingested transcript shape (raw_report.events, as AO stores them) ─────────
@@ -80,7 +87,41 @@ export interface StoredEvent {
     name?: string; // function name (function_call / function_call_output)
     arguments?: unknown;
     output?: unknown;
+    /** Turn the speaker was cut off mid-response. Rendered as a "[interrupted]"
+     *  tag so the loop/adherence judges can exempt it (they only exempt what
+     *  they can SEE). Absent until the uploader carries it. */
+    interrupted?: boolean;
+    /** Platform-spoken user-idle boilerplate (reminder/hangup), not agent
+     *  speech. Rendered as "[system idle prompt]" so judges treat it as
+     *  scaffolding. Absent until the uploader carries it. */
+    system_idle?: boolean;
   };
+}
+
+const isTruthyFlag = (v: unknown): boolean => v === true || v === "true" || v === 1;
+
+/** Append the interruption / idle tags the loop & adherence judges look for.
+ *  No-op until the uploader marks items — but wiring it here means the moment
+ *  it does, the judges' exemptions take effect with no further change. */
+function tagText(text: string, item: NonNullable<StoredEvent["item"]>): string {
+  let out = text;
+  if (isTruthyFlag(item.system_idle)) out += " [system idle prompt]";
+  if (isTruthyFlag(item.interrupted)) out += " [interrupted]";
+  return out;
+}
+
+/** Coerce a loosely-typed config map to a flat string→string map (values
+ *  stringified, empties dropped). Returns undefined when there's nothing usable
+ *  so callers can omit the field entirely. Never throws. */
+function toStringMap(v: unknown): Record<string, string> | undefined {
+  if (!isRecord(v)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v)) {
+    if (!k || val == null) continue;
+    const s = typeof val === "string" ? val : (() => { try { return JSON.stringify(val); } catch { return ""; } })();
+    if (s) out[k] = s;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 const USER_ROLES = new Set(["user", "customer", "human", "caller", "callee", "contact"]);
@@ -249,9 +290,10 @@ export function buildSessionEvalInput(
       pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
     }
+    const tagged = tagText(text, item);
     pushTurn(ref, isUser
-      ? { node_uuid: ref, user: text, agent: "", intent: "" }
-      : { node_uuid: ref, user: "", agent: text, intent: "" });
+      ? { node_uuid: ref, user: tagged, agent: "", intent: "" }
+      : { node_uuid: ref, user: "", agent: tagged, intent: "" });
   }
 
   const nodes: NodeEvalInput[] = [];
@@ -299,6 +341,9 @@ export function buildSessionEvalInput(
     nodeRefs.push({ ref: echoedRef, name: typeof def.name === "string" ? def.name : echoedRef });
   }
 
+  const globalVariables = toStringMap(config.global_variables);
+  const pronunciationGuides = toStringMap(config.pronunciation_guides);
+
   return {
     input: {
       flow_name: typeof config.flow_name === "string" ? config.flow_name : "conversation",
@@ -314,6 +359,9 @@ export function buildSessionEvalInput(
           (t) => !t.evidence,
         ),
       ),
+      // Grounding evidence for the hallucination judge (omitted when empty).
+      ...(globalVariables ? { global_variables: globalVariables } : {}),
+      ...(pronunciationGuides ? { pronunciation_guides: pronunciationGuides } : {}),
     },
     nodeRefs,
   };
@@ -337,8 +385,12 @@ export async function evaluateIngestedSession(
   config: AgentConfig,
   events: StoredEvent[],
   provider?: LlmProvider,
+  /** Session transport/channel, from the session row. Gates the voice-only
+   *  conversation detections so they don't fire on text (chat/SMS/WhatsApp). */
+  transport?: string,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = buildSessionEvalInput(config, events);
+  if (transport) input.transport = transport;
 
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()

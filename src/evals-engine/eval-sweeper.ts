@@ -246,7 +246,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       return false;
     }
 
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events);
+    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined);
     if (ownershipLost) {
       // Another sweeper adopted the claim mid-judge — its results win; ours
       // are discarded so the session is never double-completed/fanned out.
