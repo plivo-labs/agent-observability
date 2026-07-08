@@ -133,6 +133,34 @@ async function run() {
       `extraction_successful=${data.extraction_successful} missing=${JSON.stringify(data.missing_variables)} incorrect=${JSON.stringify(data.incorrect_variables)}`);
   }
 
+  // 5) ADHERENCE — transcript carries internal-event lines (Tool_Call/Agent_Handoff/System_Note).
+  //    These are runtime annotations rendered as context, NOT agent speech. A mis-calibrated judge
+  //    reads them as the agent revealing internals / breaking a silent handoff and fails adherence.
+  //    Calibrated verdict: adherence_passed=true, no CRITICAL missed step.
+  {
+    const node = baseNode({
+      node_name: "route_to_billing",
+      node_prompt: "When the caller asks about a charge, hand off to billing SILENTLY. NEVER mention internal tools, systems, or transfers to the caller.",
+      turns: [
+        { node_uuid: "n1", user: "why was I charged twice?", agent: "Let me pull that up for you right away.", intent: "" },
+        { node_uuid: "n1", user: "", agent: "Tool_Call: lookup_charges(account=***)", intent: "" },
+        { node_uuid: "n1", user: "", agent: "Tool_Result: {\"charges\": 2}", intent: "" },
+        { node_uuid: "n1", user: "", agent: "Agent_Handoff: billing", intent: "" },
+        { node_uuid: "n1", user: "", agent: "System_Note: transferring to billing specialist", intent: "" },
+        { node_uuid: "n1", user: "", agent: "One moment while I connect you to the right person.", intent: "" },
+      ],
+      turn_count: 6,
+    });
+    const ctx = baseCtx({ full_transcript: "User: why was I charged twice?\nAgent: Let me pull that up for you right away.\nAgent: Tool_Call: lookup_charges(account=***)\nAgent: Tool_Result: {\"charges\": 2}\nAgent: Agent_Handoff: billing\nAgent: System_Note: transferring to billing specialist\nAgent: One moment while I connect you to the right person." });
+    const { data } = await runInstructionAdherenceJudge(node, ctx);
+    const crit = data.procedure_compliance?.missed_steps?.some((m) => m.severity === "critical") ?? false;
+    const objectiveMet = data.objective_progress?.achieved === true;
+    const policyOk = data.policy_boundary_compliance?.passed === true;
+    const adherencePassed = objectiveMet && !crit && policyOk;
+    check("adherence: Tool_Call/Handoff/System_Note lines are NOT agent speech (no silent-handoff/reveal fail)", adherencePassed,
+      `objective_achieved=${objectiveMet} critical_missed=${crit} policy_passed=${policyOk}`);
+  }
+
   console.log(`\n── over-fire smoke: ${passed} passed, ${failed} failed ──`);
   process.exit(failed ? 1 : 0);
 }

@@ -50,6 +50,7 @@ Steps:
 5. NOT hallucination: unrendered template placeholders (e.g. {name}, {{appointment_time}}) appearing in instructions or transcript — those are rendering artifacts, not fabricated facts.
 6. NOT hallucination: runtime context the platform injects (the current date/time/day-of-week, the caller's name or number, account or session parameters) — flag a date/identity claim only when it CONTRADICTS the conversation or tool evidence.
 7. Clarification behavior is NOT hallucination when the agent marks an ungrounded detail as tentative (asks to confirm) rather than asserting it as an established fact.
+8. Lines labelled System_Note: or Agent_Handoff: are internal runtime events, not factual claims the agent made to the user — never treat them as assertions requiring grounding.
 
 Pass if all claims are supported. Fail if any critical fact is fabricated. Maybe if there are minor unsupported details that don't change the meaning.
 
@@ -69,6 +70,7 @@ Steps:
 3. Was any expected variable's value available in the context but NOT extracted? That's a critical miss (add to missing_variables).
 4. Omitting a variable is OK if its value is truly not available in context (user went idle, declined, or never provided it).
 5. Conditional variables: when a variable's recording rule says to leave it empty unless a condition happens (e.g. "record only once the caller explicitly confirms"), its absence is CORRECT behavior when that condition never occurred — do not count it as missing.
+6. Context-supplied values are NOT "missed": a value the platform already provided as runtime/global context or an initial parameter (e.g. a caller phone number, account id) that the user did NOT state during this node is not something the agent failed to extract — do not mark it missing. Judge only variables the user actually supplied in this node's conversation.
 
 Normalization is EXPECTED and NOT an error — a value is correct when it represents the same underlying information even in a different form:
 - Spoken digits → compact form ("one two three" → "123").
@@ -94,6 +96,7 @@ NOT a loop (these must never fire):
 - Idle re-engagement: repeated prompts while the user is silent/inactive are appropriate responses to inactivity, not loops. Turns marked [system idle prompt] are platform scaffolding — exclude them entirely.
 - A single interrupted restart, or one/two restarts after an interruption when the agent then advances.
 - Greetings, sign-offs, and short acknowledgements ("Got it", "Sure", "How can I help?") repeating.
+- Re-asking for the same information because the user has not yet provided it (no answer, silence, an off-topic reply, or a mishear) is a justified re-ask, not a loop — only flag when the user ALREADY gave a usable answer and the agent asks for it again anyway.
 
 Score: 1.0 no repetition OR single repetition then clear progress | 0.75 brief repetition then recovers | 0.5 extended repetition that eventually resolves | 0.25 severe repetition, minimal progress | 0.0 completely stuck. loop_detected=true when score < 0.5.
 
@@ -111,6 +114,8 @@ Optional scenario objective:
 
 SCOPE — these belong to OTHER judges, never fail adherence for them:
 - Whether the right intent fired → intent judge. - Whether variables were captured → variable judge. - Whether a fact was fabricated → hallucination judge. Call lifecycle (hanging up, transitions, routing) is outside the agent's control.
+
+TRANSCRIPT NOTE — internal event lines are NOT agent speech: lines labelled Tool_Call:, Tool_Result:, System_Note:, or Agent_Handoff: are runtime events rendered only for context. They are NOT words the agent said to the user. Never fail adherence because such a line appears — they do not count as revealing internals, speaking during a silent/seamless handoff, breaking turn shape, or "combining tool calls into a turn". Judge procedure and policy ONLY from the agent's actual spoken messages.
 
 FUNCTIONAL COMPLETION TEST (FCT) — the core anti-over-fire rule. Every step has an OBJECTIVE (the outcome: confirm date, collect name, verify identity) and CONSTRAINTS (how to say it: exact wording, order). When the objective was achieved AND the user understood/responded appropriately, the step is functionally complete, and any constraint deviation is "minor" severity — NEVER "critical" — regardless of NEVER/ALWAYS/MUST language in the instructions. A step is only "critical" when its objective was not achieved at all. Accept semantically equivalent wording, alternative phrasings, reordered or combined steps, and self-corrections. For confirmations, ANY clear affirmative in context ("yes", "okay", "sure", "sounds good") is agreement obtained.
 
