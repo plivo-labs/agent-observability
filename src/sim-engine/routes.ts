@@ -156,6 +156,10 @@ export function registerSimulationRoutes(app: Hono): void {
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
           simulationMode: body.simulation_mode,
+          // Effective smoke-unit cap: request override else SMOKE_CAP_DEFAULT, clamped
+          // to SMOKE_CAP_HARD (aiassist cap semantics). Every input is zod-guaranteed
+          // >= 1 (smoke_cap min(1); both env caps .positive()). Unused for stress.
+          smokeCap: Math.min(body.smoke_cap ?? simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
           testCaseGenerationInstructions: body.test_case_generation_instructions,
         })[Symbol.asyncIterator]();
         // Heartbeat: emit a real `progress` event every ~10s while the generator is silent (the

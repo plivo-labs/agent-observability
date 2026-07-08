@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SMOKE_CAP_FALLBACK } from "./sim-engine/gen/combos.js"; // pure data leaf — safe at env-parse time
 
 export const envSchema = z.object({
   PORT: z.coerce.number().default(9090),
@@ -184,6 +185,14 @@ export const envSchema = z.object({
   // the per-request LLM cost). A request over the cap is rejected with 400.
   // Raise via env up to 100 if a deployment needs it.
   MAX_SCENARIOS_PER_REQUEST: z.coerce.number().int().positive().max(100).default(50),
+  // Smoke-mode unit caps (aiassist parity: VIBE_AGENT_SMOKE_CAP_DEFAULT/HARD were
+  // 20/50). A smoke run yields ONE scenario per planner-emitted smoke unit, so the
+  // cap bounds both the planner prompt ("emit at most N units") and the allocator
+  // (lowest-priority overflow units are dropped). `max_scenarios` stays a hint for
+  // smoke — the unit count governs, exactly like aiassist. DEFAULT applies when the
+  // request carries no `smoke_cap`; HARD is the absolute per-request ceiling.
+  SMOKE_CAP_DEFAULT: z.coerce.number().int().positive().max(100).default(SMOKE_CAP_FALLBACK),
+  SMOKE_CAP_HARD: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
   // is an expensive multi-call LLM fan-out, so this stops a burst from
   // multiplying into unbounded spend; requests over the limit get 429.
