@@ -28,7 +28,8 @@ import { slug } from "./text.js"; // pure leaf — keeps the allocator config-fr
 type Dict = Record<string, any>;
 const SEP = ""; // unit separator for pair/triple keys
 
-const cmpStr = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+// Shared with smoke-allocator.ts (which layers on this module's helpers).
+export const cmpStr = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 // ── quotas ─────────────────────────────────────────────────────────────────────
 
@@ -164,7 +165,14 @@ function dedup(ids: string[]): string[] {
   return out;
 }
 
-function patternsForScenarioType(cap: Capability, type: string, inv: Dict): string[] {
+export function patternsForScenarioType(
+  // Structural subset — exactly the two fields this function reads, so the smoke
+  // allocator's per-unit view passes without casts and a future field-read here
+  // becomes a compile error at both call sites instead of a silent undefined.
+  cap: Pick<Capability, "recommended_conversation_patterns" | "boundary_patterns">,
+  type: string,
+  inv: Dict,
+): string[] {
   let recommended = [...(cap.recommended_conversation_patterns ?? [])];
   if (type === "boundary_pressure") recommended = recommended.concat(cap.boundary_patterns ?? []);
   const languages = inv.languages ?? [];
@@ -195,7 +203,7 @@ const STRESS_EXTRAS: Record<string, string[]> = {
   boundary_pressure: ["R00", "R01", "R02"],
 };
 
-function personaIdsForPattern(pattern: Dict, type: string, n: number, mode: string, inv: Dict): string[] {
+export function personaIdsForPattern(pattern: Dict, type: string, n: number, mode: string, inv: Dict): string[] {
   let ids = [...(pattern.persona_ids ?? ["P02"])];
   if (type === "clean_baseline" && !ids.includes("P14")) {
     ids = ["P01"];
@@ -588,3 +596,4 @@ export function auditAllocation(
     missing_core_capabilities: missingCore,
   };
 }
+

@@ -37,12 +37,46 @@ export function plannerSystemPrompt(simulationMode: "smoke" | "stress", smokeCap
 
   if (simulationMode !== "smoke") return base;
 
+  // Port of the orchestrator service's _PLANNER_SMOKE_SUFFIX_TEMPLATE (scenario_generator.py) —
+  // the unit-granularity rules, overflow priority order, and per-unit contract are load-bearing:
+  // the deterministic smoke allocator (allocateSmokeSlots) turns each unit into exactly one slot.
   const smoke = [
     "",
-    "SMOKE MODE: also emit `smoke_units` per capability — the minimal set of coverage",
-    "units (kind happy_path|boundary, scenario_type clean_baseline|boundary_pressure,",
-    "optional route_id, a short description). Each unit becomes exactly one scenario.",
+    "You are planning SMOKE coverage. The goal is to identify every distinct executable",
+    "check needed to prove the flow works in the Vibe Agent build loop.",
+    "",
+    "Return stable capabilities AND smoke_units under each capability.",
+    "",
+    "Capabilities are user-facing jobs or boundaries.",
+    "Smoke units are the individual scenario-sized checks required for that capability.",
+    "Each smoke unit becomes exactly one scenario.",
+    "",
+    "Include smoke units for:",
+    "- Each happy-path job: STEPs in instructions, tool/action calls, intent routes, and",
+    "  required variables.",
+    "- Each boundary: HANDLING blocks, out-of-scope, refusal, off-script, wrong person,",
+    "  alternate channel, explicit ## Boundaries restrictions, and scope inferred from",
+    "  the agent role.",
+    "- Separate smoke units for nested branches or route outcomes that require separate",
+    "  execution.",
+    "",
     `Emit at most ${smokeCap} smoke units in total across all capabilities.`,
+    `If the flow has more meaningful checks than ${smokeCap}, prioritize:`,
+    "1. core happy-path units that prove the main flow works",
+    "2. high-risk boundary/guardrail units",
+    "3. secondary capabilities",
+    `Stop after ${smokeCap}; do not emit lower-priority overflow units.`,
+    "",
+    "Per-unit rules:",
+    "- Do NOT duplicate capability_id to increase count. Put multiplicity in smoke_units.",
+    "- unit_id must be unique within this flow. Prefer the form CAPABILITY__KIND__SEQ",
+    "  where SEQ is a zero-padded 3-digit local sequence.",
+    '- kind is "happy_path" for normal jobs or "boundary" for guardrail checks.',
+    '- scenario_type is "clean_baseline" for happy_path units and "boundary_pressure"',
+    "  for boundary units.",
+    "- If a smoke unit pins route_id, that route is fixed for allocation; otherwise the",
+    "  allocator picks from the capability's route anchors.",
+    "- description is one short sentence stating exactly what this unit proves.",
   ].join("\n");
   return base + "\n" + smoke;
 }

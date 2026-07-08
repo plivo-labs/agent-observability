@@ -1,8 +1,9 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
+import { allocateSmokeSlots } from "./smoke-allocator.js";
 import { writeScenarioChunk } from "./writer.js";
-import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES } from "./combos.js";
+import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, SMOKE_CAP_FALLBACK } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
 
 // AO Simulation Engine — generation orchestration (Phase 1.6).
@@ -33,13 +34,21 @@ export interface GenMetadata {
   saved_count: number;
   failed_count: number;
   failed_slot_ids: string[];
-  /** Scenarios written but dropped as coverage_key duplicates (the allocator's feasibility
-   *  fallback can legitimately reuse a key). Keeps the ledger self-consistent:
-   *  planned = saved + failed + deduped. */
+  /** Scenarios written but dropped as duplicates — coverage_key for stress (the
+   *  allocator's feasibility fallback can legitimately reuse a key), smoke_unit_id for
+   *  smoke (units under one capability legitimately share all coverage axes). Keeps the
+   *  ledger self-consistent: planned = saved + failed + deduped. */
   deduped_count: number;
   partial_success: boolean;
   planner_usage: LlmUsage | null;
   writer_usages: LlmUsage[];
+  /** Smoke-mode only (aiassist metadata parity, minus its unconsumed
+   *  expected_smoke_unit_ids): the effective unit cap, the stable hash over the
+   *  surviving unit_ids (coverage-drift detection), and any planner units dropped
+   *  as over-cap overflow. Absent for stress runs. */
+  smoke_cap?: number;
+  smoke_units_hash?: string;
+  dropped_unit_ids?: string[];
 }
 
 export interface GenerateInput {
@@ -51,6 +60,9 @@ export interface GenerateInput {
   simulationMode?: SimulationMode;
   testCaseGenerationInstructions?: string;
   existingSummaries?: ExistingScenarioSummary[];
+  /** Callers must pre-clamp to SMOKE_CAP_HARD — only the HTTP route does (the gen
+   *  pipeline is config-free by design, so the env-tunable hard cap can't live here;
+   *  the Python reference clamps inside the generator instead). */
   smokeCap?: number;
   /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
    *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */
@@ -105,7 +117,10 @@ async function runChunkWithRetry(
 
 export async function* generateScenarios(input: GenerateInput): AsyncGenerator<GenEvent> {
   const mode: SimulationMode = input.simulationMode ?? "stress";
-  if (mode === "smoke") throw new Error("smoke mode allocation is not yet implemented (Phase 1.4 deferred allocateSmokeSlots)");
+  // Effective smoke-unit cap. The route resolves it from the request/env (clamped to
+  // SMOKE_CAP_HARD); the fallback covers direct callers/tests so the planner is never
+  // told "emit at most 0 units". Stays 0 for stress (unused there).
+  const smokeCap = mode === "smoke" ? Math.max(1, input.smokeCap ?? SMOKE_CAP_FALLBACK) : 0;
   const existing = input.existingSummaries ?? [];
   const generationId = crypto.randomUUID();
   let instructions = input.testCaseGenerationInstructions ?? "";
@@ -124,7 +139,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
-        smokeCap: input.smokeCap,
+        smokeCap,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -140,17 +155,32 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
 
   // ── ALLOCATOR (2 attempts; replan on the 2nd) ──────────────────────────────────
   let slots: Slot[] | null = null;
+  // Smoke-mode metadata extras (aiassist parity) — captured from the smoke allocation.
+  let smokeUnitsHashOut: string | undefined;
+  let droppedUnitIds: string[] | undefined;
   for (let attempt = 1; attempt <= ALLOCATION_RETRIES; attempt++) {
     yield { type: "allocation_started", attempt, capability_count: planner.capabilities.length };
     try {
-      const result = allocateScenarioSlots(planner, input.maxScenarios, existing);
-      slots = result.slots;
+      if (mode === "smoke") {
+        const result = allocateSmokeSlots({ planner, smokeCap });
+        slots = result.slots;
+        smokeUnitsHashOut = result.smoke_units_hash;
+        droppedUnitIds = result.dropped_unit_ids;
+      } else {
+        const result = allocateScenarioSlots(planner, input.maxScenarios, existing);
+        slots = result.slots;
+      }
       yield { type: "allocation_done", attempt, planned_count: slots.length };
       break;
     } catch (e) {
       if (attempt >= ALLOCATION_RETRIES) throw new Error(`Allocator failed after ${ALLOCATION_RETRIES} attempts: ${(e as Error).message}`);
-      // Replan with the allocator error appended to the instructions.
-      instructions = `${instructions}\n\n[allocator retry] ${(e as Error).message}`.trim();
+      // Replan with the allocator error appended to the instructions. In smoke mode the
+      // dominant failure is a planner that omitted smoke_units — say so explicitly (aiassist parity).
+      const retryHint =
+        mode === "smoke"
+          ? `[allocator retry] ${(e as Error).message}. You MUST emit smoke_units under each capability.`
+          : `[allocator retry] ${(e as Error).message}`;
+      instructions = `${instructions}\n\n${retryHint}`.trim();
       const out = await planCapabilities({
         flowJson: input.flowJson,
         phloUuid: input.phloUuid,
@@ -158,7 +188,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
-        smokeCap: input.smokeCap,
+        smokeCap,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -190,7 +220,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     ),
   );
 
-  // Emit per-chunk + per-scenario events, dedup by coverage_key.
+  // Emit per-chunk + per-scenario events, dedup by smoke_unit_id (smoke) / coverage_key (stress).
   const writerUsages: LlmUsage[] = [];
   const failedSlotIds: string[] = [];
   const seenCoverage = new Set<string>();
@@ -203,7 +233,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     let chunkSaved = 0;
     for (let i = 0; i < r.scenarios.length; i++) {
       const scenario = r.scenarios[i];
-      const key = scenario.eval_metadata?.coverage_key ?? "";
+      // Smoke units under one capability legitimately share all 8 coverage axes (same
+      // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
+      // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
+      const key = scenario.eval_metadata?.smoke_unit_id || scenario.eval_metadata?.coverage_key || "";
       if (key && seenCoverage.has(key)) {
         deduped += 1; // counted so the shortfall is visible in metadata, not silent
         continue;
@@ -239,6 +272,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       partial_success: saved > 0 && saved < slots.length,
       planner_usage: plannerUsage,
       writer_usages: writerUsages,
+      ...(mode === "smoke"
+        ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
+        : {}),
     },
   };
 }

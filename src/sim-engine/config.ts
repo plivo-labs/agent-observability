@@ -97,6 +97,10 @@ export const simEngineConfig = {
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,
   /** Hard per-request scenario ceiling (a generate request over this is rejected 400). */
   maxScenariosPerRequest: config.MAX_SCENARIOS_PER_REQUEST,
+  /** Smoke-mode unit cap when the request carries no `smoke_cap` (aiassist cap_default=20). */
+  smokeCapDefault: config.SMOKE_CAP_DEFAULT,
+  /** Absolute smoke-unit ceiling per request (aiassist cap_hard=50). */
+  smokeCapHard: config.SMOKE_CAP_HARD,
   /** Concurrent generate requests allowed per process (over the limit → 429). */
   genMaxConcurrent: config.GEN_MAX_CONCURRENT,
   /**

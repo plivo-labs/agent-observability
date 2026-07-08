@@ -116,6 +116,140 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
   });
 });
 
+describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)", () => {
+  // Derived from PLANNER_JSON (one fixture contract, not a copy) — the same two
+  // capabilities with smoke_units attached per capability.
+  const SMOKE_UNITS_BY_CAP: Record<string, unknown[]> = {
+    handle_refund: [
+      { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "refund happy path" },
+      { unit_id: "handle_refund__boundary__001", kind: "boundary", scenario_type: "boundary_pressure", description: "out of scope refusal" },
+    ],
+    handle_status: [
+      { unit_id: "handle_status__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "status happy path" },
+    ],
+  };
+  const smokePlanner = JSON.parse(PLANNER_JSON);
+  smokePlanner.capabilities = smokePlanner.capabilities.map((c: any) => ({
+    ...c,
+    smoke_units: SMOKE_UNITS_BY_CAP[c.capability_id] ?? [],
+  }));
+  const SMOKE_PLANNER_JSON = JSON.stringify(smokePlanner);
+
+  test("smoke run: scenario count = unit count; smoke metadata + eval_metadata stamped", async () => {
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical,
+        phloUuid: "agent-1",
+        maxScenarios: 50, // a hint at most in smoke — the unit count governs
+        model: "m",
+        simulationMode: "smoke",
+        smokeCap: 20,
+        plannerProvider: new MockLLM([SMOKE_PLANNER_JSON]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    expect(scenarios.length).toBe(3); // 3 units, NOT max_scenarios
+    for (const s of scenarios) {
+      expect(s.eval_metadata.simulation_mode).toBe("smoke");
+      expect(s.eval_metadata.smoke_unit_id).toBeTruthy();
+      expect(s.eval_metadata.smoke_units_hash).toMatch(/^[0-9a-f]{32}$/);
+      expect(s.eval_metadata.runtime_stress_combo_id).toBe("R00");
+      expect(s.eval_metadata.mock_profile_id).toBe("M_SUCCESS");
+      expect(s.tags).toContain("simulation_mode:smoke");
+    }
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(3);
+    expect(meta.smoke_cap).toBe(20);
+    expect(meta.smoke_units_hash).toMatch(/^[0-9a-f]{32}$/);
+    expect(meta.dropped_unit_ids).toEqual([]);
+  });
+
+  test("smoke cap drops overflow units and reports them in metadata", async () => {
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 2,
+        plannerProvider: new MockLLM([SMOKE_PLANNER_JSON]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario");
+    expect(scenarios.length).toBe(2);
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.smoke_cap).toBe(2);
+    expect(meta.dropped_unit_ids).toEqual(["handle_status__happy_path__001"]); // lowest priority dropped
+  });
+
+  test("same-kind units under one capability (identical coverage_key) are NOT deduped away", async () => {
+    // The dev E2E bug: units of the same capability + kind + route share all 8 coverage
+    // axes; the within-run dedup (keyed by coverage_key) silently dropped 10/17 units.
+    // Dedup must key on the audit-unique smoke_unit_id for smoke scenarios.
+    const collidingPlanner = JSON.parse(PLANNER_JSON);
+    collidingPlanner.capabilities = collidingPlanner.capabilities.map((c: any) => ({
+      ...c,
+      smoke_units:
+        c.capability_id === "handle_refund"
+          ? [
+              { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "collects order id" },
+              { unit_id: "handle_refund__happy_path__002", kind: "happy_path", scenario_type: "clean_baseline", description: "confirms refund amount" },
+            ]
+          : [],
+    }));
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 20,
+        plannerProvider: new MockLLM([JSON.stringify(collidingPlanner)]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    // Both colliding handle_refund units survive — nothing collapsed.
+    const unitIds = scenarios.map((s: any) => s.eval_metadata.smoke_unit_id).sort();
+    expect(unitIds).toContain("handle_refund__happy_path__001");
+    expect(unitIds).toContain("handle_refund__happy_path__002");
+    // The two colliding units really do share a coverage key (the bug's precondition).
+    const keys = scenarios
+      .filter((s: any) => s.eval_metadata.smoke_unit_id.startsWith("handle_refund__happy_path"))
+      .map((s: any) => s.eval_metadata.coverage_key);
+    expect(keys.length).toBe(2);
+    expect(keys[0]).toBe(keys[1]);
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.deduped_count).toBe(0);
+    expect(meta.saved_count).toBe(scenarios.length);
+  });
+
+  test("planner that omits smoke_units degrades to one fallback unit per capability", async () => {
+    // PLANNER_JSON has no smoke_units — allocateSmokeSlots synthesizes {capId}__happy_path__001.
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 20,
+        plannerProvider: new MockLLM([PLANNER_JSON]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    expect(scenarios.length).toBe(2); // one per capability
+    const unitIds = scenarios.map((s: any) => s.eval_metadata.smoke_unit_id).sort();
+    expect(unitIds).toEqual(["handle_refund__happy_path__001", "handle_status__happy_path__001"]);
+  });
+
+  test("stress metadata carries NO smoke fields", async () => {
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.smoke_cap).toBeUndefined();
+    expect(meta.smoke_units_hash).toBeUndefined();
+    expect(meta.dropped_unit_ids).toBeUndefined();
+  });
+});
+
 describe("generateScenarios — G5 all-failed / partial", () => {
   const scen = (id: string) => ({
     slot_id: id,

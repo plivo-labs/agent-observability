@@ -88,6 +88,34 @@ describe("validateAndFixScenario (with slot)", () => {
     expect(validateAndFixScenario({ persona: {}, goal: "g", world_state: [], tags: [] }, slot, "g", "", [])).toBeNull();
     expect(validateAndFixScenario({ name: "x", world_state: [], tags: [] }, slot, "g", "", [])).toBeNull();
   });
+
+  test("a smoke slot stamps the smoke fields into eval_metadata + the smoke tags", () => {
+    const smokeSlot: Slot = {
+      ...slot,
+      scenario_type: "clean_baseline",
+      conversation_pattern_id: "clean_direct",
+      persona_combo_id: "P01",
+      entity_format_combo_id: "E01",
+      runtime_stress_combo_id: "R00",
+      simulation_mode: "smoke",
+      smoke_unit_id: "handle_refund__happy_path__001",
+      smoke_unit_kind: "happy_path",
+      smoke_unit_description: "proves the refund happy path",
+      smoke_units_hash: "abc123",
+      coverage_key: "handle_refund|clean_baseline|clean_direct|P01|E01|R00|n-greet:wants_refund|M_SUCCESS",
+    };
+    const s = validateAndFixScenario(writerScenario(), smokeSlot, "gen-1", "Refund agent.", [])!;
+    expect(s.eval_metadata!.simulation_mode).toBe("smoke");
+    expect(s.eval_metadata!.smoke_unit_id).toBe("handle_refund__happy_path__001");
+    expect(s.eval_metadata!.smoke_unit_kind).toBe("happy_path");
+    expect(s.eval_metadata!.smoke_unit_description).toBe("proves the refund happy path");
+    expect(s.eval_metadata!.smoke_units_hash).toBe("abc123");
+    expect(s.tags).toContain("simulation_mode:smoke");
+    expect(s.tags).toContain("smoke_kind:happy_path");
+    // smoke = R00: no interruption/noise injected
+    expect(s.interruption.enabled).toBe(false);
+    expect(s.stt_noise.enabled).toBe(false);
+  });
 });
 
 describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
