@@ -173,9 +173,10 @@ export function registerSimulationRoutes(app: Hono): void {
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
           simulationMode: body.simulation_mode,
-          // Effective smoke-unit cap: request override else SMOKE_CAP_DEFAULT, always
-          // clamped to SMOKE_CAP_HARD (aiassist cap semantics). Unused for stress.
-          smokeCap: Math.max(1, Math.min(body.smoke_cap ?? simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard)),
+          // Effective smoke-unit cap: request override else SMOKE_CAP_DEFAULT, clamped
+          // to SMOKE_CAP_HARD (aiassist cap semantics). Every input is zod-guaranteed
+          // >= 1 (smoke_cap min(1); both env caps .positive()). Unused for stress.
+          smokeCap: Math.min(body.smoke_cap ?? simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
           testCaseGenerationInstructions: body.test_case_generation_instructions,
           // Client disconnect propagates into the LLM fan-out: an abandoned request stops
           // burning tokens and releases its concurrency slot instead of running to completion.

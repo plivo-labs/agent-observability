@@ -2,7 +2,7 @@ import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots, allocateSmokeSlots } from "./allocator.js";
 import { writeScenarioChunk } from "./writer.js";
-import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES } from "./combos.js";
+import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, SMOKE_CAP_FALLBACK } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
 
 // AO Simulation Engine — generation orchestration (Phase 1.6).
@@ -112,9 +112,9 @@ async function runChunkWithRetry(
 export async function* generateScenarios(input: GenerateInput): AsyncGenerator<GenEvent> {
   const mode: SimulationMode = input.simulationMode ?? "stress";
   // Effective smoke-unit cap. The route resolves it from the request/env (clamped to
-  // SMOKE_CAP_HARD); the `?? 20` is a safe default for direct callers/tests so the
-  // planner is never told "emit at most 0 units". Stays 0 for stress (unused there).
-  const smokeCap = mode === "smoke" ? Math.max(1, input.smokeCap ?? 20) : 0;
+  // SMOKE_CAP_HARD); the fallback covers direct callers/tests so the planner is never
+  // told "emit at most 0 units". Stays 0 for stress (unused there).
+  const smokeCap = mode === "smoke" ? Math.max(1, input.smokeCap ?? SMOKE_CAP_FALLBACK) : 0;
   const existing = input.existingSummaries ?? [];
   const generationId = crypto.randomUUID();
   let instructions = input.testCaseGenerationInstructions ?? "";
@@ -264,7 +264,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       planner_usage: plannerUsage,
       writer_usages: writerUsages,
       ...(mode === "smoke"
-        ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds ?? [] }
+        ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
         : {}),
     },
   };

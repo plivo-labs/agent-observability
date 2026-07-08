@@ -243,6 +243,11 @@ export const OUTBOUND_PATTERN_BOOST: Record<string, number> = {
 };
 
 export const MAX_EXISTING_SCENARIO_SUMMARIES = 200;
+// Smoke-unit cap used when no explicit cap reaches the generator (aiassist
+// VIBE_AGENT_SMOKE_CAP_DEFAULT parity). The env schema's SMOKE_CAP_DEFAULT and
+// generate.ts's direct-caller fallback both reference THIS constant so the two
+// can never drift.
+export const SMOKE_CAP_FALLBACK = 20;
 export const WRITER_CHUNK_SIZE = 10;
 export const WRITER_CHUNK_RETRIES = 1;
 export const WRITER_SLOT_RETRIES = 1;

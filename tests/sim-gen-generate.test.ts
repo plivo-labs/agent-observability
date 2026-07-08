@@ -117,29 +117,23 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
 });
 
 describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)", () => {
-  const SMOKE_PLANNER_JSON = JSON.stringify({
-    agent_flow_description: "Refund agent.",
-    capabilities: [
-      {
-        capability_id: "handle_refund", name: "Handle refund", description: "d", priority: "core", risk: "high",
-        source_signals: ["s"], success_criteria: ["sc"],
-        route_anchors: [{ source_node_id: "n-greet", intent_name: "wants_refund", target_node_type: "branch_v2", support: "fully_executable" }],
-        action_anchors: [], variable_anchors: ["order_id"], recommended_conversation_patterns: [], boundary_patterns: [],
-        smoke_units: [
-          { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "refund happy path" },
-          { unit_id: "handle_refund__boundary__001", kind: "boundary", scenario_type: "boundary_pressure", description: "out of scope refusal" },
-        ],
-      },
-      {
-        capability_id: "handle_status", name: "Handle status", description: "d", priority: "core", risk: "medium",
-        source_signals: ["s"], success_criteria: ["sc"],
-        route_anchors: [{ source_node_id: "n-greet", intent_name: "check_status", target_node_type: "ai_agent_v2", support: "fully_executable" }],
-        action_anchors: [], variable_anchors: [], recommended_conversation_patterns: [], boundary_patterns: [],
-        smoke_units: [{ unit_id: "handle_status__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "status happy path" }],
-      },
+  // Derived from PLANNER_JSON (one fixture contract, not a copy) — the same two
+  // capabilities with smoke_units attached per capability.
+  const SMOKE_UNITS_BY_CAP: Record<string, unknown[]> = {
+    handle_refund: [
+      { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "refund happy path" },
+      { unit_id: "handle_refund__boundary__001", kind: "boundary", scenario_type: "boundary_pressure", description: "out of scope refusal" },
     ],
-    planner_rationale: "r",
-  });
+    handle_status: [
+      { unit_id: "handle_status__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "status happy path" },
+    ],
+  };
+  const smokePlanner = JSON.parse(PLANNER_JSON);
+  smokePlanner.capabilities = smokePlanner.capabilities.map((c: any) => ({
+    ...c,
+    smoke_units: SMOKE_UNITS_BY_CAP[c.capability_id] ?? [],
+  }));
+  const SMOKE_PLANNER_JSON = JSON.stringify(smokePlanner);
 
   test("smoke run: scenario count = unit count; smoke metadata + eval_metadata stamped", async () => {
     const events = await collect(

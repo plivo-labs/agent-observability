@@ -165,7 +165,14 @@ function dedup(ids: string[]): string[] {
   return out;
 }
 
-function patternsForScenarioType(cap: Capability, type: string, inv: Dict): string[] {
+function patternsForScenarioType(
+  // Structural subset — exactly the two fields this function reads, so the smoke
+  // allocator's per-unit view passes without casts and a future field-read here
+  // becomes a compile error at both call sites instead of a silent undefined.
+  cap: Pick<Capability, "recommended_conversation_patterns" | "boundary_patterns">,
+  type: string,
+  inv: Dict,
+): string[] {
   let recommended = [...(cap.recommended_conversation_patterns ?? [])];
   if (type === "boundary_pressure") recommended = recommended.concat(cap.boundary_patterns ?? []);
   const languages = inv.languages ?? [];
@@ -709,12 +716,12 @@ function compareSmokeUnitPriority(a: EnrichedSmokeUnit, b: EnrichedSmokeUnit): n
  *  route_anchors; otherwise the first anchor; otherwise a stub. */
 function smokeRouteFromUnit(unit: EnrichedSmokeUnit): Dict {
   const requestedRouteId = unit.route_id || "";
-  for (const anchor of unit.route_anchors ?? []) {
+  const anchors = unit.route_anchors; // non-optional — both producers always set it
+  for (const anchor of anchors) {
     if (!anchor || typeof anchor !== "object") continue;
     const anchorRouteId = anchor.route_id || routeId(anchor);
     if (anchorRouteId === requestedRouteId) return anchor;
   }
-  const anchors = unit.route_anchors ?? [];
   if (anchors.length && typeof anchors[0] === "object") return anchors[0];
   return { route_id: requestedRouteId, source_node_id: "", intent_name: "", target_node_type: "" };
 }
@@ -779,12 +786,9 @@ export function auditSmokeAllocation(slots: Slot[], smokeCap: number): SmokeAudi
   };
 }
 
-export interface SmokeAllocationResult {
-  requested_scenarios: number;
-  scenario_type_quotas: ScenarioTypeQuotas;
-  capability_quotas: Record<string, number>;
-  allocation_matrix: Array<Dict & { count: number }>;
-  slots: Slot[];
+/** Same shape as the stress AllocationResult (one source of truth for the shared
+ *  fields) with a smoke-specific audit + the smoke extras. */
+export interface SmokeAllocationResult extends Omit<AllocationResult, "audit"> {
   audit: SmokeAuditResult;
   smoke_units_hash: string;
   dropped_unit_ids: string[];
@@ -819,15 +823,11 @@ export function allocateSmokeSlots(args: {
   for (let idx = 1; idx <= units.length; idx++) {
     const unit = units[idx - 1];
     const scenarioType = unit.scenario_type || "clean_baseline";
-    // A partial capability view carrying exactly what patternsForScenarioType reads.
+    // Exactly the two fields patternsForScenarioType reads (its param is the Pick).
     const capForPatterns = {
-      capability_id: unit.capability_id,
-      name: unit.capability_name || unit.capability_id,
-      recommended_conversation_patterns: unit.recommended_patterns ?? [],
-      boundary_patterns: unit.boundary_patterns ?? [],
-      action_anchors: unit.action_anchors ?? [],
-      variable_anchors: unit.variable_anchors ?? [],
-    } as unknown as Capability;
+      recommended_conversation_patterns: unit.recommended_patterns,
+      boundary_patterns: unit.boundary_patterns,
+    };
     let patterns = patternsForScenarioType(capForPatterns, scenarioType, inventory);
     // Boundary-kind guardrail units default to the out-of-scope probe when available.
     if (scenarioType === "boundary_pressure" && unit.kind === "boundary" && patterns.includes("topic_out_of_scope")) {
