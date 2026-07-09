@@ -186,6 +186,7 @@ export function registerSimulationRoutes(app: Hono): void {
           // Every input is zod-guaranteed >= 1 (smoke_cap min(1); both env caps
           // .positive()). Unused for stress.
           smokeCap: body.smoke_cap ?? Math.min(simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
+          incrementalEmit: simEngineConfig.genIncremental,
           testCaseGenerationInstructions: body.test_case_generation_instructions,
           // Client disconnect propagates into the LLM fan-out: an abandoned request stops
           // burning tokens and releases its concurrency slot instead of running to completion.

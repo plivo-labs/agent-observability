@@ -23,6 +23,7 @@ import {
 } from "./inventory.js";
 import type { Slot, RuntimeScenario, EvalMetadata, PlannerWithInventory } from "./types.js";
 import { isRecord } from "../json.js";
+import { WriterStreamExtractor } from "./stream-extract.js";
 
 // AO Simulation Engine — WRITER (LLM 2) + validate_and_fix (Phase 1.5).
 // Faithful port of the orchestrator service `_write_scenario_chunk`, `_combo_context_for_slots`,
@@ -347,6 +348,15 @@ export interface WriteScenarioChunkArgs {
   provider?: LlmProvider;
   /** Caller abort (SSE client disconnect) — stops the LLM call + its retries. */
   signal?: AbortSignal;
+  /**
+   * Incremental delivery: called with each scenario the MOMENT its item completes
+   * in the LLM's token stream (after passing the exact same validateAndFixScenario
+   * gate as the final parse). Scenarios delivered here are EXCLUDED from the
+   * returned `scenarios` array and listed in `emittedSlotIds` instead — the caller
+   * owns emission; this function guarantees at-most-once per slot across the
+   * call's internal retry attempts.
+   */
+  onScenario?: (s: RuntimeScenario) => void;
 }
 
 export interface WriteScenarioChunkResult {
@@ -354,12 +364,44 @@ export interface WriteScenarioChunkResult {
   usage: LlmUsage;
   failedSlotIds: string[];
   validationErrors: Array<{ slot_id: string; reasons: string[] }>;
+  /** Slot ids already delivered via `onScenario` (count them as satisfied). */
+  emittedSlotIds: string[];
 }
 
 /** LLM 2: a batch of ≤WRITER_CHUNK_SIZE slots → validated scenarios. */
 export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<WriteScenarioChunkResult> {
   const { flowJson, planner, slots, model, generationId } = args;
   const startNodeParamKeys = extractStartNodePayloadKeys(flowJson);
+  const slotById = new Map(slots.map((s) => [s.slot_id, s]));
+
+  // Incremental path: parse scenario items out of the token stream as they complete
+  // and hand each through the IDENTICAL validation gate the final loop uses. The
+  // extractor is optimistic and self-disabling — the end-of-stream parse below stays
+  // authoritative. `emittedThisCall` persists across completeJSON's internal retry
+  // attempts (each retry is a fresh stream that would re-produce the same items).
+  const emittedThisCall = new Set<string>();
+  const makeOnText = args.onScenario
+    ? (): ((delta: string) => void) => {
+        const extractor = new WriterStreamExtractor((item) => {
+          const slotId = typeof item.slot_id === "string" ? item.slot_id : "";
+          const slot = slotById.get(slotId);
+          if (!slot || emittedThisCall.has(slotId)) return;
+          const fixed = validateAndFixScenario(
+            item.scenario as Dict,
+            slot,
+            generationId,
+            // The envelope's agent_flow_description when already streamed (the schema
+            // orders it first); else the planner's own text the writer is told to echo.
+            extractor.description ?? planner.agent_flow_description ?? "",
+            startNodeParamKeys,
+          );
+          if (!fixed) return; // failure accounting stays with the final parse/retry machinery
+          emittedThisCall.add(slotId);
+          args.onScenario!(fixed);
+        });
+        return (delta: string) => extractor.push(delta);
+      }
+    : undefined;
 
   const payload: Dict = {
     generation_id: generationId,
@@ -393,13 +435,15 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
     jsonSchema: { name: WRITER_SCHEMA_NAME, schema: WRITER_JSON_SCHEMA },
     provider: args.provider,
     signal: args.signal,
+    makeOnText,
   });
 
-  const slotById = new Map(slots.map((s) => [s.slot_id, s]));
   const scenarios: RuntimeScenario[] = [];
   const failedSlotIds: string[] = [];
   const validationErrors: Array<{ slot_id: string; reasons: string[] }> = [];
-  const seen = new Set<string>();
+  // Slots delivered incrementally count as satisfied: never re-emitted here, never
+  // marked failed, never retried by the caller.
+  const seen = new Set<string>(emittedThisCall);
 
   for (const item of res.data.scenario_items) {
     const slotId = item.slot_id;
@@ -422,5 +466,5 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
   }
   for (const s of slots) if (!seen.has(s.slot_id) && !failedSlotIds.includes(s.slot_id)) failedSlotIds.push(s.slot_id);
 
-  return { scenarios, usage: res.usage, failedSlotIds, validationErrors };
+  return { scenarios, usage: res.usage, failedSlotIds, validationErrors, emittedSlotIds: [...emittedThisCall] };
 }

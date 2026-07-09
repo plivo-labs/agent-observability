@@ -139,6 +139,67 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(events.filter((e) => e.type === "scenario").length).toBe(meta.metadata.saved_count);
   });
 
+  test("incremental: scenario events precede their chunk's writer_chunk_done; kill-switch parity", async () => {
+    // MockLLM streams deltas, so incremental emission is ACTIVE by default: every
+    // scenario surfaces from the token stream before its chunk's terminal event.
+    const on = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 12, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const chunkDoneAt = new Map<number, number>();
+    on.forEach((e, idx) => {
+      if (e.type === "writer_chunk_done") chunkDoneAt.set((e as any).chunk_index, idx);
+    });
+    on.forEach((e, idx) => {
+      if (e.type === "writer_scenario_done") expect(idx).toBeLessThan(chunkDoneAt.get((e as any).chunk_index)!);
+    });
+    // Kill-switch: identical ledger + identical scenario set, chunk-granular timing.
+    const off = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 12, model: "m", incrementalEmit: false,
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const ledger = (evs: GenEvent[]) => {
+      const m = (evs.find((e) => e.type === "metadata") as any).metadata;
+      return { saved: m.saved_count, failed: m.failed_count, deduped: m.deduped_count };
+    };
+    expect(ledger(on)).toEqual(ledger(off));
+    const slotIds = (evs: GenEvent[]) =>
+      evs.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.slot_id).sort();
+    expect(slotIds(on)).toEqual(slotIds(off));
+  });
+
+  test("a slot emitted mid-stream in a FAILED attempt is not re-emitted or re-requested by the retry", async () => {
+    // Attempt 1 streams one complete, valid item then dies as invalid JSON (truncated
+    // envelope) → completeJSON retries internally. The already-emitted slot must appear
+    // EXACTLY once on the wire even though the retry's stream re-produces it (the
+    // writer's emittedThisCall set persists across the call's internal attempts).
+    let firstUser: string | null = null;
+    const flakyWriter = (args: ProviderCompleteArgs): string => {
+      if (firstUser === null) {
+        firstUser = args.user;
+        const full = JSON.parse(writerResponder(args));
+        const one = { agent_flow_description: full.agent_flow_description, scenario_items: [full.scenario_items[0]] };
+        return JSON.stringify(one).slice(0, -1); // valid item streamed, envelope unparseable
+      }
+      return writerResponder({ ...args, user: firstUser }); // full valid envelope on retry
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([flakyWriter]),
+      }),
+    );
+    const emitted = events.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.slot_id);
+    expect(new Set(emitted).size).toBe(emitted.length); // no slot twice
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+    expect(meta.failed_count).toBe(0);
+  });
+
   test("throws after the planner fails twice", async () => {
     const run = collect(
       generateScenarios({

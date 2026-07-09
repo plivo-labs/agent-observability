@@ -74,6 +74,10 @@ export interface GenerateInput {
    *  pipeline is config-free by design, so the env-tunable hard cap can't live here;
    *  the Python reference clamps inside the generator instead). */
   smokeCap?: number;
+  /** Emit each scenario mid-stream as its item completes in the writer's token
+   *  stream (default true). False = chunk-granular emission (the pre-incremental
+   *  behavior); the route wires this from SIM_GEN_INCREMENTAL as the kill-switch. */
+  incrementalEmit?: boolean;
   /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
    *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */
   signal?: AbortSignal;
@@ -91,21 +95,27 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-/** One chunk through the writer with chunk-level + per-slot fallback retries. */
+/** One chunk through the writer with chunk-level + per-slot fallback retries.
+ *  `onScenario` (incremental emission) makes delivered slots count as satisfied:
+ *  they are excluded from every retry (no token waste, no second version) and
+ *  from the returned `scenarios` (the caller already emitted them). */
 async function runChunkWithRetry(
   base: { flowJson: Dict; planner: PlannerWithInventory; model: string; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider; signal?: AbortSignal },
   slots: Slot[],
+  onScenario?: (s: RuntimeScenario) => void,
 ): Promise<{ scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] }> {
   const scenarios: RuntimeScenario[] = [];
   const usages: LlmUsage[] = [];
+  const consumed = new Set<string>(); // slots delivered incrementally in an earlier attempt
   let remaining = slots;
 
   for (let attempt = 1; attempt <= WRITER_CHUNK_RETRIES + 1 && remaining.length > 0; attempt++) {
-    const res = await writeScenarioChunk({ ...base, slots: remaining, attempt });
+    const res = await writeScenarioChunk({ ...base, slots: remaining, attempt, onScenario });
     scenarios.push(...res.scenarios);
     usages.push(res.usage);
+    for (const id of res.emittedSlotIds) consumed.add(id);
     const got = new Set(res.scenarios.map((s) => s.eval_metadata?.slot_id));
-    remaining = remaining.filter((s) => !got.has(s.slot_id));
+    remaining = remaining.filter((s) => !got.has(s.slot_id) && !consumed.has(s.slot_id));
   }
 
   // Per-slot fallback: retry each still-missing slot on its own.
@@ -113,9 +123,9 @@ async function runChunkWithRetry(
   for (const slot of remaining) {
     let done = false;
     for (let attempt = 1; attempt <= WRITER_SLOT_RETRIES + 1 && !done; attempt++) {
-      const res = await writeScenarioChunk({ ...base, slots: [slot], attempt });
+      const res = await writeScenarioChunk({ ...base, slots: [slot], attempt, onScenario });
       usages.push(res.usage);
-      if (res.scenarios.length > 0) {
+      if (res.scenarios.length > 0 || res.emittedSlotIds.length > 0) {
         scenarios.push(...res.scenarios);
         done = true;
       }
@@ -230,14 +240,21 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // exactly one terminal event, so nothing rejects unhandled.
   type ChunkResult = { scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] };
   type WriterQueueEvent =
+    | { kind: "scenario"; chunkIndex: number; scenario: RuntimeScenario }
     | { kind: "chunk_done"; chunkIndex: number; result: ChunkResult }
     | { kind: "abort"; err: unknown };
   const queue = new AsyncQueue<WriterQueueEvent>();
+  // Incremental emission (kill-switch: SIM_GEN_INCREMENTAL / GenerateInput.incrementalEmit):
+  // each scenario surfaces the moment its item completes in the LLM token stream. With the
+  // switch off (or a provider without text deltas) nothing streams mid-chunk and behavior
+  // is chunk-granular, exactly as before.
+  const incremental = input.incrementalEmit ?? true;
   for (let i = 0; i < chunks.length; i++) {
     const c = chunks[i];
     runChunkWithRetry(
       { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
       c,
+      incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: i, scenario }) : undefined,
     ).then(
       (result) => queue.push({ kind: "chunk_done", chunkIndex: i, result }),
       (err) => {
@@ -251,39 +268,54 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     );
   }
 
-  // Emit per-chunk + per-scenario events as chunks settle; dedup by smoke_unit_id
-  // (smoke) / coverage_key (stress).
+  // Emit scenarios as they arrive (mid-stream when incremental, at chunk settle
+  // otherwise); dedup by smoke_unit_id (smoke) / coverage_key (stress). `admit` is
+  // the single ledger owner — every delivered scenario passes through it exactly
+  // once, keeping the invariant planned = saved + failed + deduped.
   const writerUsages: LlmUsage[] = [];
   const failedSlotIds: string[] = [];
   const seenCoverage = new Set<string>();
+  const perChunkSaved = new Map<number, number>();
   let saved = 0;
   let deduped = 0;
+  const admit = (scenario: RuntimeScenario, chunkIndex: number): boolean => {
+    // Smoke units under one capability legitimately share all 8 coverage axes (same
+    // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
+    // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
+    const key = scenario.eval_metadata?.smoke_unit_id || scenario.eval_metadata?.coverage_key || "";
+    if (key && seenCoverage.has(key)) {
+      deduped += 1; // counted so the shortfall is visible in metadata, not silent
+      return false;
+    }
+    if (key) seenCoverage.add(key);
+    saved += 1;
+    perChunkSaved.set(chunkIndex, (perChunkSaved.get(chunkIndex) ?? 0) + 1);
+    ttfsMs ??= Date.now() - genStart;
+    return true;
+  };
   let remainingChunks = chunks.length;
   while (remainingChunks > 0) {
     const ev = await queue.pop();
     if (ev.kind === "abort") throw ev.err;
+    if (ev.kind === "scenario") {
+      // Incremental: this slot is excluded from the chunk's final result by the
+      // writer, so it flows through `admit` exactly once.
+      if (admit(ev.scenario, ev.chunkIndex)) {
+        yield { type: "scenario", scenario: ev.scenario };
+        yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
+      }
+      continue;
+    }
     remainingChunks -= 1;
     const r = ev.result;
     writerUsages.push(...r.usages);
     failedSlotIds.push(...r.failedSlotIds);
-    let chunkSaved = 0;
     for (const scenario of r.scenarios) {
-      // Smoke units under one capability legitimately share all 8 coverage axes (same
-      // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
-      // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
-      const key = scenario.eval_metadata?.smoke_unit_id || scenario.eval_metadata?.coverage_key || "";
-      if (key && seenCoverage.has(key)) {
-        deduped += 1; // counted so the shortfall is visible in metadata, not silent
-        continue;
-      }
-      if (key) seenCoverage.add(key);
-      saved += 1;
-      chunkSaved += 1;
-      ttfsMs ??= Date.now() - genStart;
+      if (!admit(scenario, ev.chunkIndex)) continue;
       yield { type: "scenario", scenario };
-      yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: chunkSaved - 1, saved_count: saved, slot_id: scenario.eval_metadata?.slot_id ?? "" };
+      yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: scenario.eval_metadata?.slot_id ?? "" };
     }
-    yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: chunkSaved, failed_slot_ids: r.failedSlotIds };
+    yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: r.failedSlotIds };
   }
 
   // All-failed: every planned slot failed and nothing was saved. Throw (the route's

@@ -112,6 +112,9 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         jsonSchema: opts.jsonSchema,
         stream: opts.stream,
         apiMode: opts.apiMode,
+        // Fresh sink per attempt: each retry is a new stream, so incremental
+        // consumers get a reset (see CompleteJSONOptions.makeOnText).
+        onText: opts.makeOnText?.(attempt),
         // Per-attempt timeout, raced with the caller's abort when one is supplied.
         signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });

@@ -191,6 +191,14 @@ export const envSchema = z.object({
   // (lowest-priority overflow units are dropped). `max_scenarios` stays a hint for
   // smoke — the unit count governs, exactly like aiassist. DEFAULT applies when the
   // request carries no `smoke_cap`; HARD is the absolute per-request ceiling.
+  // Kill-switch for mid-stream scenario emission: when true (default) each scenario
+  // streams the moment its item completes in the writer's LLM token stream; "false"
+  // restores chunk-granular emission (the pre-incremental behavior). Same output
+  // either way — only WHEN scenarios surface changes.
+  SIM_GEN_INCREMENTAL: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
   SMOKE_CAP_DEFAULT: z.coerce.number().int().positive().max(100).default(SMOKE_CAP_FALLBACK),
   SMOKE_CAP_HARD: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
