@@ -218,7 +218,7 @@ export function registerSimulationRoutes(app: Hono): void {
           // aborts the in-flight LLM work; this just exits the relay loop promptly.
           // iterator.return() lets any future try/finally inside the generator run.
           if (stream.aborted || c.req.raw.signal.aborted) {
-            void iterator.return?.(undefined as never);
+            void iterator.return?.();
             break;
           }
           const nextEvent = iterator.next();
