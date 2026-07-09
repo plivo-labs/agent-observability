@@ -15,7 +15,7 @@
 import type { Hono, Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { simEngineConfig, scenarioPersistDefault } from "./config.js";
-import { dbConfigured } from "../config.js";
+import { config, dbConfigured } from "../config.js";
 import { tryAcquireGenerationSlot, releaseGenerationSlot } from "./gen/inflight.js";
 import {
   GenerateScenariosRequest,
@@ -42,6 +42,20 @@ import { newApiId, buildErrorResponse } from "../response.js";
 // spoof this header, so if AO is ever fronted by anything other than the API gateway, add real auth here
 // (validate the account) before using it. Null (no header) = unscoped, single-tenant/no-auth mode.
 const tenantIdOf = (c: Context): string | null => c.req.header("auth-id") || null;
+
+// Defense-in-depth for the mutating routes: with SIM_REQUIRE_TENANT_HEADER=true (multi-tenant
+// deploys behind the gateway), a missing `auth-id` is rejected instead of running UNSCOPED —
+// an unscoped batch-delete would hard-delete rows across every tenant if the gateway ever
+// dropped the header. Default false preserves single-tenant/OSS behavior (no header, no scoping).
+const requireTenant = (c: Context): string | null | undefined => {
+  const tenant = tenantIdOf(c);
+  if (tenant === null && config.SIM_REQUIRE_TENANT_HEADER) return undefined; // signal: reject
+  return tenant;
+};
+
+// Postgres casts scenario ids with `::uuid`; validate here so a malformed id is a clean
+// 400/404 instead of a 22P02 → unhandled 500 that aborts the whole batch.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function pageParams(c: Context, defaultPageSize: number): { page: number; pageSize: number; limit: number; offset: number } {
   const page = Math.max(1, Number(c.req.query("page")) || 1);
@@ -119,6 +133,13 @@ export function registerSimulationRoutes(app: Hono): void {
       console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
       return c.json(buildErrorResponse("invalid_request", detail), 400);
     }
+    // Same contract for the smoke-unit cap: an explicit over-hard request is rejected,
+    // not silently clamped (zod's static max is 100; the runtime ceiling is env-tunable).
+    if (body.smoke_cap != null && body.smoke_cap > simEngineConfig.smokeCapHard) {
+      const detail = `smoke_cap ${body.smoke_cap} exceeds the hard cap of ${simEngineConfig.smokeCapHard}`;
+      console.warn(`[sim-gen] 400 invalid_request: ${detail}`);
+      return c.json(buildErrorResponse("invalid_request", detail), 400);
+    }
     let canonical: Record<string, unknown>;
     try {
       canonical = parseFlowJson(body.flow_json) as unknown as Record<string, unknown>;
@@ -135,8 +156,11 @@ export function registerSimulationRoutes(app: Hono): void {
     // (the system of record). The full scenario rides on the SSE event either way.
     // Precedence: the per-request `?persist=` query param overrides the env default
     // (SIM_PERSIST). ANDed with dbConfigured — persistence is impossible without a database.
+    // "0" is falsy here to mirror the SIM_PERSIST env transform (schema.ts) — the two parsers
+    // must agree on what "off" spells.
     const persistQuery = c.req.query("persist");
-    const persist = (persistQuery != null ? persistQuery !== "false" : scenarioPersistDefault) && dbConfigured;
+    const persist =
+      (persistQuery != null ? persistQuery !== "false" && persistQuery !== "0" : scenarioPersistDefault) && dbConfigured;
     // Concurrency cap: each generation is an expensive multi-call LLM fan-out.
     // Acquire AFTER the cheap validations (so a 400 never leaks a slot) and
     // release when the stream ends (in the finally below), not when the handler
@@ -156,11 +180,18 @@ export function registerSimulationRoutes(app: Hono): void {
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
           simulationMode: body.simulation_mode,
-          // Effective smoke-unit cap: request override else SMOKE_CAP_DEFAULT, clamped
-          // to SMOKE_CAP_HARD (aiassist cap semantics). Every input is zod-guaranteed
-          // >= 1 (smoke_cap min(1); both env caps .positive()). Unused for stress.
-          smokeCap: Math.min(body.smoke_cap ?? simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
+          // Effective smoke-unit cap: an explicit request passes through verbatim (the
+          // 400 guard above already enforces <= SMOKE_CAP_HARD); the env DEFAULT stays
+          // min-clamped against the hard cap (env-misconfig guard — no caller to inform).
+          // Every input is zod-guaranteed >= 1 (smoke_cap min(1); both env caps
+          // .positive()). Unused for stress.
+          smokeCap: body.smoke_cap ?? Math.min(simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
+          incrementalEmit: simEngineConfig.genIncremental,
+          plannerCacheTtlMs: simEngineConfig.plannerCacheTtlMs,
           testCaseGenerationInstructions: body.test_case_generation_instructions,
+          // Client disconnect propagates into the LLM fan-out: an abandoned request stops
+          // burning tokens and releases its concurrency slot instead of running to completion.
+          signal: c.req.raw.signal,
         })[Symbol.asyncIterator]();
         // Heartbeat: emit a real `progress` event every ~10s while the generator is silent (the
         // planner + parallel writer LLM calls run for tens of seconds with no events). This keeps
@@ -183,6 +214,13 @@ export function registerSimulationRoutes(app: Hono): void {
           data: envelope("generation_id", genId, { stage: "heartbeat", generation_id: genId, seq: ++hbSeq }),
         });
         for (;;) {
+          // Stop consuming when the client is gone — the generator's own signal check
+          // aborts the in-flight LLM work; this just exits the relay loop promptly.
+          // iterator.return() lets any future try/finally inside the generator run.
+          if (stream.aborted || c.req.raw.signal.aborted) {
+            void iterator.return?.();
+            break;
+          }
           const nextEvent = iterator.next();
           let result: Awaited<typeof nextEvent> | undefined;
           for (;;) {
@@ -211,15 +249,24 @@ export function registerSimulationRoutes(app: Hono): void {
             // writing its own DB row — it echoes this event as its scenario_saved.
             let persistedId: string | null = null;
             if (persist) {
-              const row = await createScenario({
-                tenantId,
-                agentId: body.phlo_uuid,
-                name: s.name,
-                scenario: s,
-                tags: s.tags,
-                coverageKey: s.eval_metadata?.coverage_key ?? null,
-              });
-              persistedId = row.id;
+              // Same posture as the run path's persistSafe: a DB failure downgrades THIS
+              // scenario to unpersisted (no scenario_uuid on the event) instead of killing
+              // the stream and losing every in-flight scenario after it.
+              try {
+                const row = await createScenario({
+                  tenantId,
+                  agentId: body.phlo_uuid,
+                  name: s.name,
+                  scenario: s,
+                  tags: s.tags,
+                  coverageKey: s.eval_metadata?.coverage_key ?? null,
+                });
+                persistedId = row.id;
+              } catch (err) {
+                console.error(
+                  `[sim-gen] createScenario failed (generation ${genId}, scenario "${s.name}"): ${(err as Error).message}`,
+                );
+              }
             }
             await stream.writeSSE({
               event: SSE.SCENARIO_SAVED,
@@ -257,7 +304,11 @@ export function registerSimulationRoutes(app: Hono): void {
   //    uuid owned by another account is a no-op → 404 (so existence isn't leaked).
   app.delete("/api/simulation/scenarios/:scenario_uuid", async (c) => {
     if (!dbConfigured) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
-    const deleted = await deleteScenarios([c.req.param("scenario_uuid")], tenantIdOf(c));
+    const tenant = requireTenant(c);
+    if (tenant === undefined) return c.json(buildErrorResponse("invalid_request", "auth-id header is required"), 400);
+    const uuid = c.req.param("scenario_uuid");
+    if (!UUID_RE.test(uuid)) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
+    const deleted = await deleteScenarios([uuid], tenant);
     if (deleted === 0) return c.json(buildErrorResponse("not_found", "scenario not found"), 404);
     return c.json({ api_id: newApiId(), deleted });
   });
@@ -265,9 +316,11 @@ export function registerSimulationRoutes(app: Hono): void {
   // 4. batch delete — account-scoped: uuids owned by other accounts are silent no-ops.
   app.post("/api/simulation/scenarios/batch-delete", async (c) => {
     const parsed = await readJson(c, (v) => DeleteScenariosRequest.parse(v));
-    if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body must be { uuids: string[] (1-200) }"), 400);
+    if (!parsed.ok) return c.json(buildErrorResponse("invalid_request", "Body must be { uuids: uuid[] (1-200) }"), 400);
+    const tenant = requireTenant(c);
+    if (tenant === undefined) return c.json(buildErrorResponse("invalid_request", "auth-id header is required"), 400);
     if (!dbConfigured) return c.json({ api_id: newApiId(), deleted_count: 0 });
-    const deleted = await deleteScenarios(parsed.value.uuids, tenantIdOf(c));
+    const deleted = await deleteScenarios(parsed.value.uuids, tenant);
     return c.json({ api_id: newApiId(), deleted_count: deleted });
   });
 
@@ -275,8 +328,10 @@ export function registerSimulationRoutes(app: Hono): void {
   app.delete("/api/simulation/scenarios", async (c) => {
     const agentId = c.req.query("phlo_uuid");
     if (!agentId) return c.json(buildErrorResponse("invalid_request", "phlo_uuid query param is required"), 400);
+    const tenant = requireTenant(c);
+    if (tenant === undefined) return c.json(buildErrorResponse("invalid_request", "auth-id header is required"), 400);
     if (!dbConfigured) return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: 0 });
-    const deleted = await deleteScenariosByAgent(agentId, tenantIdOf(c));
+    const deleted = await deleteScenariosByAgent(agentId, tenant);
     return c.json({ api_id: newApiId(), phlo_uuid: agentId, deleted_count: deleted });
   });
 }

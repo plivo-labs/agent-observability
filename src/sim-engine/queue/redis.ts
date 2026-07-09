@@ -105,6 +105,11 @@ local completedKey = KEYS[3]
 
 local newCount = redis.call('INCR', processedKey)
 redis.call('EXPIRE', processedKey, 3600)
+-- Refresh the expected-count key too: it's seeded once by the orchestrator service with a
+-- 3600s TTL and AO only ever GETs it, so a run whose scenarios span >1h would otherwise
+-- lose the gate (GET returns nil → simulation_completed never fires, the run hangs
+-- 'running' forever). Sliding both counters keeps the gate alive as long as work arrives.
+redis.call('EXPIRE', expectedKey, 3600)
 local expected = redis.call('GET', expectedKey)
 if expected and tonumber(newCount) >= tonumber(expected) then
     local wasSet = redis.call('SETNX', completedKey, '1')

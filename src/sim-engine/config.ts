@@ -97,6 +97,10 @@ export const simEngineConfig = {
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,
   /** Hard per-request scenario ceiling (a generate request over this is rejected 400). */
   maxScenariosPerRequest: config.MAX_SCENARIOS_PER_REQUEST,
+  /** Mid-stream scenario emission kill-switch (SIM_GEN_INCREMENTAL; default true). */
+  genIncremental: config.SIM_GEN_INCREMENTAL,
+  /** Planner-cache TTL ms (SIM_GEN_PLANNER_CACHE_TTL_MS; 0 disables). */
+  plannerCacheTtlMs: config.SIM_GEN_PLANNER_CACHE_TTL_MS,
   /** Smoke-mode unit cap when the request carries no `smoke_cap` (aiassist cap_default=20). */
   smokeCapDefault: config.SMOKE_CAP_DEFAULT,
   /** Absolute smoke-unit ceiling per request (aiassist cap_hard=50). */

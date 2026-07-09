@@ -50,6 +50,14 @@ export interface ProviderCompleteArgs {
    * global mode (Responses, required by its reasoning model).
    */
   apiMode?: "chat" | "responses";
+  /**
+   * Optional live text sink: called with each output-text delta as it arrives on
+   * a streaming call. Purely observational — the provider still returns the full
+   * accumulated text, and paths without text deltas (non-streaming; the Anthropic
+   * tool-forced path, whose JSON arrives as tool input) simply never call it.
+   * Sinks must not throw.
+   */
+  onText?: (delta: string) => void;
   /** Aborts the call when the completeJSON timeout fires. */
   signal: AbortSignal;
 }
@@ -97,6 +105,17 @@ export interface CompleteJSONOptions<T> {
   maxRetries?: number;
   /** Inject a provider (tests pass MockLLM; prod resolves from env). */
   provider?: LlmProvider;
+  /**
+   * Factory for a per-attempt live text sink. completeJSON retries internally
+   * (re-prompting on parse/schema failures), and each attempt is a fresh stream —
+   * so the factory is invoked at the START of every attempt and the returned sink
+   * receives only THAT attempt's deltas. Consumers that parse the stream
+   * incrementally (the writer's scenario extractor) reset their state here.
+   */
+  makeOnText?: (attempt: number) => (delta: string) => void;
+  /** Caller-supplied abort (e.g. the SSE client disconnected). Combined with the per-attempt
+   *  timeout; an abort stops retries immediately so abandoned requests stop burning LLM spend. */
+  signal?: AbortSignal;
 }
 
 export interface LlmResult<T> {

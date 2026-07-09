@@ -541,6 +541,9 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Turns executed before the failure — each turn pushes exactly one transcript payload,
+    // so the durable row's turn_count agrees with its own transcript instead of reading 0.
+    const executedTurns = runnerRef?.getTranscript().length ?? 0;
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,
       flow_run_uuid: flowRunUuid,
@@ -555,7 +558,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         scenarioIndex: job.scenarioIndex,
         status: "error",
         stopReason: "error",
-        turnCount: 0,
+        turnCount: executedTurns,
         error: message,
         transcript: runnerRef?.getTranscript() ?? [],
       }),
@@ -565,8 +568,13 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
       nodes_visited: [],
       last_node_id: "",
       last_node_type: "",
-      turn_count: 0,
+      turn_count: executedTurns,
       error_detail: message,
     };
+  } finally {
+    // Release this scenario's sticky-cookie jar in the shared /turn client — session ids are
+    // fresh UUIDs per scenario, so without this the worker's Map grows one entry per scenario
+    // for the life of the process.
+    deps.livekit?.forgetSession?.(flowRunUuid);
   }
 }

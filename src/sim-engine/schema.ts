@@ -47,17 +47,20 @@ export const GenerateScenariosRequest = z.object({
   test_case_generation_instructions: z.string().default(""),
   simulation_mode: SimulationMode.default("stress"),
   // Smoke-mode unit cap override. Optional: when absent the route applies
-  // SMOKE_CAP_DEFAULT (20), always clamped to SMOKE_CAP_HARD (50). Ignored for
-  // stress. aiassist's relay doesn't send it today — this is the forward hook so
+  // SMOKE_CAP_DEFAULT (20), min-clamped to SMOKE_CAP_HARD (50); an explicit value
+  // over the hard cap is rejected with 400 (same contract as max_scenarios). Ignored
+  // for stress. aiassist's relay doesn't send it today — this is the forward hook so
   // it can, without another AO release. For smoke, `max_scenarios` is a hint at
   // most (aiassist parity): the unit count governs the scenario count.
   smoke_cap: z.number().int().min(1).max(100).optional(),
 });
 export type GenerateScenariosRequest = z.infer<typeof GenerateScenariosRequest>;
 
-/** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`. */
+/** POST .../scenarios/batch-delete — mirror of the orchestrator service's `DeleteScenariosRequest`.
+ *  `.uuid()` because the delete SQL casts each id with `::uuid` — one malformed entry would
+ *  otherwise throw Postgres 22P02 and 500 the whole batch. */
 export const DeleteScenariosRequest = z.object({
-  uuids: z.array(z.string()).min(1).max(200),
+  uuids: z.array(z.string().uuid()).min(1).max(200),
 });
 export type DeleteScenariosRequest = z.infer<typeof DeleteScenariosRequest>;
 

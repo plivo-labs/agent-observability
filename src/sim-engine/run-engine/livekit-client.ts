@@ -169,6 +169,12 @@ export class LiveKitSimClient {
     );
   }
 
+  /** Forget a session's cookie jar. Called when a scenario finishes (session ids are fresh
+   *  UUIDs per scenario, so without this the shared worker client's Map grows unbounded). */
+  forgetSession(sessionId: string): void {
+    if (sessionId) this.sessionCookies.delete(sessionId);
+  }
+
   private async post(path: string, req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
     const url = `${this.url}${path}`;
     const controller = new AbortController();
@@ -178,7 +184,11 @@ export class LiveKitSimClient {
     const sessionId = req.simulation_session_id ?? "";
     const cookieHeader = sessionId ? this.sessionCookies.get(sessionId) : undefined;
 
+    // The timeout must cover the BODY read too, not just response headers: a server that sends
+    // headers then stalls mid-body would otherwise hang this turn forever (the abort timer used
+    // to be cleared right after fetch resolved) and permanently wedge one worker slot.
     let resp: Response;
+    let body: string;
     try {
       resp = await this.fetchImpl(url, {
         method: "POST",
@@ -191,6 +201,7 @@ export class LiveKitSimClient {
         body: JSON.stringify(req),
         signal: controller.signal,
       });
+      body = await resp.text();
     } catch (err) {
       if (controller.signal.aborted) {
         throw new LiveKitSimError(`livekit sim ${path} timed out after ${this.timeoutMs}ms`);
@@ -203,7 +214,6 @@ export class LiveKitSimClient {
     // Persist any Set-Cookie for this session so subsequent turns reuse it (sticky routing parity).
     if (sessionId) this.storeCookies(sessionId, resp);
 
-    const body = await resp.text();
     if (resp.status !== 200) {
       const preview = body.length > MAX_ERROR_PREVIEW ? body.slice(0, MAX_ERROR_PREVIEW) : body;
       throw new LiveKitSimError(`livekit sim ${path} returned status ${resp.status}: ${preview}`, resp.status);

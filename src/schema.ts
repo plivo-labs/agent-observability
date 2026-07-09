@@ -37,23 +37,6 @@ export const envSchema = z.object({
   // the dedicated worker entrypoint (bun src/worker.ts) so exactly one
   // sweeper is active.
   ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
-  // Eval sweeper: judges ingested sessions that carry an agent config.
-  // "inline" runs it in the API process (zero-config single container);
-  // set "off" on the API when the dedicated worker runs it, so exactly one
-  // sweeper is active.
-  // One flag, read by BOTH processes, so the "who runs the eval sweep" state is
-  // unrepresentable-if-invalid: "inline" → the API runs it; "worker" → the
-  // dedicated worker runs it; "off" → neither. Exactly one (or zero) sweepers,
-  // no cross-process coordination needed.
-  EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
-
-  // Event-kick: judge a session the instant its ingest completes instead of
-  // waiting for the next EVAL_SWEEP poll tick + settle window. Only fires in
-  // the process that runs the sweeper inline (EVAL_SWEEPER=inline); the 20s
-  // poller remains the safety net and covers anything the kick skips. "off"
-  // reverts to poll-only without redeploying (a latency-optimization kill
-  // switch; it never changes WHAT gets judged, only HOW SOON).
-  EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
 
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
@@ -147,6 +130,23 @@ export const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false" && v !== "0"),
 
+  // Multi-tenant hardening for the scenario-library MUTATING routes (delete single/batch/
+  // by-agent). Tenant scope comes from the gateway-injected `auth-id` header; when this flag
+  // is true a request WITHOUT that header is rejected (400) instead of running unscoped —
+  // unscoped means the delete matches rows across every tenant. Default false preserves
+  // single-tenant/OSS behavior (no gateway, no header, no scoping). Set "true" on
+  // multi-tenant deploys where AO's tables live in a shared database.
+  SIM_REQUIRE_TENANT_HEADER: z
+    .string()
+    .default("false")
+    .transform((v) => v !== "false" && v !== "0"),
+
+  // SSRF-guard escape hatch for alert webhooks (src/net/public-url.ts). Comma-separated
+  // entries, each an exact hostname, an IP literal, or an IPv4 CIDR — receivers matching an
+  // entry skip the public-address requirement (delivery to internal hosts, the pre-guard
+  // behavior, but by explicit operator opt-in only). Empty (default) = strict guard for all.
+  WEBHOOK_URL_ALLOWLIST: z.string().optional(),
+
   // ── Run engine (the ported reference-worker simulation loop) ───────────────────
   // Runs are dispatched via the SQS consumer (src/worker.ts), which drains run
   // messages produced by the orchestrator service; AO stays stateless (Redis-only, no Postgres run
@@ -191,6 +191,20 @@ export const envSchema = z.object({
   // (lowest-priority overflow units are dropped). `max_scenarios` stays a hint for
   // smoke — the unit count governs, exactly like aiassist. DEFAULT applies when the
   // request carries no `smoke_cap`; HARD is the absolute per-request ceiling.
+  // Kill-switch for mid-stream scenario emission: when true (default) each scenario
+  // streams the moment its item completes in the writer's LLM token stream; "false"
+  // restores chunk-granular emission (the pre-incremental behavior). Same scenarios
+  // either way — only WHEN they surface changes. (Text deltas exist only on the
+  // OpenAI Responses streaming path; other providers fall back automatically.)
+  SIM_GEN_INCREMENTAL: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
+  // Planner-output cache TTL (ms). The planner is deterministic in its inputs and is
+  // the slowest generation phase; the vibe rerun loop re-requests the SAME flow, so a
+  // hit skips ~50s of planning per rerun (and keeps the same smoke units across the
+  // loop). A hit only ever reuses a byte-identical request's plan. 0 disables.
+  SIM_GEN_PLANNER_CACHE_TTL_MS: z.coerce.number().int().min(0).default(900_000),
   SMOKE_CAP_DEFAULT: z.coerce.number().int().positive().max(100).default(SMOKE_CAP_FALLBACK),
   SMOKE_CAP_HARD: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
