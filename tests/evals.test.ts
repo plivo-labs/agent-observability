@@ -45,6 +45,7 @@ mock.module("../src/db.js", () => ({
   upsertSessionOutcome: mock(() => Promise.resolve()),
   applySessionTagMetadata: mock(() => Promise.resolve()),
   mergeSessionRawReport: mock(() => Promise.resolve()),
+  upsertSessionAgentConfig: mock(() => Promise.resolve()),
 }));
 
 mock.module("../src/evals/db.js", () => ({

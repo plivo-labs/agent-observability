@@ -37,6 +37,7 @@ mock.module("../src/db.js", () => ({
   upsertSessionOutcome: mock(() => Promise.resolve()),
   applySessionTagMetadata: mock(() => Promise.resolve()),
   mergeSessionRawReport: mock(() => Promise.resolve()),
+  upsertSessionAgentConfig: mock(() => Promise.resolve()),
 }));
 
 const { evaluateRules } = await import("../src/alerts/engine.js");
