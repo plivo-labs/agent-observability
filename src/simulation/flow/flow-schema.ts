@@ -11,6 +11,13 @@ import { z } from "zod";
 // them — important because node config is an open map the orchestrator reads by
 // field access; we must not silently drop fields we don't model.
 
+/** JSON `null` ⇒ "not provided" for an OPTIONAL envelope field. Python callers
+ *  (the vibe agent serializes its draft with None for empty optionals) send null
+ *  where TS senders omit the key; AO never distinguishes the two downstream, so
+ *  the boundary must not either (zod's .optional() alone rejects explicit null). */
+const nullAsAbsent = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === null ? undefined : v), schema.optional());
+
 /** An intent declared on an agent (or branch) node. Open map — only `id` matters
  *  structurally (edges key on it), the rest is read leniently downstream. */
 const Intent = z
@@ -100,14 +107,15 @@ export const CanonicalFlow = z
           .passthrough(),
       ]))
       .default(""),
-    agentSettings: z
-      .object({
-        voice_ai_config: z.unknown().optional(),
-        knowledge_base_ids: z.array(z.string()).optional(),
-      })
-      .passthrough()
-      .optional(),
-    global_meta: z.object({ stt_guidance: z.string().optional() }).passthrough().optional(),
+    agentSettings: nullAsAbsent(
+      z
+        .object({
+          voice_ai_config: z.unknown().optional(),
+          knowledge_base_ids: z.array(z.string()).optional(),
+        })
+        .passthrough(),
+    ),
+    global_meta: nullAsAbsent(z.object({ stt_guidance: nullAsAbsent(z.string()) }).passthrough()),
     nodes: z.array(Node).min(1),
     edges: z.array(Edge).default([]),
   })
