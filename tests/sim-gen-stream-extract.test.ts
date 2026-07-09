@@ -89,6 +89,19 @@ describe("WriterStreamExtractor", () => {
     expect(items).toEqual([ITEM_A, ITEM_B]);
   });
 
+  test('"agent_flow_description": null does not mis-capture the next key as the description', () => {
+    // The regression the review found: a non-string description value left the
+    // awaiting flag dangling, so the NEXT root key ("scenario_items") was captured
+    // as the description and the extractor silently emitted nothing.
+    const nullDesc = `{"agent_flow_description": null, "scenario_items": [${JSON.stringify(ITEM_A)}]}`;
+    for (const size of [1, 5, nullDesc.length]) {
+      const { items, ex } = run(nullDesc, size);
+      expect(items).toEqual([ITEM_A]); // items still emit
+      expect(ex.description).toBeNull(); // and nothing bogus was captured
+      expect(ex.isDisabled).toBe(false);
+    }
+  });
+
   test("other root keys with object/array values are traversed without confusion", () => {
     const withExtras = `{"meta":{"a":[1,{"b":"c"}]},"agent_flow_description":"d","scenario_items":[${JSON.stringify(ITEM_A)}],"tail":"end"}`;
     const { items, ex } = run(withExtras, 5);

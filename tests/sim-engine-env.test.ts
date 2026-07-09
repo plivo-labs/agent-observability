@@ -34,3 +34,19 @@ describe("envSchema — run-engine vars", () => {
     expect(envSchema.safeParse({ ...base, SIM_WORKER_CONCURRENCY: "-2" }).success).toBe(false);
   });
 });
+
+describe("envSchema — gen-latency vars", () => {
+  test("SIM_GEN_INCREMENTAL: default true; only \"false\"/\"0\" disable", () => {
+    expect(envSchema.parse(base).SIM_GEN_INCREMENTAL).toBe(true);
+    expect(envSchema.parse({ ...base, SIM_GEN_INCREMENTAL: "false" }).SIM_GEN_INCREMENTAL).toBe(false);
+    expect(envSchema.parse({ ...base, SIM_GEN_INCREMENTAL: "0" }).SIM_GEN_INCREMENTAL).toBe(false);
+    expect(envSchema.parse({ ...base, SIM_GEN_INCREMENTAL: "true" }).SIM_GEN_INCREMENTAL).toBe(true);
+  });
+
+  test("SIM_GEN_PLANNER_CACHE_TTL_MS: default 15min; 0 allowed (disables); negative rejected", () => {
+    expect(envSchema.parse(base).SIM_GEN_PLANNER_CACHE_TTL_MS).toBe(900_000);
+    expect(envSchema.parse({ ...base, SIM_GEN_PLANNER_CACHE_TTL_MS: "0" }).SIM_GEN_PLANNER_CACHE_TTL_MS).toBe(0);
+    expect(envSchema.parse({ ...base, SIM_GEN_PLANNER_CACHE_TTL_MS: "60000" }).SIM_GEN_PLANNER_CACHE_TTL_MS).toBe(60_000);
+    expect(envSchema.safeParse({ ...base, SIM_GEN_PLANNER_CACHE_TTL_MS: "-1" }).success).toBe(false);
+  });
+});

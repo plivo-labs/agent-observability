@@ -216,7 +216,11 @@ export function registerSimulationRoutes(app: Hono): void {
         for (;;) {
           // Stop consuming when the client is gone — the generator's own signal check
           // aborts the in-flight LLM work; this just exits the relay loop promptly.
-          if (stream.aborted || c.req.raw.signal.aborted) break;
+          // iterator.return() lets any future try/finally inside the generator run.
+          if (stream.aborted || c.req.raw.signal.aborted) {
+            void iterator.return?.(undefined as never);
+            break;
+          }
           const nextEvent = iterator.next();
           let result: Awaited<typeof nextEvent> | undefined;
           for (;;) {

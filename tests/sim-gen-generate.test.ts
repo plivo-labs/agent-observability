@@ -200,6 +200,39 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(meta.failed_count).toBe(0);
   });
 
+  test("BLOCK regression: slots emitted mid-stream before EVERY attempt throws are saved, never failed", async () => {
+    // Each writer call streams ONE valid item (emitted incrementally) and then dies:
+    // the envelope is truncated (invalid JSON) and the internal retry returns garbage,
+    // so every completeJSON call throws after emitting. Pre-fix, the chunk rejection
+    // marked ALL slots failed — including the emitted (and downstream-persisted) ones,
+    // breaking planned = saved + failed + deduped.
+    const emitOneThenDie = (args: ProviderCompleteArgs): string => {
+      let parseable = true;
+      try {
+        JSON.parse(args.user);
+      } catch {
+        parseable = false;
+      }
+      if (!parseable) return "not json"; // completeJSON's internal retry — fail it too
+      const full = JSON.parse(writerResponder(args));
+      const one = { agent_flow_description: full.agent_flow_description, scenario_items: [full.scenario_items[0]] };
+      return JSON.stringify(one).slice(0, -1); // valid item streamed, envelope unparseable
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([emitOneThenDie]),
+      }),
+    );
+    const emitted = events.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.slot_id);
+    expect(new Set(emitted).size).toBe(emitted.length); // each slot at most once
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    // Every emitted slot is saved; NONE of them may simultaneously appear failed.
+    for (const id of emitted) expect(meta.failed_slot_ids).not.toContain(id);
+    expect(meta.saved_count).toBe(emitted.length);
+    expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
+  });
+
   test("per-slot fallback rescues slots the chunk attempts keep missing (now parallel)", async () => {
     // Multi-slot calls always omit the LAST requested slot → both chunk attempts miss
     // it → the single-slot fallback (expected_slot_ids.length === 1) writes it.

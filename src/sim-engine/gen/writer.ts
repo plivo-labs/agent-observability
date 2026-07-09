@@ -392,6 +392,9 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
             generationId,
             // The envelope's agent_flow_description when already streamed (the schema
             // orders it first); else the planner's own text the writer is told to echo.
+            // KNOWN cosmetic divergence: if the model orders scenario_items first, a
+            // mid-stream scenario carries the planner's description while a final-parse
+            // sibling carries the envelope's — description only, scenarios identical.
             extractor.description ?? planner.agent_flow_description ?? "",
             startNodeParamKeys,
           );

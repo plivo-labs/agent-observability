@@ -193,8 +193,9 @@ export const envSchema = z.object({
   // request carries no `smoke_cap`; HARD is the absolute per-request ceiling.
   // Kill-switch for mid-stream scenario emission: when true (default) each scenario
   // streams the moment its item completes in the writer's LLM token stream; "false"
-  // restores chunk-granular emission (the pre-incremental behavior). Same output
-  // either way — only WHEN scenarios surface changes.
+  // restores chunk-granular emission (the pre-incremental behavior). Same scenarios
+  // either way — only WHEN they surface changes. (Text deltas exist only on the
+  // OpenAI Responses streaming path; other providers fall back automatically.)
   SIM_GEN_INCREMENTAL: z
     .string()
     .default("true")

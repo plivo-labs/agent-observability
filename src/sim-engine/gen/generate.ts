@@ -28,6 +28,8 @@ export type GenEvent =
   | { type: "allocation_done"; attempt: number; planned_count: number }
   | { type: "writing_started"; planned_count: number; chunk_count: number; chunk_size: number }
   | { type: "writer_chunk_done"; chunk_index: number; chunk_count: number; chunk_saved_count: number; failed_slot_ids: string[] }
+  // scenario_index = the scenario's 0-based SAVED ordinal within its chunk (dedup
+  // skips excluded); saved_count is the global running total the console displays.
   | { type: "writer_scenario_done"; chunk_index: number; chunk_count: number; scenario_index: number; saved_count: number; slot_id: string }
   | { type: "scenario"; scenario: RuntimeScenario }
   | { type: "metadata"; metadata: GenMetadata };
@@ -58,13 +60,13 @@ export interface GenMetadata {
    *  planner call); writer_ms spans the writer fan-out through the last emit.
    *  ttfs_ms = time from generation start to the FIRST `scenario` event (null when
    *  nothing was saved) — the perceived-latency number the latency work optimizes. */
-  planner_ms?: number;
-  allocation_ms?: number;
-  writer_ms?: number;
-  ttfs_ms?: number | null;
+  planner_ms: number;
+  allocation_ms: number;
+  writer_ms: number;
+  ttfs_ms: number | null;
   /** True when the plan was served from the planner cache (planner_usage is null
    *  then — no tokens were spent this run). */
-  planner_cache_hit?: boolean;
+  planner_cache_hit: boolean;
 }
 
 export interface GenerateInput {
@@ -106,9 +108,20 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 /** One chunk through the writer with chunk-level + per-slot fallback retries.
+ *
+ *  NEVER rejects except on caller abort: a hard LLM failure (completeJSON throw
+ *  after its own retries) degrades to "that attempt produced nothing" and the
+ *  retry budget continues; unsatisfied slots come back in `failedSlotIds`. This
+ *  is load-bearing for the ledger — a slot already DELIVERED (returned earlier,
+ *  or emitted incrementally) must never be marked failed, and only this scope
+ *  knows which those are.
+ *
  *  `onScenario` (incremental emission) makes delivered slots count as satisfied:
  *  they are excluded from every retry (no token waste, no second version) and
- *  from the returned `scenarios` (the caller already emitted them). */
+ *  from the returned `scenarios` (the caller already emitted them). Consumption
+ *  is recorded AT EMISSION TIME via a wrapper — not from the call's result — so
+ *  an attempt that emits scenarios and THEN throws mid-stream still can't get
+ *  those slots re-requested or marked failed. */
 async function runChunkWithRetry(
   base: { flowJson: Dict; planner: PlannerWithInventory; model: string; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider; signal?: AbortSignal },
   slots: Slot[],
@@ -116,36 +129,64 @@ async function runChunkWithRetry(
 ): Promise<{ scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] }> {
   const scenarios: RuntimeScenario[] = [];
   const usages: LlmUsage[] = [];
-  const consumed = new Set<string>(); // slots delivered incrementally in an earlier attempt
+  const consumed = new Set<string>(); // slots delivered incrementally, recorded at emission time
+  const record = onScenario
+    ? (s: RuntimeScenario): void => {
+        const id = s.eval_metadata?.slot_id;
+        if (id) consumed.add(id);
+        onScenario(s);
+      }
+    : undefined;
+  const logAttemptFailure = (what: string, attempt: number, err: unknown): void => {
+    console.error(
+      `[sim-gen] writer ${what} attempt ${attempt} failed (generation ${base.generationId}, chunk ${base.chunkIndex}): ${(err as Error).message}`,
+    );
+  };
   let remaining = slots;
 
   for (let attempt = 1; attempt <= WRITER_CHUNK_RETRIES + 1 && remaining.length > 0; attempt++) {
-    const res = await writeScenarioChunk({ ...base, slots: remaining, attempt, onScenario });
-    scenarios.push(...res.scenarios);
-    usages.push(res.usage);
-    for (const id of res.emittedSlotIds) consumed.add(id);
-    const got = new Set(res.scenarios.map((s) => s.eval_metadata?.slot_id));
-    remaining = remaining.filter((s) => !got.has(s.slot_id) && !consumed.has(s.slot_id));
+    remaining = remaining.filter((s) => !consumed.has(s.slot_id));
+    if (remaining.length === 0) break;
+    try {
+      const res = await writeScenarioChunk({ ...base, slots: remaining, attempt, onScenario: record });
+      scenarios.push(...res.scenarios);
+      usages.push(res.usage);
+      const got = new Set(res.scenarios.map((s) => s.eval_metadata?.slot_id));
+      remaining = remaining.filter((s) => !got.has(s.slot_id));
+    } catch (err) {
+      if (base.signal?.aborted) throw err; // abort is the ONLY rejection that escapes
+      logAttemptFailure("chunk", attempt, err);
+    }
   }
 
   // Per-slot fallback: retry each still-missing slot on its own. Slots are
-  // independent single-slot LLM calls, so they run in PARALLEL (the serial loop
-  // added a full round-trip per missing slot to the chunk's wall clock); each
-  // slot's attempts stay serial (same attempt budget as before).
+  // independent single-slot LLM calls, so they run in PARALLEL; each slot's
+  // attempts stay serial (same attempt budget as before), and one slot's hard
+  // failure burns only its own budget — siblings are unaffected.
   const stillFailed: string[] = [];
   const fallbackResults = await Promise.all(
-    remaining.map(async (slot) => {
-      for (let attempt = 1; attempt <= WRITER_SLOT_RETRIES + 1; attempt++) {
-        const res = await writeScenarioChunk({ ...base, slots: [slot], attempt, onScenario });
-        usages.push(res.usage);
-        if (res.scenarios.length > 0 || res.emittedSlotIds.length > 0) return { slot, scenarios: res.scenarios };
-      }
-      return { slot, scenarios: null };
-    }),
+    remaining
+      .filter((slot) => !consumed.has(slot.slot_id))
+      .map(async (slot) => {
+        for (let attempt = 1; attempt <= WRITER_SLOT_RETRIES + 1; attempt++) {
+          // Re-check per attempt: the previous attempt may have emitted the slot
+          // mid-stream and THEN thrown — re-requesting it would re-emit a duplicate.
+          if (consumed.has(slot.slot_id)) return { slot, scenarios: [] as RuntimeScenario[] };
+          try {
+            const res = await writeScenarioChunk({ ...base, slots: [slot], attempt, onScenario: record });
+            usages.push(res.usage);
+            if (res.scenarios.length > 0 || consumed.has(slot.slot_id)) return { slot, scenarios: res.scenarios };
+          } catch (err) {
+            if (base.signal?.aborted) throw err;
+            logAttemptFailure(`slot ${slot.slot_id}`, attempt, err);
+          }
+        }
+        return { slot, scenarios: null };
+      }),
   );
   for (const r of fallbackResults) {
     if (r.scenarios) scenarios.push(...r.scenarios);
-    else stillFailed.push(r.slot.slot_id);
+    else if (!consumed.has(r.slot.slot_id)) stillFailed.push(r.slot.slot_id);
   }
   return { scenarios, failedSlotIds: stillFailed, usages };
 }
@@ -274,24 +315,25 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   yield { type: "writing_started", planned_count: slots.length, chunk_count: chunks.length, chunk_size: WRITER_CHUNK_SIZE };
 
   // Chunks report through a single queue in COMPLETION order — the client sees each
-  // chunk's scenarios the moment that chunk settles instead of waiting for the slowest
-  // one (the previous Promise.all gated ALL emission on the last chunk + its retries).
-  // Each chunk stays isolated: a thrown chunk (LlmError after completeJSON's own
-  // retries — sustained 429, timeout, twice-invalid JSON) degrades to "all its slots
-  // failed" instead of killing the generation and discarding every other chunk's
-  // already-written scenarios. A caller abort is not a chunk failure — it surfaces as
-  // an `abort` queue event and stops the whole generation. Every chunk promise pushes
-  // exactly one terminal event, so nothing rejects unhandled.
-  type ChunkResult = { scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] };
+  // chunk's scenarios the moment they exist (mid-stream when incremental, at chunk
+  // settle otherwise) instead of waiting for the slowest chunk (the previous
+  // Promise.all gated ALL emission on the last chunk + its retries). ALL scenarios —
+  // incremental and final-parse alike — ride the queue as `scenario` events, so the
+  // consumer has exactly one emit path; `chunk_done` is purely terminal bookkeeping.
+  // runChunkWithRetry never rejects except on caller abort (hard LLM failures degrade
+  // to failed slots inside it), so every chunk promise pushes exactly one terminal
+  // event and nothing rejects unhandled.
   type WriterQueueEvent =
     | { kind: "scenario"; chunkIndex: number; scenario: RuntimeScenario }
-    | { kind: "chunk_done"; chunkIndex: number; result: ChunkResult }
+    | { kind: "chunk_done"; chunkIndex: number; failedSlotIds: string[]; usages: LlmUsage[] }
     | { kind: "abort"; err: unknown };
   const queue = new AsyncQueue<WriterQueueEvent>();
-  // Incremental emission (kill-switch: SIM_GEN_INCREMENTAL / GenerateInput.incrementalEmit):
-  // each scenario surfaces the moment its item completes in the LLM token stream. With the
-  // switch off (or a provider without text deltas) nothing streams mid-chunk and behavior
-  // is chunk-granular, exactly as before.
+  // Incremental emission (kill-switch: SIM_GEN_INCREMENTAL / GenerateInput.incrementalEmit,
+  // default ON — it's an output-timing improvement with identical output, unlike the
+  // planner cache which holds cross-request state and is opt-in): each scenario surfaces
+  // the moment its item completes in the LLM token stream. With the switch off (or a
+  // provider without text deltas) nothing streams mid-chunk and behavior is
+  // chunk-granular, exactly as before.
   const incremental = input.incrementalEmit ?? true;
   for (let i = 0; i < chunks.length; i++) {
     const c = chunks[i];
@@ -300,14 +342,19 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       c,
       incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: i, scenario }) : undefined,
     ).then(
-      (result) => queue.push({ kind: "chunk_done", chunkIndex: i, result }),
+      (result) => {
+        for (const scenario of result.scenarios) queue.push({ kind: "scenario", chunkIndex: i, scenario });
+        queue.push({ kind: "chunk_done", chunkIndex: i, failedSlotIds: result.failedSlotIds, usages: result.usages });
+      },
       (err) => {
         if (input.signal?.aborted) {
           queue.push({ kind: "abort", err });
           return;
         }
-        console.error(`[sim-gen] writer chunk ${i} failed (generation ${generationId}): ${(err as Error).message}`);
-        queue.push({ kind: "chunk_done", chunkIndex: i, result: { scenarios: [], failedSlotIds: c.map((s) => s.slot_id), usages: [] } });
+        // Unreachable by design (runChunkWithRetry only rethrows aborts) — kept so an
+        // unexpected bug degrades to a failed chunk instead of hanging the consumer.
+        console.error(`[sim-gen] writer chunk ${i} rejected unexpectedly (generation ${generationId}): ${(err as Error).message}`);
+        queue.push({ kind: "chunk_done", chunkIndex: i, failedSlotIds: c.map((s) => s.slot_id), usages: [] });
       },
     );
   }
@@ -342,8 +389,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     const ev = await queue.pop();
     if (ev.kind === "abort") throw ev.err;
     if (ev.kind === "scenario") {
-      // Incremental: this slot is excluded from the chunk's final result by the
-      // writer, so it flows through `admit` exactly once.
+      // Every scenario (mid-stream or final-parse) arrives here — `admit` is the
+      // single ledger owner by construction, and each slot flows through it once
+      // (the writer excludes incrementally-delivered slots from its final result).
       if (admit(ev.scenario, ev.chunkIndex)) {
         yield { type: "scenario", scenario: ev.scenario };
         yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
@@ -351,15 +399,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       continue;
     }
     remainingChunks -= 1;
-    const r = ev.result;
-    writerUsages.push(...r.usages);
-    failedSlotIds.push(...r.failedSlotIds);
-    for (const scenario of r.scenarios) {
-      if (!admit(scenario, ev.chunkIndex)) continue;
-      yield { type: "scenario", scenario };
-      yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: scenario.eval_metadata?.slot_id ?? "" };
-    }
-    yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: r.failedSlotIds };
+    writerUsages.push(...ev.usages);
+    failedSlotIds.push(...ev.failedSlotIds);
+    yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
   }
 
   // All-failed: every planned slot failed and nothing was saved. Throw (the route's

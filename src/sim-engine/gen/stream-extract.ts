@@ -12,7 +12,8 @@
 // internal inconsistency — an element that isn't an object, an element that
 // fails JSON.parse, a runaway buffer — the extractor permanently disables
 // itself for the rest of the stream and never throws into the LLM read loop.
-// Worst case is exactly today's behavior (everything arrives at final parse).
+// Worst case is exactly the pre-incremental behavior (everything arrives at
+// final parse).
 //
 // Pure: no config, no I/O, no LLM knowledge — just a character-level JSON
 // scanner (string/escape aware, brace/bracket depth) fed by arbitrary deltas
@@ -24,6 +25,15 @@ type Dict = Record<string, any>;
  *  grows past this, the stream is malformed — disable rather than balloon. */
 const MAX_CAPTURE_BYTES = 2_000_000;
 
+/** scenario_items elements sit at depth 2 by construction: root object (1) →
+ *  the items array (2). The `awaiting === "items"` transition is only taken at
+ *  depth 1, so the array's depth is invariant. */
+const ITEMS_DEPTH = 2;
+
+/** Extractor lifecycle: before the root `{` → scanning inside it → root closed
+ *  (trailing bytes ignored) → gave up (final parse remains the authority). */
+type Phase = "pre" | "open" | "done" | "disabled";
+
 export class WriterStreamExtractor {
   /** Root-level `agent_flow_description` value, once its string completes.
    *  Null until seen (the writer schema orders it before scenario_items, but
@@ -31,25 +41,24 @@ export class WriterStreamExtractor {
   description: string | null = null;
 
   private readonly onItem: (item: Dict) => void;
-  private disabled = false;
-  private done = false;
+  private phase: Phase = "pre";
 
   // ── character-scanner state (persists across push() boundaries) ──────────────
   private inString = false;
   private escape = false;
   private depth = 0; // combined {} / [] nesting depth
-  private rootSeen = false;
 
-  // Root-level (depth 1) string capture — a key, or the description value.
+  /** Root-level (depth 1) string capture — a key, or the description value. */
   private rootStringRaw: string | null = null;
   /** A depth-1 string just closed; if the next structural char is ':', it was a key. */
   private pendingKey: string | null = null;
-  private awaitingDescriptionValue = false;
-  private awaitingItemsArray = false;
+  /** What the NEXT root-level value means. Set by ':' after a recognized key and
+   *  cleared by the start of ANY value token — so a non-string description value
+   *  (e.g. null) can never leave a stale binding that mis-captures the next key. */
+  private awaiting: "description" | "items" | null = null;
 
   // scenario_items array state.
   private inItems = false;
-  private itemsArrayDepth = 0; // depth value while directly inside the items array
   private itemRaw: string | null = null; // raw text of the item object being captured
 
   constructor(onItem: (item: Dict) => void) {
@@ -58,20 +67,20 @@ export class WriterStreamExtractor {
 
   /** True once the extractor has given up; callers may skip feeding it. */
   get isDisabled(): boolean {
-    return this.disabled;
+    return this.phase === "disabled";
   }
 
   push(delta: string): void {
-    if (this.disabled || this.done) return;
+    if (this.phase === "disabled" || this.phase === "done") return;
     try {
       for (let i = 0; i < delta.length; i++) {
         this.feed(delta[i]);
-        if (this.disabled || this.done) return;
+        if (this.phase === "disabled" || this.phase === "done") return;
       }
     } catch {
       // Any surprise (including an onItem callback throwing) disables the
       // optimistic path; the final parse remains the authority.
-      this.disabled = true;
+      this.phase = "disabled";
     }
   }
 
@@ -81,7 +90,7 @@ export class WriterStreamExtractor {
     if (this.itemRaw !== null) {
       this.itemRaw += ch;
       if (this.itemRaw.length > MAX_CAPTURE_BYTES) {
-        this.disabled = true;
+        this.phase = "disabled";
         return;
       }
     }
@@ -104,15 +113,15 @@ export class WriterStreamExtractor {
       }
       if (this.rootStringRaw !== null) {
         this.rootStringRaw += ch;
-        if (this.rootStringRaw.length > MAX_CAPTURE_BYTES) this.disabled = true;
+        if (this.rootStringRaw.length > MAX_CAPTURE_BYTES) this.phase = "disabled";
       }
       return;
     }
 
     switch (ch) {
       case '"':
-        if (this.inItems && this.depth === this.itemsArrayDepth && this.itemRaw === null) {
-          this.disabled = true; // string element in scenario_items — not the writer shape
+        if (this.inItems && this.depth === ITEMS_DEPTH && this.itemRaw === null) {
+          this.phase = "disabled"; // string element in scenario_items — not the writer shape
           return;
         }
         this.inString = true;
@@ -123,25 +132,24 @@ export class WriterStreamExtractor {
         return;
       case "{":
       case "[": {
-        if (!this.rootSeen) {
+        if (this.phase === "pre") {
           if (ch === "{") {
-            this.rootSeen = true;
+            this.phase = "open";
           } else {
-            this.disabled = true; // root is not an object — not the writer shape
+            this.phase = "disabled"; // root is not an object — not the writer shape
             return;
           }
-        } else if (this.awaitingItemsArray && ch === "[" && this.depth === 1) {
+        } else if (this.awaiting === "items" && ch === "[" && this.depth === 1) {
           this.inItems = true;
-          this.awaitingItemsArray = false;
-          this.itemsArrayDepth = this.depth + 1;
-        } else if (this.inItems && this.depth === this.itemsArrayDepth && this.itemRaw === null) {
+        } else if (this.inItems && this.depth === ITEMS_DEPTH && this.itemRaw === null) {
           if (ch === "{") {
             this.itemRaw = "{"; // start of a scenario_items element
           } else {
-            this.disabled = true; // array element that isn't an object
+            this.phase = "disabled"; // array element that isn't an object
             return;
           }
         }
+        this.awaiting = null; // a value token started — any pending binding is resolved
         this.depth += 1;
         this.pendingKey = null;
         return;
@@ -150,40 +158,43 @@ export class WriterStreamExtractor {
       case "]": {
         this.depth -= 1;
         if (this.depth < 0) {
-          this.disabled = true;
+          this.phase = "disabled";
           return;
         }
         // An item object just closed (back at array level)?
-        if (this.itemRaw !== null && this.inItems && this.depth === this.itemsArrayDepth) {
+        if (this.itemRaw !== null && this.inItems && this.depth === ITEMS_DEPTH) {
           this.emitItem();
           return;
         }
         // The scenario_items array itself closed?
-        if (this.inItems && ch === "]" && this.depth === this.itemsArrayDepth - 1) {
+        if (this.inItems && ch === "]" && this.depth === ITEMS_DEPTH - 1) {
           this.inItems = false;
           return;
         }
-        if (this.rootSeen && this.depth === 0) this.done = true; // root object closed
+        if (this.phase === "open" && this.depth === 0) this.phase = "done"; // root closed
         this.pendingKey = null;
         return;
       }
       case ":":
         if (this.depth === 1 && this.pendingKey !== null) {
-          if (this.pendingKey === "agent_flow_description") this.awaitingDescriptionValue = true;
-          else if (this.pendingKey === "scenario_items") this.awaitingItemsArray = true;
+          if (this.pendingKey === "agent_flow_description") this.awaiting = "description";
+          else if (this.pendingKey === "scenario_items") this.awaiting = "items";
           this.pendingKey = null;
         }
         return;
       default: {
         const isWs = ch === " " || ch === "\n" || ch === "\r" || ch === "\t";
+        if (isWs || ch === ",") return;
         // A bare token (digit/literal) directly inside scenario_items — elements must
         // be objects; anything else means this isn't the writer shape.
-        if (!isWs && ch !== "," && this.inItems && this.depth === this.itemsArrayDepth && this.itemRaw === null) {
-          this.disabled = true;
+        if (this.inItems && this.depth === ITEMS_DEPTH && this.itemRaw === null) {
+          this.phase = "disabled";
           return;
         }
-        // Any non-colon token after a depth-1 string means that string was a VALUE.
-        if (!isWs) this.pendingKey = null;
+        // A non-string value token: resolves (and clears) any pending binding —
+        // e.g. `"agent_flow_description": null` must not capture the NEXT string.
+        this.awaiting = null;
+        this.pendingKey = null;
         return;
       }
     }
@@ -197,14 +208,15 @@ export class WriterStreamExtractor {
     try {
       decoded = JSON.parse(`"${raw}"`) as string;
     } catch {
-      this.disabled = true;
+      this.phase = "disabled";
       return;
     }
-    if (this.awaitingDescriptionValue) {
+    if (this.awaiting === "description") {
       this.description = decoded;
-      this.awaitingDescriptionValue = false;
+      this.awaiting = null;
       return;
     }
+    this.awaiting = null; // a string value for some other key resolves the binding too
     this.pendingKey = decoded; // becomes a key iff the next structural char is ':'
   }
 
@@ -215,11 +227,11 @@ export class WriterStreamExtractor {
     try {
       item = JSON.parse(raw);
     } catch {
-      this.disabled = true;
+      this.phase = "disabled";
       return;
     }
     if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      this.disabled = true;
+      this.phase = "disabled";
       return;
     }
     this.onItem(item as Dict);

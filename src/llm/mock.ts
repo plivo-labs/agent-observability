@@ -31,8 +31,9 @@ export class MockLLM implements LlmProvider {
     const text = typeof next === "function" ? await next(args) : next;
     // Mirror a streaming provider deterministically: feed the response through the
     // live text sink in fixed-size deltas before returning — exercises incremental
-    // consumers (the writer's stream extractor) on every mocked call.
-    if (args.onText) {
+    // consumers (the writer's stream extractor). Gated on `stream` for honesty:
+    // real providers only produce text deltas on their streaming path.
+    if (args.onText && args.stream) {
       for (let i = 0; i < text.length; i += 16) args.onText(text.slice(i, i + 16));
     }
     return { text, usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } };

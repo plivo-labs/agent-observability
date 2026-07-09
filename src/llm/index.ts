@@ -56,6 +56,22 @@ function addUsage(into: LlmUsage, from: LlmUsage): void {
   into.totalTokens += from.totalTokens;
 }
 
+/** Wrap a live-text sink so a throw disables it (with one log) instead of
+ *  rejecting the provider call — sinks are observational by contract. */
+function guardOnText(sink?: (delta: string) => void): ((delta: string) => void) | undefined {
+  if (!sink) return undefined;
+  let dead = false;
+  return (delta: string) => {
+    if (dead) return;
+    try {
+      sink(delta);
+    } catch (e) {
+      dead = true;
+      console.error(`[llm] onText sink threw — disabled for this attempt: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+}
+
 const JSON_ONLY_HINT =
   "Respond with ONLY a single JSON object that satisfies the required schema. " +
   "No prose, no explanation, no markdown code fences.";
@@ -113,8 +129,11 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         stream: opts.stream,
         apiMode: opts.apiMode,
         // Fresh sink per attempt: each retry is a new stream, so incremental
-        // consumers get a reset (see CompleteJSONOptions.makeOnText).
-        onText: opts.makeOnText?.(attempt),
+        // consumers get a reset (see CompleteJSONOptions.makeOnText). The shim
+        // ENFORCES the sinks-must-not-throw contract: a throwing sink would
+        // otherwise reject the provider call and burn full LLM retries on a
+        // deterministic consumer bug — instead it's disabled for the attempt.
+        onText: guardOnText(opts.makeOnText?.(attempt)),
         // Per-attempt timeout, raced with the caller's abort when one is supplied.
         signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });

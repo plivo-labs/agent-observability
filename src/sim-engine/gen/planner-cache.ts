@@ -56,7 +56,9 @@ export function plannerCacheGet(key: string, ttlMs: number): PlannerWithInventor
 }
 
 /** Store (or refresh) a plan. Callers store only AFTER allocation succeeds, so a
- *  cached plan is never one the allocator rejects. */
+ *  cached plan is never one the allocator rejects. Refreshing on every success
+ *  makes the TTL SLIDING (a plan in active rerun use stays warm) — safe because
+ *  the key is deterministic in the inputs. */
 export function plannerCacheSet(key: string, planner: PlannerWithInventory): void {
   store.delete(key); // re-insert to refresh FIFO position + timestamp
   store.set(key, { serialized: JSON.stringify(planner), at: Date.now() });
