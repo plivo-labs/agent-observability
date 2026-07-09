@@ -352,9 +352,9 @@ export interface WriteScenarioChunkArgs {
    * Incremental delivery: called with each scenario the MOMENT its item completes
    * in the LLM's token stream (after passing the exact same validateAndFixScenario
    * gate as the final parse). Scenarios delivered here are EXCLUDED from the
-   * returned `scenarios` array and listed in `emittedSlotIds` instead — the caller
-   * owns emission; this function guarantees at-most-once per slot across the
-   * call's internal retry attempts.
+   * returned `scenarios` array — the caller owns emission and observes delivery
+   * only through this callback; this function guarantees at-most-once per slot
+   * across the call's internal retry attempts.
    */
   onScenario?: (s: RuntimeScenario) => void;
 }
@@ -364,8 +364,12 @@ export interface WriteScenarioChunkResult {
   usage: LlmUsage;
   failedSlotIds: string[];
   validationErrors: Array<{ slot_id: string; reasons: string[] }>;
-  /** Slot ids already delivered via `onScenario` (count them as satisfied). */
-  emittedSlotIds: string[];
+  /** True when any attempt's stream extractor self-disabled (anomalous stream
+   *  shape / consumer throw / capture overflow). Output stays correct — the final
+   *  parse is authoritative — but mid-stream emission silently stopped, so the
+   *  caller surfaces this in metadata for direct triage (the only other symptom
+   *  is an unexplained ttfs regression). */
+  incrementalDisabled: boolean;
 }
 
 /** LLM 2: a batch of ≤WRITER_CHUNK_SIZE slots → validated scenarios. */
@@ -380,6 +384,9 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
   // authoritative. `emittedThisCall` persists across completeJSON's internal retry
   // attempts (each retry is a fresh stream that would re-produce the same items).
   const emittedThisCall = new Set<string>();
+  // Extractors created for this call (one per completeJSON attempt) — checked after
+  // the call so a self-disable on ANY attempt is reported, not just the last one's.
+  const extractors: WriterStreamExtractor[] = [];
   const makeOnText = args.onScenario
     ? (): ((delta: string) => void) => {
         const extractor = new WriterStreamExtractor((item) => {
@@ -402,6 +409,7 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
           emittedThisCall.add(slotId);
           args.onScenario!(fixed);
         });
+        extractors.push(extractor);
         return (delta: string) => extractor.push(delta);
       }
     : undefined;
@@ -469,5 +477,11 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
   }
   for (const s of slots) if (!seen.has(s.slot_id) && !failedSlotIds.includes(s.slot_id)) failedSlotIds.push(s.slot_id);
 
-  return { scenarios, usage: res.usage, failedSlotIds, validationErrors, emittedSlotIds: [...emittedThisCall] };
+  return {
+    scenarios,
+    usage: res.usage,
+    failedSlotIds,
+    validationErrors,
+    incrementalDisabled: extractors.some((e) => e.isDisabled),
+  };
 }

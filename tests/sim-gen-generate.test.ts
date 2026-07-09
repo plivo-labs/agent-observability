@@ -256,6 +256,69 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(singleSlotCalls.length).toBeGreaterThanOrEqual(1); // the fallback actually ran
   });
 
+  test("fallback fan-out is bounded: ≤ WRITER_FALLBACK_CONCURRENCY single-slot calls in flight", async () => {
+    // Chunk-level calls return nothing → EVERY slot lands in the fallback. This path
+    // fires exactly when the provider is degraded, so the burst must stay bounded —
+    // but still parallel (the P3 win the bound must not revert).
+    const { WRITER_FALLBACK_CONCURRENCY } = await import("../src/sim-engine/gen/combos.js");
+    let inFlight = 0;
+    let peak = 0;
+    const degraded = async (args: ProviderCompleteArgs): Promise<string> => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length > 1) return JSON.stringify({ agent_flow_description: "x", scenario_items: [] });
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 10)); // hold the slot so overlap is observable
+      inFlight -= 1;
+      return writerResponder(args);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([degraded]),
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.failed_count).toBe(0); // every slot rescued
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+    expect(peak).toBeGreaterThanOrEqual(2); // parallelism kept…
+    expect(peak).toBeLessThanOrEqual(WRITER_FALLBACK_CONCURRENCY); // …but bounded
+  });
+
+  test("incremental_disabled: true when an attempt's extractor self-disables; false on a clean run", async () => {
+    // Attempt 1 streams a non-writer shape (root array): the extractor disables and the
+    // schema parse rejects it, so completeJSON retries; attempt 2 streams the valid
+    // envelope. Output is correct (final parse authoritative) but mid-stream emission was
+    // lost for an attempt — metadata must surface that directly (the disable paths are
+    // otherwise silent; the only other symptom is an unexplained ttfs regression).
+    // completeJSON's internal retry mutates args.user (repair feedback), so replay the
+    // FIRST prompt into writerResponder — the retry must SUCCEED for the call to return
+    // (a throw would discard the attempt's extractor state with the whole call).
+    let firstUser: string | null = null;
+    const flaky = (args: ProviderCompleteArgs): string => {
+      if (firstUser === null) {
+        firstUser = args.user;
+        return '["not","an","object"]';
+      }
+      return writerResponder({ ...args, user: firstUser });
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([flaky]),
+      }),
+    );
+    expect((events.find((e) => e.type === "metadata") as any).metadata.incremental_disabled).toBe(true);
+
+    const clean = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect((clean.find((e) => e.type === "metadata") as any).metadata.incremental_disabled).toBe(false);
+  });
+
   test("planner cache: an identical request reuses the plan (no second planner call); any input change misses", async () => {
     const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
     plannerCacheClear();
@@ -439,6 +502,44 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     expect(scenarios.length).toBe(2); // one per capability
     const unitIds = scenarios.map((s: any) => s.eval_metadata.smoke_unit_id).sort();
     expect(unitIds).toEqual(["handle_refund__happy_path__001", "handle_status__happy_path__001"]);
+  });
+
+  test("a cached plan that fails allocation replans honestly: cache_hit=false, usage captured, cache healed", async () => {
+    const { plannerCacheClear, plannerCacheKey, plannerCacheSet } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+    // Poison the cache under the EXACT request key with a plan the smoke allocator
+    // genuinely rejects: zero capabilities (a unit-less plan won't do — the allocator
+    // synthesizes fallback units from capabilities). Forces the replan path off a
+    // cache hit. (Field order must mirror generate.ts's plannerCacheKey call — the
+    // key is a stringify of these parts.)
+    const key = plannerCacheKey({
+      flowJson: canonical, phloUuid: "a", model: "m", simulationMode: "smoke",
+      smokeCap: 20, instructions: "", existingSummaries: [],
+    });
+    plannerCacheSet(key, { ...JSON.parse(PLANNER_JSON), capabilities: [] });
+    const plannerLlm = new MockLLM([SMOKE_PLANNER_JSON]);
+    const run = () =>
+      collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+          simulationMode: "smoke", smokeCap: 20, plannerCacheTtlMs: 60_000,
+          plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]),
+        }),
+      );
+
+    const events = await run();
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(plannerLlm.calls.length).toBe(1); // the replan ran a REAL planner call
+    expect(meta.planner_cache_hit).toBe(false); // …so the run must not claim a hit
+    expect(meta.planner_usage).not.toBeNull(); // …and its tokens are accounted
+    expect(meta.saved_count).toBe(3); // the replanned (healthy) plan generated
+
+    // The healed plan replaced the poisoned entry under the same key: an identical
+    // rerun is a true hit with no further planner calls.
+    const second = await run();
+    expect(plannerLlm.calls.length).toBe(1);
+    expect((second.find((e) => e.type === "metadata") as any).metadata.planner_cache_hit).toBe(true);
+    plannerCacheClear();
   });
 
   test("stress metadata carries NO smoke fields", async () => {

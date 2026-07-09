@@ -68,6 +68,24 @@ describe("WriterStreamExtractor", () => {
     expect(ex.isDisabled).toBe(true);
   });
 
+  test("a STRING element in scenario_items disables too (distinct branch from bare tokens)", () => {
+    // 42 above exits via the bare-token branch; a string element takes the '"' branch —
+    // both must classify as "not the writer shape".
+    const { items, ex } = run('{"scenario_items":["oops",{"slot_id":"S001"}]}', 3);
+    expect(items).toEqual([]);
+    expect(ex.isDisabled).toBe(true);
+  });
+
+  test("a stream truncated mid-item emits nothing and is NOT disabled", () => {
+    // Truncation is not an anomaly — the item simply never completed; the final
+    // parse (or completeJSON's retry) is authoritative. The extractor must stay
+    // healthy so a fresh attempt's extractor isn't the only working one.
+    const cut = ENVELOPE_TEXT.indexOf('"slot_id":"S001"') + 8; // inside the first item
+    const { items, ex } = run(ENVELOPE_TEXT.slice(0, cut), 4);
+    expect(items).toEqual([]);
+    expect(ex.isDisabled).toBe(false);
+  });
+
   test("a non-object root disables (not the writer shape)", () => {
     const { ex } = run('["not","an","object"]', 2);
     expect(ex.isDisabled).toBe(true);
