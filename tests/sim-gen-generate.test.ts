@@ -106,6 +106,39 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(meta.metadata.partial_success).toBe(true);
   });
 
+  test("chunks emit in COMPLETION order — a slow chunk no longer gates a fast one", async () => {
+    // 12 slots → 2 chunks (10 + 2). The 10-slot chunk (index 0) sleeps 50ms; the 2-slot
+    // chunk (index 1) responds immediately. With the old Promise.all gate nothing emitted
+    // until BOTH finished (index order); now chunk 1's scenarios stream first.
+    const slowFirstChunk = async (args: ProviderCompleteArgs): Promise<string> => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length > 2) await Bun.sleep(50);
+      return writerResponder(args);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical,
+        phloUuid: "agent-1",
+        maxScenarios: 12,
+        model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]),
+        writerProvider: new MockLLM([slowFirstChunk]),
+      }),
+    );
+    const chunkDones = events.filter((e) => e.type === "writer_chunk_done") as Array<Extract<GenEvent, { type: "writer_chunk_done" }>>;
+    expect(chunkDones.map((e) => e.chunk_index)).toEqual([1, 0]); // completion order, not index order
+    // The fast chunk's scenarios precede the slow chunk's writer_chunk_done.
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("scenario")).toBeLessThan(types.lastIndexOf("writer_chunk_done"));
+    // Ledger invariant unchanged: planned = saved + failed + deduped, nothing failed.
+    // (The feasibility fallback legitimately reuses one coverage key at 12 slots on this
+    // fixture, so exactly one dedup occurs — same as under the old index-order emission.)
+    const meta = events.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(meta.metadata.failed_count).toBe(0);
+    expect(meta.metadata.saved_count + meta.metadata.deduped_count).toBe(meta.metadata.planned_count);
+    expect(events.filter((e) => e.type === "scenario").length).toBe(meta.metadata.saved_count);
+  });
+
   test("throws after the planner fails twice", async () => {
     const run = collect(
       generateScenarios({

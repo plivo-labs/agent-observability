@@ -2,6 +2,7 @@ import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
+import { AsyncQueue } from "./async-queue.js";
 import { writeScenarioChunk } from "./writer.js";
 import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, SMOKE_CAP_FALLBACK } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -218,37 +219,55 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const chunks = chunk(slots, WRITER_CHUNK_SIZE);
   yield { type: "writing_started", planned_count: slots.length, chunk_count: chunks.length, chunk_size: WRITER_CHUNK_SIZE };
 
-  // Each chunk is isolated: a thrown chunk (LlmError after completeJSON's own retries —
-  // sustained 429, timeout, twice-invalid JSON) degrades to "all its slots failed" instead of
-  // rejecting Promise.all, which would discard every OTHER chunk's already-written scenarios
-  // and turn a partial success into a total failure.
-  const results = await Promise.all(
-    chunks.map((c, i) =>
-      runChunkWithRetry(
-        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
-        c,
-      ).catch((err): { scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] } => {
-        // A caller abort is not a chunk failure — rethrow so the whole generation stops.
-        if (input.signal?.aborted) throw err;
+  // Chunks report through a single queue in COMPLETION order — the client sees each
+  // chunk's scenarios the moment that chunk settles instead of waiting for the slowest
+  // one (the previous Promise.all gated ALL emission on the last chunk + its retries).
+  // Each chunk stays isolated: a thrown chunk (LlmError after completeJSON's own
+  // retries — sustained 429, timeout, twice-invalid JSON) degrades to "all its slots
+  // failed" instead of killing the generation and discarding every other chunk's
+  // already-written scenarios. A caller abort is not a chunk failure — it surfaces as
+  // an `abort` queue event and stops the whole generation. Every chunk promise pushes
+  // exactly one terminal event, so nothing rejects unhandled.
+  type ChunkResult = { scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[] };
+  type WriterQueueEvent =
+    | { kind: "chunk_done"; chunkIndex: number; result: ChunkResult }
+    | { kind: "abort"; err: unknown };
+  const queue = new AsyncQueue<WriterQueueEvent>();
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    runChunkWithRetry(
+      { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
+      c,
+    ).then(
+      (result) => queue.push({ kind: "chunk_done", chunkIndex: i, result }),
+      (err) => {
+        if (input.signal?.aborted) {
+          queue.push({ kind: "abort", err });
+          return;
+        }
         console.error(`[sim-gen] writer chunk ${i} failed (generation ${generationId}): ${(err as Error).message}`);
-        return { scenarios: [], failedSlotIds: c.map((s) => s.slot_id), usages: [] };
-      }),
-    ),
-  );
+        queue.push({ kind: "chunk_done", chunkIndex: i, result: { scenarios: [], failedSlotIds: c.map((s) => s.slot_id), usages: [] } });
+      },
+    );
+  }
 
-  // Emit per-chunk + per-scenario events, dedup by smoke_unit_id (smoke) / coverage_key (stress).
+  // Emit per-chunk + per-scenario events as chunks settle; dedup by smoke_unit_id
+  // (smoke) / coverage_key (stress).
   const writerUsages: LlmUsage[] = [];
   const failedSlotIds: string[] = [];
   const seenCoverage = new Set<string>();
   let saved = 0;
   let deduped = 0;
-  for (let chunkIndex = 0; chunkIndex < results.length; chunkIndex++) {
-    const r = results[chunkIndex];
+  let remainingChunks = chunks.length;
+  while (remainingChunks > 0) {
+    const ev = await queue.pop();
+    if (ev.kind === "abort") throw ev.err;
+    remainingChunks -= 1;
+    const r = ev.result;
     writerUsages.push(...r.usages);
     failedSlotIds.push(...r.failedSlotIds);
     let chunkSaved = 0;
-    for (let i = 0; i < r.scenarios.length; i++) {
-      const scenario = r.scenarios[i];
+    for (const scenario of r.scenarios) {
       // Smoke units under one capability legitimately share all 8 coverage axes (same
       // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
       // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
@@ -262,9 +281,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       chunkSaved += 1;
       ttfsMs ??= Date.now() - genStart;
       yield { type: "scenario", scenario };
-      yield { type: "writer_scenario_done", chunk_index: chunkIndex, chunk_count: chunks.length, scenario_index: i, saved_count: saved, slot_id: scenario.eval_metadata?.slot_id ?? "" };
+      yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: chunkSaved - 1, saved_count: saved, slot_id: scenario.eval_metadata?.slot_id ?? "" };
     }
-    yield { type: "writer_chunk_done", chunk_index: chunkIndex, chunk_count: chunks.length, chunk_saved_count: chunkSaved, failed_slot_ids: r.failedSlotIds };
+    yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: chunkSaved, failed_slot_ids: r.failedSlotIds };
   }
 
   // All-failed: every planned slot failed and nothing was saved. Throw (the route's
