@@ -10,9 +10,11 @@ ALTER TABLE ao_session_eval_verdicts
   ADD COLUMN IF NOT EXISTS reviewed_at       TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS review_error      TEXT;
 
--- Claim lookup: done-but-unreviewed, newest first.
+-- Claim lookup: done-but-unreviewed, newest-completed first. The sort column
+-- MUST match claimNextReview's `ORDER BY completed_at DESC NULLS LAST`
+-- (supervisor/db.ts) or the planner can't use this index to serve the sort.
 CREATE INDEX IF NOT EXISTS ao_eval_verdicts_review_claim_idx
-  ON ao_session_eval_verdicts (created_at DESC)
+  ON ao_session_eval_verdicts (completed_at DESC NULLS LAST)
   WHERE status = 'done' AND review_status IS NULL;
 
 -- One row per (session, judge axis, node). node_ref = '' for conversation/goal axes.
@@ -22,9 +24,9 @@ CREATE TABLE IF NOT EXISTS ao_session_eval_reviews (
   axis                TEXT NOT NULL,               -- e.g. 'bot_detection', 'instructions_adherence'
   node_ref            TEXT NOT NULL DEFAULT '',    -- node axes carry the node ref; conversation/goal = ''
   node_name           TEXT,
-  original_verdict    TEXT,                        -- what the primary judge decided (pass/fail/detected/…)
+  original_verdict    TEXT,                        -- primary judge, normalized to 'flagged' | 'clear' (reviewer.ts)
   original_reason     TEXT,
-  supervisor_verdict  TEXT,                        -- the supervisor's independent re-decision
+  supervisor_verdict  TEXT,                        -- supervisor's independent re-decision, also 'flagged' | 'clear'
   supervisor_reason   TEXT,
   agreement           BOOLEAN NOT NULL,            -- false = MISFLAG
   votes_for           INTEGER NOT NULL DEFAULT 1,  -- N-vote self-consistency: votes matching supervisor_verdict

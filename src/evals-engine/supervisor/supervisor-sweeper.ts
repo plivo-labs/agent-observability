@@ -13,14 +13,12 @@ import { getSessionEvalSource } from "../db.js";
 import { eventsFromChatHistory } from "../eval-sweeper.js";
 import { buildSessionEvalInput, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "../integration/session-evals.js";
 import { buildAxisChecks } from "./axes.js";
+import { isTerminalEvalError } from "../eval-sweeper.js";
 import { reviewAxis } from "./reviewer.js";
 import { claimNextReview, markReviewDone, markReviewError, pendingReviews, storeReview } from "./db.js";
 
 const MAX_SESSIONS_PER_SWEEP = 3;
 const AXIS_CONCURRENCY = 4;
-const CONVERSATION_AXES = new Set([
-  "bot_detection", "voicemail", "call_screening", "low_engagement", "wrong_number", "do_not_disturb", "user_sentiment",
-]);
 
 let handle: SweeperHandle | null = null;
 let sweeping = false;
@@ -53,7 +51,10 @@ async function reviewOneSession(): Promise<boolean> {
 
     let misflags = 0;
     await pool(selected, AXIS_CONCURRENCY, async (check) => {
-      const transcript = CONVERSATION_AXES.has(check.axis)
+      // Conversation axes are exactly the whole-transcript ones buildAxisChecks
+      // emits with nodeRef="" (node axes carry a ref, goal axes carry the goal
+      // name), so they get the spoken transcript; everything else gets the full.
+      const transcript = check.nodeRef === ""
         ? (input.speech_transcript || input.full_transcript)
         : input.full_transcript;
       const review = await reviewAxis(check, input.flow_name, transcript);
@@ -64,8 +65,18 @@ async function reviewOneSession(): Promise<boolean> {
     await markReviewDone(sessionId);
     console.log(`[supervisor] reviewed session=${sanitizeForLog(sessionId)} axes=${selected.length} misflags=${misflags}`);
   } catch (e) {
-    await markReviewError(sessionId, (e as Error).message);
-    console.error(`[supervisor] review_error session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
+    // Mirror the eval sweeper's terminal/transient split. markReviewError sets
+    // review_status='error', which claimNextReview NEVER re-adopts — so a
+    // transient provider blip (timeout/5xx/429/network, incl. reviewAxis
+    // throwing when every vote failed) must NOT be recorded as terminal, or one
+    // outage permanently drops the session from review. Leave the claim
+    // 'running' instead: stale-claim adoption re-reviews it after the timeout.
+    if (isTerminalEvalError(e)) {
+      await markReviewError(sessionId, (e as Error).message);
+      console.error(`[supervisor] review_error session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
+    } else {
+      console.warn(`[supervisor] transient review failure session=${sanitizeForLog(sessionId)} (will retry): ${(e as Error).message}`);
+    }
   }
   return true;
 }

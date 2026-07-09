@@ -151,7 +151,7 @@ export async function fanOutExternalEvals(
  *  policy). Transient provider trouble (timeouts, 429s, 5xx, network) must
  *  NOT terminally poison a session — leaving the claim `running` lets the
  *  stale-claim adoption re-judge it after EVAL_CLAIM_STALE_MINUTES. */
-function isTerminalEvalError(e: unknown): boolean {
+export function isTerminalEvalError(e: unknown): boolean {
   const seen = new Set<unknown>();
   let messages = "";
   for (let cur = e; cur && typeof cur === "object" && !seen.has(cur); cur = (cur as { cause?: unknown }).cause) {

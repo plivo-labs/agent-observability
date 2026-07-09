@@ -92,7 +92,15 @@ export async function reviewAxis(check: AxisCheck, flowName: string, transcript:
     }
   }
 
-  const effective = votes.length || 1;
+  // Every vote threw (e.g. provider outage). Do NOT fall back to effective=1 —
+  // that fabricates a "clear" verdict, and if the judge had fired it lands as a
+  // bogus misflag with an empty fix, poisoning misflagsByAxis. Throw so the
+  // sweeper treats it as a transient error and releases the claim to retry.
+  if (votes.length === 0) {
+    throw new Error("supervisor: all review votes failed — refusing to fabricate a verdict");
+  }
+
+  const effective = votes.length;
   const problemVotes = votes.filter((v) => v.problem_present).length;
   const supervisorProblem = problemVotes * 2 >= effective; // majority (ties → problem, conservative)
   const votesFor = supervisorProblem ? problemVotes : effective - problemVotes;
