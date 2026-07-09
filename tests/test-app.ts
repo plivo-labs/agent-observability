@@ -18,6 +18,7 @@ export const mockInsertLiveKitEvaluation = mock(() => Promise.resolve());
 export const mockUpsertSessionOutcome = mock(() => Promise.resolve());
 export const mockApplySessionTagMetadata = mock(() => Promise.resolve());
 export const mockMergeSessionRawReport = mock(() => Promise.resolve());
+export const mockUpsertSessionAgentConfig = mock(() => Promise.resolve());
 export const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 // Route `sql.unsafe(...)` through the same queue as `sql\`...\`` so the
 // existing `.mockResolvedValueOnce(...)` pattern works for both call styles.
@@ -70,6 +71,7 @@ export function registerAppMocks(): void {
     upsertSessionOutcome: mockUpsertSessionOutcome,
     applySessionTagMetadata: mockApplySessionTagMetadata,
     mergeSessionRawReport: mockMergeSessionRawReport,
+    upsertSessionAgentConfig: mockUpsertSessionAgentConfig,
   }));
 
   mock.module("../src/migrate.js", () => ({
