@@ -32,9 +32,9 @@ export interface CoreStatsTotals {
   p50_user_perceived_ms: number | null;
   p95_user_perceived_ms: number | null;
   p99_user_perceived_ms: number | null;
-  /** verdict='pass' share over session_external_evals in window, 0..1 */
+  /** verdict='pass' share over ao_session_external_evals in window, 0..1 */
   llm_pass_rate: number | null;
-  /** passed/total over eval_runs in window, 0..1 */
+  /** passed/total over ao_eval_runs in window, 0..1 */
   ci_pass_rate: number | null;
 }
 
@@ -63,7 +63,7 @@ export async function getStatsCore(
     sql.unsafe(
       `WITH win AS (
          SELECT id, ended_at, duration_ms, session_metrics, estimated_cost_usd
-         FROM agent_transport_sessions
+         FROM ao_agent_transport_sessions
          WHERE ($1::text IS NULL OR agent_id = $1)
            AND ended_at >= NOW() - $2::interval
            AND ($4::text IS NULL OR account_id = $4)
@@ -107,7 +107,7 @@ export async function getStatsCore(
     sql.unsafe(
       `WITH win AS (
          SELECT id, session_id, session_metrics, duration_ms, turn_count, estimated_cost_usd
-         FROM agent_transport_sessions
+         FROM ao_agent_transport_sessions
          WHERE ($1::text IS NULL OR agent_id = $1)
            AND ended_at >= NOW() - $2::interval
            AND ($3::text IS NULL OR account_id = $3)
@@ -130,7 +130,7 @@ export async function getStatsCore(
              WHEN COUNT(*) = 0 THEN NULL
              ELSE SUM(CASE WHEN verdict = 'pass' THEN 1 ELSE 0 END)::float / COUNT(*)::float
            END
-           FROM session_external_evals see
+           FROM ao_session_external_evals see
            WHERE see.session_id IN (SELECT session_id FROM win)
          ) AS llm_pass_rate,
          (
@@ -138,7 +138,7 @@ export async function getStatsCore(
              WHEN SUM(total) = 0 OR SUM(total) IS NULL THEN NULL
              ELSE SUM(passed)::float / SUM(total)::float
            END
-           FROM eval_runs
+           FROM ao_eval_runs
            WHERE ($1::text IS NULL OR agent_id = $1)
              AND started_at >= NOW() - $2::interval
              AND ($3::text IS NULL OR account_id = $3)

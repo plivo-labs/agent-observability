@@ -87,11 +87,18 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
   // chat_history at insert time carries only timings (TTFT/TTFB/e2e
   // latency), not token counts, so computing here would persist a
   // misleading $0 for every voice-agent session.
+  // Idempotency via WHERE NOT EXISTS rather than ON CONFLICT: ON CONFLICT
+  // (session_id) THROWS on a database where migration 022's unique index has
+  // not run yet (AUTO_MIGRATE=false deployments apply migrations manually),
+  // which would 500 every recording ingest until the migration lands. The
+  // NOT EXISTS guard gives the same retry-is-a-no-op behavior on any schema;
+  // 021's unique index still closes the tiny concurrent-insert race for good.
   await tx`
-    INSERT INTO agent_transport_sessions (
+    INSERT INTO ao_agent_transport_sessions (
       session_id, account_id, agent_id, agent_name, transport, started_at, ended_at, duration_ms, turn_count,
       has_stt, has_llm, has_tts, chat_history, session_metrics, raw_report, record_url
-    ) VALUES (
+    )
+    SELECT
       ${session.sessionId},
       ${session.accountId},
       ${session.agentId},
@@ -108,13 +115,18 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
       ${session.sessionMetrics}::jsonb,
       ${session.rawReport}::jsonb,
       ${session.recordUrl}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ao_agent_transport_sessions WHERE session_id = ${session.sessionId}
     )
   `;
+  // At-least-once ingest: a client retry after a timeout the server actually
+  // committed must be a no-op, not a duplicate session (unique index from
+  // migration 022).
 }
 
 export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
   await sql`
-    INSERT INTO session_tags (
+    INSERT INTO ao_session_tags (
       session_id, name, metadata, source, observed_at
     ) VALUES (
       ${input.sessionId},
@@ -125,7 +137,7 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
     )
     ON CONFLICT (session_id, name, source) DO UPDATE SET
       metadata = EXCLUDED.metadata,
-      observed_at = COALESCE(EXCLUDED.observed_at, session_tags.observed_at),
+      observed_at = COALESCE(EXCLUDED.observed_at, ao_session_tags.observed_at),
       updated_at = NOW()
   `;
 }
@@ -136,12 +148,16 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
 export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db: SQL = sql): Promise<void> {
   // Idempotent against at-least-once OTLP redelivery: a redelivered batch
   // carries a byte-identical evaluation payload, so skip the insert when an
-  // identical row (same session/source/judge + exact raw payload) already
-  // exists. Guarding on `raw` equality never drops a genuinely different
-  // evaluation, and needs no unique constraint (so no migration that could
-  // fail on pre-existing duplicates).
+  // identical row (same session/source/judge/tag + exact raw payload) already
+  // exists. `tag` is part of the identity — the eval-sweeper fan-out writes
+  // one row per node per judge with the node ref in `tag`, and two nodes can
+  // legitimately produce byte-identical verdicts (same judge, same short
+  // reason); without tag in the key the second node's row would be dropped
+  // and the node axis undercounted. Guarding on `raw` equality never drops a
+  // genuinely different evaluation, and needs no unique constraint (so no
+  // migration that could fail on pre-existing duplicates).
   await db`
-    INSERT INTO session_external_evals (
+    INSERT INTO ao_session_external_evals (
       session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw
     )
     SELECT
@@ -155,10 +171,11 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db:
       ${input.observedAt},
       ${input.raw}::jsonb
     WHERE NOT EXISTS (
-      SELECT 1 FROM session_external_evals
+      SELECT 1 FROM ao_session_external_evals
       WHERE session_id = ${input.sessionId}
         AND source = ${input.source}
         AND judge_name = ${input.judgeName}
+        AND tag IS NOT DISTINCT FROM ${input.tag}
         AND raw = ${input.raw}::jsonb
     )
   `;
@@ -166,7 +183,7 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db:
 
 export async function upsertSessionOutcome(input: SessionOutcomeInput): Promise<void> {
   await sql`
-    INSERT INTO session_outcomes (
+    INSERT INTO ao_session_outcomes (
       session_id, source, outcome, reason, observed_at, raw
     ) VALUES (
       ${input.sessionId},
@@ -179,7 +196,7 @@ export async function upsertSessionOutcome(input: SessionOutcomeInput): Promise<
     ON CONFLICT (session_id, source) DO UPDATE SET
       outcome = EXCLUDED.outcome,
       reason = EXCLUDED.reason,
-      observed_at = COALESCE(EXCLUDED.observed_at, session_outcomes.observed_at),
+      observed_at = COALESCE(EXCLUDED.observed_at, ao_session_outcomes.observed_at),
       raw = EXCLUDED.raw,
       updated_at = NOW()
   `;
@@ -206,15 +223,15 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
   // Handle the OTLP-before-recording race. Every write below is an UPDATE
   // keyed on session_id; if the recording multipart hasn't created the row
   // yet, those UPDATEs match nothing and the usage/cost/events are lost.
-  // Park the patch in session_raw_report_patches instead and return — it
+  // Park the patch in ao_session_raw_report_patches instead and return — it
   // gets replayed (in arrival order) by drainStagedRawReportPatches once
-  // insertSession creates the row, mirroring the session_tags replay.
+  // insertSession creates the row, mirroring the ao_session_tags replay.
   const [sessionRow] = await sql`
-    SELECT 1 AS present FROM agent_transport_sessions WHERE session_id = ${input.sessionId} LIMIT 1
+    SELECT 1 AS present FROM ao_agent_transport_sessions WHERE session_id = ${input.sessionId} LIMIT 1
   `;
   if (!sessionRow) {
     await sql`
-      INSERT INTO session_raw_report_patches (session_id, patch)
+      INSERT INTO ao_session_raw_report_patches (session_id, patch)
       VALUES (${input.sessionId}, ${input.patch}::jsonb)
     `;
     return;
@@ -261,14 +278,14 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
       // the agent row and the FK write commit/rollback together.
       await upsertAgentTx(tx, { agentId, accountId: null, agentName });
       await tx`
-        UPDATE agent_transport_sessions
+        UPDATE ao_agent_transport_sessions
         SET agent_id = ${agentId}
         WHERE session_id = ${input.sessionId} AND agent_id IS NULL
       `;
     }
     if (agentName) {
       await tx`
-        UPDATE agent_transport_sessions
+        UPDATE ao_agent_transport_sessions
         SET agent_name = ${agentName}
         WHERE session_id = ${input.sessionId} AND agent_name IS NULL
       `;
@@ -293,7 +310,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
       // is otherwise only written here, so this is effectively a NULL→
       // value transition, but the COALESCE keeps the column monotonic).
       await tx`
-        UPDATE agent_transport_sessions
+        UPDATE ao_agent_transport_sessions
         SET session_metrics = jsonb_set(
               CASE
                 WHEN jsonb_typeof(session_metrics) = 'object'
@@ -322,7 +339,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
       // concurrent append for the same session isn't lost.
       const [cur] = await tx`
         SELECT raw_report->'events' AS events
-        FROM agent_transport_sessions WHERE session_id = ${input.sessionId}
+        FROM ao_agent_transport_sessions WHERE session_id = ${input.sessionId}
       `;
       const storedIds = new Set(
         asEventArray(cur?.events).map(eventItemId).filter((id): id is string => id != null),
@@ -333,7 +350,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
       });
 
       await tx`
-        UPDATE agent_transport_sessions
+        UPDATE ao_agent_transport_sessions
         SET raw_report =
           (CASE WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report ELSE '{}'::jsonb END)
           || ${restWithoutEvents}::jsonb
@@ -347,7 +364,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
     }
 
     await tx`
-      UPDATE agent_transport_sessions
+      UPDATE ao_agent_transport_sessions
       SET raw_report = (
         CASE
           WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
@@ -369,7 +386,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
  */
 export async function drainStagedRawReportPatches(sessionId: string): Promise<void> {
   const rows = await sql`
-    SELECT id, patch FROM session_raw_report_patches
+    SELECT id, patch FROM ao_session_raw_report_patches
     WHERE session_id = ${sessionId}
     ORDER BY id ASC
   `;
@@ -377,7 +394,7 @@ export async function drainStagedRawReportPatches(sessionId: string): Promise<vo
     try {
       const patch = typeof row.patch === "string" ? JSON.parse(row.patch) : row.patch;
       await mergeSessionRawReport({ sessionId, patch });
-      await sql`DELETE FROM session_raw_report_patches WHERE id = ${row.id}`;
+      await sql`DELETE FROM ao_session_raw_report_patches WHERE id = ${row.id}`;
     } catch (e) {
       console.error(
         `[otlp] failed to replay staged raw_report patch id=${row.id} ` +
@@ -460,7 +477,7 @@ export async function applySessionTagMetadata(
       await upsertAgentTx(tx, { agentId, accountId, agentName });
     }
     await tx.unsafe(
-      `UPDATE agent_transport_sessions
+      `UPDATE ao_agent_transport_sessions
        SET ${assignments.join(", ")}
        WHERE session_id = $${params.length}`,
       params,
@@ -471,7 +488,7 @@ export async function applySessionTagMetadata(
 export async function applyStoredSessionTags(sessionId: string): Promise<void> {
   const rows = await sql`
     SELECT name, metadata
-    FROM session_tags
+    FROM ao_session_tags
     WHERE session_id = ${sessionId}
   `;
   await applySessionTagMetadata(
@@ -482,3 +499,42 @@ export async function applyStoredSessionTags(sessionId: string): Promise<void> {
     })),
   );
 }
+
+// ── Ingest-based evals: agent config + sweeper verdicts ──────────────────────
+//
+// ao_session_agent_config stores the generic authoring config a client attaches at
+// call end (per-node instructions, intents, variable rules, goals, opaque node
+// refs). Its presence is the eval opt-in. ao_session_eval_verdicts doubles as the
+// sweeper's work claim: inserting the row IS claiming the session (PK conflict
+// = someone else won). Deterministic judge failures land as status='error' and
+// are never retried; a worker that died mid-judge leaves a stale 'running' row
+// that gets re-claimed after EVAL_CLAIM_STALE_MINUTES.
+
+export interface SessionAgentConfigInput {
+  sessionId: string;
+  config: Record<string, unknown>;
+  source: string;
+  observedAt: Date | null;
+}
+
+export async function upsertSessionAgentConfig(input: SessionAgentConfigInput): Promise<void> {
+  await sql`
+    INSERT INTO ao_session_agent_config (
+      session_id, config, source, observed_at
+    ) VALUES (
+      ${input.sessionId},
+      ${input.config}::jsonb,
+      ${input.source},
+      ${input.observedAt}
+    )
+    ON CONFLICT (session_id) DO UPDATE SET
+      config = EXCLUDED.config,
+      observed_at = COALESCE(EXCLUDED.observed_at, ao_session_agent_config.observed_at),
+      updated_at = NOW()
+  `;
+}
+
+// NOTE: the verdict-row and by-tag reads live inline in their routes
+// (src/index.ts session detail + /api/sessions/by-tag) — the by-tag route
+// needs a richer join (verdict status) than a plain-id helper would provide,
+// and keeping one copy per read path avoids helper/inline drift.

@@ -57,9 +57,7 @@ export const INTENT_JSON = strict(
 );
 
 // instruction adherence — the 4 sub-metrics (mirror cx-sqs node/instruction/config.go exactly).
-// severity is enum-constrained at the wire schema (it gates adherence_passed, see aggregate.ts)
-// so the strict path can never emit "Critical"/free-form casings.
-const MISSED_STEP = obj({ step: str, severity: { type: "string", enum: ["minor", "major", "critical"] } as const, reason_code: str, details: str });
+const MISSED_STEP = obj({ step: str, severity: str, reason_code: str, details: str });
 const ISSUE = obj({ category: str, reason_code: str, details: str });
 export const INSTRUCTION_ADHERENCE_JSON = strict(
   "eval_instruction",

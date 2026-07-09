@@ -2,7 +2,7 @@
  * Conversation-goal analyzer: a background sweep (same placement model as
  * the alert sweeper) that claims ended sessions carrying goal:<text>
  * tags, judges each against the transcript with one LLM call per
- * session, and writes per-goal verdicts into session_external_evals
+ * session, and writes per-goal verdicts into ao_session_external_evals
  * (source='goal').
  *
  * The judging goes through the repo's own provider-neutral LLM stack
