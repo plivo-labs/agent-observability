@@ -87,6 +87,19 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.conversation_status.status).toBe("voicemail_detected");
   });
 
+  test("mutual exclusivity: call_screening/voicemail suppresses wrong_number + do_not_disturb (no co-fire)", async () => {
+    // Regression: the top-priority voicemail/screening branch must clear EVERY
+    // lower detection. It previously cleared only bot + low_engagement, so
+    // call_screening + wrong_number both stayed detected and the sweeper fanned
+    // two separate failing alert rows off a single call.
+    const llm = new MockLLM([responder({ screening: true, wrong: true, dnd: true, low: true })]);
+    const cm = await evaluateConversationMetrics(ctx(), llm);
+    expect(cm.call_screening.detected).toBe(true);
+    expect(cm.wrong_number.detected).toBe(false); // superseded
+    expect(cm.do_not_disturb.detected).toBe(false); // superseded
+    expect(cm.low_engagement.detected).toBe(false); // superseded
+  });
+
   test("wrong_number outranks do_not_disturb + low_engagement", async () => {
     const llm = new MockLLM([responder({ wrong: true, dnd: true, low: true })]);
     const cm = await evaluateConversationMetrics(ctx(), llm);

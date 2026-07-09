@@ -243,7 +243,7 @@ export interface SimConversationMetrics {
   /** STT quality axis. `available:false` marks "the judge did not run" (skipped
    *  or errored) so consumers don't read the zero counts as a confident "clean
    *  call". `error_count`/`recovered_count` are only meaningful when available. */
-  stt: { error_count: number; recovered_count: number; available?: boolean };
+  stt: { error_count: number; recovered_count: number; available: boolean };
 }
 
 /** What `evaluateSimulation` returns: the node + goal axes only.

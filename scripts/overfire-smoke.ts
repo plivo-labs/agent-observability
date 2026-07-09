@@ -18,6 +18,7 @@
  * exercises the exact path production uses. Read-only; makes ~4 judge calls.
  */
 import { runInstructionAdherenceJudge, runHallucinationJudge, runLoopJudge, runVariableExtractionJudge } from "../src/evals-engine/judges/node-judges.js";
+import { deriveInstructionAdherence } from "../src/evals-engine/aggregate.js";
 import type { ConversationInput, NodeEvalInput } from "../src/evals-engine/types.js";
 
 const baseCtx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
@@ -63,14 +64,12 @@ async function run() {
     });
     const ctx = baseCtx({ full_transcript: "Agent: Hi there! Thanks for reaching Acme. Can I grab your order id?\nUser: It's 4471\nAgent: Great, order 4471 — got it." });
     const { data } = await runInstructionAdherenceJudge(node, ctx);
-    // The judge returns the RAW 4 sub-metrics; `adherence_passed` is derived
-    // downstream (aggregate.ts) as objective.achieved ∧ no-critical-step ∧ policy.passed.
-    const crit = data.procedure_compliance?.missed_steps?.some((m) => m.severity === "critical") ?? false;
-    const objectiveMet = data.objective_progress?.achieved === true;
-    const policyOk = data.policy_boundary_compliance?.passed === true;
-    const adherencePassed = objectiveMet && !crit && policyOk;
-    check("adherence: wording deviation on a met objective is NOT critical", adherencePassed,
-      `objective_achieved=${objectiveMet} critical_missed=${crit} policy_passed=${policyOk}`);
+    // The judge returns the RAW 4 sub-metrics; run them through the canonical
+    // aggregate rule rather than re-deriving it here, so this harness can't
+    // drift from the production adherence_passed logic it exists to guard.
+    const adherence = deriveInstructionAdherence(data);
+    check("adherence: wording deviation on a met objective is NOT critical", adherence.adherence_passed,
+      `objective_achieved=${adherence.objective_progress.achieved} procedure_passed=${adherence.procedure_compliance.passed} policy_passed=${adherence.policy_boundary_compliance.passed}`);
   }
 
   // 2) HALLUCINATION — agent cites a value present only in global_variables.

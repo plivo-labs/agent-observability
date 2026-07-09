@@ -156,6 +156,13 @@ type DetectionResult = { detected: boolean; reason: string; technical_reason: st
  *  unavailable so fan-out skips it — never emitted as a real pass/fail. */
 const skippedDetection = (why: string): DetectionResult => ({ detected: false, reason: "", technical_reason: why, available: false });
 
+type SttResult = { error_count: number; recovered_count: number; available: boolean };
+
+/** STT metrics for a run where the STT judge did not execute (non-voice channel
+ *  or a failed judge call). `available:false` so fan-out skips it — same pattern
+ *  as skippedDetection, keeping the skipped shape in one place. */
+const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0, available: false });
+
 /** Run one boolean detection judge; default to `detected:false` on any failure. */
 async function runDetection(
   criteria: string,
@@ -202,7 +209,7 @@ async function runSentiment(
 async function runStt(
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ error_count: number; recovered_count: number; available: boolean }> {
+): Promise<SttResult> {
   try {
     const { data } = await runLlmJudge({
       system: STT + OUT_STT,
@@ -217,7 +224,7 @@ async function runStt(
     const recovered = Math.min(errors, Math.max(0, Math.round(data.recovered_count)));
     return { error_count: errors, recovered_count: recovered, available: true };
   } catch {
-    return { error_count: 0, recovered_count: 0, available: false };
+    return skippedStt();
   }
 }
 
@@ -272,7 +279,7 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     conversation_status: { status: "", reason: "", technical_reason: "" },
     is_livekit: false,
     is_agent_runner: false,
-    stt: { error_count: 0, recovered_count: 0, available: false },
+    stt: skippedStt(),
   };
 }
 
@@ -298,14 +305,16 @@ export async function evaluateConversationMetrics(
     runDetection(WRONG_NUMBER, DETECTION_JSON, ctx, provider),
     runDetection(DO_NOT_DISTURB, DETECTION_JSON, ctx, provider),
     runSentiment(ctx, provider),
-    voice ? runStt(ctx, provider) : Promise.resolve({ error_count: 0, recovered_count: 0, available: false }),
+    voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);
 
   // ── mutual exclusivity on the emitted booleans (cx-sqs priority) ──
-  // Voicemail + call-screening may co-exist; either one suppresses bot and
-  // low-engagement. Otherwise resolve by bot > wrong_number > do_not_disturb >
-  // low_engagement. `botFired` is already false on non-voice (voiceOnlySkip),
-  // so the same block yields the text-channel priority (wrong > dnd > low).
+  // Voicemail + call-screening may co-exist and take top priority; either one
+  // suppresses every lower detection (bot, wrong_number, do_not_disturb,
+  // low_engagement) so the sweeper never fans two failing rows off one call.
+  // Otherwise resolve by bot > wrong_number > do_not_disturb > low_engagement.
+  // `botFired` is already false on non-voice (voiceOnlySkip), so the same block
+  // yields the text-channel priority (wrong > dnd > low).
   const vmFired = voicemail.available && voicemail.detected;
   const screenFired = screening.available && screening.detected;
   let botFired = bot.available && bot.detected;
@@ -315,6 +324,8 @@ export async function evaluateConversationMetrics(
 
   if (vmFired || screenFired) {
     botFired = false;
+    wrongFired = false;
+    dndFired = false;
     lowFired = false;
   } else if (botFired) {
     wrongFired = false; dndFired = false; lowFired = false;
