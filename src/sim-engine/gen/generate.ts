@@ -118,19 +118,24 @@ async function runChunkWithRetry(
     remaining = remaining.filter((s) => !got.has(s.slot_id) && !consumed.has(s.slot_id));
   }
 
-  // Per-slot fallback: retry each still-missing slot on its own.
+  // Per-slot fallback: retry each still-missing slot on its own. Slots are
+  // independent single-slot LLM calls, so they run in PARALLEL (the serial loop
+  // added a full round-trip per missing slot to the chunk's wall clock); each
+  // slot's attempts stay serial (same attempt budget as before).
   const stillFailed: string[] = [];
-  for (const slot of remaining) {
-    let done = false;
-    for (let attempt = 1; attempt <= WRITER_SLOT_RETRIES + 1 && !done; attempt++) {
-      const res = await writeScenarioChunk({ ...base, slots: [slot], attempt, onScenario });
-      usages.push(res.usage);
-      if (res.scenarios.length > 0 || res.emittedSlotIds.length > 0) {
-        scenarios.push(...res.scenarios);
-        done = true;
+  const fallbackResults = await Promise.all(
+    remaining.map(async (slot) => {
+      for (let attempt = 1; attempt <= WRITER_SLOT_RETRIES + 1; attempt++) {
+        const res = await writeScenarioChunk({ ...base, slots: [slot], attempt, onScenario });
+        usages.push(res.usage);
+        if (res.scenarios.length > 0 || res.emittedSlotIds.length > 0) return { slot, scenarios: res.scenarios };
       }
-    }
-    if (!done) stillFailed.push(slot.slot_id);
+      return { slot, scenarios: null };
+    }),
+  );
+  for (const r of fallbackResults) {
+    if (r.scenarios) scenarios.push(...r.scenarios);
+    else stillFailed.push(r.slot.slot_id);
   }
   return { scenarios, failedSlotIds: stillFailed, usages };
 }

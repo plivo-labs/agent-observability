@@ -200,6 +200,29 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(meta.failed_count).toBe(0);
   });
 
+  test("per-slot fallback rescues slots the chunk attempts keep missing (now parallel)", async () => {
+    // Multi-slot calls always omit the LAST requested slot → both chunk attempts miss
+    // it → the single-slot fallback (expected_slot_ids.length === 1) writes it.
+    const omitLast = (args: ProviderCompleteArgs): string => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      const full = JSON.parse(writerResponder(args));
+      if (ids.length > 1) full.scenario_items = full.scenario_items.filter((it: any) => it.slot_id !== ids[ids.length - 1]);
+      return JSON.stringify(full);
+    };
+    const writerLlm = new MockLLM([omitLast]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.failed_count).toBe(0);
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+    const singleSlotCalls = writerLlm.calls.filter((c) => JSON.parse(c.user).expected_slot_ids?.length === 1);
+    expect(singleSlotCalls.length).toBeGreaterThanOrEqual(1); // the fallback actually ran
+  });
+
   test("throws after the planner fails twice", async () => {
     const run = collect(
       generateScenarios({
