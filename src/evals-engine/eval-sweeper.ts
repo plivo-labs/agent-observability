@@ -28,12 +28,16 @@ import { sentimentPassed } from "./judges/conversation-judges.js";
 // one poison session can never block the backlog the way a shared queue would.
 // All state is Postgres, so progress survives restarts.
 
-export const EVAL_SWEEP_INTERVAL_MS = 20_000;
-const MAX_PER_SWEEP = 20; // bound the work per tick so one sweep can't run unbounded
+// Concurrency/throughput knobs are env-configurable (consul-tunable) so they
+// can be dialed without a redeploy; defaults in src/schema.ts preserve prior
+// behavior. The judge-call semaphore (EVAL_MAX_CONCURRENT_JUDGE_CALLS, in
+// run-llm-judge.ts) remains the true provider ceiling.
+export const EVAL_SWEEP_INTERVAL_MS = config.EVAL_SWEEP_INTERVAL_MS;
+const MAX_PER_SWEEP = config.EVAL_MAX_PER_SWEEP; // bound the work per tick so one sweep can't run unbounded
 // Sessions judged concurrently within one sweep. The judge-call semaphore
 // (MAX_CONCURRENT_JUDGE_CALLS) still caps total provider concurrency, so this
 // only overlaps sessions' wall-clock — it can't stack provider load.
-const MAX_CONCURRENT_SESSIONS = 3;
+const MAX_CONCURRENT_SESSIONS = config.EVAL_MAX_CONCURRENT_SESSIONS;
 // Re-assert claim ownership at least this often while judging, so a healthy
 // long-running judge is never stale-adopted (heartbeat interval << stale window).
 const CLAIM_HEARTBEAT_MS = 60_000;
@@ -332,7 +336,7 @@ export async function runEvalSweepOnce(): Promise<void> {
 // (MAX_CONCURRENT_JUDGE_CALLS) still caps provider concurrency; this only
 // bounds how many full-session judges the ingest hot path spawns before it
 // defers the rest to the poller. Mirrors the sweep's MAX_CONCURRENT_SESSIONS.
-const MAX_CONCURRENT_KICKS = 3;
+const MAX_CONCURRENT_KICKS = config.EVAL_MAX_CONCURRENT_KICKS;
 let activeKicks = 0;
 
 /**

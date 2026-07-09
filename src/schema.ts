@@ -38,6 +38,33 @@ export const envSchema = z.object({
   // sweeper is active.
   ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
 
+  // ── Eval sweeper concurrency / throughput (consul-tunable) ──────────────────
+  // These were compile-time constants; surfaced as env so throughput can be
+  // tuned from consul. NOTE: they bind to module-level consts at import
+  // (eval-sweeper.ts, run-llm-judge.ts), so a consul edit takes effect only on
+  // the next process RESTART — flipping the KV alone does not apply live.
+  // IMPORTANT: the true provider ceiling is EVAL_MAX_CONCURRENT_JUDGE_CALLS — a
+  // GLOBAL semaphore shared by BOTH the poller and the event-kick. Every session
+  // fans out ~12-13 judge calls through it, so raising the session/kick caps
+  // WITHOUT raising this does nothing. Size this against the judge LLM endpoint's
+  // rate limit; overshooting just trades throughput for 429s → retries. Each knob
+  // carries a .max() sanity cap so a fat-fingered consul value can't 100x
+  // provider concurrency. Defaults preserve today's behavior.
+  // Sessions judged concurrently within one poll sweep.
+  EVAL_MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().max(100).default(3),
+  // Sessions the ingest event-kick judges at once before deferring the rest to
+  // the poller (burst backpressure).
+  EVAL_MAX_CONCURRENT_KICKS: z.coerce.number().int().positive().max(100).default(3),
+  // Global cap on simultaneous LLM judge calls across ALL sessions — the real
+  // throughput ceiling. Raise this TOGETHER with the session/kick caps. The
+  // .max() is a fat-finger guard, not a tuning limit — size the real ceiling
+  // against the judge endpoint's rate limit, well under 200.
+  EVAL_MAX_CONCURRENT_JUDGE_CALLS: z.coerce.number().int().positive().max(200).default(10),
+  // Max sessions claimed per poll tick (bounds one sweep's work).
+  EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().max(500).default(20),
+  // Poll interval (ms) between eval sweeps.
+  EVAL_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
+
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
   // configured LLM provider has a key. It judges through the shared LLM stack

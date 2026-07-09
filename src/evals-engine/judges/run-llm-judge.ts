@@ -1,5 +1,6 @@
 import type { ZodType } from "zod";
 import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { config } from "../../config.js";
 
 // AO Eval Engine — the single LLM entry every judge uses. Replaces LiveKit's private `_LLMJudge`:
 // build system+user, call the shared `completeJSON` on the "judge" role (→ JUDGE_MODEL || claude-opus-4-8,
@@ -37,7 +38,10 @@ export interface JudgeResult<T> {
 // conversation judges in parallel; without a cap a multi-node session lands
 // dozens of simultaneous provider calls (rate-limit storms → transient eval
 // failures, plus cost spikes). Queue order is FIFO.
-const MAX_CONCURRENT_JUDGE_CALLS = 10;
+// Env-configurable (consul-tunable) — this is the TRUE throughput ceiling
+// shared by the poller and the event-kick; size it against the judge LLM
+// endpoint's rate limit. Default (10) preserves prior behavior.
+const MAX_CONCURRENT_JUDGE_CALLS = config.EVAL_MAX_CONCURRENT_JUDGE_CALLS;
 let activeJudgeCalls = 0;
 const judgeWaiters: Array<() => void> = [];
 
