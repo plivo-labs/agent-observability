@@ -1,6 +1,6 @@
 import type { LlmProvider, ProviderCompleteArgs, RawCompletion } from "./types.js";
 
-type Responder = string | ((args: ProviderCompleteArgs) => string);
+type Responder = string | ((args: ProviderCompleteArgs) => string | Promise<string>);
 
 /**
  * Deterministic in-memory provider for tests and CI — no network, no API keys.
@@ -26,7 +26,16 @@ export class MockLLM implements LlmProvider {
   async complete(args: ProviderCompleteArgs): Promise<RawCompletion> {
     this.calls.push(args);
     const next = this.queue.length > 1 ? this.queue.shift()! : (this.queue[0] ?? "{}");
-    const text = typeof next === "function" ? next(args) : next;
+    // A responder may be async (e.g. Bun.sleep before responding) so tests can model
+    // slow LLM calls and assert completion-order behavior.
+    const text = typeof next === "function" ? await next(args) : next;
+    // Mirror a streaming provider deterministically: feed the response through the
+    // live text sink in fixed-size deltas before returning — exercises incremental
+    // consumers (the writer's stream extractor). Gated on `stream` for honesty:
+    // real providers only produce text deltas on their streaming path.
+    if (args.onText && args.stream) {
+      for (let i = 0; i < text.length; i += 16) args.onText(text.slice(i, i + 16));
+    }
     return { text, usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } };
   }
 }

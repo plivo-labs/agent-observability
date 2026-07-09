@@ -251,6 +251,11 @@ export const SMOKE_CAP_FALLBACK = 20;
 export const WRITER_CHUNK_SIZE = 10;
 export const WRITER_CHUNK_RETRIES = 1;
 export const WRITER_SLOT_RETRIES = 1;
+// Per-chunk cap on concurrent single-slot fallback calls. The fallback fires exactly
+// when the provider is already degraded (parse failures / 429s), so an unbounded
+// fan-out would land planned_count concurrent retries on a struggling endpoint;
+// bounded, the generation-wide worst case is chunks × this (~15 at typical sizes).
+export const WRITER_FALLBACK_CONCURRENCY = 3;
 // 24000 matches aiassist's SIM_EVAL_PLANNER_MAX_OUTPUT_TOKENS default — its config
 // comment records that 8000 truncated a large share of planner runs (status="incomplete").
 export const PLANNER_MAX_OUTPUT_TOKENS = 24000;

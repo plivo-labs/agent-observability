@@ -70,6 +70,16 @@ describe("parseFlowJson — boundary gate via normalizeFlow", () => {
     expect(() => parseFlowJson({ nodes: [] })).toThrow(FlowJsonError);
     expect(() => parseFlowJson(null)).toThrow(FlowJsonError);
   });
+
+  test("JSON null on optional envelope fields means ABSENT (Python drafts send None)", () => {
+    // Dev regression: the vibe agent's draft flow carried global_meta.stt_guidance: null
+    // and AO 400'd the whole generation ("expected string, received null").
+    const withNulls = { ...(realShape as Record<string, unknown>), global_meta: { stt_guidance: null }, agentSettings: null };
+    const flow = parseFlowJson(withNulls);
+    expect(flow.nodes.length).toBeGreaterThan(0);
+    const nullMeta = { ...(realShape as Record<string, unknown>), global_meta: null };
+    expect(parseFlowJson(nullMeta).nodes.length).toBeGreaterThan(0);
+  });
 });
 
 describe("Scenario (matches the worker SimulationScenario struct)", () => {

@@ -186,6 +186,8 @@ export function registerSimulationRoutes(app: Hono): void {
           // Every input is zod-guaranteed >= 1 (smoke_cap min(1); both env caps
           // .positive()). Unused for stress.
           smokeCap: body.smoke_cap ?? Math.min(simEngineConfig.smokeCapDefault, simEngineConfig.smokeCapHard),
+          incrementalEmit: simEngineConfig.genIncremental,
+          plannerCacheTtlMs: simEngineConfig.plannerCacheTtlMs,
           testCaseGenerationInstructions: body.test_case_generation_instructions,
           // Client disconnect propagates into the LLM fan-out: an abandoned request stops
           // burning tokens and releases its concurrency slot instead of running to completion.
@@ -214,7 +216,11 @@ export function registerSimulationRoutes(app: Hono): void {
         for (;;) {
           // Stop consuming when the client is gone — the generator's own signal check
           // aborts the in-flight LLM work; this just exits the relay loop promptly.
-          if (stream.aborted || c.req.raw.signal.aborted) break;
+          // iterator.return() lets any future try/finally inside the generator run.
+          if (stream.aborted || c.req.raw.signal.aborted) {
+            void iterator.return?.();
+            break;
+          }
           const nextEvent = iterator.next();
           let result: Awaited<typeof nextEvent> | undefined;
           for (;;) {

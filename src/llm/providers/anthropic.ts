@@ -35,7 +35,7 @@ function getClient(): Anthropic {
  */
 export const anthropicProvider: LlmProvider = {
   name: "anthropic",
-  async complete({ system, user, model, maxTokens, temperature, topP, jsonSchema, stream, signal }: ProviderCompleteArgs): Promise<RawCompletion> {
+  async complete({ system, user, model, maxTokens, temperature, topP, jsonSchema, stream, signal, onText }: ProviderCompleteArgs): Promise<RawCompletion> {
     const params: Anthropic.MessageCreateParamsNonStreaming = {
       model,
       // maxTokens === 0 means "no cap" — Anthropic needs a positive number, so use the ceiling.
@@ -58,9 +58,17 @@ export const anthropicProvider: LlmProvider = {
       messages: [{ role: "user", content: user }],
     };
 
-    const res = stream
-      ? await getClient().messages.stream(params, { signal }).finalMessage()
-      : await getClient().messages.create(params, { signal });
+    let res: Anthropic.Message;
+    if (stream) {
+      const s = getClient().messages.stream(params, { signal });
+      // Live text sink (text deltas only). The tool-forced path streams its JSON as
+      // tool INPUT deltas, not text — onText never fires there, so incremental
+      // consumers automatically fall back to the authoritative final parse.
+      if (onText) s.on("text", (delta) => onText(delta));
+      res = await s.finalMessage();
+    } else {
+      res = await getClient().messages.create(params, { signal });
+    }
 
     // Forced tool use → the result is the tool_use block's input; otherwise concatenated text.
     // Either way the return is a JSON string for completeJSON's parse+Zod validation.

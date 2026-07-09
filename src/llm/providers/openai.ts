@@ -188,7 +188,10 @@ async function completeViaResponsesStream(args: ProviderCompleteArgs): Promise<R
     }
     const type: string = event?.type ?? "";
     if (type === "response.output_text.delta") {
-      if (typeof event.delta === "string") text += event.delta;
+      if (typeof event.delta === "string") {
+        text += event.delta;
+        args.onText?.(event.delta);
+      }
     } else if (type === "response.failed" || type === "response.incomplete") {
       const payload = event.response ?? event;
       const reason = payload?.incomplete_details?.reason ? ` reason="${payload.incomplete_details.reason}"` : "";
