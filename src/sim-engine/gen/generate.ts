@@ -3,6 +3,7 @@ import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
 import { AsyncQueue } from "./async-queue.js";
+import { plannerCacheKey, plannerCacheGet, plannerCacheSet, plannerCacheDelete } from "./planner-cache.js";
 import { writeScenarioChunk } from "./writer.js";
 import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, SMOKE_CAP_FALLBACK } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -13,14 +14,16 @@ import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSumma
 // chunk + per-slot fallback retries) → dedup by coverage_key. Yields progress events
 // + scenarios as a discriminated union (the Phase 4 route layer maps these to SSE).
 //
-// V1 simplification: non-streaming writer chunks (parallel via Promise.all), deferring
-// the orchestrator service's token-streaming recovery — same schema, validation, retries, and events.
+// Emission is incremental end-to-end: writer chunks stream in completion order and
+// (with SIM_GEN_INCREMENTAL) each scenario surfaces mid-stream as its item completes
+// in the LLM token stream. Planner output is cached across identical requests (the
+// vibe rerun loop) — see planner-cache.ts.
 
 type Dict = Record<string, any>;
 
 export type GenEvent =
   | { type: "planning_started"; attempt: number; existing_summary_count: number }
-  | { type: "planning_done"; attempt: number; capability_count: number }
+  | { type: "planning_done"; attempt: number; capability_count: number; cache_hit?: boolean }
   | { type: "allocation_started"; attempt: number; capability_count: number }
   | { type: "allocation_done"; attempt: number; planned_count: number }
   | { type: "writing_started"; planned_count: number; chunk_count: number; chunk_size: number }
@@ -59,6 +62,9 @@ export interface GenMetadata {
   allocation_ms?: number;
   writer_ms?: number;
   ttfs_ms?: number | null;
+  /** True when the plan was served from the planner cache (planner_usage is null
+   *  then — no tokens were spent this run). */
+  planner_cache_hit?: boolean;
 }
 
 export interface GenerateInput {
@@ -78,6 +84,10 @@ export interface GenerateInput {
    *  stream (default true). False = chunk-granular emission (the pre-incremental
    *  behavior); the route wires this from SIM_GEN_INCREMENTAL as the kill-switch. */
   incrementalEmit?: boolean;
+  /** Planner-cache TTL in ms (0/absent = cache disabled — the default for direct
+   *  callers and tests). The route wires SIM_GEN_PLANNER_CACHE_TTL_MS. A hit reuses
+   *  the plan of a byte-identical prior request (see planner-cache.ts). */
+  plannerCacheTtlMs?: number;
   /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
    *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */
   signal?: AbortSignal;
@@ -152,11 +162,34 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const genStart = Date.now();
   let ttfsMs: number | null = null; // stamped at the first `scenario` yield
 
-  // ── PLANNER (2 attempts) ──────────────────────────────────────────────────────
+  // ── PLANNER (2 attempts; cached across byte-identical requests) ────────────────
   const plannerStart = Date.now();
+  const cacheTtlMs = input.plannerCacheTtlMs ?? 0;
+  const cacheKey =
+    cacheTtlMs > 0
+      ? plannerCacheKey({
+          flowJson: input.flowJson,
+          phloUuid: input.phloUuid,
+          model: input.model,
+          simulationMode: mode,
+          smokeCap,
+          instructions: input.testCaseGenerationInstructions ?? "",
+          existingSummaries: existing,
+        })
+      : null;
   let planner: PlannerWithInventory | null = null;
   let plannerUsage: LlmUsage | null = null;
-  for (let attempt = 1; attempt <= PLANNER_RETRIES; attempt++) {
+  let plannerCacheHit = false;
+  if (cacheKey) {
+    const cached = plannerCacheGet(cacheKey, cacheTtlMs);
+    if (cached) {
+      planner = cached;
+      plannerCacheHit = true;
+      yield { type: "planning_started", attempt: 1, existing_summary_count: existing.length };
+      yield { type: "planning_done", attempt: 1, capability_count: planner.capabilities.length, cache_hit: true };
+    }
+  }
+  for (let attempt = 1; attempt <= PLANNER_RETRIES && !planner; attempt++) {
     input.signal?.throwIfAborted();
     yield { type: "planning_started", attempt, existing_summary_count: existing.length };
     try {
@@ -203,6 +236,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       yield { type: "allocation_done", attempt, planned_count: slots.length };
       break;
     } catch (e) {
+      // The plan under this key failed allocation — poison-pill it (the replanned
+      // successor is re-stored below once it passes).
+      if (cacheKey) plannerCacheDelete(cacheKey);
       if (attempt >= ALLOCATION_RETRIES) throw new Error(`Allocator failed after ${ALLOCATION_RETRIES} attempts: ${(e as Error).message}`);
       // Replan with the allocator error appended to the instructions. In smoke mode the
       // dominant failure is a planner that omitted smoke_units — say so explicitly (aiassist parity).
@@ -226,6 +262,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     }
   }
   if (!slots) throw new Error("Allocator produced no slots");
+  // Cache only allocation-proven plans (keyed by the ORIGINAL request inputs, so a
+  // replanned successor replaces its poisoned predecessor under the same key).
+  if (cacheKey) plannerCacheSet(cacheKey, planner);
   const allocationMs = Date.now() - allocationStart;
 
   // ── WRITER (parallel chunks + retries) ─────────────────────────────────────────
@@ -356,6 +395,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       allocation_ms: allocationMs,
       writer_ms: writerMs,
       ttfs_ms: ttfsMs,
+      planner_cache_hit: plannerCacheHit,
     },
   };
 }

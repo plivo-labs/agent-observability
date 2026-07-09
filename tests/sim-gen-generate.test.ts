@@ -223,6 +223,56 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(singleSlotCalls.length).toBeGreaterThanOrEqual(1); // the fallback actually ran
   });
 
+  test("planner cache: an identical request reuses the plan (no second planner call); any input change misses", async () => {
+    const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+    const base = { flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m", plannerCacheTtlMs: 60_000 };
+    const plannerLlm = new MockLLM([PLANNER_JSON]);
+    const run = () =>
+      collect(generateScenarios({ ...base, plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]) }));
+
+    const first = await run();
+    expect(plannerLlm.calls.length).toBe(1);
+    expect((first.find((e) => e.type === "metadata") as any).metadata.planner_cache_hit).toBe(false);
+
+    const second = await run();
+    expect(plannerLlm.calls.length).toBe(1); // served from cache — no new planner call
+    const meta2 = (second.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta2.planner_cache_hit).toBe(true);
+    expect(meta2.planner_usage).toBeNull(); // honest token accounting on a hit
+    expect((second.find((e) => e.type === "planning_done") as any).cache_hit).toBe(true);
+    // Same ledger either way.
+    expect(meta2.saved_count).toBe((first.find((e) => e.type === "metadata") as any).metadata.saved_count);
+
+    // Any planner-input change (here: instructions) is a different key → miss.
+    await collect(
+      generateScenarios({
+        ...base,
+        testCaseGenerationInstructions: "different",
+        plannerProvider: plannerLlm,
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect(plannerLlm.calls.length).toBe(2);
+    plannerCacheClear();
+  });
+
+  test("planner cache: ttl 0 (the default) disables caching entirely", async () => {
+    const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+    const plannerLlm = new MockLLM([PLANNER_JSON]);
+    const run = () =>
+      collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+          plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]),
+        }),
+      );
+    await run();
+    await run();
+    expect(plannerLlm.calls.length).toBe(2); // no reuse without a TTL
+  });
+
   test("throws after the planner fails twice", async () => {
     const run = collect(
       generateScenarios({

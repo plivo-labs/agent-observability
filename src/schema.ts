@@ -199,6 +199,11 @@ export const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false" && v !== "0"),
+  // Planner-output cache TTL (ms). The planner is deterministic in its inputs and is
+  // the slowest generation phase; the vibe rerun loop re-requests the SAME flow, so a
+  // hit skips ~50s of planning per rerun (and keeps the same smoke units across the
+  // loop). A hit only ever reuses a byte-identical request's plan. 0 disables.
+  SIM_GEN_PLANNER_CACHE_TTL_MS: z.coerce.number().int().min(0).default(900_000),
   SMOKE_CAP_DEFAULT: z.coerce.number().int().positive().max(100).default(SMOKE_CAP_FALLBACK),
   SMOKE_CAP_HARD: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
