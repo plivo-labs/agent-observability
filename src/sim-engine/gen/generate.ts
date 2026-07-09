@@ -49,6 +49,15 @@ export interface GenMetadata {
   smoke_cap?: number;
   smoke_units_hash?: string;
   dropped_unit_ids?: string[];
+  /** Phase wall-clock durations (ms). planner_ms spans the planner loop (incl. its
+   *  retries); allocation_ms spans the allocator loop (incl. a replan's second
+   *  planner call); writer_ms spans the writer fan-out through the last emit.
+   *  ttfs_ms = time from generation start to the FIRST `scenario` event (null when
+   *  nothing was saved) — the perceived-latency number the latency work optimizes. */
+  planner_ms?: number;
+  allocation_ms?: number;
+  writer_ms?: number;
+  ttfs_ms?: number | null;
 }
 
 export interface GenerateInput {
@@ -124,8 +133,11 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const existing = input.existingSummaries ?? [];
   const generationId = crypto.randomUUID();
   let instructions = input.testCaseGenerationInstructions ?? "";
+  const genStart = Date.now();
+  let ttfsMs: number | null = null; // stamped at the first `scenario` yield
 
   // ── PLANNER (2 attempts) ──────────────────────────────────────────────────────
+  const plannerStart = Date.now();
   let planner: PlannerWithInventory | null = null;
   let plannerUsage: LlmUsage | null = null;
   for (let attempt = 1; attempt <= PLANNER_RETRIES; attempt++) {
@@ -152,8 +164,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     }
   }
   if (!planner) throw new Error("Planner produced no output");
+  const plannerMs = Date.now() - plannerStart;
 
   // ── ALLOCATOR (2 attempts; replan on the 2nd) ──────────────────────────────────
+  const allocationStart = Date.now();
   let slots: Slot[] | null = null;
   // Smoke-mode metadata extras (aiassist parity) — captured from the smoke allocation.
   let smokeUnitsHashOut: string | undefined;
@@ -196,8 +210,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     }
   }
   if (!slots) throw new Error("Allocator produced no slots");
+  const allocationMs = Date.now() - allocationStart;
 
   // ── WRITER (parallel chunks + retries) ─────────────────────────────────────────
+  const writerStart = Date.now();
   input.signal?.throwIfAborted();
   const chunks = chunk(slots, WRITER_CHUNK_SIZE);
   yield { type: "writing_started", planned_count: slots.length, chunk_count: chunks.length, chunk_size: WRITER_CHUNK_SIZE };
@@ -244,6 +260,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       if (key) seenCoverage.add(key);
       saved += 1;
       chunkSaved += 1;
+      ttfsMs ??= Date.now() - genStart;
       yield { type: "scenario", scenario };
       yield { type: "writer_scenario_done", chunk_index: chunkIndex, chunk_count: chunks.length, scenario_index: i, saved_count: saved, slot_id: scenario.eval_metadata?.slot_id ?? "" };
     }
@@ -259,6 +276,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     throw new Error("Scenario generation failed for all planned slots.");
   }
 
+  const writerMs = Date.now() - writerStart;
+  console.log(
+    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length}`,
+  );
   yield {
     type: "metadata",
     metadata: {
@@ -275,6 +296,10 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       ...(mode === "smoke"
         ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
         : {}),
+      planner_ms: plannerMs,
+      allocation_ms: allocationMs,
+      writer_ms: writerMs,
+      ttfs_ms: ttfsMs,
     },
   };
 }

@@ -72,6 +72,11 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     expect(meta.metadata.failed_slot_ids).toEqual([]);
     expect(meta.metadata.deduped_count).toBe(0);
     expect(meta.metadata.partial_success).toBe(false);
+    // P0 timing fields: numeric phase durations + a ttfs stamped at the first scenario.
+    expect(meta.metadata.planner_ms).toBeGreaterThanOrEqual(0);
+    expect(meta.metadata.allocation_ms).toBeGreaterThanOrEqual(0);
+    expect(meta.metadata.writer_ms).toBeGreaterThanOrEqual(0);
+    expect(meta.metadata.ttfs_ms).toBeGreaterThanOrEqual(0);
   });
 
   test("one chunk's thrown LlmError degrades to failed slots — other chunks' scenarios survive", async () => {
