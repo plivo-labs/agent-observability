@@ -36,8 +36,12 @@ export function renderNodeTranscript(node: NodeEvalInput): string {
     .join("\n");
 }
 
-/** Shared user payload for the node judges (superset; each judge reads what it needs, like the reference engine). */
+/** Shared user payload for the node judges (superset; each judge reads what it needs, like the reference engine).
+ *  Grounding evidence (extracted_variables / global_variables / pronunciation_guides) is included when present so
+ *  the hallucination judge can trace claims to it — a value the runtime supplied must not read as fabricated.
+ *  Empty maps are omitted to keep the payload clean. */
 function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
+  const hasEntries = (m: Record<string, unknown> | undefined): m is Record<string, unknown> => !!m && Object.keys(m).length > 0;
   return {
     global_prompt: ctx.global_prompt,
     node_name: node.node_name,
@@ -46,6 +50,9 @@ function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string
     chosen_intent: node.chosen_intent,
     node_transcript: renderNodeTranscript(node),
     conversation_history: ctx.full_transcript,
+    ...(hasEntries(node.extracted_variables) ? { extracted_variables: node.extracted_variables } : {}),
+    ...(hasEntries(ctx.global_variables) ? { global_variables: ctx.global_variables } : {}),
+    ...(hasEntries(ctx.pronunciation_guides) ? { pronunciation_guides: ctx.pronunciation_guides } : {}),
   };
 }
 

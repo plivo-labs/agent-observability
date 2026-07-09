@@ -328,6 +328,7 @@ describe("POST /observability/recordings/v0", () => {
       ],
     });
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -356,6 +357,7 @@ describe("POST /observability/recordings/v0", () => {
       items: [],
     });
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -381,6 +383,7 @@ describe("POST /observability/recordings/v0", () => {
       items: [],
     });
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -431,6 +434,7 @@ describe("POST /observability/recordings/v0", () => {
     });
 
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -560,6 +564,7 @@ describe("POST /observability/recordings/v0", () => {
 
   test("handles request with no chat history", async () => {
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
@@ -583,6 +588,7 @@ describe("POST /observability/recordings/v0", () => {
     mockInsertSession.mockImplementationOnce(() => Promise.reject(new Error("db down")));
 
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
@@ -602,6 +608,7 @@ describe("POST /observability/recordings/v0", () => {
 
   test("handles malformed chat history JSON gracefully", async () => {
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob(["not valid json"], { type: "application/json" }));
 
     const res = await server.fetch(

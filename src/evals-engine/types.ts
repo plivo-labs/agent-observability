@@ -76,6 +76,20 @@ export interface ConversationInput {
    *  an agent line would otherwise skew voicemail/engagement/sentiment.
    *  Absent (sim path) ⇒ judges fall back to full_transcript. */
   speech_transcript?: string;
+  /** Runtime context the platform supplied to the live agent — trigger inputs
+   *  and mid-flow HTTP/tool outputs (flat string→string). A value present here
+   *  is grounded evidence for the hallucination judge even if it never appears
+   *  in the transcript. Absent when the sender didn't attach it. */
+  global_variables?: Record<string, string>;
+  /** TTS pronunciation map (word→guide). The engine rewrites each word to its
+   *  guide before speaking, so the transcript holds the guide form; the
+   *  hallucination judge treats guide and word as equivalent. */
+  pronunciation_guides?: Record<string, string>;
+  /** Session transport/channel (e.g. "livekit", "twilio", "chat", "sms",
+   *  "whatsapp"). Gates the voice-only conversation detections (voicemail /
+   *  bot / call-screening) so they don't fire on text transcripts. Absent ⇒
+   *  treated as voice (the historical default). */
+  transport?: string;
 }
 
 // ── OUTPUT (the stable verdict contract a consumer renders/persists) ─────────
@@ -226,7 +240,10 @@ export interface SimConversationMetrics {
   conversation_status: { status: string; reason: string; technical_reason: string };
   is_livekit: boolean;
   is_agent_runner: boolean;
-  stt: { error_count: number; recovered_count: number };
+  /** STT quality axis. `available:false` marks "the judge did not run" (skipped
+   *  or errored) so consumers don't read the zero counts as a confident "clean
+   *  call". `error_count`/`recovered_count` are only meaningful when available. */
+  stt: { error_count: number; recovered_count: number; available: boolean };
 }
 
 /** What `evaluateSimulation` returns: the node + goal axes only.

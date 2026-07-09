@@ -208,6 +208,9 @@ export interface SessionEvalSource {
    *  judge time) so windowed alert rules see call recency, and a backlog
    *  flush of old sessions can't page the CURRENT alert window. */
   sessionEndedAt: Date | null;
+  /** Session transport/channel (e.g. "livekit", "twilio", "chat"). Passed to
+   *  the conversation judges to gate the voice-only detections on text calls. */
+  transport: string | null;
 }
 
 /** Backdate a running claim so stale adoption re-picks it after roughly
@@ -226,7 +229,7 @@ export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: numb
 /** Everything the eval sweeper needs to judge one session. */
 export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report, s.created_at AS session_created_at, s.ended_at AS session_ended_at
+    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at
     FROM ao_session_agent_config c
     JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
@@ -243,5 +246,6 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     rawReport: parse(row.raw_report),
     sessionCreatedAt: row.session_created_at ? new Date(row.session_created_at) : null,
     sessionEndedAt: row.session_ended_at ? new Date(row.session_ended_at) : null,
+    transport: typeof row.transport === "string" ? row.transport : null,
   };
 }

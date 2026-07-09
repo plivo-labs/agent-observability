@@ -2,25 +2,31 @@
 //
 // The node/goal judges score per-node behavior; voice conversations also carry
 // CONVERSATION-level signals (voicemail / bot / call-screening / low-engagement /
-// wrong-number / do-not-disturb / user-sentiment) plus a derived
+// wrong-number / do-not-disturb / user-sentiment / STT) plus a derived
 // conversation_status. This module scores that axis from the full transcript.
 //
-// Design: 6 boolean detection judges + 1 sentiment classifier, all reading the full
-// transcript once, run in parallel via the same `runLlmJudge` + strict-JSON path the
-// node judges use. conversation_status is DERIVED in code from the detections
-// (fixed priority: voicemail > bot > screening > low engagement), not an LLM call. Each judge is fault-tolerant: a
-// failure defaults to "not detected" (a flaky supplementary signal must not blank the
+// Design: 6 boolean detection judges + 1 sentiment classifier + 1 STT judge, all
+// reading the transcript once, run in parallel via the same `runLlmJudge` +
+// strict-JSON path the node judges use. Each is fault-tolerant: a failure defaults
+// to "not detected / unavailable" (a flaky supplementary signal must not blank the
 // whole evaluation — unlike the node judges, whose failure is a hard eval_error).
 //
-// Criteria strings are verbatim from the SDK judges so behaviour matches the
-// validated reference implementation.
+// CALIBRATION (ported from cx-sqs conversation/system.tmpl):
+//   - Voice-only detections (voicemail / bot / call-screening / STT) are GATED on
+//     the transport: on text channels (chat/SMS/WhatsApp) they don't run, so they
+//     can't false-positive on a text transcript.
+//   - MUTUAL EXCLUSIVITY is enforced on the EMITTED booleans (not just the derived
+//     status): voicemail/screening suppress bot + low-engagement; otherwise the
+//     priority bot > wrong_number > do_not_disturb > low_engagement resolves
+//     conflicts. This stops two outcomes co-firing into alerts.
+//   - conversation_status is derived in code from the finalized booleans.
 
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 
-// ── criteria bodies (verbatim from _instructions.py) ─────────────────────────
+// ── criteria bodies ──────────────────────────────────────────────────────────
 const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
 
 Criteria:
@@ -51,35 +57,56 @@ const LOW_ENGAGEMENT = `Detect low engagement: a real human answered but only ga
 Criteria:
 1. Applies after a human answered, not voicemail, call screening, or bot/IVR.
 2. User messages are only brief greetings or acknowledgements such as hello, yes, yeah, speaking, okay.
-3. Any substantive question, provided information, disinterest, wrong-number statement, or opt-out is not low engagement.`;
+3. Any substantive question, provided information, disinterest, wrong-number statement, or opt-out is not low engagement.
+4. Repeated connection checks ("hello?", "can you hear me?") with no response to the agent's purpose are low engagement, not confusion.`;
 
 const WRONG_NUMBER = `Detect whether the user indicates they are not the intended recipient. Pass when wrong_number=false. Fail when wrong_number=true.
 
 Criteria:
-1. User says wrong number, wrong person, I do not know them, nobody by that name, or otherwise rejects the identity target.
-2. General confusion about the purpose of the call is not enough.
-3. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
+1. Only flag AFTER the agent has introduced itself or explained the purpose — an initial "who is this?" / "hello?" alone is normal, not a wrong number.
+2. User says wrong number, wrong person, I do not know them, nobody by that name, denies the identity, or says they never signed up / have no account after the explanation.
+3. General confusion about the purpose of the call, or simply declining while acknowledging they are the right person, is not enough (that is do_not_disturb or negative sentiment).
+4. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
 
 const DO_NOT_DISTURB = `Detect whether the user explicitly asks not to be contacted again. Pass when do_not_disturb=false. Fail when do_not_disturb=true.
 
 Criteria:
-1. Explicit opt-out language such as do not call me again, remove me, stop contacting me, take me off your list, or similar means true.
-2. Simple disinterest is not enough unless it includes a future-contact ban.
-3. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
+1. Explicit opt-out language such as do not call me again, remove me, stop contacting me, take me off your list, unsubscribe, or similar means true.
+2. Simple disinterest ("not interested", "no thanks") is NOT enough unless it includes a future-contact ban.
+3. Asking to be contacted later ("call me back later", "not a good time") is rescheduling, not do_not_disturb.
+4. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
 
-const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, negative, confused, or not_applicable. Pass unless the sentiment is clearly negative or confused in a way that indicates poor user experience; maybe for weak signals.
+const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, negative, confused, or not_applicable — the user's predominant emotional state, leaning on the closing tone. Pass unless the sentiment is clearly negative or confused; maybe for weak signals.
 
 Rules:
-1. positive: cooperative, receptive, appreciative.
-2. neutral: minimal but valid engagement.
-3. negative: dissatisfaction, rejection, hostility, frustration, opt-out.
-4. confused: repeated uncertainty or requests for clarification.
-5. not_applicable: no human interaction, voicemail, screening, or bot/IVR.`;
+1. positive: cooperative, receptive, appreciative, agrees or provides requested information. A user who cooperates throughout is positive EVEN IF their final message is a follow-up question about next steps — a follow-up question is not negative. Declining an offered action is positive unless they express dissatisfaction with the service itself.
+2. neutral: minimal but valid engagement — a single greeting or brief factual reply with no emotional signal, or a conversation too short to judge.
+3. negative: dissatisfaction, rejection, hostility, frustration, opt-out, or deflection ("send me details" / "WhatsApp me") with no follow-up acceptance.
+4. confused: REPEATED uncertainty or clarification requests across MULTIPLE user turns. A single message followed by silence is NOT confused — it is neutral.
+5. not_applicable: no human interaction — voicemail, call screening, or bot/IVR answered. When a detection outcome (voicemail/screening/bot) is present, sentiment is not_applicable.`;
+
+const STT = `Evaluate speech-to-text quality across the conversation. For each USER turn, decide whether the transcription shows an STT error, then whether the agent recovered. Output aggregate counts only.
+
+Flag an STT error ONLY in these four categories:
+1. Garbled/nonsensical — not coherent language in any language the speaker used.
+2. Out-of-context (misheard) — real words clearly wrong for what was asked, or a phonetic mishearing the user then corrects.
+3. Random language switch — a sudden, unexplained switch to a different language for a single turn.
+4. Truncated mid-sentence — cut off mid-clause so meaning is lost (NOT brief-but-complete replies like "Yes"/"Okay").
+
+NOT STT errors: short valid replies, informal/colloquial speech, the user simply saying something unexpected but plausible, or coherent multilingual speech.
+
+Recovery: an error is RECOVERED when the agent moved the conversation forward on the likely intended meaning AND the user did not correct it or repeat themselves. Otherwise it FAILED (agent acted on the wrong literal words, asked the user to repeat, or the user corrected/restated).
+
+Rules: evaluate every user turn; at most one error per turn; recovered_count must be <= error_count; do not flag a brief opening greeting.
+
+Default bias: CONSERVATIVE — when unsure whether a turn is an STT error or genuine user speech, do NOT flag it; when unsure about recovery, count it as not recovered.`;
 
 const OUT_DETECTION =
   '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
 const OUT_SENTIMENT =
   '\n\nReturn ONLY a JSON object: {"sentiment": "positive"|"neutral"|"negative"|"confused"|"not_applicable", "reason": string, "technical_reason": string}.';
+const OUT_STT =
+  '\n\nReturn ONLY a JSON object: {"error_count": integer (>=0), "recovered_count": integer (0..error_count), "reason": string, "technical_reason": string}.';
 
 // ── output schemas (strict JSON for the responses gateway) + Zod validation ──
 type JsonSchema = Record<string, unknown>;
@@ -92,6 +119,7 @@ const strObj = (props: Record<string, unknown>): JsonSchema => ({
 const strict = (name: string, schema: JsonSchema) => ({ name, schema, strict: true });
 const STR = { type: "string" } as const;
 const BOOL = { type: "boolean" } as const;
+const INT = { type: "integer" } as const;
 
 // Sentiment is enum-constrained (strict JSON schema + Zod) so the model can't
 // emit an off-enum value that the producer's pass rule and the console's
@@ -101,12 +129,15 @@ const BOOL = { type: "boolean" } as const;
 const SENTIMENT_VALUES = ["positive", "neutral", "negative", "confused", "not_applicable"] as const;
 const DETECTION_JSON = strict("eval_detection", strObj({ detected: BOOL, reason: STR, technical_reason: STR }));
 const SENTIMENT_JSON = strict("eval_sentiment", strObj({ sentiment: { type: "string", enum: SENTIMENT_VALUES }, reason: STR, technical_reason: STR }));
+const STT_JSON = strict("eval_stt", strObj({ error_count: INT, recovered_count: INT, reason: STR, technical_reason: STR }));
 
 const DetectionRawZ = z.object({ detected: z.boolean(), reason: z.string(), technical_reason: z.string() });
 const SentimentRawZ = z.object({ sentiment: z.enum(SENTIMENT_VALUES), reason: z.string(), technical_reason: z.string() });
+const SttRawZ = z.object({ error_count: z.number(), recovered_count: z.number(), reason: z.string(), technical_reason: z.string() });
 
 // ── judge execution ──────────────────────────────────────────────────────────
 const DETECTION_MAX_TOKENS = 1500;
+const STT_MAX_TOKENS = 3000;
 
 function payload(ctx: ConversationInput): Record<string, unknown> {
   // Detection judges classify what was SAID on the call, so prefer the
@@ -119,13 +150,26 @@ function payload(ctx: ConversationInput): Record<string, unknown> {
   return { flow_name: ctx.flow_name, conversation_history: ctx.speech_transcript || ctx.full_transcript };
 }
 
+type DetectionResult = { detected: boolean; reason: string; technical_reason: string; available: boolean };
+
+/** A voice-only detection that did not run on this (non-voice) channel. Marked
+ *  unavailable so fan-out skips it — never emitted as a real pass/fail. */
+const skippedDetection = (why: string): DetectionResult => ({ detected: false, reason: "", technical_reason: why, available: false });
+
+type SttResult = { error_count: number; recovered_count: number; available: boolean };
+
+/** STT metrics for a run where the STT judge did not execute (non-voice channel
+ *  or a failed judge call). `available:false` so fan-out skips it — same pattern
+ *  as skippedDetection, keeping the skipped shape in one place. */
+const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0, available: false });
+
 /** Run one boolean detection judge; default to `detected:false` on any failure. */
 async function runDetection(
   criteria: string,
   json: ReturnType<typeof strict>,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ detected: boolean; reason: string; technical_reason: string; available: boolean }> {
+): Promise<DetectionResult> {
   try {
     const { data } = await runLlmJudge({
       system: criteria + OUT_DETECTION,
@@ -160,6 +204,30 @@ async function runSentiment(
   }
 }
 
+/** STT quality over the transcript. Voice-only; caller passes a skipped result on
+ *  text channels. Fault-tolerant: any failure → unavailable (never a fabricated 0). */
+async function runStt(
+  ctx: ConversationInput,
+  provider?: LlmProvider,
+): Promise<SttResult> {
+  try {
+    const { data } = await runLlmJudge({
+      system: STT + OUT_STT,
+      input: payload(ctx),
+      schema: SttRawZ,
+      jsonSchema: STT_JSON,
+      maxTokens: STT_MAX_TOKENS,
+      provider,
+    });
+    const errors = Math.max(0, Math.round(data.error_count));
+    // Clamp recovered into [0, errors] — the constraint the prompt states, enforced.
+    const recovered = Math.min(errors, Math.max(0, Math.round(data.recovered_count)));
+    return { error_count: errors, recovered_count: recovered, available: true };
+  } catch {
+    return skippedStt();
+  }
+}
+
 /** The single source of truth for the sentiment pass/fail rule: a sentiment
  *  fails only when it is clearly negative or confused. Fan-out, config-service,
  *  and the console read the emitted `passed` rather than re-implementing this. */
@@ -172,7 +240,14 @@ function isAnswered(ctx: ConversationInput): boolean {
   return /(^|\n)User:\s*\S/.test(ctx.full_transcript);
 }
 
-const det = (v: { detected: boolean; reason: string; technical_reason: string; available?: boolean }) => ({
+/** Voice unless the transport is clearly a text channel. Unknown transport ⇒
+ *  voice (the historical default: every ingested session was a voice call). */
+const TEXT_CHANNEL_RE = /chat|sms|whatsapp|messenger|web|text|email|rcs/i;
+function isVoiceChannel(transport?: string): boolean {
+  return !transport || !TEXT_CHANNEL_RE.test(transport);
+}
+
+const det = (v: DetectionResult) => ({
   detected: v.detected,
   detected_value: v.detected ? 1 : 0,
   reason: v.reason,
@@ -180,12 +255,14 @@ const det = (v: { detected: boolean; reason: string; technical_reason: string; a
   available: v.available !== false,
 });
 
-/**
- * Score the conversation axis over the full transcript and return real
- * `conversation_metrics` (SimConversationMetrics). All six detections + sentiment
- * run on every transcript (there is no channel field to gate on).
- * `conversation_status` is derived in code (fixed priority order).
- */
+/** Emit a detection whose raw verdict was overruled by mutual exclusivity. Keeps
+ *  `available:true` (the judge ran) but reports not-detected, so it fans out as a
+ *  clean "not this outcome" rather than co-firing with the winner. */
+const suppressed = (raw: DetectionResult) =>
+  raw.detected
+    ? { detected: false, detected_value: 0, reason: "", technical_reason: "superseded by a higher-priority conversation outcome", available: true }
+    : det(raw);
+
 /** All-zero conversation metrics with every axis marked unavailable — the
  *  placeholder for an empty transcript (ingest) or a skipped conversation eval
  *  (sim). `available:false` is how consumers tell "the judge did not run" from
@@ -202,43 +279,84 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     conversation_status: { status: "", reason: "", technical_reason: "" },
     is_livekit: false,
     is_agent_runner: false,
-    stt: { error_count: 0, recovered_count: 0 },
+    stt: skippedStt(),
   };
 }
 
+/**
+ * Score the conversation axis over the transcript and return real
+ * `conversation_metrics`. Voice-only detections (voicemail / bot / call-screening
+ * / STT) are gated on the transport; mutual exclusivity is enforced on the emitted
+ * booleans; `conversation_status` is derived from the finalized outcomes.
+ */
 export async function evaluateConversationMetrics(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<SimConversationMetrics> {
   const answered = isAnswered(ctx);
+  const voice = isVoiceChannel(ctx.transport);
+  const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
 
-  const [voicemail, bot, screening, lowEng, wrong, dnd, sentiment] = await Promise.all([
-    runDetection(VOICEMAIL, DETECTION_JSON, ctx, provider),
-    runDetection(BOT, DETECTION_JSON, ctx, provider),
-    runDetection(CALL_SCREENING, DETECTION_JSON, ctx, provider),
+  const [voicemail, bot, screening, lowEng, wrong, dnd, sentiment, stt] = await Promise.all([
+    voice ? runDetection(VOICEMAIL, DETECTION_JSON, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection(BOT, DETECTION_JSON, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection(CALL_SCREENING, DETECTION_JSON, ctx, provider) : Promise.resolve(voiceOnlySkip),
     runDetection(LOW_ENGAGEMENT, DETECTION_JSON, ctx, provider),
     runDetection(WRONG_NUMBER, DETECTION_JSON, ctx, provider),
     runDetection(DO_NOT_DISTURB, DETECTION_JSON, ctx, provider),
     runSentiment(ctx, provider),
+    voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);
 
-  // Fixed priority order for the final status label.
+  // ── mutual exclusivity on the emitted booleans (cx-sqs priority) ──
+  // Voicemail + call-screening may co-exist and take top priority; either one
+  // suppresses every lower detection (bot, wrong_number, do_not_disturb,
+  // low_engagement) so the sweeper never fans two failing rows off one call.
+  // Otherwise resolve by bot > wrong_number > do_not_disturb > low_engagement.
+  // `botFired` is already false on non-voice (voiceOnlySkip), so the same block
+  // yields the text-channel priority (wrong > dnd > low).
+  const vmFired = voicemail.available && voicemail.detected;
+  const screenFired = screening.available && screening.detected;
+  let botFired = bot.available && bot.detected;
+  let wrongFired = wrong.available && wrong.detected;
+  let dndFired = dnd.available && dnd.detected;
+  let lowFired = lowEng.available && lowEng.detected;
+
+  if (vmFired || screenFired) {
+    botFired = false;
+    wrongFired = false;
+    dndFired = false;
+    lowFired = false;
+  } else if (botFired) {
+    wrongFired = false; dndFired = false; lowFired = false;
+  } else if (wrongFired) {
+    dndFired = false; lowFired = false;
+  } else if (dndFired) {
+    lowFired = false;
+  }
+
+  const botFinal = botFired ? det(bot) : suppressed(bot);
+  const wrongFinal = wrongFired ? det(wrong) : suppressed(wrong);
+  const dndFinal = dndFired ? det(dnd) : suppressed(dnd);
+  const lowFinal = lowFired ? det(lowEng) : suppressed(lowEng);
+
+  // Fixed priority order for the final status label (from finalized outcomes).
   let status = "answered";
   if (!answered) status = "unanswered";
-  else if (voicemail.detected) status = "voicemail_detected";
-  else if (bot.detected) status = "bot_detected";
-  else if (screening.detected) status = "call_screening";
-  else if (lowEng.detected) status = "low_engagement";
-  const customerEngaged = answered && !lowEng.detected;
+  else if (vmFired) status = "voicemail_detected";
+  else if (botFired) status = "bot_detected";
+  else if (screenFired) status = "call_screening";
+  else if (lowFired) status = "low_engagement";
+  const customerEngaged = answered && !lowFired;
 
   return {
     answered,
     voicemail_detected: det(voicemail),
-    bot_detected: det(bot),
+    bot_detected: botFinal,
     call_screening: det(screening),
-    low_engagement: det(lowEng),
-    wrong_number: det(wrong),
-    do_not_disturb: det(dnd),
+    low_engagement: lowFinal,
+    wrong_number: wrongFinal,
+    do_not_disturb: dndFinal,
     user_sentiment: {
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,
@@ -253,6 +371,6 @@ export async function evaluateConversationMetrics(
     // true here and overridden to false by the only caller).
     is_livekit: false,
     is_agent_runner: false,
-    stt: { error_count: 0, recovered_count: 0 },
+    stt: { error_count: stt.error_count, recovered_count: stt.recovered_count, available: stt.available },
   };
 }
