@@ -65,6 +65,18 @@ export const envSchema = z.object({
   // Poll interval (ms) between eval sweeps.
   EVAL_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
 
+  // Eval sweeper placement: judges ingested sessions that carry an agent config.
+  // 'inline' (default) runs it in the API; 'worker' in the dedicated worker; 'off'
+  // disables ingest-eval everywhere. RESTORED: this + EVAL_EVENT_KICK were dropped
+  // by 0cdc22c ("sim-engine: sync gen/llm/queue surface to main"), which overwrote
+  // this schema block. Without EVAL_SWEEPER, config.EVAL_SWEEPER is undefined, the
+  // start gate (=== "inline") is false, and the sweeper/event-kick never run.
+  EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
+
+  // Event-kick: judge a session the instant its ingest completes instead of waiting
+  // for the poll tick. Only fires when EVAL_SWEEPER=inline; 'off' = poll-only.
+  EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
+
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
   // configured LLM provider has a key. It judges through the shared LLM stack
