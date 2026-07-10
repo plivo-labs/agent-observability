@@ -7,9 +7,12 @@
 //
 // Design: 6 boolean detection judges + 1 sentiment classifier + 1 STT judge, all
 // reading the transcript once, run in parallel via the same `runLlmJudge` +
-// strict-JSON path the node judges use. Each is fault-tolerant: a failure defaults
-// to "not detected / unavailable" (a flaky supplementary signal must not blank the
-// whole evaluation — unlike the node judges, whose failure is a hard eval_error).
+// strict-JSON path the node judges use. Fault tolerance is split by error
+// durability: a DETERMINISTIC failure (schema/content policy) defaults to
+// "not detected / unavailable" (a flaky supplementary signal must not blank the
+// whole evaluation), while a TRANSIENT provider failure (timeout/429/5xx)
+// rethrows so the whole session retries — same as the node judges — instead of
+// silently completing 'done' with that verdict permanently dropped.
 //
 // CALIBRATION (ported from cx-sqs conversation/system.tmpl):
 //   - Voice-only detections (voicemail / bot / call-screening / STT) are GATED on
@@ -24,6 +27,7 @@
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
+import { classifyErrorDurability } from "../../error-durability.js";
 import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
 import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON } from "./schemas.js";
 
@@ -143,10 +147,17 @@ type SttResult = { error_count: number; recovered_count: number; available: bool
 const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0, available: false });
 
 /** One skeleton for every conversation judge: run the LLM call over the
- *  transcript payload, transform the validated output, and on ANY failure
- *  return the judge's unavailable-shaped fallback. The module invariant
- *  ("a flaky supplementary signal must not blank the whole evaluation")
- *  lives here, once — not copy-pasted per judge. */
+ *  transcript payload, transform the validated output, and on a DETERMINISTIC
+ *  failure (schema/content policy — identical on retry) return the judge's
+ *  unavailable-shaped fallback. The module invariant ("a flaky supplementary
+ *  signal must not blank the whole evaluation") lives here, once — not
+ *  copy-pasted per judge.
+ *
+ *  TRANSIENT failures (timeout/429/5xx/network) RETHROW instead: swallowing
+ *  them would permanently drop that verdict while the session still completes
+ *  'done' — a provider burst mid-judging must retry the session (the thrown
+ *  error reaches judgeClaimed, which keeps the claim running for stale
+ *  adoption), matching the node judges' behavior. */
 async function safeJudge<T, R>(
   call: {
     system: string;
@@ -169,7 +180,8 @@ async function safeJudge<T, R>(
       provider: call.provider,
     });
     return transform(data);
-  } catch {
+  } catch (e) {
+    if (classifyErrorDurability(e) === "transient") throw e;
     return fallback;
   }
 }

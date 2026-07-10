@@ -55,7 +55,13 @@ export type IntentIdentificationRaw = z.infer<typeof IntentIdentificationRawZ>;
 // instruction adherence — the LLM returns the 4 sub-metrics; `passed`/weighted score are derived.
 const MissedStepZ = z.object({
   step: reasonZ,
-  severity: z.string().default("minor"),
+  // Normalized + enum-constrained: `severity` gates adherence_passed (a missed step is fatal
+  // only when critical), and the compare must not be defeated by the model emitting "Critical"/
+  // "CRITICAL". Unknown values coerce to "minor" (the old default posture) rather than failing.
+  severity: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim().toLowerCase() : "minor"),
+    z.enum(["minor", "major", "critical"]).catch("minor"),
+  ),
   reason_code: reasonZ,
   details: reasonZ,
 });
@@ -97,6 +103,10 @@ export const InstructionAdherenceRawZ = z.object({
 export type InstructionAdherenceRaw = z.infer<typeof InstructionAdherenceRawZ>;
 
 // goal — the LLM returns one entry per goal (flow_goal_id is re-attached from the input in code).
+// `goals` is REQUIRED and non-empty: the judge is only invoked when goals exist, so `{}` or
+// `{"goals":[]}` is a malformed reply that must fail Zod → completeJSON re-prompts (and errors
+// out after retries → eval_error). With the old `.default([])`, that reply parsed "successfully"
+// and every requested goal was silently scored not-achieved — a fake all-goals-failed verdict.
 export const GoalRawZ = z.object({
   goals: z
     .array(
@@ -107,7 +117,7 @@ export const GoalRawZ = z.object({
         technical_reason: reasonZ,
       }),
     )
-    .default([]),
+    .min(1),
 });
 export type GoalRaw = z.infer<typeof GoalRawZ>;
 
