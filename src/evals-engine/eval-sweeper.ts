@@ -76,13 +76,14 @@ export async function probeEvalTables(): Promise<boolean> {
  *  double-weight. Row shape mirrors the OTLP "evaluation" records: verdict
  *  pass/fail + reasoning, `tag` = the node's opaque ref so consumers group by node. */
 export async function fanOutExternalEvals(
-  sessionId: string,
+  claim: EvalClaim,
   verdicts: SessionEvalVerdicts,
   /** Call-end time. Rows are stamped with CALL time, not judge time — a
    *  backlog flush of old sessions must not inject its fails into the
    *  CURRENT alert window. */
   observedAt: Date = new Date(),
-): Promise<void> {
+): Promise<boolean> {
+  const sessionId = claim.sessionId;
   const rows: Array<{ judgeName: string; tag: string | null; passed: boolean; reasoning: string; raw: object }> = [];
 
   for (const ne of verdicts.node_evaluations) {
@@ -153,7 +154,24 @@ export async function fanOutExternalEvals(
   // the session. Instead, clear this session's prior eval_sweeper rows and write
   // the current set in ONE transaction: a crash rolls the whole set back (never
   // a partial fan-out), and a retry (or a stale-adoption re-judge) re-fans cleanly.
-  await sql.begin(async (tx: typeof sql) => {
+  //
+  // FENCED on the claim row, inside the same transaction: without the guard, a
+  // fan-out racing DELETE /api/sessions would re-INSERT transcript-quote rows
+  // AFTER the erasure commits (orphan PII the delete exists to purge — these
+  // tables have no FK), and a stale-adopted run could overwrite the new
+  // owner's rows with older verdicts. FOR UPDATE serializes against both: the
+  // delete's satellite DELETE and the adopter's claim bump block until we
+  // commit (or we see their commit and abort). Returns false when ownership
+  // was lost — the caller must skip completion.
+  return await sql.begin(async (tx: typeof sql) => {
+    const owned = await tx`
+      SELECT 1 FROM ao_session_eval_verdicts
+      WHERE session_id = ${sessionId}
+        AND status = 'running'
+        AND claimed_at::text = ${claim.token}
+      FOR UPDATE
+    `;
+    if (owned.length === 0) return false; // session deleted, or claim adopted by another sweeper
     await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
     for (const row of rows) {
       await insertLiveKitEvaluation({
@@ -168,6 +186,7 @@ export async function fanOutExternalEvals(
         raw: row.raw,
       }, tx);
     }
+    return true;
   });
 }
 
@@ -224,17 +243,37 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
   // Heartbeat: re-assert ownership well inside the stale window so a long
   // judge run (many nodes x slow provider) is never adopted mid-flight and
   // double-judged. Losing the heartbeat aborts the run before more spend.
+  //
+  // Token discipline (the fencing token IS claimed_at): a beat's DB UPDATE
+  // bumps claimed_at, and `claim.token` only catches up when its .then runs —
+  // so any token-fenced write issued while a beat is in flight could carry the
+  // STALE token, match 0 rows, and discard a fully-judged session (double
+  // spend on retry). Two rules close that window: (1) at most one beat in
+  // flight (`beatInFlight` also stops two overlapping beats from tripping a
+  // false ownershipLost); (2) every terminal write below goes through
+  // settleHeartbeat() first — stop the timer, await the in-flight beat, THEN
+  // read claim.token. Terminal paths return immediately after, so judging is
+  // never left running unprotected.
   let ownershipLost = false;
+  let beatInFlight: Promise<void> | null = null;
   const heartbeat = setInterval(() => {
-    void heartbeatEvalClaim(claim).then((token) => {
-      if (token === null) {
-        ownershipLost = true;
-      } else {
-        claim.token = token;
-      }
-    }).catch(() => { /* transient DB blip — next beat retries */ });
+    if (beatInFlight) return; // previous beat still round-tripping — skip this tick
+    beatInFlight = heartbeatEvalClaim(claim)
+      .then((token) => {
+        if (token === null) {
+          ownershipLost = true;
+        } else {
+          claim.token = token;
+        }
+      })
+      .catch(() => { /* transient DB blip — next beat retries */ })
+      .finally(() => { beatInFlight = null; });
   }, CLAIM_HEARTBEAT_MS);
   if (typeof (heartbeat as any).unref === "function") (heartbeat as any).unref();
+  const settleHeartbeat = async (): Promise<void> => {
+    clearInterval(heartbeat);
+    if (beatInFlight) await beatInFlight; // never rejects (catch above)
+  };
 
   try {
     const rawReport = (source.rawReport ?? {}) as { events?: unknown };
@@ -258,10 +297,12 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
         // Backdate the claim so stale adoption re-picks it in ~2 minutes —
         // without this, "will retry" would silently mean the FULL stale
         // window (15 min), long after the in-flight transcript landed.
+        await settleHeartbeat();
         await deferEvalClaimRetry(claim, 120);
         console.warn(`[evals] session=${sanitizeForLog(sessionId)} has no judgeable transcript yet (age ${Math.round(ageMs / 1000)}s) — retrying in ~2min`);
         return false;
       }
+      await settleHeartbeat();
       await failSessionEvalVerdicts(claim, "no judgeable transcript to evaluate");
       return false;
     }
@@ -269,6 +310,10 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
     // `built` is threaded through so the (pure but heavy) input build from the
     // judgeability gate above isn't recomputed inside the evaluation.
     const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined, built);
+    // Judging is done — no more provider spend to protect. Stop the heartbeat
+    // and drain any in-flight beat so the fan-out + completion below read a
+    // token no concurrent beat can invalidate.
+    await settleHeartbeat();
     if (ownershipLost) {
       // Another sweeper adopted the claim mid-judge — its results win; ours
       // are discarded so the session is never double-completed/fanned out.
@@ -283,7 +328,14 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
     // fan-out has no retry, so a fan-out crash after completion would lose the
     // only rows the evals tab, session drawer, and alert rules read.
     try {
-      await fanOutExternalEvals(sessionId, verdicts, source.sessionEndedAt ?? new Date());
+      const fanned = await fanOutExternalEvals(claim, verdicts, source.sessionEndedAt ?? new Date());
+      if (!fanned) {
+        // The fence found our claim gone (session deleted, or adopted by
+        // another sweeper) — write nothing more; the winner (or the erasure)
+        // owns the rows now.
+        console.warn(`[evals] fan-out fenced out (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
+        return false;
+      }
     } catch (e) {
       // Leave the claim running so the stale-adoption retry re-fans; don't
       // complete on top of a partial fan-out.
@@ -312,6 +364,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
     }
     // Deterministic failure (schema/content policy) — the same input would
     // fail identically, so DLQ-style record it and move on.
+    await settleHeartbeat();
     await failSessionEvalVerdicts(claim, (e as Error).message);
     console.error(`[evals] eval_error session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
     return false;
