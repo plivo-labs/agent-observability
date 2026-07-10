@@ -42,8 +42,12 @@ CREATE INDEX IF NOT EXISTS idx_session_tags_name
   ON session_tags (name, created_at DESC);
 
 -- (3) The eval sweeper's fresh-claim query orders session_agent_config by
---     created_at (oldest unjudged first) on every claim attempt — without
---     this index that is a seq-scan + sort over the whole table, repeated
---     up to MAX_PER_SWEEP times per tick, degrading as the table grows.
+--     created_at DESC (newest unjudged first — a backlog flush must not
+--     starve just-ended calls, whose verdicts are the ones an operator is
+--     waiting on; stale-claim adoption separately drains the old tail) on
+--     every claim attempt — without this index that is a seq-scan + sort
+--     over the whole table, repeated up to MAX_PER_SWEEP times per tick,
+--     degrading as the table grows. A btree serves ORDER BY in either
+--     direction, so the plain (created_at) index covers the DESC scan.
 CREATE INDEX IF NOT EXISTS idx_session_agent_config_created_at
   ON session_agent_config (created_at);

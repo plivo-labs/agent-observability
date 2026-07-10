@@ -148,7 +148,8 @@ export async function heartbeatEvalClaim(claim: EvalClaim): Promise<string | nul
  *  it no longer owns (or that no longer exists). */
 export async function completeSessionEvalVerdicts(
   claim: EvalClaim,
-  verdicts: Record<string, unknown>,
+  /** Serialized to jsonb verbatim (SessionEvalVerdicts in practice). */
+  verdicts: object,
 ): Promise<boolean> {
   const rows = await sql`
     UPDATE ao_session_eval_verdicts

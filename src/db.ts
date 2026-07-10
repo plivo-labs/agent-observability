@@ -64,7 +64,10 @@ interface LiveKitEvaluationInput {
   reasoning: string | null;
   instructions: string | null;
   observedAt: Date | null;
-  raw: Record<string, unknown>;
+  /** Serialized to jsonb verbatim — any JSON-shaped object. Judge structs are
+   *  interfaces without index signatures, so Record<> here would force an
+   *  erasing cast at every fan-out call site. */
+  raw: object;
 }
 
 interface SessionOutcomeInput {

@@ -12,6 +12,7 @@
 // public ingest contract, and `ref` is echoed back untouched so the caller can
 // map verdicts to whatever node identity it uses.
 
+import { config as envConfig } from "../../config.js";
 import type { LlmProvider } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
@@ -341,6 +342,30 @@ export function buildSessionEvalInput(
     nodeRefs.push({ ref: echoedRef, name: typeof def.name === "string" ? def.name : echoedRef });
   }
 
+  // Per-session spend ceiling on the NODE-JUDGING surface only. Each judged
+  // node costs ~5 LLM calls; the kick/semaphore/sweep caps bound the rate but
+  // nothing else bounds one session's bill — anyone with ingest creds can
+  // attach a max-size config (150 clamped nodes ≈ ~760 judge calls) to every
+  // session. Keep the busiest nodes: most turns = most judgeable signal, and
+  // the places where a misbehaving agent spent longest. `sort` is stable, so
+  // ties keep chronological order; the survivors stay in transcript order.
+  // The conversation/goal judges are untouched — they read the full
+  // transcript below, which is built from ALL turns, capped or not.
+  const maxJudgedNodes = envConfig.EVAL_MAX_JUDGED_NODES ?? 30;
+  let judgedNodes = nodes;
+  let judgedRefs = nodeRefs;
+  if (nodes.length > maxJudgedNodes) {
+    const keep = new Set(
+      nodes
+        .map((n, i) => i)
+        .sort((a, b) => nodes[b].turn_count - nodes[a].turn_count)
+        .slice(0, maxJudgedNodes),
+    );
+    judgedNodes = nodes.filter((_, i) => keep.has(i));
+    judgedRefs = nodeRefs.filter((_, i) => keep.has(i));
+    console.warn(`[evals] node-judging surface capped: judging top ${maxJudgedNodes} of ${nodes.length} transcript nodes by turn count (EVAL_MAX_JUDGED_NODES)`);
+  }
+
   const globalVariables = toStringMap(config.global_variables);
   const pronunciationGuides = toStringMap(config.pronunciation_guides);
 
@@ -348,7 +373,7 @@ export function buildSessionEvalInput(
     input: {
       flow_name: typeof config.flow_name === "string" ? config.flow_name : "conversation",
       global_prompt: typeof config.global_prompt === "string" ? config.global_prompt : "",
-      nodes,
+      nodes: judgedNodes,
       goals: nodeGoals(config),
       full_transcript: renderFullTranscript(allTurns),
       // Speech-only variant for the conversation-axis judges: drop the
@@ -363,7 +388,7 @@ export function buildSessionEvalInput(
       ...(globalVariables ? { global_variables: globalVariables } : {}),
       ...(pronunciationGuides ? { pronunciation_guides: pronunciationGuides } : {}),
     },
-    nodeRefs,
+    nodeRefs: judgedRefs,
   };
 }
 

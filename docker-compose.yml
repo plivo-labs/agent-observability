@@ -49,7 +49,8 @@ services:
     environment:
       DATABASE_URL: postgres://observability:observability@postgres:5432/agent_observability
       NODE_ENV: "production"
-      # This worker owns the eval sweep (the API sets EVAL_SWEEPER=off above).
+      # This worker owns the eval sweep (the API also sets EVAL_SWEEPER=worker
+      # above, which on the API is a no-op — only "inline" starts its sweeper).
       EVAL_SWEEPER: "worker"
     depends_on:
       postgres:

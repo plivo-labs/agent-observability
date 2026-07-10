@@ -11,6 +11,7 @@ import {
   heartbeatEvalClaim,
   type EvalClaim,
 } from "./db.js";
+import { classifyErrorDurability } from "../error-durability.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
@@ -47,6 +48,23 @@ const CLAIM_HEARTBEAT_MS = 60_000;
 let handle: SweeperHandle | null = null;
 let sweeping = false;
 
+// Boot-time table probe, shared by every eval entry point (inline sweeper,
+// worker sweeper, ingest event-kick). A deploy whose DB lacks the eval tables
+// (sim-only/OSS, or prod before the core-db eval migration lands) must go
+// quiet with ONE log line — not error-log `relation "ao_session_agent_config"
+// does not exist` every sweep tick plus one warn per ingest kick.
+// `null` = never probed (tests import kickEvalForSession directly with a
+// mocked db) — treated as present so mocked suites keep exercising the kick.
+let evalTablesPresent: boolean | null = null;
+
+/** Probe once at boot; callers gate startEvalSweeper() on the result. The
+ *  outcome also disarms kickEvalForSession, which shares the same tables. */
+export async function probeEvalTables(): Promise<boolean> {
+  const [row] = await sql`SELECT to_regclass('ao_session_eval_verdicts') IS NOT NULL AS present`;
+  evalTablesPresent = row.present === true;
+  return evalTablesPresent;
+}
+
 /** Fan the stored verdicts out as per-judge rows in ao_session_external_evals so
  *  the existing conversation-evals surfaces (agent tab, session drawer, alert
  *  count rules) render sweeper results with zero extra read paths. Runs BEFORE
@@ -65,20 +83,20 @@ export async function fanOutExternalEvals(
    *  CURRENT alert window. */
   observedAt: Date = new Date(),
 ): Promise<void> {
-  const rows: Array<{ judgeName: string; tag: string | null; passed: boolean; reasoning: string; raw: Record<string, unknown> }> = [];
+  const rows: Array<{ judgeName: string; tag: string | null; passed: boolean; reasoning: string; raw: object }> = [];
 
   for (const ne of verdicts.node_evaluations) {
     const tag = ne.ref || null;
     const ia = ne.instructions_adherence;
-    if (ia) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia as any });
+    if (ia) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia });
     const ii = ne.intent_identification;
-    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii as any });
+    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii });
     const ve = ne.variable_extraction;
-    if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve as any });
+    if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve });
     const ha = ne.hallucination;
-    if (ha) rows.push({ judgeName: "hallucination", tag, passed: !ha.hallucinated, reasoning: ha.reason, raw: ha as any });
+    if (ha) rows.push({ judgeName: "hallucination", tag, passed: !ha.hallucinated, reasoning: ha.reason, raw: ha });
     const lo = ne.node_loop;
-    if (lo) rows.push({ judgeName: "node_loop", tag, passed: !lo.loop_detected, reasoning: lo.reason, raw: lo as any });
+    if (lo) rows.push({ judgeName: "node_loop", tag, passed: !lo.loop_detected, reasoning: lo.reason, raw: lo });
   }
   // Conversation-axis judges (whole-transcript, no node tag). Detections read
   // as fail when they fire; sentiment fails when clearly negative or confused
@@ -102,7 +120,7 @@ export async function fanOutExternalEvals(
       // unavailable detection out as a `pass`. `available` is always set on
       // this path (real judges and the zero placeholder both set it).
       if (det.available === false) continue;
-      rows.push({ judgeName, tag: null, passed: !det.detected, reasoning: det.reason, raw: det as any });
+      rows.push({ judgeName, tag: null, passed: !det.detected, reasoning: det.reason, raw: det });
     }
     const sentiment = cm.user_sentiment;
     const sentimentValue = sentiment?.sentiment ?? "";
@@ -114,7 +132,7 @@ export async function fanOutExternalEvals(
         // rule (via sentimentPassed) for payloads that predate the field.
         passed: sentiment?.passed ?? sentimentPassed(sentimentValue),
         reasoning: sentiment?.reason ? `${sentimentValue}: ${sentiment.reason}` : sentimentValue,
-        raw: sentiment as any,
+        raw: sentiment,
       });
     }
   }
@@ -125,7 +143,7 @@ export async function fanOutExternalEvals(
       tag: null,
       passed: goal.achieved,
       reasoning: goal.reason,
-      raw: goal as any,
+      raw: goal,
     });
   }
 
@@ -156,25 +174,12 @@ export async function fanOutExternalEvals(
 /** True when the error would fail identically on retry (schema/content
  *  policy). Transient provider trouble (timeouts, 429s, 5xx, network) must
  *  NOT terminally poison a session — leaving the claim `running` lets the
- *  stale-claim adoption re-judge it after EVAL_CLAIM_STALE_MINUTES. */
+ *  stale-claim adoption re-judge it after EVAL_CLAIM_STALE_MINUTES.
+ *  Classification lives in error-durability.ts (shared with the OTLP persist
+ *  path); only the DEFAULT is this site's: unknown → terminal, because a
+ *  retry re-spends LLM budget and so needs positive environmental evidence. */
 function isTerminalEvalError(e: unknown): boolean {
-  const seen = new Set<unknown>();
-  let messages = "";
-  for (let cur = e; cur && typeof cur === "object" && !seen.has(cur); cur = (cur as { cause?: unknown }).cause) {
-    seen.add(cur);
-    messages += ` ${(cur as Error).message ?? ""}`;
-  }
-  // Auth failures (401/403/expired or rotated key) are environmental, not
-  // input-determined — once the key is fixed the same session judges fine.
-  // Treating them as terminal would permanently poison every session claimed
-  // during a key-rotation gap.
-  // Status codes are word-boundary anchored: bare `50[0-9]` would match the
-  // "500" inside token counts like "1500" in judge error messages and
-  // misclassify a deterministic failure as transient (endless re-judging).
-  if (/timeout|timed.?out|\b429\b|rate.?limit|too many requests|\b50[0-9]\b|overloaded|unavailable|unable to connect|connection (refused|reset|closed|error)|ECONN|ENOTFOUND|EAI_AGAIN|network|socket|fetch failed|\b40[13]\b|unauthoriz|forbidden|invalid.?api.?key|authentication|permission denied/i.test(messages)) {
-    return false;
-  }
-  return true;
+  return classifyErrorDurability(e) !== "transient";
 }
 
 /** Synthesize builder events from stored chat_history items when the OTLP
@@ -274,7 +279,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       console.error(`[evals] fan-out failed (will retry) session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
       return false;
     }
-    const completed = await completeSessionEvalVerdicts(claim, verdicts as unknown as Record<string, unknown>);
+    const completed = await completeSessionEvalVerdicts(claim, verdicts);
     if (!completed) {
       // Lost the claim at the final write (stale adoption / bulk delete). The
       // fan-out above is identity-idempotent, so the winner's re-fan clears +
@@ -353,6 +358,7 @@ let activeKicks = 0;
  */
 export async function kickEvalForSession(sessionId: string): Promise<void> {
   if (config.EVAL_EVENT_KICK === "off") return;
+  if (evalTablesPresent === false) return; // boot probe found no eval tables — nothing to judge into
   // Only the inline-sweeper process both ingests AND judges; in worker mode the
   // API ingests but the worker's poller judges, so an in-process kick here
   // would judge in the wrong process (or not at all). Poller covers it.

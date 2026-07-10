@@ -24,7 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
-import { startEvalSweeper, stopEvalSweeper, kickEvalForSession } from "./evals-engine/eval-sweeper.js";
+import { startEvalSweeper, stopEvalSweeper, kickEvalForSession, probeEvalTables } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
@@ -51,7 +51,7 @@ if (process.env.NODE_ENV !== "test" && config.SIM_PERSIST && dbConfigured) {
 // shared DB carrying ONLY ao_sim_* tables — without the probe, the default-inline sweeps
 // would log `relation "alert_rules" does not exist` every interval, forever.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
-  const [alertTables] = await sql`SELECT to_regclass('alert_rules') IS NOT NULL AS present`;
+  const [alertTables] = await sql`SELECT to_regclass('ao_alert_rules') IS NOT NULL AS present`;
   if (alertTables.present === true) {
     startAlertSweeper();
   } else {
@@ -62,8 +62,16 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 // Eval sweeper: judges ingested sessions that carry an agent config. Same
 // inline-by-default posture as the alert sweeper (set EVAL_SWEEPER=off on the
 // API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
+// Table-probed like the alert/goal loops: a DB without the eval tables
+// (sim-only deploy, or prod before the core-db eval migration) must not
+// error-log every sweep tick + every ingest kick forever. The probe outcome
+// also disarms the ingest event-kick, which writes to the same tables.
 if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
-  startEvalSweeper();
+  if (await probeEvalTables()) {
+    startEvalSweeper();
+  } else {
+    console.log("[evals] eval tables absent — inline sweeper + ingest event-kick disabled (apply migrations 021–023 to enable)");
+  }
 } else if (process.env.NODE_ENV !== "test" && dbConfigured && config.EVAL_SWEEPER === "off") {
   // Loud on purpose: with EVAL_SWEEPER=off nobody judges ingested sessions.
   // ("worker" is the normal non-inline value — the dedicated worker handles it.)
@@ -75,7 +83,7 @@ if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbCon
 // too (inert in stateless mode); additionally a no-op (with one startup log)
 // unless an LLM provider key is configured.
 if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
-  const [goalTables] = await sql`SELECT to_regclass('session_goal_analyses') IS NOT NULL AS present`;
+  const [goalTables] = await sql`SELECT to_regclass('ao_session_goal_analyses') IS NOT NULL AS present`;
   if (goalTables.present === true) {
     startGoalAnalyzer();
   } else {

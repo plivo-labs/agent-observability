@@ -24,7 +24,7 @@
 
 import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
-import { startEvalSweeper, stopEvalSweeper } from "./evals-engine/eval-sweeper.js";
+import { startEvalSweeper, stopEvalSweeper, probeEvalTables } from "./evals-engine/eval-sweeper.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
@@ -108,10 +108,10 @@ if (dbConfigured) {
   // gate the worker (off on the API means the worker owns sweeping), so table existence is
   // the only signal that distinguishes a full AO deploy from a sim-only one.
   const { sql } = await import("./db.js");
-  const [alertTables] = await sql`SELECT to_regclass('alert_rules') IS NOT NULL AS present`;
+  const [alertTables] = await sql`SELECT to_regclass('ao_alert_rules') IS NOT NULL AS present`;
   const goalAnalyzerOn = config.GOAL_ANALYZER !== "off";
   const [goalTables] = goalAnalyzerOn
-    ? await sql`SELECT to_regclass('session_goal_analyses') IS NOT NULL AS present`
+    ? await sql`SELECT to_regclass('ao_session_goal_analyses') IS NOT NULL AS present`
     : [{ present: false }];
   const sweepAlerts = alertTables.present === true;
   const sweepGoals = goalAnalyzerOn && goalTables.present === true;
@@ -127,7 +127,13 @@ if (dbConfigured) {
   // re-entrancy guard makes overlapping ticks a no-op. Gated so an inline-API
   // deployment can run this worker for alerts/SQS without doubling eval sweepers.
   if (config.EVAL_SWEEPER === "worker") {
-    startEvalSweeper();
+    // Same boot probe as the API's inline gate: a DB without the eval tables
+    // must go quiet with one line, not error-log every sweep tick.
+    if (await probeEvalTables()) {
+      startEvalSweeper();
+    } else {
+      console.log("[worker] eval tables absent — eval sweeper disabled (apply migrations 021–023 to enable)");
+    }
   } else {
     console.log(`[worker] EVAL_SWEEPER=${config.EVAL_SWEEPER} — this worker does not judge ingested sessions (set EVAL_SWEEPER=worker here, or "inline" on the API).`);
   }

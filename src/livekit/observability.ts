@@ -8,6 +8,7 @@ import {
   upsertSessionAgentConfig,
 } from "../db.js";
 import type { DecodedOtlpLog } from "./protobuf.js";
+import { classifyErrorDurability } from "../error-durability.js";
 import { parseJsonValue } from "../raw-report.js";
 import { sanitizeForLog } from "../response.js";
 
@@ -398,20 +399,12 @@ const OTLP_HANDLERS: Record<string, OtlpHandler> = {
 /** True when a persist error is environmental (connection/timeout/outage) —
  *  the batch should abort and 503 so at-least-once senders retry. Everything
  *  else (constraint violations, invalid input, oversize values) fails the
- *  same way on every redelivery and is skipped per-record instead. Unknown
- *  errors default to transient: dropping data needs positive evidence. */
+ *  same way on every redelivery and is skipped per-record instead.
+ *  Classification lives in error-durability.ts (shared with the eval
+ *  sweeper); only the DEFAULT is this site's: unknown → transient, because
+ *  skipping a record drops ingested data and needs positive evidence. */
 function isTransientPersistError(e: unknown): boolean {
-  // Prefer the structured SQLSTATE that Postgres attaches to the error. Classes
-  // 22 (data exception — incl. 22P05 jsonb NUL), 23 (integrity constraint) and
-  // 42 (syntax/access) are DETERMINISTIC: the same record fails identically on
-  // every redelivery, so it's skipped rather than 503-looping the batch.
-  const code = (e as { code?: string })?.code ?? "";
-  if (/^(22|23|42)/.test(code)) return false;
-  if (code) return true; // any other coded error (e.g. class 08 connection) is transient
-  // No SQLSTATE (non-Postgres throw) — fall back to matching the message text.
-  const msg = (e as Error)?.message ?? "";
-  const deterministic = /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|unsupported unicode|invalid byte sequence/i;
-  return !deterministic.test(msg);
+  return classifyErrorDurability(e) !== "deterministic";
 }
 
 export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<PersistResult> {

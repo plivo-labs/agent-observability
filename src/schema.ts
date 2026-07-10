@@ -58,6 +58,13 @@ export const envSchema = z.object({
   EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().default(20),
   // Poll interval (ms) between eval sweeps.
   EVAL_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
+  // Per-session SPEND ceiling (the caps above bound the rate, not the bill):
+  // judge at most this many nodes per session, keeping the busiest by turn
+  // count. Each judged node costs ~5 LLM calls, so without this a max-size
+  // config (150 clamped nodes) whose transcript touches every node fans
+  // ~760 judge calls out of ONE ingested session. Conversation/goal judges
+  // still see the full transcript regardless.
+  EVAL_MAX_JUDGED_NODES: z.coerce.number().int().positive().default(30),
 
   // Eval sweeper placement: judges ingested sessions that carry an agent
   // config. 'inline' (default) runs it in the API; 'worker' in the dedicated
