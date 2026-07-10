@@ -1,4 +1,4 @@
-import { insertLiveKitEvaluation, sql } from "../db.js";
+import { insertLiveKitEvaluation, sql, tableExists } from "../db.js";
 import { config } from "../config.js";
 import {
   claimEvalSessionNow,
@@ -9,6 +9,7 @@ import {
   failSessionEvalVerdicts,
   getSessionEvalSource,
   heartbeatEvalClaim,
+  retireExpiredEvalClaims,
   type EvalClaim,
 } from "./db.js";
 import { classifyErrorDurability } from "../error-durability.js";
@@ -60,8 +61,7 @@ let evalTablesPresent: boolean | null = null;
 /** Probe once at boot; callers gate startEvalSweeper() on the result. The
  *  outcome also disarms kickEvalForSession, which shares the same tables. */
 export async function probeEvalTables(): Promise<boolean> {
-  const [row] = await sql`SELECT to_regclass('ao_session_eval_verdicts') IS NOT NULL AS present`;
-  evalTablesPresent = row.present === true;
+  evalTablesPresent = await tableExists("ao_session_eval_verdicts");
   return evalTablesPresent;
 }
 
@@ -186,6 +186,15 @@ function isTerminalEvalError(e: unknown): boolean {
  *  event channel was lost — judging the recording's transcript beats marking
  *  a fully transcribed call "done" with phantom empty-input verdicts. */
 function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
+  // Parse lazily: getSessionEvalSource returns the column raw so the common
+  // path (raw_report.events present) never pays for parsing the large blob.
+  if (typeof chatHistory === "string") {
+    try {
+      chatHistory = JSON.parse(chatHistory);
+    } catch {
+      return []; // malformed blob → no synthesizable events (caller handles no-transcript)
+    }
+  }
   if (!Array.isArray(chatHistory)) return [];
   return chatHistory
     .filter((item) => item && typeof item === "object")
@@ -257,7 +266,9 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       return false;
     }
 
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined);
+    // `built` is threaded through so the (pure but heavy) input build from the
+    // judgeability gate above isn't recomputed inside the evaluation.
+    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined, built);
     if (ownershipLost) {
       // Another sweeper adopted the claim mid-judge — its results win; ours
       // are discarded so the session is never double-completed/fanned out.
@@ -313,6 +324,9 @@ export async function runEvalSweepOnce(): Promise<void> {
   if (sweeping) return; // re-entrancy guard: a slow sweep can't stack
   sweeping = true;
   try {
+    // Retire poison claims once per tick (hoisted out of claimNextEvalSession,
+    // which the workers below call up to MAX_PER_SWEEP times per tick).
+    await retireExpiredEvalClaims();
     const pending = await countPendingEvalSessions();
     if (pending > 0) {
       console.log(`[evals] backlog=${pending} pending sessions`);

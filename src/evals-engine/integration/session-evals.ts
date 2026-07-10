@@ -111,6 +111,15 @@ function tagText(text: string, item: NonNullable<StoredEvent["item"]>): string {
   return out;
 }
 
+/** JSON.stringify that never throws (unserializable values → ""). */
+const safeStringify = (v: unknown): string => {
+  try {
+    return JSON.stringify(v) ?? "";
+  } catch {
+    return "";
+  }
+};
+
 /** Coerce a loosely-typed config map to a flat string→string map (values
  *  stringified, empties dropped). Returns undefined when there's nothing usable
  *  so callers can omit the field entirely. Never throws. */
@@ -119,7 +128,7 @@ function toStringMap(v: unknown): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   for (const [k, val] of Object.entries(v)) {
     if (!k || val == null) continue;
-    const s = typeof val === "string" ? val : (() => { try { return JSON.stringify(val); } catch { return ""; } })();
+    const s = typeof val === "string" ? val : safeStringify(val);
     if (s) out[k] = s;
   }
   return Object.keys(out).length ? out : undefined;
@@ -413,8 +422,12 @@ export async function evaluateIngestedSession(
   /** Session transport/channel, from the session row. Gates the voice-only
    *  conversation detections so they don't fire on text (chat/SMS/WhatsApp). */
   transport?: string,
+  /** The already-built eval input, when the caller ran buildSessionEvalInput
+   *  for its judgeability gate — avoids re-grouping the whole transcript and
+   *  re-rendering both transcript strings a second time per session. */
+  prebuilt?: ReturnType<typeof buildSessionEvalInput>,
 ): Promise<SessionEvalVerdicts> {
-  const { input, nodeRefs } = buildSessionEvalInput(config, events);
+  const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
 
   const [conversation_metrics, scored] = await Promise.all([

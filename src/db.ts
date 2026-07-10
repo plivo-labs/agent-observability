@@ -27,6 +27,29 @@ function makeUnconfiguredSql(): SQL {
 
 export const sql = config.DATABASE_URL ? new SQL(config.DATABASE_URL) : makeUnconfiguredSql();
 
+/** True when the named relation exists. Boot gates use this to self-disable
+ *  loops whose tables are absent (sim-only / feature-scoped deploys) instead
+ *  of error-logging every sweep tick against a missing table. */
+export async function tableExists(name: string): Promise<boolean> {
+  const [row] = await sql`SELECT to_regclass(${name}) IS NOT NULL AS present`;
+  return (row as { present: boolean }).present === true;
+}
+
+/** Every session-scoped satellite table: keyed by session_id, deliberately NO
+ *  FK to the session row (satellites can arrive before it). The session-delete
+ *  cascade (DELETE /api/sessions) erases from every table listed here — when
+ *  adding a session-scoped table, ADD IT TO THIS LIST or deleted sessions
+ *  leave its rows (and their PII) behind. */
+export const SESSION_SATELLITE_TABLES = [
+  "ao_session_agent_config",
+  "ao_session_eval_verdicts",
+  "ao_session_external_evals",
+  "ao_session_tags",
+  "ao_session_outcomes",
+  "ao_session_raw_report_patches",
+  "ao_session_goal_analyses",
+] as const;
+
 interface SessionInsert {
   sessionId: string;
   accountId: string | null;

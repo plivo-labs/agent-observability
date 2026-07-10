@@ -8,7 +8,7 @@ import { requestId } from "hono/request-id";
 import { serveStatic } from "hono/bun";
 import { config, s3Enabled, basicAuthEnabled, liveKitAuthEnabled, dbConfigured } from "./config.js";
 import { uploadRecording, deleteRecording } from "./s3.js";
-import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches } from "./db.js";
+import { sql, insertSession, applyStoredSessionTags, drainStagedRawReportPatches, tableExists, SESSION_SATELLITE_TABLES } from "./db.js";
 import { upsertAgentTx } from "./agents/upsert.js";
 import { migrate } from "./migrate.js";
 import { parseChatHistory, normalizeKeys } from "./parse.js";
@@ -51,8 +51,7 @@ if (process.env.NODE_ENV !== "test" && config.SIM_PERSIST && dbConfigured) {
 // shared DB carrying ONLY ao_sim_* tables — without the probe, the default-inline sweeps
 // would log `relation "alert_rules" does not exist` every interval, forever.
 if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbConfigured) {
-  const [alertTables] = await sql`SELECT to_regclass('ao_alert_rules') IS NOT NULL AS present`;
-  if (alertTables.present === true) {
+  if (await tableExists("ao_alert_rules")) {
     startAlertSweeper();
   } else {
     console.log("[alerts] alert tables absent — inline sweeper disabled (sim-only deployment)");
@@ -83,8 +82,7 @@ if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbCon
 // too (inert in stateless mode); additionally a no-op (with one startup log)
 // unless an LLM provider key is configured.
 if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
-  const [goalTables] = await sql`SELECT to_regclass('ao_session_goal_analyses') IS NOT NULL AS present`;
-  if (goalTables.present === true) {
+  if (await tableExists("ao_session_goal_analyses")) {
     startGoalAnalyzer();
   } else {
     console.log("[goals] goal tables absent — inline analyzer disabled (sim-only deployment)");
@@ -679,18 +677,10 @@ app.delete("/api/sessions", async (c) => {
     // Delete only from the satellites that EXIST in this deployment: a
     // feature-scoped core DB (e.g. the eval-only schema) omits the
     // goal-analyzer / alert / CI-eval tables, and a hardcoded DELETE against a
-    // missing table would abort the whole erasure transaction. The names are a
-    // fixed allow-list resolved against pg_tables, so the interpolation below is
-    // never user-controlled.
-    const satellites = [
-      "ao_session_agent_config",
-      "ao_session_eval_verdicts",
-      "ao_session_external_evals",
-      "ao_session_tags",
-      "ao_session_outcomes",
-      "ao_session_raw_report_patches",
-      "ao_session_goal_analyses",
-    ];
+    // missing table would abort the whole erasure transaction. The names come
+    // from the SESSION_SATELLITE_TABLES registry (db.ts) resolved against
+    // pg_tables, so the interpolation below is never user-controlled.
+    const satellites = [...SESSION_SATELLITE_TABLES];
     const satPlaceholders = satellites.map((_, i) => `$${i + 1}`).join(", ");
     const present = (await tx.unsafe(
       `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename IN (${satPlaceholders})`,

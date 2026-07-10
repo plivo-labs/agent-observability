@@ -24,7 +24,8 @@
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
-import { runLlmJudge } from "./run-llm-judge.js";
+import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
+import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON } from "./schemas.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
 const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
@@ -108,29 +109,7 @@ const OUT_SENTIMENT =
 const OUT_STT =
   '\n\nReturn ONLY a JSON object: {"error_count": integer (>=0), "recovered_count": integer (0..error_count), "reason": string, "technical_reason": string}.';
 
-// ── output schemas (strict JSON for the responses gateway) + Zod validation ──
-type JsonSchema = Record<string, unknown>;
-const strObj = (props: Record<string, unknown>): JsonSchema => ({
-  type: "object",
-  properties: props,
-  required: Object.keys(props),
-  additionalProperties: false,
-});
-const strict = (name: string, schema: JsonSchema) => ({ name, schema, strict: true });
-const STR = { type: "string" } as const;
-const BOOL = { type: "boolean" } as const;
-const INT = { type: "integer" } as const;
-
-// Sentiment is enum-constrained (strict JSON schema + Zod) so the model can't
-// emit an off-enum value that the producer's pass rule and the console's
-// fallback would classify differently — with only these five values, both
-// reduce to the same result and the emitted user_sentiment.passed is the
-// single source of truth.
-const SENTIMENT_VALUES = ["positive", "neutral", "negative", "confused", "not_applicable"] as const;
-const DETECTION_JSON = strict("eval_detection", strObj({ detected: BOOL, reason: STR, technical_reason: STR }));
-const SENTIMENT_JSON = strict("eval_sentiment", strObj({ sentiment: { type: "string", enum: SENTIMENT_VALUES }, reason: STR, technical_reason: STR }));
-const STT_JSON = strict("eval_stt", strObj({ error_count: INT, recovered_count: INT, reason: STR, technical_reason: STR }));
-
+// ── Zod validation (the strict JSON schemas live in schemas.ts with the node/goal ones) ──
 const DetectionRawZ = z.object({ detected: z.boolean(), reason: z.string(), technical_reason: z.string() });
 const SentimentRawZ = z.object({ sentiment: z.enum(SENTIMENT_VALUES), reason: z.string(), technical_reason: z.string() });
 const SttRawZ = z.object({ error_count: z.number(), recovered_count: z.number(), reason: z.string(), technical_reason: z.string() });
@@ -163,69 +142,70 @@ type SttResult = { error_count: number; recovered_count: number; available: bool
  *  as skippedDetection, keeping the skipped shape in one place. */
 const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0, available: false });
 
-/** Run one boolean detection judge; default to `detected:false` on any failure. */
-async function runDetection(
-  criteria: string,
-  json: ReturnType<typeof strict>,
-  ctx: ConversationInput,
-  provider?: LlmProvider,
-): Promise<DetectionResult> {
+/** One skeleton for every conversation judge: run the LLM call over the
+ *  transcript payload, transform the validated output, and on ANY failure
+ *  return the judge's unavailable-shaped fallback. The module invariant
+ *  ("a flaky supplementary signal must not blank the whole evaluation")
+ *  lives here, once — not copy-pasted per judge. */
+async function safeJudge<T, R>(
+  call: {
+    system: string;
+    ctx: ConversationInput;
+    schema: z.ZodType<T>;
+    jsonSchema: RunLlmJudgeArgs<T>["jsonSchema"];
+    maxTokens: number;
+    provider?: LlmProvider;
+  },
+  transform: (data: T) => R,
+  fallback: R,
+): Promise<R> {
   try {
     const { data } = await runLlmJudge({
-      system: criteria + OUT_DETECTION,
-      input: payload(ctx),
-      schema: DetectionRawZ,
-      jsonSchema: json,
-      maxTokens: DETECTION_MAX_TOKENS,
-      provider,
+      system: call.system,
+      input: payload(call.ctx),
+      schema: call.schema,
+      jsonSchema: call.jsonSchema,
+      maxTokens: call.maxTokens,
+      provider: call.provider,
     });
-    return { ...data, available: true };
+    return transform(data);
   } catch {
-    return { detected: false, reason: "", technical_reason: "conversation judge unavailable", available: false };
+    return fallback;
   }
 }
 
-async function runSentiment(
-  ctx: ConversationInput,
-  provider?: LlmProvider,
-): Promise<{ sentiment: string; reason: string; technical_reason: string; available: boolean }> {
-  try {
-    const { data } = await runLlmJudge({
-      system: USER_SENTIMENT + OUT_SENTIMENT,
-      input: payload(ctx),
-      schema: SentimentRawZ,
-      jsonSchema: SENTIMENT_JSON,
-      maxTokens: DETECTION_MAX_TOKENS,
-      provider,
-    });
-    return { ...data, available: true };
-  } catch {
-    return { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable", available: false };
-  }
+/** Run one boolean detection judge; default to `detected:false` on any failure. */
+function runDetection(criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
+  return safeJudge(
+    { system: criteria + OUT_DETECTION, ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
+    (data): DetectionResult => ({ ...data, available: true }),
+    { detected: false, reason: "", technical_reason: "conversation judge unavailable", available: false },
+  );
+}
+
+type SentimentResult = { sentiment: string; reason: string; technical_reason: string; available: boolean };
+
+function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
+  return safeJudge(
+    { system: USER_SENTIMENT + OUT_SENTIMENT, ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
+    (data): SentimentResult => ({ ...data, available: true }),
+    { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable", available: false },
+  );
 }
 
 /** STT quality over the transcript. Voice-only; caller passes a skipped result on
  *  text channels. Fault-tolerant: any failure → unavailable (never a fabricated 0). */
-async function runStt(
-  ctx: ConversationInput,
-  provider?: LlmProvider,
-): Promise<SttResult> {
-  try {
-    const { data } = await runLlmJudge({
-      system: STT + OUT_STT,
-      input: payload(ctx),
-      schema: SttRawZ,
-      jsonSchema: STT_JSON,
-      maxTokens: STT_MAX_TOKENS,
-      provider,
-    });
-    const errors = Math.max(0, Math.round(data.error_count));
-    // Clamp recovered into [0, errors] — the constraint the prompt states, enforced.
-    const recovered = Math.min(errors, Math.max(0, Math.round(data.recovered_count)));
-    return { error_count: errors, recovered_count: recovered, available: true };
-  } catch {
-    return skippedStt();
-  }
+function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<SttResult> {
+  return safeJudge(
+    { system: STT + OUT_STT, ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
+    (data): SttResult => {
+      const errors = Math.max(0, Math.round(data.error_count));
+      // Clamp recovered into [0, errors] — the constraint the prompt states, enforced.
+      const recovered = Math.min(errors, Math.max(0, Math.round(data.recovered_count)));
+      return { error_count: errors, recovered_count: recovered, available: true };
+    },
+    skippedStt(),
+  );
 }
 
 /** The single source of truth for the sentiment pass/fail rule: a sentiment
@@ -298,12 +278,12 @@ export async function evaluateConversationMetrics(
   const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
 
   const [voicemail, bot, screening, lowEng, wrong, dnd, sentiment, stt] = await Promise.all([
-    voice ? runDetection(VOICEMAIL, DETECTION_JSON, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection(BOT, DETECTION_JSON, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection(CALL_SCREENING, DETECTION_JSON, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    runDetection(LOW_ENGAGEMENT, DETECTION_JSON, ctx, provider),
-    runDetection(WRONG_NUMBER, DETECTION_JSON, ctx, provider),
-    runDetection(DO_NOT_DISTURB, DETECTION_JSON, ctx, provider),
+    voice ? runDetection(VOICEMAIL, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection(BOT, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection(CALL_SCREENING, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    runDetection(LOW_ENGAGEMENT, ctx, provider),
+    runDetection(WRONG_NUMBER, ctx, provider),
+    runDetection(DO_NOT_DISTURB, ctx, provider),
     runSentiment(ctx, provider),
     voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);

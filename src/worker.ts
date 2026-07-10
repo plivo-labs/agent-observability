@@ -107,14 +107,10 @@ if (dbConfigured) {
   // Probe once at boot instead of erroring every sweep interval; ALERT_SWEEPER=off must not
   // gate the worker (off on the API means the worker owns sweeping), so table existence is
   // the only signal that distinguishes a full AO deploy from a sim-only one.
-  const { sql } = await import("./db.js");
-  const [alertTables] = await sql`SELECT to_regclass('ao_alert_rules') IS NOT NULL AS present`;
+  const { tableExists } = await import("./db.js");
   const goalAnalyzerOn = config.GOAL_ANALYZER !== "off";
-  const [goalTables] = goalAnalyzerOn
-    ? await sql`SELECT to_regclass('ao_session_goal_analyses') IS NOT NULL AS present`
-    : [{ present: false }];
-  const sweepAlerts = alertTables.present === true;
-  const sweepGoals = goalAnalyzerOn && goalTables.present === true;
+  const sweepAlerts = await tableExists("ao_alert_rules");
+  const sweepGoals = goalAnalyzerOn && (await tableExists("ao_session_goal_analyses"));
   if (!sweepAlerts) {
     console.log("[worker] alert tables absent — alert sweeper disabled (sim-only deployment)");
   }

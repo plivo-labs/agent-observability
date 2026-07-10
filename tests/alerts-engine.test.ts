@@ -38,6 +38,16 @@ mock.module("../src/db.js", () => ({
   applySessionTagMetadata: mock(() => Promise.resolve()),
   mergeSessionRawReport: mock(() => Promise.resolve()),
   upsertSessionAgentConfig: mock(() => Promise.resolve()),
+  tableExists: mock(() => Promise.resolve(true)),
+  SESSION_SATELLITE_TABLES: [
+    "ao_session_agent_config",
+    "ao_session_eval_verdicts",
+    "ao_session_external_evals",
+    "ao_session_tags",
+    "ao_session_outcomes",
+    "ao_session_raw_report_patches",
+    "ao_session_goal_analyses",
+  ],
 }));
 
 const { evaluateRules } = await import("../src/alerts/engine.js");

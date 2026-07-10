@@ -42,8 +42,11 @@ export interface EvalClaim {
   token: string;
 }
 
-export async function claimNextEvalSession(): Promise<EvalClaim | null> {
-  // Retire claims that exhausted their retry budget before adopting anything.
+/** Retire claims that exhausted their retry budget. Run ONCE per sweep tick
+ *  (from runEvalSweepOnce) rather than inside claimNextEvalSession — the
+ *  workers call that up to MAX_PER_SWEEP times per tick, and only the first
+ *  call could ever find something to retire; the rest re-scanned for nothing. */
+export async function retireExpiredEvalClaims(): Promise<void> {
   await sql`
     UPDATE ao_session_eval_verdicts
     SET status = 'error', error = ${`retry budget exhausted (claim older than ${EVAL_CLAIM_MAX_AGE_HOURS}h)`},
@@ -52,7 +55,9 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
       AND created_at < NOW() - INTERVAL '1 hour' * ${EVAL_CLAIM_MAX_AGE_HOURS}
       AND claimed_at < NOW() - INTERVAL '1 minute' * ${EVAL_CLAIM_STALE_MINUTES}
   `;
+}
 
+export async function claimNextEvalSession(): Promise<EvalClaim | null> {
   const stale = await sql`
     UPDATE ao_session_eval_verdicts SET claimed_at = NOW(), updated_at = NOW()
     WHERE session_id = (
@@ -243,7 +248,11 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
   return {
     sessionId,
     config: parse(row.config) as Record<string, unknown>,
-    chatHistory: parse(row.chat_history),
+    // Returned RAW (possibly a JSON string): it's only consumed by the
+    // fallback path when raw_report.events is empty, so the common path
+    // never pays for parsing the (large) chat_history blob. The consumer
+    // (eventsFromChatHistory) parses lazily.
+    chatHistory: row.chat_history,
     rawReport: parse(row.raw_report),
     sessionCreatedAt: row.session_created_at ? new Date(row.session_created_at) : null,
     sessionEndedAt: row.session_ended_at ? new Date(row.session_ended_at) : null,

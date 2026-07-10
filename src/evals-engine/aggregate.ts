@@ -70,12 +70,13 @@ export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): Instru
     failing.push({ part: "procedure", detail });
   }
   if (!policy.passed) failing.push({ part: "policy", detail: policy.reason });
+  const cap = (s: string) => `${s[0]!.toUpperCase()}${s.slice(1)}`;
   const reason = adherence_passed
     ? "Instructions followed across objective, procedure, and policy."
-    : `Adherence failed on: ${failing.map((f) => f.part).join(", ")}. ${failing
-        .map((f) => (f.detail ? `${f.part[0]!.toUpperCase()}${f.part.slice(1)}: ${f.detail}` : ""))
-        .filter(Boolean)
-        .join(" ")}`.trim();
+    : `Adherence failed on: ${failing.map((f) => f.part).join(", ")}.${failing
+        .filter((f) => f.detail)
+        .map((f) => ` ${cap(f.part)}: ${f.detail}`)
+        .join("")}`;
   const technical_reason = [objective.technical_reason, procedure.technical_reason, interaction.technical_reason, policy.technical_reason]
     .filter(Boolean)
     .join(" | ");
