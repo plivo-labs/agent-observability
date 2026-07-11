@@ -70,7 +70,303 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     const meta = events.find((e) => e.type === "metadata") as any;
     expect(meta.metadata.saved_count).toBe(4);
     expect(meta.metadata.failed_slot_ids).toEqual([]);
+    expect(meta.metadata.deduped_count).toBe(0);
     expect(meta.metadata.partial_success).toBe(false);
+    // P0 timing fields: numeric phase durations + a ttfs stamped at the first scenario.
+    expect(meta.metadata.planner_ms).toBeGreaterThanOrEqual(0);
+    expect(meta.metadata.allocation_ms).toBeGreaterThanOrEqual(0);
+    expect(meta.metadata.writer_ms).toBeGreaterThanOrEqual(0);
+    expect(meta.metadata.ttfs_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  test("one chunk's thrown LlmError degrades to failed slots — other chunks' scenarios survive", async () => {
+    // 12 slots → 2 chunks (10 + 2). The 2-slot chunk's writer call throws (sustained 429 /
+    // timeout after completeJSON's retries); chunk 1's 10 scenarios must still stream, with
+    // the 2 slots reported failed — previously the rejection discarded everything.
+    const throwingWriter = (args: ProviderCompleteArgs): string => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length <= 2) throw new Error("429 rate limited");
+      return writerResponder(args);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical,
+        phloUuid: "agent-1",
+        maxScenarios: 12,
+        model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]),
+        writerProvider: new MockLLM([throwingWriter]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario");
+    expect(scenarios.length).toBe(10);
+    const meta = events.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(meta.metadata.saved_count).toBe(10);
+    expect(meta.metadata.failed_count).toBe(2);
+    expect(meta.metadata.partial_success).toBe(true);
+  });
+
+  test("chunks emit in COMPLETION order — a slow chunk no longer gates a fast one", async () => {
+    // 12 slots → 2 chunks (10 + 2). The 10-slot chunk (index 0) sleeps 50ms; the 2-slot
+    // chunk (index 1) responds immediately. With the old Promise.all gate nothing emitted
+    // until BOTH finished (index order); now chunk 1's scenarios stream first.
+    const slowFirstChunk = async (args: ProviderCompleteArgs): Promise<string> => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length > 2) await Bun.sleep(50);
+      return writerResponder(args);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical,
+        phloUuid: "agent-1",
+        maxScenarios: 12,
+        model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]),
+        writerProvider: new MockLLM([slowFirstChunk]),
+      }),
+    );
+    const chunkDones = events.filter((e) => e.type === "writer_chunk_done") as Array<Extract<GenEvent, { type: "writer_chunk_done" }>>;
+    expect(chunkDones.map((e) => e.chunk_index)).toEqual([1, 0]); // completion order, not index order
+    // The fast chunk's scenarios precede the slow chunk's writer_chunk_done.
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("scenario")).toBeLessThan(types.lastIndexOf("writer_chunk_done"));
+    // Ledger invariant unchanged: planned = saved + failed + deduped, nothing failed.
+    // (The feasibility fallback legitimately reuses one coverage key at 12 slots on this
+    // fixture, so exactly one dedup occurs — same as under the old index-order emission.)
+    const meta = events.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(meta.metadata.failed_count).toBe(0);
+    expect(meta.metadata.saved_count + meta.metadata.deduped_count).toBe(meta.metadata.planned_count);
+    expect(events.filter((e) => e.type === "scenario").length).toBe(meta.metadata.saved_count);
+  });
+
+  test("incremental: scenario events precede their chunk's writer_chunk_done; kill-switch parity", async () => {
+    // MockLLM streams deltas, so incremental emission is ACTIVE by default: every
+    // scenario surfaces from the token stream before its chunk's terminal event.
+    const on = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 12, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const chunkDoneAt = new Map<number, number>();
+    on.forEach((e, idx) => {
+      if (e.type === "writer_chunk_done") chunkDoneAt.set((e as any).chunk_index, idx);
+    });
+    on.forEach((e, idx) => {
+      if (e.type === "writer_scenario_done") expect(idx).toBeLessThan(chunkDoneAt.get((e as any).chunk_index)!);
+    });
+    // Kill-switch: identical ledger + identical scenario set, chunk-granular timing.
+    const off = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 12, model: "m", incrementalEmit: false,
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const ledger = (evs: GenEvent[]) => {
+      const m = (evs.find((e) => e.type === "metadata") as any).metadata;
+      return { saved: m.saved_count, failed: m.failed_count, deduped: m.deduped_count };
+    };
+    expect(ledger(on)).toEqual(ledger(off));
+    const slotIds = (evs: GenEvent[]) =>
+      evs.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.slot_id).sort();
+    expect(slotIds(on)).toEqual(slotIds(off));
+  });
+
+  test("a slot emitted mid-stream in a FAILED attempt is not re-emitted or re-requested by the retry", async () => {
+    // Attempt 1 streams one complete, valid item then dies as invalid JSON (truncated
+    // envelope) → completeJSON retries internally. The already-emitted slot must appear
+    // EXACTLY once on the wire even though the retry's stream re-produces it (the
+    // writer's emittedThisCall set persists across the call's internal attempts).
+    let firstUser: string | null = null;
+    const flakyWriter = (args: ProviderCompleteArgs): string => {
+      if (firstUser === null) {
+        firstUser = args.user;
+        const full = JSON.parse(writerResponder(args));
+        const one = { agent_flow_description: full.agent_flow_description, scenario_items: [full.scenario_items[0]] };
+        return JSON.stringify(one).slice(0, -1); // valid item streamed, envelope unparseable
+      }
+      return writerResponder({ ...args, user: firstUser }); // full valid envelope on retry
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([flakyWriter]),
+      }),
+    );
+    const emitted = events.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.slot_id);
+    expect(new Set(emitted).size).toBe(emitted.length); // no slot twice
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+    expect(meta.failed_count).toBe(0);
+  });
+
+  test("BLOCK regression: slots emitted mid-stream before EVERY attempt throws are saved, never failed", async () => {
+    // Each writer call streams ONE valid item (emitted incrementally) and then dies:
+    // the envelope is truncated (invalid JSON) and the internal retry returns garbage,
+    // so every completeJSON call throws after emitting. Pre-fix, the chunk rejection
+    // marked ALL slots failed — including the emitted (and downstream-persisted) ones,
+    // breaking planned = saved + failed + deduped.
+    const emitOneThenDie = (args: ProviderCompleteArgs): string => {
+      let parseable = true;
+      try {
+        JSON.parse(args.user);
+      } catch {
+        parseable = false;
+      }
+      if (!parseable) return "not json"; // completeJSON's internal retry — fail it too
+      const full = JSON.parse(writerResponder(args));
+      const one = { agent_flow_description: full.agent_flow_description, scenario_items: [full.scenario_items[0]] };
+      return JSON.stringify(one).slice(0, -1); // valid item streamed, envelope unparseable
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([emitOneThenDie]),
+      }),
+    );
+    const emitted = events.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.slot_id);
+    expect(new Set(emitted).size).toBe(emitted.length); // each slot at most once
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    // Every emitted slot is saved; NONE of them may simultaneously appear failed.
+    for (const id of emitted) expect(meta.failed_slot_ids).not.toContain(id);
+    expect(meta.saved_count).toBe(emitted.length);
+    expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
+  });
+
+  test("per-slot fallback rescues slots the chunk attempts keep missing (now parallel)", async () => {
+    // Multi-slot calls always omit the LAST requested slot → both chunk attempts miss
+    // it → the single-slot fallback (expected_slot_ids.length === 1) writes it.
+    const omitLast = (args: ProviderCompleteArgs): string => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      const full = JSON.parse(writerResponder(args));
+      if (ids.length > 1) full.scenario_items = full.scenario_items.filter((it: any) => it.slot_id !== ids[ids.length - 1]);
+      return JSON.stringify(full);
+    };
+    const writerLlm = new MockLLM([omitLast]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.failed_count).toBe(0);
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+    const singleSlotCalls = writerLlm.calls.filter((c) => JSON.parse(c.user).expected_slot_ids?.length === 1);
+    expect(singleSlotCalls.length).toBeGreaterThanOrEqual(1); // the fallback actually ran
+  });
+
+  test("fallback fan-out is bounded: ≤ WRITER_FALLBACK_CONCURRENCY single-slot calls in flight", async () => {
+    // Chunk-level calls return nothing → EVERY slot lands in the fallback. This path
+    // fires exactly when the provider is degraded, so the burst must stay bounded —
+    // but still parallel (the P3 win the bound must not revert).
+    const { WRITER_FALLBACK_CONCURRENCY } = await import("../src/sim-engine/gen/combos.js");
+    let inFlight = 0;
+    let peak = 0;
+    const degraded = async (args: ProviderCompleteArgs): Promise<string> => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length > 1) return JSON.stringify({ agent_flow_description: "x", scenario_items: [] });
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 10)); // hold the slot so overlap is observable
+      inFlight -= 1;
+      return writerResponder(args);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([degraded]),
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.failed_count).toBe(0); // every slot rescued
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+    expect(peak).toBeGreaterThanOrEqual(2); // parallelism kept…
+    expect(peak).toBeLessThanOrEqual(WRITER_FALLBACK_CONCURRENCY); // …but bounded
+  });
+
+  test("incremental_disabled: true when an attempt's extractor self-disables; false on a clean run", async () => {
+    // Attempt 1 streams a non-writer shape (root array): the extractor disables and the
+    // schema parse rejects it, so completeJSON retries; attempt 2 streams the valid
+    // envelope. Output is correct (final parse authoritative) but mid-stream emission was
+    // lost for an attempt — metadata must surface that directly (the disable paths are
+    // otherwise silent; the only other symptom is an unexplained ttfs regression).
+    // completeJSON's internal retry mutates args.user (repair feedback), so replay the
+    // FIRST prompt into writerResponder — the retry must SUCCEED for the call to return
+    // (a throw would discard the attempt's extractor state with the whole call).
+    let firstUser: string | null = null;
+    const flaky = (args: ProviderCompleteArgs): string => {
+      if (firstUser === null) {
+        firstUser = args.user;
+        return '["not","an","object"]';
+      }
+      return writerResponder({ ...args, user: firstUser });
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([flaky]),
+      }),
+    );
+    expect((events.find((e) => e.type === "metadata") as any).metadata.incremental_disabled).toBe(true);
+
+    const clean = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect((clean.find((e) => e.type === "metadata") as any).metadata.incremental_disabled).toBe(false);
+  });
+
+  test("planner cache: an identical request reuses the plan (no second planner call); any input change misses", async () => {
+    const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+    const base = { flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m", plannerCacheTtlMs: 60_000 };
+    const plannerLlm = new MockLLM([PLANNER_JSON]);
+    const run = () =>
+      collect(generateScenarios({ ...base, plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]) }));
+
+    const first = await run();
+    expect(plannerLlm.calls.length).toBe(1);
+    expect((first.find((e) => e.type === "metadata") as any).metadata.planner_cache_hit).toBe(false);
+
+    const second = await run();
+    expect(plannerLlm.calls.length).toBe(1); // served from cache — no new planner call
+    const meta2 = (second.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta2.planner_cache_hit).toBe(true);
+    expect(meta2.planner_usage).toBeNull(); // honest token accounting on a hit
+    expect((second.find((e) => e.type === "planning_done") as any).cache_hit).toBe(true);
+    // Same ledger either way.
+    expect(meta2.saved_count).toBe((first.find((e) => e.type === "metadata") as any).metadata.saved_count);
+
+    // Any planner-input change (here: instructions) is a different key → miss.
+    await collect(
+      generateScenarios({
+        ...base,
+        testCaseGenerationInstructions: "different",
+        plannerProvider: plannerLlm,
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect(plannerLlm.calls.length).toBe(2);
+    plannerCacheClear();
+  });
+
+  test("planner cache: ttl 0 (the default) disables caching entirely", async () => {
+    const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+    const plannerLlm = new MockLLM([PLANNER_JSON]);
+    const run = () =>
+      collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+          plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]),
+        }),
+      );
+    await run();
+    await run();
+    expect(plannerLlm.calls.length).toBe(2); // no reuse without a TTL
   });
 
   test("throws after the planner fails twice", async () => {
@@ -85,6 +381,178 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
       }),
     );
     await expect(run).rejects.toThrow(/Planner failed/);
+  });
+});
+
+describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)", () => {
+  // Derived from PLANNER_JSON (one fixture contract, not a copy) — the same two
+  // capabilities with smoke_units attached per capability.
+  const SMOKE_UNITS_BY_CAP: Record<string, unknown[]> = {
+    handle_refund: [
+      { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "refund happy path" },
+      { unit_id: "handle_refund__boundary__001", kind: "boundary", scenario_type: "boundary_pressure", description: "out of scope refusal" },
+    ],
+    handle_status: [
+      { unit_id: "handle_status__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "status happy path" },
+    ],
+  };
+  const smokePlanner = JSON.parse(PLANNER_JSON);
+  smokePlanner.capabilities = smokePlanner.capabilities.map((c: any) => ({
+    ...c,
+    smoke_units: SMOKE_UNITS_BY_CAP[c.capability_id] ?? [],
+  }));
+  const SMOKE_PLANNER_JSON = JSON.stringify(smokePlanner);
+
+  test("smoke run: scenario count = unit count; smoke metadata + eval_metadata stamped", async () => {
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical,
+        phloUuid: "agent-1",
+        maxScenarios: 50, // a hint at most in smoke — the unit count governs
+        model: "m",
+        simulationMode: "smoke",
+        smokeCap: 20,
+        plannerProvider: new MockLLM([SMOKE_PLANNER_JSON]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    expect(scenarios.length).toBe(3); // 3 units, NOT max_scenarios
+    for (const s of scenarios) {
+      expect(s.eval_metadata.simulation_mode).toBe("smoke");
+      expect(s.eval_metadata.smoke_unit_id).toBeTruthy();
+      expect(s.eval_metadata.smoke_units_hash).toMatch(/^[0-9a-f]{32}$/);
+      expect(s.eval_metadata.runtime_stress_combo_id).toBe("R00");
+      expect(s.eval_metadata.mock_profile_id).toBe("M_SUCCESS");
+      expect(s.tags).toContain("simulation_mode:smoke");
+    }
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(3);
+    expect(meta.smoke_cap).toBe(20);
+    expect(meta.smoke_units_hash).toMatch(/^[0-9a-f]{32}$/);
+    expect(meta.dropped_unit_ids).toEqual([]);
+  });
+
+  test("smoke cap drops overflow units and reports them in metadata", async () => {
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 2,
+        plannerProvider: new MockLLM([SMOKE_PLANNER_JSON]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario");
+    expect(scenarios.length).toBe(2);
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.smoke_cap).toBe(2);
+    expect(meta.dropped_unit_ids).toEqual(["handle_status__happy_path__001"]); // lowest priority dropped
+  });
+
+  test("same-kind units under one capability (identical coverage_key) are NOT deduped away", async () => {
+    // The dev E2E bug: units of the same capability + kind + route share all 8 coverage
+    // axes; the within-run dedup (keyed by coverage_key) silently dropped 10/17 units.
+    // Dedup must key on the audit-unique smoke_unit_id for smoke scenarios.
+    const collidingPlanner = JSON.parse(PLANNER_JSON);
+    collidingPlanner.capabilities = collidingPlanner.capabilities.map((c: any) => ({
+      ...c,
+      smoke_units:
+        c.capability_id === "handle_refund"
+          ? [
+              { unit_id: "handle_refund__happy_path__001", kind: "happy_path", scenario_type: "clean_baseline", description: "collects order id" },
+              { unit_id: "handle_refund__happy_path__002", kind: "happy_path", scenario_type: "clean_baseline", description: "confirms refund amount" },
+            ]
+          : [],
+    }));
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 20,
+        plannerProvider: new MockLLM([JSON.stringify(collidingPlanner)]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    // Both colliding handle_refund units survive — nothing collapsed.
+    const unitIds = scenarios.map((s: any) => s.eval_metadata.smoke_unit_id).sort();
+    expect(unitIds).toContain("handle_refund__happy_path__001");
+    expect(unitIds).toContain("handle_refund__happy_path__002");
+    // The two colliding units really do share a coverage key (the bug's precondition).
+    const keys = scenarios
+      .filter((s: any) => s.eval_metadata.smoke_unit_id.startsWith("handle_refund__happy_path"))
+      .map((s: any) => s.eval_metadata.coverage_key);
+    expect(keys.length).toBe(2);
+    expect(keys[0]).toBe(keys[1]);
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.deduped_count).toBe(0);
+    expect(meta.saved_count).toBe(scenarios.length);
+  });
+
+  test("planner that omits smoke_units degrades to one fallback unit per capability", async () => {
+    // PLANNER_JSON has no smoke_units — allocateSmokeSlots synthesizes {capId}__happy_path__001.
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 20,
+        plannerProvider: new MockLLM([PLANNER_JSON]),
+        writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const scenarios = events.filter((e) => e.type === "scenario").map((e) => (e as any).scenario);
+    expect(scenarios.length).toBe(2); // one per capability
+    const unitIds = scenarios.map((s: any) => s.eval_metadata.smoke_unit_id).sort();
+    expect(unitIds).toEqual(["handle_refund__happy_path__001", "handle_status__happy_path__001"]);
+  });
+
+  test("a cached plan that fails allocation replans honestly: cache_hit=false, usage captured, cache healed", async () => {
+    const { plannerCacheClear, plannerCacheKey, plannerCacheSet } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+    // Poison the cache under the EXACT request key with a plan the smoke allocator
+    // genuinely rejects: zero capabilities (a unit-less plan won't do — the allocator
+    // synthesizes fallback units from capabilities). Forces the replan path off a
+    // cache hit. (Field order must mirror generate.ts's plannerCacheKey call — the
+    // key is a stringify of these parts.)
+    const key = plannerCacheKey({
+      flowJson: canonical, phloUuid: "a", model: "m", simulationMode: "smoke",
+      smokeCap: 20, instructions: "", existingSummaries: [],
+    });
+    plannerCacheSet(key, { ...JSON.parse(PLANNER_JSON), capabilities: [] });
+    const plannerLlm = new MockLLM([SMOKE_PLANNER_JSON]);
+    const run = () =>
+      collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+          simulationMode: "smoke", smokeCap: 20, plannerCacheTtlMs: 60_000,
+          plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]),
+        }),
+      );
+
+    const events = await run();
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(plannerLlm.calls.length).toBe(1); // the replan ran a REAL planner call
+    expect(meta.planner_cache_hit).toBe(false); // …so the run must not claim a hit
+    expect(meta.planner_usage).not.toBeNull(); // …and its tokens are accounted
+    expect(meta.saved_count).toBe(3); // the replanned (healthy) plan generated
+
+    // The healed plan replaced the poisoned entry under the same key: an identical
+    // rerun is a true hit with no further planner calls.
+    const second = await run();
+    expect(plannerLlm.calls.length).toBe(1);
+    expect((second.find((e) => e.type === "metadata") as any).metadata.planner_cache_hit).toBe(true);
+    plannerCacheClear();
+  });
+
+  test("stress metadata carries NO smoke fields", async () => {
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.smoke_cap).toBeUndefined();
+    expect(meta.smoke_units_hash).toBeUndefined();
+    expect(meta.dropped_unit_ids).toBeUndefined();
   });
 });
 
