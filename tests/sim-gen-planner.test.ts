@@ -95,6 +95,17 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
     expect(sent.simulation_surface.executable_node_types).toContain("ai_agent_v2");
     expect(sent.conversation_pattern_library).toContain("clean_direct");
     expect(sent.simulation_mode).toBe("stress");
+    expect(sent.smoke_cap).toBeUndefined(); // stress payloads never carry a cap
+  });
+
+  test("smoke mode: payload carries the REAL smoke_cap and the system prompt embeds it", async () => {
+    const llm = new MockLLM([goodPlanner]);
+    await planCapabilities({ flowJson: canonical, phloUuid: "agent-1", model: "m", simulationMode: "smoke", smokeCap: 12, provider: llm });
+    const sent = JSON.parse(llm.calls[0].user);
+    expect(sent.simulation_mode).toBe("smoke");
+    expect(sent.smoke_cap).toBe(12); // the pre-smoke wiring gap sent 0 here
+    expect(llm.calls[0].system).toContain("Emit at most 12 smoke units");
+    expect(llm.calls[0].system).toContain("SMOKE coverage");
   });
 
   test("throws after exhausting retries on invalid JSON", async () => {
