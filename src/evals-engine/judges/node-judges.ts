@@ -64,12 +64,29 @@ export async function runHallucinationJudge(
   return runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
 }
 
+const IDLE_TAG = "[system idle prompt]";
+
+/** Strip platform idle re-prompts from the loop judge's view. Models do NOT
+ *  reliably honor a written "exclude tagged turns" rule (verified live: the
+ *  judge names them idle prompts and still fires), so the exclusion is done
+ *  here deterministically — the same way the legacy engine strips marked idle
+ *  turns before loop analysis. Only the loop judge gets the filtered view;
+ *  the other judges keep tagged turns as context. */
+export function withoutIdleTurns(node: NodeEvalInput): NodeEvalInput {
+  const turns = node.turns.filter((t) => !(t.agent?.includes(IDLE_TAG)) && !(t.user?.includes(IDLE_TAG)));
+  return turns.length === node.turns.length ? node : { ...node, turns, turn_count: turns.length };
+}
+
 export async function runLoopJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: NodeLoopRaw; usage: LlmUsage }> {
-  return runLlmJudge({ system: systemForLoop(), input: nodePayload(node, ctx), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider });
+  const loopNode = withoutIdleTurns(node);
+  const loopCtx: ConversationInput = ctx.full_transcript.includes(IDLE_TAG)
+    ? { ...ctx, full_transcript: ctx.full_transcript.split("\n").filter((l) => !l.includes(IDLE_TAG)).join("\n") }
+    : ctx;
+  return runLlmJudge({ system: systemForLoop(), input: nodePayload(loopNode, loopCtx), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider });
 }
 
 export async function runVariableExtractionJudge(
