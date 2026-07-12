@@ -11,6 +11,12 @@
 
 // ── INPUT ───────────────────────────────────────────────────────────────────────
 
+/** Text tag appended to platform idle boilerplate (user-idle reminders /
+ *  idle-hangup lines) so LLM judges can see WHY a turn is exempt. Machine-side
+ *  filtering keys on EvalTurn.idle, not this string — the tag text is
+ *  display-only context inside the judges' prompts. */
+export const IDLE_TAG = "[system idle prompt]";
+
 /** One conversational turn that ran at a node (the eval-relevant slice of a turn_completed event). */
 export interface EvalTurn {
   node_uuid: string;
@@ -24,6 +30,11 @@ export interface EvalTurn {
    *  that are NOT spoken words. The speech-only transcript filters on this
    *  flag instead of re-matching the rendered label strings. */
   evidence?: boolean;
+  /** True for platform idle boilerplate (reminder / idle-hangup lines). The
+   *  loop judge's deterministic exclusion filters on this flag (same pattern
+   *  as `evidence`); the IDLE_TAG suffix on the turn text is only the
+   *  judges' human-readable context. */
+  idle?: boolean;
 }
 
 /** A single AI node the scenario visited, with the config + turns needed to score it. */

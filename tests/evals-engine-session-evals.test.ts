@@ -235,7 +235,9 @@ describe("buildSessionEvalInput", () => {
     // to "" which must not match punctuation-only agent turns.
     for (const bad of [42, "reminder", { msg: "x" }, [null, 7, "", "..."]]) {
       const { input: built } = buildSessionEvalInput(
-        { ...cfg(), idle_messages: bad },
+        // Deliberately violates the declared string[] type: the ingest contract
+        // is read defensively and must ignore garbage without throwing.
+        { ...cfg(), idle_messages: bad as unknown as string[] },
         [ev("node-A", "assistant", "reminder"), ev("node-A", "assistant", "?!")],
       );
       for (const t of built.nodes[0].turns) expect(t.agent).not.toContain("[system idle prompt]");
@@ -282,6 +284,27 @@ describe("buildSessionEvalInput", () => {
     expect(agents[2]).toBe("Great — what's your order id?"); // user spoke → run over
   });
 
+  test("loop judge conversation_history strips idle lines (memoized per session)", async () => {
+    const { runLoopJudge } = await import("../src/evals-engine/judges/node-judges.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "user", "hello"),
+      ev("node-A", "assistant", "How can I help?"),
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "assistant", "Are you still there?"),
+    ]);
+    let seenHistory = "";
+    const llm = new MockLLM([
+      (args: { user?: string }) => {
+        seenHistory = args.user ?? "";
+        return JSON.stringify({ loop_detected: false, score: 1, reason: "r", technical_reason: "t" });
+      },
+    ]);
+    await runLoopJudge(input.nodes[0], input, llm);
+    expect(seenHistory).toContain("How can I help?");
+    expect(seenHistory).not.toContain("Are you still there?"); // stripped from node transcript AND conversation history
+  });
+
   test("repeat detection resets on user speech and ignores tool/system events", () => {
     const { input } = buildSessionEvalInput(cfg(), [
       ev("node-A", "assistant", "Could you share the date?"),
@@ -300,7 +323,7 @@ describe("buildSessionEvalInput", () => {
     expect(agents[2]).toContain("[system idle prompt]");
   });
 
-  test("loop judge input drops idle-tagged turns entirely", async () => {
+  test("loop judge input drops idle-flagged turns entirely", async () => {
     const { withoutIdleTurns } = await import("../src/evals-engine/judges/node-judges.js");
     const { input } = buildSessionEvalInput(cfg(), [
       ev("node-A", "user", "hello"),
@@ -308,9 +331,39 @@ describe("buildSessionEvalInput", () => {
       ev("node-A", "assistant", "Are you still there?"),
       ev("node-A", "assistant", "Are you still there?"),
     ]);
+    // Idle turns carry the structured flag; filtering keys on it, not on text.
+    expect(input.nodes[0].turns.filter((t) => t.idle)).toHaveLength(2);
     const filtered = withoutIdleTurns(input.nodes[0]);
     const agents = filtered.turns.map((t) => t.agent).filter(Boolean);
     expect(agents).toEqual(["How can I help?"]); // both idle repeats (incl. retro-tagged first) removed
     expect(filtered.turn_count).toBe(2); // user turn + one agent turn
+
+    // A user turn merely CONTAINING the tag text is never dropped (flag-based,
+    // not substring-based).
+    const echo = buildSessionEvalInput(cfg(), [ev("node-A", "user", "you said [system idle prompt] to me")]);
+    expect(withoutIdleTurns(echo.input.nodes[0]).turn_count).toBe(1);
+  });
+
+  test("idle repeat cap: a stuck agent repeating past the cap stays visible to the loop judge", async () => {
+    const { withoutIdleTurns } = await import("../src/evals-engine/judges/node-judges.js");
+    // 6 identical substantive lines into dead air — a real loop, not idle
+    // scaffolding (platform idle retries are <=3). Repeats past the cap must
+    // stay untagged so the loop judge can still fire.
+    const { input } = buildSessionEvalInput(cfg(), Array.from({ length: 6 }, () =>
+      ev("node-A", "assistant", "Please provide your booking reference now."),
+    ));
+    const visible = withoutIdleTurns(input.nodes[0]);
+    expect(visible.turn_count).toBeGreaterThanOrEqual(2); // enough repetition survives to detect a loop
+  });
+
+  test("repeat detection does not cross node boundaries", () => {
+    // The same opening line spoken by two different node visits is each node's
+    // own speech, not an idle re-prompt (idle timers re-speak within a node).
+    const config: AgentConfig = { nodes: [{ ref: "visit-1", name: "A" }, { ref: "visit-2", name: "A" }] };
+    const { input } = buildSessionEvalInput(config, [
+      ev("visit-1", "assistant", "Hello, welcome to the clinic."),
+      ev("visit-2", "assistant", "Hello, welcome to the clinic."),
+    ]);
+    for (const n of input.nodes) for (const t of n.turns) expect(t.idle).toBeUndefined();
   });
 });
