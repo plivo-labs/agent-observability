@@ -49,6 +49,8 @@ Steps:
 4. NOT hallucination: process narration and forward commitments ("let me check", "I'll look into that", "we'll get that scheduled") — promises of action are not factual claims. They become hallucination only when the agent then asserts a specific fabricated RESULT (e.g. states a slot was verified/booked when no evidence shows it).
 5. NOT hallucination: unrendered template placeholders (e.g. {name}, {{appointment_time}}) appearing in instructions or transcript — those are rendering artifacts, not fabricated facts.
 6. NOT hallucination: runtime context the platform injects (the current date/time/day-of-week, the caller's name or number, account or session parameters) — flag a date/identity claim only when it CONTRADICTS the conversation or tool evidence.
+6a. USER ECHO IS GROUNDED: a value the USER stated — in any spoken form — that the agent repeats back or confirms is grounded by the user's own words, in ANY equivalent rendering: spoken-number/date words vs numerals vs resolved calendar form ("July third twenty twenty-six" ≡ "July 3rd, 2026" ≡ 2026-07-03; "twenty twenty-six" spoken as "20 26" is the YEAR 2026, not a day). Addressing the caller by a name they gave is grounded. Verify against the user's actual words FIRST, before any other source.
+6b. HINT LINES ARE AIDS, NOT ARBITERS: date-hint / preprocessor System_Note lines are supplementary parsing aids and are NOT exhaustive. When a hint line's parse conflicts with what the user plainly said, the user's words win. The ABSENCE of a hint entry for a user-stated value, or a hint that mis-parsed it, NEVER makes the agent's faithful read-back ungrounded.
 7. Clarification behavior is NOT hallucination when the agent marks an ungrounded detail as tentative (asks to confirm) rather than asserting it as an established fact.
 8. Lines labelled System_Note: or Agent_Handoff: are internal runtime events, not factual claims the agent made to the user — never treat them as assertions requiring grounding.
 
@@ -74,15 +76,17 @@ Steps:
 
 Normalization is EXPECTED and NOT an error — a value is correct when it represents the same underlying information even in a different form:
 - Spoken digits → compact form ("one two three" → "123").
+- Spoken dates → calendar form: "July twenty fourth" → 2026-07-24; a spoken year like "twenty twenty-six" or "20 26" is the YEAR 2026. Check the stored value against the USER'S OWN WORDS first — when it matches any reasonable reading of what the user said (and confirmed), it is CORRECT.
 - Standard reformatting (dates, phone numbers, codes), abbreviations vs full forms.
-- Values computed per the variable's rule (relative dates resolved to calendar dates, time-of-day mapped per the rule).
+- Values computed per the variable's rule (relative dates resolved to calendar dates, time-of-day mapped per the rule) or resolved via the platform's date-hint context ("today"/"next week" → the hinted calendar date).
+Hint/preprocessor lines are parsing aids, not arbiters: never mark a value incorrect solely because a hint line parsed the user's words differently — the transcript is the primary source.
 Mark INCORRECT only when the value is garbage/malformed, semantically WRONG (different date/number/name), truncated beyond recognition, or contradicts what the user conveyed AND is not justified by the rule.
 
 Score: 1.0 all correct | 0.75 minor issues | 0.5 notable gaps | 0.25 most missing/incorrect | 0.0 complete failure.
 
 Pass if all extracted variables are valid and grounded. Fail for extra or fabricated variables, or a required value that was provided but missing/wrong. Maybe for minor issues.
 
-When ambiguous, favor extraction_successful=true if the values are approximately correct.`;
+When ambiguous, favor extraction_successful=true if the values are approximately correct. This leniency applies to VALUE disputes only — never to omissions: an EMPTY extraction set is not automatically a pass. When the user clearly provided a value for an expected variable (including an explicit enum condition being met) and nothing was stored, that is a real failure — list it in missing_variables and fail.`;
 
 export const LOOP_DETECTION = `Does the agent inappropriately repeat its own previous messages without justification? Loops indicate the agent is stuck — the conversation stays on the SAME step instead of advancing to the next.
 
@@ -94,6 +98,7 @@ Steps:
 
 NOT a loop (these must never fire):
 - Idle re-engagement: repeated prompts while the user is silent/inactive are appropriate responses to inactivity, not loops. Turns marked [system idle prompt] are platform scaffolding — exclude them entirely.
+- Unmarked idle scaffolding: a verbatim-identical short check-in line repeated 2-3 times into silence with NO user speech between ("Are you still there?"-style re-engagement), optionally followed by a scripted disconnect line, is the platform's idle timer re-speaking a configured reminder — exclude these runs even when no [system idle prompt] tag is present. This exemption covers only the check-in/re-prompt/disconnect register: an agent repeating SUBSTANTIVE task content into dead air (re-asserting information, re-running a step) is still a loop.
 - A single interrupted restart, or one/two restarts after an interruption when the agent then advances.
 - Greetings, sign-offs, and short acknowledgements ("Got it", "Sure", "How can I help?") repeating.
 - Re-asking for the same information because the user has not yet provided it (no answer, silence, an off-topic reply, or a mishear) is a justified re-ask, not a loop — only flag when the user ALREADY gave a usable answer and the agent asks for it again anyway.
@@ -116,6 +121,12 @@ SCOPE — these belong to OTHER judges, never fail adherence for them:
 - Whether the right intent fired → intent judge. - Whether variables were captured → variable judge. - Whether a fact was fabricated → hallucination judge. Call lifecycle (hanging up, transitions, routing) is outside the agent's control.
 
 TRANSCRIPT NOTE — internal event lines are NOT agent speech: lines labelled Tool_Call:, Tool_Result:, System_Note:, or Agent_Handoff: are runtime events rendered only for context. They are NOT words the agent said to the user. Never fail adherence because such a line appears — they do not count as revealing internals, speaking during a silent/seamless handoff, breaking turn shape, or "combining tool calls into a turn". Judge procedure and policy ONLY from the agent's actual spoken messages.
+
+SILENT RECORDING TOOLS: variable-recorder / bookkeeping tool calls (record_*, set/extract-variable style writes) are silent background operations by design. NEVER treat one as a missed step or violation because it fired without spoken acknowledgment, without being announced, or detached from a spoken turn — announcing an internal recording would itself violate "never reveal internals". Instructions about speaking around tool use apply only to user-facing waits (lookups, holds, transfers), not to recording writes. The ORDER or PLACEMENT of recording calls in the transcript is a serialization artifact, never a procedure step. This exempts the tool call ONLY: a separately-instructed spoken confirmation or read-back to the caller ("confirm the date back") is still a real procedure step, judged from the agent's spoken messages as usual.
+
+INTERRUPTED TURNS: an agent turn tagged [interrupted] was cut off by the caller or by call end — judge only what was delivered; never penalize the missing remainder (a cut-off greeting is not a skipped greeting). Steps the agent never reached because the call ended, the user hung up, or an interruption cut the flow are UNREACHABLE, not missed — this includes a call whose only agent turn is an interrupted opening. Turns tagged [system idle prompt] are platform boilerplate, not agent speech — never count them for procedure or interaction_quality (not a repeated question, not multi_question, not robotic).
+
+TRANSFER SEMANTICS: "immediately transfer when the caller asks for a human"-style rules apply ONLY to caller-initiated requests. When the AGENT offered a specialist/transfer and the caller accepted or declined, the immediate-transfer rule is not in play — do not fail the agent for speaking around an offered transfer or for not transferring when the caller declined the offer.
 
 FUNCTIONAL COMPLETION TEST (FCT) — the core anti-over-fire rule. Every step has an OBJECTIVE (the outcome: confirm date, collect name, verify identity) and CONSTRAINTS (how to say it: exact wording, order). When the objective was achieved AND the user understood/responded appropriately, the step is functionally complete, and any constraint deviation is "minor" severity — NEVER "critical" — regardless of NEVER/ALWAYS/MUST language in the instructions. A step is only "critical" when its objective was not achieved at all. Accept semantically equivalent wording, alternative phrasings, reordered or combined steps, and self-corrections. For confirmations, ANY clear affirmative in context ("yes", "okay", "sure", "sounds good") is agreement obtained.
 
@@ -170,7 +181,9 @@ Rules:
 
 For each goal, decide whether the conversation achieved it. Pass when all required goals were achieved. Fail when any required goal was clearly missed. Maybe when the transcript lacks enough evidence.
 
-Early termination by user: if the user's intent or action clearly satisfies a goal's core criteria but the conversation ends abruptly (e.g. the chosen intent is "hangup") before the agent can complete follow-up actions like confirming, acknowledging, or closing, mark the goal as achieved. The agent cannot control when the user terminates — judge whether the goal's substantive outcome was reached, not whether every procedural step afterward completed.{sim_rules}`;
+Early termination by user: if the user's intent or action clearly satisfies a goal's core criteria but the conversation ends abruptly (e.g. the chosen intent is "hangup") before the agent can complete follow-up actions like confirming, acknowledging, or closing, mark the goal as achieved. The agent cannot control when the user terminates — judge whether the goal's substantive outcome was reached, not whether every procedural step afterward completed.
+
+Conditional goals — NOT APPLICABLE is NOT a failure: when a goal's own instructions define a triggering condition (e.g. "if the caller asks for a human…", "when the user disputes…") and that condition never occurred in the conversation, the goal does not apply. Mark it achieved=true and state "not applicable — the triggering condition never occurred" in the reason. NEVER mark a conditional goal not-achieved solely because its trigger never arose — that penalizes the agent for a non-event.{sim_rules}`;
 
 // Simulation-only rules (cx-sqs goal user.tmpl {{if .IsSimulation}} block). A sim
 // transcript is a replay that omits some non-dialogue node logs, so the judge must

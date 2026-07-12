@@ -75,6 +75,12 @@ export interface AgentConfig {
   global_variables?: Record<string, unknown>;
   /** TTS pronunciation map (word→guide) — see ConversationInput.pronunciation_guides. */
   pronunciation_guides?: Record<string, unknown>;
+  /** Platform-spoken idle boilerplate (user-idle reminder / idle-hangup lines,
+   *  verbatim as configured). An agent turn whose text matches one of these is
+   *  tagged "[system idle prompt]" so the loop/adherence judges exempt it —
+   *  the same tag the per-item `system_idle` flag produces, but derivable from
+   *  config alone when the sender can't mark individual items. */
+  idle_messages?: unknown;
 }
 
 // ── ingested transcript shape (raw_report.events, as AO stores them) ─────────
@@ -101,12 +107,45 @@ export interface StoredEvent {
 
 const isTruthyFlag = (v: unknown): boolean => v === true || v === "true" || v === 1;
 
+/** Normalize a spoken line for idle-message matching: case/whitespace-insensitive;
+ *  ASR/TTS transcripts add/drop final periods and insert spaces before
+ *  punctuation ("there ?"), so spaces preceding punctuation collapse and
+ *  trailing space+punctuation strips entirely. */
+function normalizeSpoken(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/ ([.,!?…;:])/g, "$1")
+    .trim()
+    .replace(/[\s.!?…]+$/, "");
+}
+
+const EMPTY_IDLE_SET: Set<string> = new Set();
+
+/** Coerce config.idle_messages to a set of normalized strings. Entries that
+ *  normalize to "" (pure punctuation) are dropped — an empty-string member
+ *  would tag any punctuation-only agent turn. Never throws. */
+function idleMessageSet(v: unknown): Set<string> {
+  const out = new Set<string>();
+  if (Array.isArray(v)) {
+    for (const m of v) {
+      if (typeof m !== "string") continue;
+      const n = normalizeSpoken(m);
+      if (n) out.add(n);
+    }
+  }
+  return out;
+}
+
 /** Append the interruption / idle tags the loop & adherence judges look for.
- *  No-op until the uploader marks items — but wiring it here means the moment
- *  it does, the judges' exemptions take effect with no further change. */
-function tagText(text: string, item: NonNullable<StoredEvent["item"]>): string {
+ *  Idle turns are recognised two ways: the sender's per-item `system_idle` flag,
+ *  or a text match against the config's `idle_messages` — so a sender that can
+ *  only attach config (not per-item flags) still gets the judges' exemptions. */
+function tagText(text: string, item: NonNullable<StoredEvent["item"]>, idleMessages: Set<string>): string {
   let out = text;
-  if (isTruthyFlag(item.system_idle)) out += " [system idle prompt]";
+  if (isTruthyFlag(item.system_idle) || (idleMessages.size > 0 && idleMessages.has(normalizeSpoken(text)))) {
+    out += " [system idle prompt]";
+  }
   if (isTruthyFlag(item.interrupted)) out += " [interrupted]";
   return out;
 }
@@ -208,6 +247,7 @@ export function buildSessionEvalInput(
 ): { input: ConversationInput; nodeRefs: NodeRef[] } {
   const cfgNodes = Array.isArray(config.nodes) ? config.nodes : [];
   const evs = Array.isArray(events) ? events : [];
+  const idleMessages = idleMessageSet(config.idle_messages);
 
   // Index config nodes by ref; keep declaration order for the fallback bucket.
   // A node without a ref gets a synthetic internal grouping key (the sender
@@ -300,7 +340,9 @@ export function buildSessionEvalInput(
       pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
     }
-    const tagged = tagText(text, item);
+    // Idle-message matching applies to agent speech only — the reminder/hangup
+    // lines are platform-spoken; a user line must never be tagged by text match.
+    const tagged = tagText(text, item, isUser ? EMPTY_IDLE_SET : idleMessages);
     pushTurn(ref, isUser
       ? { node_uuid: ref, user: tagged, agent: "", intent: "" }
       : { node_uuid: ref, user: "", agent: tagged, intent: "" });

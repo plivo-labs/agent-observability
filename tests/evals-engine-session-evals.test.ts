@@ -194,4 +194,58 @@ describe("buildSessionEvalInput", () => {
     ]);
     expect(input.full_transcript).toBe(["Agent: Q?", "User: A"].join("\n"));
   });
+
+  test("tags agent turns matching config idle_messages as [system idle prompt]", () => {
+    const config: AgentConfig = {
+      ...cfg(),
+      // Punctuation/case/whitespace drift between config and TTS transcript
+      // must not break the match.
+      idle_messages: [
+        "Are you still there? I'm happy to assist whenever you're ready.",
+        "Since I'm not hearing a response, I'll go ahead and disconnect",
+      ],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "hello"),
+      ev("node-A", "assistant", "are you still there?  I'm happy to assist whenever you're ready"),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      // ASR often inserts a space before terminal punctuation — must still match.
+      ev("node-A", "assistant", "Are you still there ? I'm happy to assist whenever you're ready ."),
+      ev("node-A", "assistant", "Since I'm not hearing a response, I'll go ahead and disconnect."),
+      ev("node-A", "assistant", "Your balance is due."),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agents[0]).toContain("[system idle prompt]");
+    expect(agents[1]).toContain("[system idle prompt]");
+    expect(agents[2]).toContain("[system idle prompt]");
+    expect(agents[3]).toContain("[system idle prompt]");
+    expect(agents[4]).toBe("Your balance is due."); // real speech untouched
+  });
+
+  test("idle_messages text match never tags user turns; malformed idle_messages never throws", () => {
+    const config: AgentConfig = { ...cfg(), idle_messages: ["Are you still there?"] };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "Are you still there?"), // user echoing the line stays untagged
+      ev("node-A", "assistant", "Are you still there?"),
+    ]);
+    expect(input.nodes[0].turns[0].user).toBe("Are you still there?");
+    expect(input.nodes[0].turns[1].agent).toContain("[system idle prompt]");
+    // Garbage shapes are ignored, not fatal — AND produce no tagging: a bare
+    // string ("reminder") is not a list, and pure-punctuation entries normalize
+    // to "" which must not match punctuation-only agent turns.
+    for (const bad of [42, "reminder", { msg: "x" }, [null, 7, "", "..."]]) {
+      const { input: built } = buildSessionEvalInput(
+        { ...cfg(), idle_messages: bad },
+        [ev("node-A", "assistant", "reminder"), ev("node-A", "assistant", "?!")],
+      );
+      for (const t of built.nodes[0].turns) expect(t.agent).not.toContain("[system idle prompt]");
+    }
+  });
+
+  test("per-item system_idle flag still tags without config idle_messages", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "Still there?", system_idle: true } },
+    ]);
+    expect(input.nodes[0].turns[0].agent).toBe("Still there? [system idle prompt]");
+  });
 });
