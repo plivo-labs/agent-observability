@@ -248,4 +248,69 @@ describe("buildSessionEvalInput", () => {
     ]);
     expect(input.nodes[0].turns[0].agent).toBe("Still there? [system idle prompt]");
   });
+
+  test("auto-detects idle re-prompts: identical agent line repeated with no user speech between", () => {
+    // No idle_messages config, no per-item flags — pure repeat detection.
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "What's your order id?"),
+      ev("node-A", "user", "hang on"),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      ev("node-A", "assistant", "Since I'm not hearing a response, I'll go ahead and disconnect."),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agents[0]).toBe("What's your order id?");
+    expect(agents[1]).toContain("[system idle prompt]"); // retro-tagged once the repeat proves it's scripted
+    expect(agents[2]).toContain("[system idle prompt]"); // repeat into silence
+    expect(agents[3]).toContain("[system idle prompt]");
+    // The disconnect line follows the exhausted re-prompts with no user speech —
+    // it's the configured idle-hangup message, tagged as part of the idle run.
+    expect(agents[4]).toContain("[system idle prompt]");
+  });
+
+  test("idle-hangup tagging ends the run: a line after user speech is never tagged", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "user", "yes sorry, I'm here"),
+      ev("node-A", "assistant", "Great — what's your order id?"),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agents[0]).toContain("[system idle prompt]");
+    expect(agents[1]).toContain("[system idle prompt]");
+    expect(agents[2]).toBe("Great — what's your order id?"); // user spoke → run over
+  });
+
+  test("repeat detection resets on user speech and ignores tool/system events", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "Could you share the date?"),
+      ev("node-A", "user", "sorry, what?"),
+      // Same line again but the user spoke between → justified re-ask, NOT idle.
+      ev("node-A", "assistant", "Could you share the date?"),
+      // Tool + system events between repeats do not count as user speech.
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "noop", arguments: "{}" } },
+      ev("node-A", "assistant", "Could you share the date?"),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter((a) => a && !a.startsWith("Tool_Call"));
+    expect(agents[0]).not.toContain("[system idle prompt]"); // original ask before user spoke — never tagged
+    // The re-ask (agents[1]) is retro-tagged once agents[2] repeats it with no
+    // user speech between; the trailing repeat is tagged directly.
+    expect(agents[1]).toContain("[system idle prompt]");
+    expect(agents[2]).toContain("[system idle prompt]");
+  });
+
+  test("loop judge input drops idle-tagged turns entirely", async () => {
+    const { withoutIdleTurns } = await import("../src/evals-engine/judges/node-judges.js");
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "user", "hello"),
+      ev("node-A", "assistant", "How can I help?"),
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "assistant", "Are you still there?"),
+    ]);
+    const filtered = withoutIdleTurns(input.nodes[0]);
+    const agents = filtered.turns.map((t) => t.agent).filter(Boolean);
+    expect(agents).toEqual(["How can I help?"]); // both idle repeats (incl. retro-tagged first) removed
+    expect(filtered.turn_count).toBe(2); // user turn + one agent turn
+  });
 });

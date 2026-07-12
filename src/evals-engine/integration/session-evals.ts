@@ -273,6 +273,23 @@ export function buildSessionEvalInput(
     ? `${SYNTHETIC_REF}unattributed`
     : (cfgNodes.length > 0 ? groupKeyFor(cfgNodes[0], 0) : "");
 
+  // Idle re-prompt auto-detection: a platform idle timer re-SPEAKS the same
+  // configured line into user silence, so an agent message whose normalized
+  // text equals the previous agent message with NO user speech between them is
+  // idle scaffolding — tag it even when the sender attached no idle_messages
+  // and no per-item flag. The FIRST occurrence is tagged retroactively the
+  // moment a repeat proves the line is scripted (safe: the turn objects are
+  // mutated before any transcript is rendered), so the whole idle run carries
+  // the tag and the loop judge's deterministic filter drops all of it.
+  let lastAgentSpokenNorm = "";
+  let lastAgentTurn: EvalTurn | null = null;
+  let userSpokeSinceLastAgent = false;
+  // True while inside a detected idle run. The agent line that follows idle
+  // re-prompts with STILL no user speech is the configured idle-hangup message
+  // ("Since I'm not hearing a response…") — tag it too, but don't let it seed
+  // further tagging (the chain ends there).
+  let inIdleRun = false;
+
   // Group each transcript turn under a node ref, preserving chronological order.
   const turnsByRef = new Map<string, EvalTurn[]>();
   const orderedRefs: string[] = [];
@@ -342,10 +359,39 @@ export function buildSessionEvalInput(
     }
     // Idle-message matching applies to agent speech only — the reminder/hangup
     // lines are platform-spoken; a user line must never be tagged by text match.
-    const tagged = tagText(text, item, isUser ? EMPTY_IDLE_SET : idleMessages);
-    pushTurn(ref, isUser
-      ? { node_uuid: ref, user: tagged, agent: "", intent: "" }
-      : { node_uuid: ref, user: "", agent: tagged, intent: "" });
+    let tagged = tagText(text, item, isUser ? EMPTY_IDLE_SET : idleMessages);
+    if (isUser) {
+      userSpokeSinceLastAgent = true;
+      inIdleRun = false;
+      pushTurn(ref, { node_uuid: ref, user: tagged, agent: "", intent: "" });
+      continue;
+    }
+    // Idle by explicit signal (config match / per-item flag) vs by repeat detection.
+    const explicitIdle = tagged.includes("[system idle prompt]");
+    const norm = normalizeSpoken(text);
+    const isIdleRepeat = !!norm && norm === lastAgentSpokenNorm && !userSpokeSinceLastAgent;
+    if (isIdleRepeat) {
+      if (!explicitIdle) tagged += " [system idle prompt]";
+      // The repeat proves the previous identical line was the same scripted
+      // re-prompt — tag it retroactively so the whole run is filterable.
+      if (lastAgentTurn && !lastAgentTurn.agent.includes("[system idle prompt]")) {
+        lastAgentTurn.agent += " [system idle prompt]";
+      }
+    } else if (inIdleRun && !explicitIdle) {
+      // Idle-hangup message: directly follows the exhausted re-prompts, still
+      // with no user speech. Tagged, but it ends the run (below) so it never
+      // seeds tagging of anything after it.
+      tagged += " [system idle prompt]";
+    }
+    // Only repeat-detected idle keeps the run alive: a sender that tags via
+    // config/flags lists its hangup message explicitly, so inferring it there
+    // would risk tagging a real line spoken after a single config-tagged prompt.
+    inIdleRun = isIdleRepeat;
+    const turn: EvalTurn = { node_uuid: ref, user: "", agent: tagged, intent: "" };
+    lastAgentSpokenNorm = norm;
+    lastAgentTurn = turn;
+    userSpokeSinceLastAgent = false;
+    pushTurn(ref, turn);
   }
 
   const nodes: NodeEvalInput[] = [];

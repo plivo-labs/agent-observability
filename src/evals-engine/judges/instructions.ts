@@ -86,7 +86,7 @@ Score: 1.0 all correct | 0.75 minor issues | 0.5 notable gaps | 0.25 most missin
 
 Pass if all extracted variables are valid and grounded. Fail for extra or fabricated variables, or a required value that was provided but missing/wrong. Maybe for minor issues.
 
-When ambiguous, favor extraction_successful=true if the values are approximately correct. This leniency applies to VALUE disputes only — never to omissions: an EMPTY extraction set is not automatically a pass. When the user clearly provided a value for an expected variable (including an explicit enum condition being met) and nothing was stored, that is a real failure — list it in missing_variables and fail.`;
+When ambiguous, favor extraction_successful=true if the values are approximately correct. This leniency applies to VALUE disputes only — never to omissions: an EMPTY extraction set is not automatically a pass. When the user clearly STATED a value for an expected variable during this node's conversation (including an explicit enum condition being met) and nothing was stored, that is a real failure — list it in missing_variables and fail. This omission rule inherits steps 4-6 unchanged: values the user never stated, conditional variables whose condition never occurred, and context/platform-supplied values (step 6) are still NOT misses.`;
 
 export const LOOP_DETECTION = `Does the agent inappropriately repeat its own previous messages without justification? Loops indicate the agent is stuck — the conversation stays on the SAME step instead of advancing to the next.
 
