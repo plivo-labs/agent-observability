@@ -194,4 +194,176 @@ describe("buildSessionEvalInput", () => {
     ]);
     expect(input.full_transcript).toBe(["Agent: Q?", "User: A"].join("\n"));
   });
+
+  test("tags agent turns matching config idle_messages as [system idle prompt]", () => {
+    const config: AgentConfig = {
+      ...cfg(),
+      // Punctuation/case/whitespace drift between config and TTS transcript
+      // must not break the match.
+      idle_messages: [
+        "Are you still there? I'm happy to assist whenever you're ready.",
+        "Since I'm not hearing a response, I'll go ahead and disconnect",
+      ],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "hello"),
+      ev("node-A", "assistant", "are you still there?  I'm happy to assist whenever you're ready"),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      // ASR often inserts a space before terminal punctuation — must still match.
+      ev("node-A", "assistant", "Are you still there ? I'm happy to assist whenever you're ready ."),
+      ev("node-A", "assistant", "Since I'm not hearing a response, I'll go ahead and disconnect."),
+      ev("node-A", "assistant", "Your balance is due."),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agents[0]).toContain("[system idle prompt]");
+    expect(agents[1]).toContain("[system idle prompt]");
+    expect(agents[2]).toContain("[system idle prompt]");
+    expect(agents[3]).toContain("[system idle prompt]");
+    expect(agents[4]).toBe("Your balance is due."); // real speech untouched
+  });
+
+  test("idle_messages text match never tags user turns; malformed idle_messages never throws", () => {
+    const config: AgentConfig = { ...cfg(), idle_messages: ["Are you still there?"] };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "Are you still there?"), // user echoing the line stays untagged
+      ev("node-A", "assistant", "Are you still there?"),
+    ]);
+    expect(input.nodes[0].turns[0].user).toBe("Are you still there?");
+    expect(input.nodes[0].turns[1].agent).toContain("[system idle prompt]");
+    // Garbage shapes are ignored, not fatal — AND produce no tagging: a bare
+    // string ("reminder") is not a list, and pure-punctuation entries normalize
+    // to "" which must not match punctuation-only agent turns.
+    for (const bad of [42, "reminder", { msg: "x" }, [null, 7, "", "..."]]) {
+      const { input: built } = buildSessionEvalInput(
+        // Deliberately violates the declared string[] type: the ingest contract
+        // is read defensively and must ignore garbage without throwing.
+        { ...cfg(), idle_messages: bad as unknown as string[] },
+        [ev("node-A", "assistant", "reminder"), ev("node-A", "assistant", "?!")],
+      );
+      for (const t of built.nodes[0].turns) expect(t.agent).not.toContain("[system idle prompt]");
+    }
+  });
+
+  test("per-item system_idle flag still tags without config idle_messages", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "Still there?", system_idle: true } },
+    ]);
+    expect(input.nodes[0].turns[0].agent).toBe("Still there? [system idle prompt]");
+  });
+
+  test("auto-detects idle re-prompts: identical agent line repeated with no user speech between", () => {
+    // No idle_messages config, no per-item flags — pure repeat detection.
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "What's your order id?"),
+      ev("node-A", "user", "hang on"),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      ev("node-A", "assistant", "Are you still there? I'm happy to assist whenever you're ready."),
+      ev("node-A", "assistant", "Since I'm not hearing a response, I'll go ahead and disconnect."),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agents[0]).toBe("What's your order id?");
+    expect(agents[1]).toContain("[system idle prompt]"); // retro-tagged once the repeat proves it's scripted
+    expect(agents[2]).toContain("[system idle prompt]"); // repeat into silence
+    expect(agents[3]).toContain("[system idle prompt]");
+    // The disconnect line follows the exhausted re-prompts with no user speech —
+    // it's the configured idle-hangup message, tagged as part of the idle run.
+    expect(agents[4]).toContain("[system idle prompt]");
+  });
+
+  test("idle-hangup tagging ends the run: a line after user speech is never tagged", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "user", "yes sorry, I'm here"),
+      ev("node-A", "assistant", "Great — what's your order id?"),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
+    expect(agents[0]).toContain("[system idle prompt]");
+    expect(agents[1]).toContain("[system idle prompt]");
+    expect(agents[2]).toBe("Great — what's your order id?"); // user spoke → run over
+  });
+
+  test("loop judge conversation_history strips idle lines (memoized per session)", async () => {
+    const { runLoopJudge } = await import("../src/evals-engine/judges/node-judges.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "user", "hello"),
+      ev("node-A", "assistant", "How can I help?"),
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "assistant", "Are you still there?"),
+    ]);
+    let seenHistory = "";
+    const llm = new MockLLM([
+      (args: { user?: string }) => {
+        seenHistory = args.user ?? "";
+        return JSON.stringify({ loop_detected: false, score: 1, reason: "r", technical_reason: "t" });
+      },
+    ]);
+    await runLoopJudge(input.nodes[0], input, llm);
+    expect(seenHistory).toContain("How can I help?");
+    expect(seenHistory).not.toContain("Are you still there?"); // stripped from node transcript AND conversation history
+  });
+
+  test("repeat detection resets on user speech and ignores tool/system events", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "Could you share the date?"),
+      ev("node-A", "user", "sorry, what?"),
+      // Same line again but the user spoke between → justified re-ask, NOT idle.
+      ev("node-A", "assistant", "Could you share the date?"),
+      // Tool + system events between repeats do not count as user speech.
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "noop", arguments: "{}" } },
+      ev("node-A", "assistant", "Could you share the date?"),
+    ]);
+    const agents = input.nodes[0].turns.map((t) => t.agent).filter((a) => a && !a.startsWith("Tool_Call"));
+    expect(agents[0]).not.toContain("[system idle prompt]"); // original ask before user spoke — never tagged
+    // The re-ask (agents[1]) is retro-tagged once agents[2] repeats it with no
+    // user speech between; the trailing repeat is tagged directly.
+    expect(agents[1]).toContain("[system idle prompt]");
+    expect(agents[2]).toContain("[system idle prompt]");
+  });
+
+  test("loop judge input drops idle-flagged turns entirely", async () => {
+    const { withoutIdleTurns } = await import("../src/evals-engine/judges/node-judges.js");
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "user", "hello"),
+      ev("node-A", "assistant", "How can I help?"),
+      ev("node-A", "assistant", "Are you still there?"),
+      ev("node-A", "assistant", "Are you still there?"),
+    ]);
+    // Idle turns carry the structured flag; filtering keys on it, not on text.
+    expect(input.nodes[0].turns.filter((t) => t.idle)).toHaveLength(2);
+    const filtered = withoutIdleTurns(input.nodes[0]);
+    const agents = filtered.turns.map((t) => t.agent).filter(Boolean);
+    expect(agents).toEqual(["How can I help?"]); // both idle repeats (incl. retro-tagged first) removed
+    expect(filtered.turn_count).toBe(2); // user turn + one agent turn
+
+    // A user turn merely CONTAINING the tag text is never dropped (flag-based,
+    // not substring-based).
+    const echo = buildSessionEvalInput(cfg(), [ev("node-A", "user", "you said [system idle prompt] to me")]);
+    expect(withoutIdleTurns(echo.input.nodes[0]).turn_count).toBe(1);
+  });
+
+  test("idle repeat cap: a stuck agent repeating past the cap stays visible to the loop judge", async () => {
+    const { withoutIdleTurns } = await import("../src/evals-engine/judges/node-judges.js");
+    // 6 identical substantive lines into dead air — a real loop, not idle
+    // scaffolding (platform idle retries are <=3). Repeats past the cap must
+    // stay untagged so the loop judge can still fire.
+    const { input } = buildSessionEvalInput(cfg(), Array.from({ length: 6 }, () =>
+      ev("node-A", "assistant", "Please provide your booking reference now."),
+    ));
+    const visible = withoutIdleTurns(input.nodes[0]);
+    expect(visible.turn_count).toBeGreaterThanOrEqual(2); // enough repetition survives to detect a loop
+  });
+
+  test("repeat detection does not cross node boundaries", () => {
+    // The same opening line spoken by two different node visits is each node's
+    // own speech, not an idle re-prompt (idle timers re-speak within a node).
+    const config: AgentConfig = { nodes: [{ ref: "visit-1", name: "A" }, { ref: "visit-2", name: "A" }] };
+    const { input } = buildSessionEvalInput(config, [
+      ev("visit-1", "assistant", "Hello, welcome to the clinic."),
+      ev("visit-2", "assistant", "Hello, welcome to the clinic."),
+    ]);
+    for (const n of input.nodes) for (const t of n.turns) expect(t.idle).toBeUndefined();
+  });
 });

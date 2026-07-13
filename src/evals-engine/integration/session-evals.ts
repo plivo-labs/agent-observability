@@ -16,6 +16,7 @@ import type { LlmProvider } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { evaluateConversationMetrics, zeroConversationMetrics } from "../judges/conversation-judges.js";
+import { IDLE_TAG } from "../types.js";
 import type {
   ConversationInput,
   EvalTurn,
@@ -74,6 +75,12 @@ export interface AgentConfig {
   global_variables?: Record<string, unknown>;
   /** TTS pronunciation map (word→guide) — see ConversationInput.pronunciation_guides. */
   pronunciation_guides?: Record<string, unknown>;
+  /** Platform-spoken idle boilerplate (user-idle reminder / idle-hangup lines,
+   *  verbatim as configured). An agent turn whose text matches one of these is
+   *  tagged "[system idle prompt]" so the loop/adherence judges exempt it —
+   *  the same tag the per-item `system_idle` flag produces, but derivable from
+   *  config alone when the sender can't mark individual items. */
+  idle_messages?: string[];
 }
 
 // ── ingested transcript shape (raw_report.events, as AO stores them) ─────────
@@ -100,14 +107,40 @@ export interface StoredEvent {
 
 const isTruthyFlag = (v: unknown): boolean => v === true || v === "true" || v === 1;
 
-/** Append the interruption / idle tags the loop & adherence judges look for.
- *  No-op until the uploader marks items — but wiring it here means the moment
- *  it does, the judges' exemptions take effect with no further change. */
-function tagText(text: string, item: NonNullable<StoredEvent["item"]>): string {
-  let out = text;
-  if (isTruthyFlag(item.system_idle)) out += " [system idle prompt]";
-  if (isTruthyFlag(item.interrupted)) out += " [interrupted]";
+/** Normalize a spoken line for idle-message matching: case/whitespace-insensitive;
+ *  ASR/TTS transcripts add/drop final periods and insert spaces before
+ *  punctuation ("there ?"), so spaces preceding punctuation collapse and
+ *  trailing space+punctuation strips entirely. */
+function normalizeSpoken(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/ ([.,!?…;:])/g, "$1")
+    .trim()
+    .replace(/[\s.!?…]+$/, "");
+}
+
+/** Coerce config.idle_messages to a set of normalized strings. Entries that
+ *  normalize to "" (pure punctuation) are dropped — an empty-string member
+ *  would tag any punctuation-only agent turn. Never throws. */
+function idleMessageSet(v: unknown): Set<string> {
+  const out = new Set<string>();
+  if (Array.isArray(v)) {
+    for (const m of v) {
+      if (typeof m !== "string") continue;
+      const n = normalizeSpoken(m);
+      if (n) out.add(n);
+    }
+  }
   return out;
+}
+
+/** Whether a spoken line is explicitly marked idle: the sender's per-item
+ *  `system_idle` flag, or a text match against the config's `idle_messages` —
+ *  so a sender that can only attach config (not per-item flags) still gets the
+ *  judges' exemptions. `norm` is the caller's precomputed normalizeSpoken(text). */
+function isExplicitIdle(item: NonNullable<StoredEvent["item"]>, idleMessages: Set<string>, norm: string): boolean {
+  return isTruthyFlag(item.system_idle) || (idleMessages.size > 0 && !!norm && idleMessages.has(norm));
 }
 
 /** Coerce a loosely-typed config map to a flat string→string map (values
@@ -198,6 +231,7 @@ export function buildSessionEvalInput(
 ): { input: ConversationInput; nodeRefs: NodeRef[] } {
   const cfgNodes = Array.isArray(config.nodes) ? config.nodes : [];
   const evs = Array.isArray(events) ? events : [];
+  const idleMessages = idleMessageSet(config.idle_messages);
 
   // Index config nodes by ref; keep declaration order for the fallback bucket.
   // A node without a ref gets a synthetic internal grouping key (the sender
@@ -222,6 +256,29 @@ export function buildSessionEvalInput(
   const fallbackRef = anyEventHasRef
     ? `${SYNTHETIC_REF}unattributed`
     : (cfgNodes.length > 0 ? groupKeyFor(cfgNodes[0], 0) : "");
+
+  // Idle re-prompt auto-detection: a platform idle timer re-SPEAKS the same
+  // configured line into user silence, so an agent message whose normalized
+  // text equals the previous agent message with NO user speech between them
+  // (same node) is idle scaffolding — tagged even when the sender attached no
+  // idle_messages and no per-item flag. The FIRST occurrence is tagged
+  // retroactively the moment a repeat proves the line is scripted (safe: the
+  // turn objects are mutated before any transcript is rendered), so the whole
+  // idle run carries the flag and the loop judge's deterministic filter drops
+  // all of it. Repeat state resets on user speech (lastAgentSpokenNorm="").
+  let lastAgentSpokenNorm = "";
+  let lastAgentTurn: EvalTurn | null = null;
+  // True while inside a detected idle run. The agent line that follows idle
+  // re-prompts with STILL no user speech is the configured idle-hangup message
+  // ("Since I'm not hearing a response…") — tag it too, but don't let it seed
+  // further tagging (the chain ends there).
+  let inIdleRun = false;
+  // Platform idle retries are small (retries config, typically ≤3). A run of
+  // identical lines LONGER than that is not idle scaffolding — it's an agent
+  // genuinely stuck re-emitting the same line into dead air, which the loop
+  // judge must still see. Repeats past the cap stay untagged.
+  const MAX_IDLE_REPEATS = 3;
+  let idleRepeatCount = 0;
 
   // Group each transcript turn under a node ref, preserving chronological order.
   const turnsByRef = new Map<string, EvalTurn[]>();
@@ -290,10 +347,57 @@ export function buildSessionEvalInput(
       pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
     }
-    const tagged = tagText(text, item);
-    pushTurn(ref, isUser
-      ? { node_uuid: ref, user: tagged, agent: "", intent: "" }
-      : { node_uuid: ref, user: "", agent: tagged, intent: "" });
+    if (isUser) {
+      // User speech ends any idle run and resets repeat detection — a re-ask
+      // after the user talks is a justified re-ask, never idle scaffolding.
+      // (User lines are never text-matched against idle_messages either: the
+      // reminder/hangup lines are platform-SPOKEN.)
+      lastAgentSpokenNorm = "";
+      lastAgentTurn = null;
+      inIdleRun = false;
+      idleRepeatCount = 0;
+      const userText = isTruthyFlag(item.interrupted) ? `${text} [interrupted]` : text;
+      pushTurn(ref, { node_uuid: ref, user: userText, agent: "", intent: "" });
+      continue;
+    }
+    const norm = normalizeSpoken(text);
+    // Idle by explicit signal (config match / per-item flag) vs by repeat detection.
+    const explicitIdle = isExplicitIdle(item, idleMessages, norm);
+    // An idle timer re-speaks within one node — an identical line across a node
+    // boundary is that node's own opening, not a re-prompt, so ref must match.
+    const sameAsPrev = !!norm && norm === lastAgentSpokenNorm && lastAgentTurn?.node_uuid === ref;
+    const isIdleRepeat = sameAsPrev && idleRepeatCount < MAX_IDLE_REPEATS;
+    let idle = explicitIdle;
+    if (isIdleRepeat) {
+      idle = true;
+      idleRepeatCount++;
+      // The repeat proves the previous identical line was the same scripted
+      // re-prompt — tag it retroactively so the whole run is filterable.
+      if (lastAgentTurn && !lastAgentTurn.idle) {
+        lastAgentTurn.idle = true;
+        lastAgentTurn.agent += ` ${IDLE_TAG}`;
+      }
+    } else if (inIdleRun && !explicitIdle && !sameAsPrev) {
+      // Idle-hangup message: a DIFFERENT line directly following the exhausted
+      // re-prompts, still with no user speech. Tagged, but it ends the run
+      // (below) so it never seeds tagging of anything after it. A same-text
+      // continuation past the cap is NOT a hangup — it stays visible.
+      idle = true;
+    }
+    let tagged = idle ? `${text} ${IDLE_TAG}` : text;
+    if (isTruthyFlag(item.interrupted)) tagged += " [interrupted]";
+    // Only repeat-detected idle keeps the run alive: a sender that tags via
+    // config/flags lists its hangup message explicitly, so inferring it there
+    // would risk tagging a real line spoken after a single config-tagged prompt.
+    inIdleRun = isIdleRepeat;
+    // The counter tracks the CURRENT identical-line run; it resets when the
+    // line changes (or on user speech), never mid-run — resetting mid-run
+    // would re-arm tagging and hide an over-cap (genuinely stuck) run.
+    if (!sameAsPrev) idleRepeatCount = 0;
+    const turn: EvalTurn = { node_uuid: ref, user: "", agent: tagged, intent: "", ...(idle ? { idle: true } : {}) };
+    lastAgentSpokenNorm = norm;
+    lastAgentTurn = turn;
+    pushTurn(ref, turn);
   }
 
   const nodes: NodeEvalInput[] = [];

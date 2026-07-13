@@ -35,14 +35,16 @@ Criteria:
 3. Bot/IVR menus are NOT voicemail.
 4. Human conversation after an automated prompt means voicemail_detected=false.`;
 
-const BOT = `Detect whether the answered party is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
+const BOT = `Detect whether the COUNTERPARTY is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
 
-Criteria:
+WHO IS JUDGED: the transcript labels our own AI under test as "Agent:" — it is an automated assistant BY DEFINITION and is NEVER evidence for this metric. Judge ONLY the "User:" lines (the other party on the call). The Agent's self-identification ("I'm a virtual assistant…"), scripted greetings, menu-like offers of help, capability lists, idle re-prompts ("Are you still there?"), and scripted disconnect lines are its normal operation — citing ANY Agent: line as bot evidence is an automatic error.
+
+Criteria (all applied to User: lines only):
 1. Menu prompts such as press 1, say billing, main menu, or repeat options are bot/IVR indicators.
 2. Self-identification as an automated assistant, virtual assistant, AI assistant, or phone system is a bot indicator.
 3. Voicemail and call screening are separate outcomes and should not be marked as bot_detected.
-4. Analyze the answered party's messages, not the agent's own wording.
-5. A conversational AI posing as the answered party is ALSO a bot. Strong signals (require at least one clear instance, not mere politeness): persistent assistant-register speech with reversed roles (the answered party repeatedly offers the agent help or asks what the agent needs, e.g. "I'm here to help with whatever you need", "What's the next step you'd like me to take?"); admitting to being an AI or language model when asked; or template-like responses that restate the agent's question instead of answering as a customer would. A fluent, cooperative human is NOT a bot — do not fire on eloquence alone.`;
+4. A conversational AI posing as the counterparty is ALSO a bot. Strong signals (require at least one clear instance, not mere politeness): persistent assistant-register speech with reversed roles (the counterparty repeatedly offers the agent help or asks what the agent needs, e.g. "I'm here to help with whatever you need", "What's the next step you'd like me to take?"); admitting to being an AI or language model when asked; or template-like responses that restate the agent's question instead of answering as a customer would. A fluent, cooperative human is NOT a bot — do not fire on eloquence alone.
+5. A human asking OUR agent whether IT is a robot/real person is a suspicious human, not a bot — that is evidence the counterparty is human.`;
 
 const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
 
@@ -81,7 +83,7 @@ const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, nega
 Rules:
 1. positive: cooperative, receptive, appreciative, agrees or provides requested information. A user who cooperates throughout is positive EVEN IF their final message is a follow-up question about next steps — a follow-up question is not negative. Declining an offered action is positive unless they express dissatisfaction with the service itself.
 2. neutral: minimal but valid engagement — a single greeting or brief factual reply with no emotional signal, or a conversation too short to judge.
-3. negative: dissatisfaction, rejection, hostility, frustration, opt-out, or deflection ("send me details" / "WhatsApp me") with no follow-up acceptance.
+3. negative: expressed dissatisfaction, hostility, frustration, complaints, opt-out, or deflection ("send me details" / "WhatsApp me") with no follow-up acceptance. Negative requires an EMOTIONAL signal or explicit dissatisfaction with the service — a calm decline of an offer ("No", "No thanks"), a polite factual correction (e.g. "I think you have the wrong number"), or a brief refusal to proceed WITHOUT complaint language is neutral, not negative. Brevity is not calm: a curt refusal that carries hostility or irritation ("No. Stop calling me.") is still negative.
 4. confused: REPEATED uncertainty or clarification requests across MULTIPLE user turns. A single message followed by silence is NOT confused — it is neutral.
 5. not_applicable: no human interaction — voicemail, call screening, or bot/IVR answered. When a detection outcome (voicemail/screening/bot) is present, sentiment is not_applicable.`;
 
