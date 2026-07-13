@@ -12,6 +12,7 @@
 // against. They are kept inline and adjacent here so the one file is the
 // single place they are maintained.
 import { sql } from "../db.js";
+import { jsonbParam } from "../jsonb-param.js";
 
 /** Grace period before a session becomes claimable — lets the multipart
  *  recording report land after the OTLP records so the transcript is
@@ -158,7 +159,7 @@ export async function completeSessionEvalVerdicts(
 ): Promise<boolean> {
   const rows = await sql`
     UPDATE ao_session_eval_verdicts
-    SET status = 'done', verdicts = ${verdicts}::jsonb, error = NULL,
+    SET status = 'done', verdicts = ${jsonbParam(verdicts)}::text::jsonb, error = NULL,
         completed_at = NOW(), updated_at = NOW()
     WHERE session_id = ${claim.sessionId}
       AND status = 'running'

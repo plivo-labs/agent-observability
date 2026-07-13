@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import { config } from "./config.js";
+import { jsonbParam } from "./jsonb-param.js";
 import { normalizeRawReportPatch } from "./raw-report.js";
 import { upsertAgentTx } from "./agents/upsert.js";
 import { costFromSessionUsage } from "./evals/metrics.js";
@@ -137,9 +138,9 @@ export async function insertSession(session: SessionInsert, tx: any = sql): Prom
       ${session.hasStt},
       ${session.hasLlm},
       ${session.hasTts},
-      ${session.chatHistory}::jsonb,
-      ${session.sessionMetrics}::jsonb,
-      ${session.rawReport}::jsonb,
+      ${jsonbParam(session.chatHistory)}::text::jsonb,
+      ${jsonbParam(session.sessionMetrics)}::text::jsonb,
+      ${jsonbParam(session.rawReport)}::text::jsonb,
       ${session.recordUrl}
     WHERE NOT EXISTS (
       SELECT 1 FROM ao_agent_transport_sessions WHERE session_id = ${session.sessionId}
@@ -157,7 +158,7 @@ export async function upsertSessionTag(input: SessionTagInput): Promise<void> {
     ) VALUES (
       ${input.sessionId},
       ${input.name},
-      ${input.metadata}::jsonb,
+      ${jsonbParam(input.metadata)}::text::jsonb,
       ${input.source},
       ${input.observedAt}
     )
@@ -195,14 +196,14 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db:
       ${input.reasoning},
       ${input.instructions},
       ${input.observedAt},
-      ${input.raw}::jsonb
+      ${jsonbParam(input.raw)}::text::jsonb
     WHERE NOT EXISTS (
       SELECT 1 FROM ao_session_external_evals
       WHERE session_id = ${input.sessionId}
         AND source = ${input.source}
         AND judge_name = ${input.judgeName}
         AND tag IS NOT DISTINCT FROM ${input.tag}
-        AND raw = ${input.raw}::jsonb
+        AND raw = ${jsonbParam(input.raw)}::text::jsonb
     )
   `;
 }
@@ -217,7 +218,7 @@ export async function upsertSessionOutcome(input: SessionOutcomeInput): Promise<
       ${input.outcome},
       ${input.reason},
       ${input.observedAt},
-      ${input.raw}::jsonb
+      ${jsonbParam(input.raw)}::text::jsonb
     )
     ON CONFLICT (session_id, source) DO UPDATE SET
       outcome = EXCLUDED.outcome,
@@ -258,7 +259,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
   if (!sessionRow) {
     await sql`
       INSERT INTO ao_session_raw_report_patches (session_id, patch)
-      VALUES (${input.sessionId}, ${input.patch}::jsonb)
+      VALUES (${input.sessionId}, ${jsonbParam(input.patch)}::text::jsonb)
     `;
     return;
   }
@@ -344,7 +345,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
                 ELSE '{}'::jsonb
               END,
               '{usage}',
-              ${patch.usage}::jsonb,
+              ${jsonbParam(patch.usage)}::text::jsonb,
               true
             ),
             estimated_cost_usd = COALESCE(estimated_cost_usd, ${usageCost})
@@ -379,10 +380,10 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
         UPDATE ao_agent_transport_sessions
         SET raw_report =
           (CASE WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report ELSE '{}'::jsonb END)
-          || ${restWithoutEvents}::jsonb
+          || ${jsonbParam(restWithoutEvents)}::text::jsonb
           || jsonb_build_object(
             'events',
-            COALESCE(raw_report->'events', '[]'::jsonb) || ${fresh}::jsonb
+            COALESCE(raw_report->'events', '[]'::jsonb) || ${jsonbParam(fresh)}::text::jsonb
           )
         WHERE session_id = ${input.sessionId}
       `;
@@ -396,7 +397,7 @@ export async function mergeSessionRawReport(input: SessionRawReportPatchInput): 
           WHEN jsonb_typeof(raw_report) = 'object' THEN raw_report
           ELSE '{}'::jsonb
         END
-      ) || ${patch}::jsonb
+      ) || ${jsonbParam(patch)}::text::jsonb
       WHERE session_id = ${input.sessionId}
     `;
   });
@@ -549,7 +550,7 @@ export async function upsertSessionAgentConfig(input: SessionAgentConfigInput): 
       session_id, config, source, observed_at
     ) VALUES (
       ${input.sessionId},
-      ${input.config}::jsonb,
+      ${jsonbParam(input.config)}::text::jsonb,
       ${input.source},
       ${input.observedAt}
     )

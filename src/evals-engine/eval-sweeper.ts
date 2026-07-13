@@ -232,7 +232,18 @@ function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
 async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
   const sessionId = claim.sessionId;
-  const source = await getSessionEvalSource(sessionId);
+  // Poison isolation: a session whose stored JSON can't be read (e.g. the
+  // 2026-07-13 bun-runtime jsonb corruption) must fail THAT session as a
+  // terminal eval_error — an uncaught throw here killed every sweep tick and
+  // stalled the whole backlog behind one bad row.
+  let source: Awaited<ReturnType<typeof getSessionEvalSource>>;
+  try {
+    source = await getSessionEvalSource(sessionId);
+  } catch (e) {
+    await failSessionEvalVerdicts(claim, `unreadable session data: ${(e as Error).message}`);
+    console.error(`[evals] eval_error session=${sanitizeForLog(sessionId)}: unreadable session data: ${(e as Error).message}`);
+    return false;
+  }
   if (!source) {
     // Config/session vanished between claim and read — release as error so it
     // isn't reclaimed forever.

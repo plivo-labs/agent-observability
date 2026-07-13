@@ -366,6 +366,20 @@ describe("parseChatHistory", () => {
 
 // ── normalizeKeys ────────────────────────────────────────────────────────────
 
+  test("items delivered as a STRING is dropped, never iterated as characters", () => {
+    // Regression: a sender/serialization fault can hand items as a stringified
+    // blob. Iterating a string never throws (chars have no .type), which used
+    // to silently pass the string through to the jsonb chat_history column —
+    // the 2026-07-13 corruption's ingest half. Must coerce to [].
+    const items = JSON.stringify([{ type: "message", role: "assistant", content: "hi" }]);
+    const result = parseChatHistory({ items });
+    expect(result.chatItems).toEqual([]);
+    expect(result.turnCount).toBe(0);
+    // Wrapped shape too.
+    const wrapped = parseChatHistory({ chat_history: { items: "not-an-array" } });
+    expect(wrapped.chatItems).toEqual([]);
+  });
+
 describe("normalizeKeys", () => {
   test("converts camelCase to snake_case", () => {
     const result = normalizeKeys({ llmNodeTtft: 1.5, ttsNodeTtfb: 2.0 });
