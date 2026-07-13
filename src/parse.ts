@@ -56,7 +56,12 @@ export function parseChatHistory(chat: any): ParsedChatHistory {
   // Support both formats:
   // - Direct: { items: [...] } (chat_history.to_dict())
   // - Wrapped: { chat_history: { items: [...] }, usage: [...], ... } (report.to_dict())
-  const chatItems: any[] = normalized?.items ?? normalized?.chat_history?.items ?? [];
+  // Array guard: a sender bug (or upstream serialization fault) can deliver
+  // `items` as a STRING; iterating a string yields characters (never throws),
+  // silently producing turnCount=0 and — worse — storing a string scalar in
+  // the jsonb chat_history column that later readers JSON.parse and die on.
+  const rawItems = normalized?.items ?? normalized?.chat_history?.items ?? [];
+  const chatItems: any[] = Array.isArray(rawItems) ? rawItems : [];
   let turnCount = 0;
   let hasStt = false;
   let hasLlm = false;
