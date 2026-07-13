@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { jsonbParam } from "../jsonb-param.js";
 
 // AO Simulation Engine — data accessors for the ao_sim_* tables.
 //
@@ -12,12 +13,15 @@ import { sql } from "../db.js";
 // table presence at boot instead).
 //
 // bun:sql gotchas honored throughout (see CLAUDE.md / src/alerts/engine.ts):
-//   • jsonb params are passed as RAW JS objects/arrays with a `::jsonb` cast —
-//     NEVER JSON.stringify first (that lands as a jsonb *string scalar*).
+//   • jsonb params bind via `jsonbParam(v)` + a `::text::jsonb` cast — NEVER a raw
+//     JS value with bare `::jsonb`. bun changes raw-value jsonb serialization across
+//     versions (1.2.23 stored a JS ARRAY as an invalid-JSON string scalar — the
+//     2026-07-13 dev judging outage); stringifying and letting Postgres parse is
+//     version-proof. See src/jsonb-param.ts.
 //   • JS arrays do NOT bind to Postgres arrays in bun:sql — they coerce to a
 //     comma-joined string ("a,b"), so `::text[]`/`= ANY(${arr})`/`IN ${arr}` all
-//     fail with "malformed array literal" (verified). Bind arrays as `::jsonb`,
-//     and do membership via `IN (SELECT jsonb_array_elements_text(${arr}::jsonb)::uuid)`.
+//     fail with "malformed array literal" (verified). Bind arrays via jsonbParam,
+//     membership via `IN (SELECT jsonb_array_elements_text(${jsonbParam(arr)}::text::jsonb)::uuid)`.
 //   • Optional filters use `(${x}::type IS NULL OR col = ${x})` rather than
 //     composing query fragments — clean and injection-safe.
 // bun:sql returns rows with snake_case column names and jsonb already parsed to
@@ -60,7 +64,7 @@ export async function createScenario(input: CreateScenarioInput): Promise<SimSce
       (tenant_id, agent_id, name, scenario, tags, source, coverage_key)
     VALUES
       (${input.tenantId ?? null}, ${input.agentId ?? null}, ${input.name},
-       ${input.scenario}::jsonb, ${input.tags ?? []}::jsonb, ${input.source ?? "generated"},
+       ${jsonbParam(input.scenario)}::text::jsonb, ${jsonbParam(input.tags ?? [])}::text::jsonb, ${input.source ?? "generated"},
        ${input.coverageKey ?? null})
     RETURNING *
   `;
@@ -79,7 +83,7 @@ export async function getScenariosByIds(ids: string[]): Promise<SimScenarioRow[]
   if (ids.length === 0) return [];
   const rows = await sql`
     SELECT * FROM ao_sim_scenario
-    WHERE id IN (SELECT jsonb_array_elements_text(${ids}::jsonb)::uuid)
+    WHERE id IN (SELECT jsonb_array_elements_text(${jsonbParam(ids)}::text::jsonb)::uuid)
       AND is_deleted = FALSE
   `;
   return rows as SimScenarioRow[];
@@ -123,7 +127,7 @@ export async function deleteScenarios(ids: string[], tenantId?: string | null): 
   const tenant = tenantId ?? null;
   const rows = await sql`
     DELETE FROM ao_sim_scenario
-    WHERE id IN (SELECT jsonb_array_elements_text(${ids}::jsonb)::uuid)
+    WHERE id IN (SELECT jsonb_array_elements_text(${jsonbParam(ids)}::text::jsonb)::uuid)
       AND (${tenant}::text IS NULL OR tenant_id = ${tenant})
     RETURNING id
   `;
@@ -241,10 +245,10 @@ export async function completeRunScenario(input: CompleteRunScenarioInput): Prom
       status = ${input.status},
       stop_reason = ${input.stopReason ?? null},
       turn_count = ${input.turnCount ?? null},
-      evaluation = ${evaluation}::jsonb,
+      evaluation = ${jsonbParam(evaluation)}::text::jsonb,
       eval_error = ${input.evalError ?? false},
       error = ${input.error ?? null},
-      transcript = ${transcript}::jsonb,
+      transcript = ${jsonbParam(transcript)}::text::jsonb,
       updated_at = NOW()
     WHERE id = ${input.id}
     RETURNING id
@@ -257,7 +261,7 @@ export async function completeRunScenario(input: CompleteRunScenarioInput): Prom
       VALUES
         (${input.id}, ${input.simRunId}, ${input.scenarioRef ?? null}, ${input.scenarioIndex ?? null},
          ${input.status}, ${input.stopReason ?? null}, ${input.turnCount ?? null},
-         ${evaluation}::jsonb, ${input.evalError ?? false}, ${input.error ?? null}, ${transcript}::jsonb)
+         ${jsonbParam(evaluation)}::text::jsonb, ${input.evalError ?? false}, ${input.error ?? null}, ${jsonbParam(transcript)}::text::jsonb)
       ON CONFLICT (id) DO NOTHING
     `;
   }
