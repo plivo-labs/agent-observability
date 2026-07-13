@@ -82,9 +82,12 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       system: args.system + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE,
       prompt: typeof args.input === "string" ? args.input : JSON.stringify(args.input),
       maxTokens: args.maxTokens,
-      // Deterministic verdicts: judges classify, they don't create. The
-      // provider default (~1.0) makes borderline verdicts flip run to run.
-      temperature: 0,
+      // No `temperature`: judge models are reasoning models (gpt-5.x) and the prod
+      // Vibe gateway hard-400s the parameter ("Unsupported parameter: 'temperature'",
+      // 2026-07-13 — every prod sim eval failed on it). Dev's deployment merely
+      // ignored the value, so omitting it changes nothing where evals already worked.
+      // Verdict determinism comes from the classify-only prompts + strict json_schema,
+      // not sampling temperature (which reasoning models don't honor anyway).
       // Strict structured output (reference-engine parity): the provider emits text.format/response_format json_schema so the
       // gateway returns exact JSON. Omitted → free JSON (fragile on the responses gateway).
       jsonSchema: args.jsonSchema,
