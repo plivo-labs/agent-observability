@@ -38,6 +38,46 @@ export const envSchema = z.object({
   // sweeper is active.
   ALERT_SWEEPER: z.enum(["inline", "off"]).default("inline"),
 
+  // ── Eval sweeper concurrency / throughput (consul-tunable) ──────────────────
+  // These were compile-time constants; surfaced as env so throughput can be
+  // dialed from consul without a redeploy. IMPORTANT: the true provider ceiling
+  // is EVAL_MAX_CONCURRENT_JUDGE_CALLS — a GLOBAL semaphore shared by BOTH the
+  // poller and the event-kick. Every session fans out ~12-13 judge calls through
+  // it, so raising the session/kick caps WITHOUT raising this does nothing.
+  // Size this against the judge LLM endpoint's rate limit; overshooting just
+  // trades throughput for 429s → retries. Defaults preserve today's behavior.
+  // Sessions judged concurrently within one poll sweep.
+  EVAL_MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(3),
+  // Sessions the ingest event-kick judges at once before deferring the rest to
+  // the poller (burst backpressure).
+  EVAL_MAX_CONCURRENT_KICKS: z.coerce.number().int().positive().default(3),
+  // Global cap on simultaneous LLM judge calls across ALL sessions — the real
+  // throughput ceiling. Raise this TOGETHER with the session/kick caps.
+  EVAL_MAX_CONCURRENT_JUDGE_CALLS: z.coerce.number().int().positive().default(10),
+  // Max sessions claimed per poll tick (bounds one sweep's work).
+  EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().default(20),
+  // Poll interval (ms) between eval sweeps.
+  EVAL_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
+  // Per-session SPEND ceiling (the caps above bound the rate, not the bill):
+  // judge at most this many nodes per session, keeping the busiest by turn
+  // count. Each judged node costs ~5 LLM calls, so without this a max-size
+  // config (150 clamped nodes) whose transcript touches every node fans
+  // ~760 judge calls out of ONE ingested session. Conversation/goal judges
+  // still see the full transcript regardless.
+  EVAL_MAX_JUDGED_NODES: z.coerce.number().int().positive().default(30),
+
+  // Eval sweeper placement: judges ingested sessions that carry an agent
+  // config. 'inline' (default) runs it in the API; 'worker' in the dedicated
+  // worker; 'off' disables ingest-eval everywhere.
+  EVAL_SWEEPER: z.enum(["inline", "worker", "off"]).default("inline"),
+
+  // Event-kick: judge a session the instant its ingest completes instead of
+  // waiting for the next poll. Only fires in the process that runs the sweeper
+  // inline (EVAL_SWEEPER=inline); the 20s poller is the backstop. 'on' default;
+  // 'off' falls back to poll-only (a latency switch — never changes WHAT gets
+  // judged, only HOW SOON).
+  EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
+
   // Goal analyzer (post-session LLM judging of goal: tags). Placement
   // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
   // configured LLM provider has a key. It judges through the shared LLM stack

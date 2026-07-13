@@ -179,7 +179,7 @@ In production, the Vite-built frontend is served as static files from the same s
 
 ## Database
 
-### `agent_transport_sessions` (one row per call)
+### `ao_agent_transport_sessions` (one row per call)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -202,11 +202,11 @@ Populated by the OTLP logs ingest path; joined to a session via `session_id`.
 
 | Table | Purpose |
 |-------|---------|
-| `session_tags` | Tagger annotations (e.g. `agent.session`, `account_id:…`, `transport:sip`). Unique on `(session_id, name, source)`. |
-| `session_external_evals` | LiveKit `JudgeGroup` outcomes — one row per (session, judge): `judge_name`, `verdict`, `tag`, `reasoning`, `instructions`, `raw`. |
-| `session_outcomes` | High-level pass/fail outcome summaries. Unique on `(session_id, source)`. |
+| `ao_session_tags` | Tagger annotations (e.g. `agent.session`, `account_id:…`, `transport:sip`). Unique on `(session_id, name, source)`. |
+| `ao_session_external_evals` | LiveKit `JudgeGroup` outcomes — one row per (session, judge): `judge_name`, `verdict`, `tag`, `reasoning`, `instructions`, `raw`. |
+| `ao_session_outcomes` | High-level pass/fail outcome summaries. Unique on `(session_id, source)`. |
 
-Migrations run automatically when `AUTO_MIGRATE=true`.
+All AO tables carry an `ao_` prefix (they share the core DB); the prefix is applied by migration `023_ao_table_prefix.sql`. Migrations run automatically when `AUTO_MIGRATE=true`.
 
 ## Agent-Transport Configuration
 
