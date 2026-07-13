@@ -23,9 +23,9 @@ docker compose up postgres -d  # Postgres only for local dev
 
 Two entrypoints share the codebase: `src/index.ts` (REST API) and
 `src/worker.ts` (no ports — alert sweeper + webhook delivery retries +
-goal analyzer + eval sweeper + the SQS simulation consumer when
-SQS/Redis/turn-URL are configured; each loop table-probes at boot via
-`to_regclass` and disables itself when its tables are absent). Alert rules are windowed triggers: count rules
+goal analyzer + the SQS simulation consumer when SQS/Redis/turn-URL are
+configured; each loop table-probes at boot via `to_regclass` and disables
+itself when its tables are absent). Alert rules are windowed triggers: count rules
 (≥ N matching verdicts/outcomes) and metric thresholds (eval/outcome
 fail rates, latency p95s, interruption rate — fire above X). Integration suites in `tests-integration/` run
 every trigger and the delivery pipeline against real Postgres
@@ -45,16 +45,16 @@ in query text (bun rewrites it as a placeholder; use `jsonb_exists()`).
 
 - `src/index.ts` — Hono HTTP server. Health check at `/health`. Session report at `POST /observability/recordings/v0`. OTLP ingest at `/observability/{logs,traces,metrics}/otlp/v0`. Dashboard API at `/api/sessions*`. In production, serves frontend static files.
 - `src/config.ts` — Zod-validated env config. All env vars are read here.
-- `src/db.ts` — Bun SQL client (`bun:sql`). `insertSession()` writes to `ao_agent_transport_sessions`; `upsertSessionTag` / `insertLiveKitEvaluation` / `upsertSessionOutcome` / `mergeSessionRawReport` populate the LiveKit OTLP-derived tables. (All AO tables carry an `ao_` prefix — see migration `023`.)
+- `src/db.ts` — Bun SQL client (`bun:sql`). `insertSession()` writes to `agent_transport_sessions`; `upsertSessionTag` / `insertLiveKitEvaluation` / `upsertSessionOutcome` / `mergeSessionRawReport` populate the LiveKit OTLP-derived tables.
 - `src/metrics.ts` — Transforms raw `chat_history` and `session_metrics` JSONB into structured `SessionMetrics` format with per-turn data and summary statistics.
 - `src/migrate.ts` — Raw SQL migration runner. Reads `migrations/*.sql`, tracks applied ones in `_migrations` table.
 - `src/s3.ts` — Optional S3 upload for audio recordings using Bun's built-in S3 client.
 - `src/raw-report.ts` — Generic `voice.SessionReport` JSON normalizer (parses stringified JSON attrs, hoists function_call / function_call_output / agent_handoff payloads, merges multi-fragment arrays).
 - `src/livekit/auth.ts` — Dual-auth middleware: accepts Basic credentials (`AGENT_OBSERVABILITY_USER`/`_PASS`) **or** LiveKit-issued HS256 Bearer JWTs. The JWT issuer claim must equal the LiveKit API key env value; the signature is verified against the matching API secret env value (see `.env.example` for the full pair). Payload must carry `observability.write === true`. Mounted on every native ingest path.
 - `src/livekit/protobuf.ts` — Hand-rolled decoders for `MetricsRecordingHeader` (recording multipart `header.binpb` part) and OTLP logs (handles JSON, protobuf, and gzip).
-- `src/livekit/observability.ts` — `persistLiveKitOtlpLogs(logs)`. Branches on each record's `body` field: `"session report"` (merge into raw_report patch), `"chat item"` (append events), `"tag"` (upsert `ao_session_tags`), `"evaluation"` (insert `ao_session_external_evals`), `"outcome"` (upsert `ao_session_outcomes`), `"agent config"` (upsert `ao_session_agent_config` + event-kick the ingest-eval pipeline).
+- `src/livekit/observability.ts` — `persistLiveKitOtlpLogs(logs)`. Branches on each record's `body` field: `"session report"` (merge into raw_report patch), `"chat item"` (append events), `"tag"` (upsert `session_tags`), `"evaluation"` (insert `session_external_evals`), `"outcome"` (upsert `session_outcomes`).
 - `src/sim-engine/` — the simulation engine: `gen/` (planner → deterministic allocator → writer LLM pipeline, streamed over SSE), `run-engine/` (flow executor + user simulator + `/turn` client, a faithful port of the reference Go worker), `queue/` (SQS consumer + the Redis `:RESULTS` stream and Lua completion gate), `routes.ts` (`/api/simulation/*`), `db.ts` (the `ao_sim_*` tables).
-- `src/evals-engine/` — post-conversation LLM judges (node metrics, instruction adherence, intent, loop, goal) ported from cx-sqs's ConversationEvaluator; `aggregate.ts` derives pass/fail + weighted scores from raw judge output. Also the ingest-eval pipeline (see "Ingest-eval pipeline" below): `eval-sweeper.ts` (background poll loop), `judges/run-llm-judge.ts` (the single choke point every judge call goes through), `judges/` (node + conversation + goal + intent + programmatic judges), `db.ts` (claim lifecycle over `ao_session_eval_verdicts`).
+- `src/evals-engine/` — post-conversation LLM judges (node metrics, instruction adherence, intent, loop, goal) ported from cx-sqs's ConversationEvaluator; `aggregate.ts` derives pass/fail + weighted scores from raw judge output.
 - `src/llm/` — provider-neutral LLM layer: `completeJSON` (Zod-validated structured calls with retry/timeout/usage), `providers/openai.ts` (chat + responses APIs, strict json_schema, streaming), `providers/anthropic.ts` (tool-forced schema enforcement, streaming).
 - `src/goals/` — the goal analyzer (post-session judging of `goal:<name>` tags; DB-backed sweep).
 - `src/net/public-url.ts` — SSRF guard for user-supplied webhook URLs (resolve + block private ranges; `WEBHOOK_URL_ALLOWLIST` is the explicit opt-out for internal receivers).
@@ -92,15 +92,15 @@ The dashboard (`frontend/`) and the published registry (`packages/ui/`) share ru
 2. Parses the `header` part as JSON first (`session_id`, `start_time`, `room_tags.account_id`, `transport`); falls back to `decodeMetricsRecordingHeader` (protobuf `MetricsRecordingHeader`, native LiveKit shape) when JSON parse fails. Chat history JSON carries per-turn metrics + usage; audio is OGG.
 3. Extracts turn count and STT/LLM/TTS flags from chat history items.
 4. Optionally uploads audio to S3 (when `S3_BUCKET` and credentials are set).
-5. Saves to `ao_agent_transport_sessions` table.
+5. Saves to `agent_transport_sessions` table.
 
-Native LiveKit observability also accepts OTLP log records at `POST /observability/logs/otlp/v0` (JSON or protobuf, gzip optional). `persistLiveKitOtlpLogs` branches on each record's `body` field — `"session report"` merges into raw_report patches, `"chat item"` appends events, `"tag"` upserts `ao_session_tags`, `"evaluation"` inserts `ao_session_external_evals`, `"outcome"` upserts `ao_session_outcomes`, `"agent config"` upserts `ao_session_agent_config` (the eval opt-in). The `traces` and `metrics` OTLP routes return 200 without persisting (per-turn agent metrics ride on the recording's `chat_history` payload, not OTLP metrics).
+Native LiveKit observability also accepts OTLP log records at `POST /observability/logs/otlp/v0` (JSON or protobuf, gzip optional). `persistLiveKitOtlpLogs` branches on each record's `body` field — `"session report"` merges into raw_report patches, `"chat item"` appends events, `"tag"` upserts `session_tags`, `"evaluation"` inserts `session_external_evals`, `"outcome"` upserts `session_outcomes`. The `traces` and `metrics` OTLP routes return 200 without persisting (per-turn agent metrics ride on the recording's `chat_history` payload, not OTLP metrics).
 
 ## Dashboard API
 
 - `GET /api/sessions?limit=20&offset=0` — List sessions (paginated; `limit` clamps to [1, 50], default 20, optional `account_id` filter). Returns `{ objects, meta: { total_count, limit, offset, next, previous } }`.
 - `GET /api/sessions/:id` — Session detail: includes `chat_history`, `session_metrics` (computed on the fly from raw data), `raw_report`, `events`, `options`.
-- `DELETE /api/sessions` — Bulk delete. JSON body `{ session_ids: string[] }`, max 200 ids. Returns `{ deleted: <count> }`. Mirror endpoint `DELETE /api/evals` accepts `{ run_ids: string[] }` (UUID format) and cascades to `ao_eval_cases`.
+- `DELETE /api/sessions` — Bulk delete. JSON body `{ session_ids: string[] }`, max 200 ids. Returns `{ deleted: <count> }`. Mirror endpoint `DELETE /api/evals` accepts `{ run_ids: string[] }` (UUID format) and cascades to `eval_cases`.
 
 ### Simulation API (`/api/simulation/*`, behind the same `/api/*` auth)
 
@@ -108,14 +108,6 @@ Native LiveKit observability also accepts OTLP log records at `POST /observabili
 - `POST /api/simulation/scenarios/generate` — SSE stream: planner → allocator → writer events, one `scenario_saved` per scenario, `completed` with metadata. `?persist=` overrides the SIM_PERSIST default; concurrency-capped (`GEN_MAX_CONCURRENT`, 429 over the limit).
 - `DELETE .../scenarios/:uuid`, `POST .../scenarios/batch-delete`, `DELETE .../scenarios?phlo_uuid=` — tenant-scoped deletes (UUIDs validated; `SIM_REQUIRE_TENANT_HEADER=true` makes the `auth-id` header mandatory on these).
 - Simulation runs are dispatched via SQS (the worker), not HTTP — results stream to Redis `:RESULTS` and persist to `ao_sim_run` / `ao_sim_run_scenario` when `SIM_PERSIST=true`.
-
-### Ingest-eval pipeline (`src/evals-engine/`)
-
-- The opt-in: sessions that carry an agent config (OTLP `"agent config"` record, or the reserved `observability.agent_config` tag) get judged after ingest. Full verdicts land in `ao_session_eval_verdicts`; each judge also fans out per-judge rows to `ao_session_external_evals` (source `eval_sweeper`) so the existing evals surfaces and alert count-rules render them with zero new read paths.
-- Two triggers, one pipeline: the ingest-time **event-kick** (`kickEvalForSession` — judges a session the moment its ingest completes; best-effort, bounded by `EVAL_MAX_CONCURRENT_KICKS`, only active in the process running the inline sweeper) and the **background sweeper** (every `EVAL_SWEEP_INTERVAL_MS`, claims up to `EVAL_MAX_PER_SWEEP` sessions per tick, `EVAL_MAX_CONCURRENT_SESSIONS` in parallel). Anything the kick skips, the poller judges on its normal schedule.
-- Claim lifecycle (`evals-engine/db.ts`): the verdict row is the lock (`INSERT … ON CONFLICT DO NOTHING`), `claimed_at` is a fencing token re-asserted by heartbeat, stale claims are re-adopted via `FOR UPDATE SKIP LOCKED`, and a 24h retry budget retires poison claims. Transient LLM errors leave the claim running for stale re-adoption; deterministic ones are recorded as terminal `eval_error` rows.
-- Placement: `EVAL_SWEEPER` is tri-state — `inline` (API, default), `worker`, `off` (loud warn: nobody judges). Unlike the binary `ALERT_SWEEPER`, the third state exists because the event-kick must know whether judging happens in its own process (`worker` disables the API-side kick). Boot table-probes `to_regclass('ao_session_eval_verdicts')` and self-disables the sweeper + kick when the eval tables are absent, like the alert/goal loops.
-- The true provider ceiling is `EVAL_MAX_CONCURRENT_JUDGE_CALLS` — a global semaphore in `judges/run-llm-judge.ts` shared by the poller and the kick; every session fans out ~13 judge calls through it. Judges share the same `OPENAI_*` gateway/key as sim generation, so size the semaphore against the provider's rate limit; raising the session/kick caps without it does nothing.
 
 ### Filter semantics
 

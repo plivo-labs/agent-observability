@@ -30,7 +30,7 @@ function queueStaleStatusUpdate(runId: string): void {
   // `AND status = 'running'` guards against races (another reader or
   // a terminal POST may have already flipped the row).
   sql`
-    UPDATE ao_eval_runs
+    UPDATE eval_runs
        SET status = 'completed'
      WHERE run_id = ${runId}::uuid
        AND status = 'running'
@@ -120,7 +120,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
   );
 
   await sql.begin(async (tx: any) => {
-    // Upsert the agent first so the FK on ao_eval_runs.agent_id is
+    // Upsert the agent first so the FK on eval_runs.agent_id is
     // satisfied. Skipped when no agent_id was supplied.
     if (run.agent_id) {
       await upsertAgentTx(tx, {
@@ -141,7 +141,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
     // than EVAL_RUN_STALE_ACTIVITY_MS) to 'completed' for hard-kill
     // cleanup.
     await tx`
-      INSERT INTO ao_eval_runs (
+      INSERT INTO eval_runs (
         run_id, name, account_id, agent_id,
         framework, framework_version,
         testing_framework, testing_framework_version,
@@ -171,7 +171,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${summary.failed},
         ${summary.errored},
         ${summary.skipped},
-        ${run.ci != null ? JSON.stringify(run.ci) : null}::text::jsonb,
+        ${run.ci != null ? JSON.stringify(run.ci) : null}::jsonb,
         ${status},
         NOW(),
         ${runMetrics.ttft_p50_ms},
@@ -192,23 +192,23 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
         ${runMetrics.estimated_cost_usd}
       )
       ON CONFLICT (run_id) DO UPDATE SET
-        name                = COALESCE(EXCLUDED.name,              ao_eval_runs.name),
+        name                = COALESCE(EXCLUDED.name,              eval_runs.name),
         status              = EXCLUDED.status,
-        finished_at         = COALESCE(EXCLUDED.finished_at,       ao_eval_runs.finished_at),
-        duration_ms         = COALESCE(EXCLUDED.duration_ms,       ao_eval_runs.duration_ms),
+        finished_at         = COALESCE(EXCLUDED.finished_at,       eval_runs.finished_at),
+        duration_ms         = COALESCE(EXCLUDED.duration_ms,       eval_runs.duration_ms),
         total               = EXCLUDED.total,
         passed              = EXCLUDED.passed,
         failed              = EXCLUDED.failed,
         errored             = EXCLUDED.errored,
         skipped             = EXCLUDED.skipped,
         last_activity_at    = NOW(),
-        ci                  = COALESCE(EXCLUDED.ci,                ao_eval_runs.ci),
-        account_id          = COALESCE(EXCLUDED.account_id,        ao_eval_runs.account_id),
-        agent_id            = COALESCE(EXCLUDED.agent_id,          ao_eval_runs.agent_id),
-        framework           = COALESCE(EXCLUDED.framework,         ao_eval_runs.framework),
-        framework_version   = COALESCE(EXCLUDED.framework_version, ao_eval_runs.framework_version),
+        ci                  = COALESCE(EXCLUDED.ci,                eval_runs.ci),
+        account_id          = COALESCE(EXCLUDED.account_id,        eval_runs.account_id),
+        agent_id            = COALESCE(EXCLUDED.agent_id,          eval_runs.agent_id),
+        framework           = COALESCE(EXCLUDED.framework,         eval_runs.framework),
+        framework_version   = COALESCE(EXCLUDED.framework_version, eval_runs.framework_version),
         testing_framework_version =
-          COALESCE(EXCLUDED.testing_framework_version, ao_eval_runs.testing_framework_version),
+          COALESCE(EXCLUDED.testing_framework_version, eval_runs.testing_framework_version),
         -- Latency + token metrics: the terminal POST is authoritative.
         -- Running POST (cases=[]) computes nulls/zeros, so EXCLUDED.x
         -- always wins from the side with real samples. Edge race "late
@@ -243,7 +243,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
       // Cases only arrive in the terminal POST, but idempotency here
       // keeps any client re-upload safe.
       await tx`
-        INSERT INTO ao_eval_cases (
+        INSERT INTO eval_cases (
           case_id, run_id, name, file, status, duration_ms,
           user_input, events, judgments, failure,
           ttft_p50_ms, ttft_p95_ms, ttft_avg_ms,
@@ -260,9 +260,9 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
           ${c.status},
           ${caseDurationMs},
           ${c.user_input ?? null},
-          ${JSON.stringify(c.events ?? [])}::text::jsonb,
-          ${JSON.stringify(c.judgments ?? [])}::text::jsonb,
-          ${c.failure != null ? JSON.stringify(c.failure) : null}::text::jsonb,
+          ${JSON.stringify(c.events ?? [])}::jsonb,
+          ${JSON.stringify(c.judgments ?? [])}::jsonb,
+          ${c.failure != null ? JSON.stringify(c.failure) : null}::jsonb,
           ${caseMetrics.ttft_p50_ms},
           ${caseMetrics.ttft_p95_ms},
           ${caseMetrics.ttft_avg_ms},
@@ -284,7 +284,7 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
       `;
     }
 
-    // Recompute run-level aggregates from ao_eval_cases. Lets the streaming
+    // Recompute run-level aggregates from eval_cases. Lets the streaming
     // flusher POST partial payloads (cases=[newly finished N]) without
     // clobbering the totals — each call adds N case rows and this UPDATE
     // re-derives the run-level fields from whatever's now in the table.
@@ -338,10 +338,10 @@ export async function insertEvalRun(payload: EvalPayloadV0): Promise<void> {
                ELSE ROUND(AVG(ttfb_p50_ms))::int END                AS c_ttfb_p50,
           CASE WHEN COUNT(*) FILTER (WHERE ttfb_p95_ms IS NOT NULL) = 0 THEN NULL
                ELSE ROUND(AVG(ttfb_p95_ms))::int END                AS c_ttfb_p95
-        FROM ao_eval_cases
+        FROM eval_cases
         WHERE run_id = ${run.run_id}::uuid
       )
-      UPDATE ao_eval_runs SET
+      UPDATE eval_runs SET
         total                = agg.c_total,
         passed               = agg.c_passed,
         failed               = agg.c_failed,
@@ -390,7 +390,7 @@ export async function countEvalRuns(opts: ListEvalRunsOpts): Promise<number> {
   const { predicates, params } = buildPredicates(opts);
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
   const [row] = await sql.unsafe(
-    `SELECT count(*)::int AS total FROM ao_eval_runs r ${whereClause}`,
+    `SELECT count(*)::int AS total FROM eval_runs r ${whereClause}`,
     params,
   );
   return row.total;
@@ -414,8 +414,8 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
   const whereClause = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
   const rows = await sql.unsafe(
     `SELECT ${RUN_SELECT_COLS}
-     FROM ao_eval_runs r
-     LEFT JOIN ao_agents a ON a.agent_id = r.agent_id
+     FROM eval_runs r
+     LEFT JOIN agents a ON a.agent_id = r.agent_id
      ${whereClause}
      ORDER BY r.started_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -427,8 +427,8 @@ export async function listEvalRuns(opts: ListEvalRunsOpts): Promise<any[]> {
 export async function getEvalRun(runId: string): Promise<any | null> {
   const rows = await sql.unsafe(
     `SELECT ${RUN_SELECT_COLS}
-     FROM ao_eval_runs r
-     LEFT JOIN ao_agents a ON a.agent_id = r.agent_id
+     FROM eval_runs r
+     LEFT JOIN agents a ON a.agent_id = r.agent_id
      WHERE r.run_id = $1
      LIMIT 1`,
     [runId],
@@ -446,7 +446,7 @@ export async function listEvalCases(runId: string): Promise<any[]> {
            agent_handoff_count, ttft_sample_count,
            prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens,
            estimated_cost_usd
-    FROM ao_eval_cases
+    FROM eval_cases
     WHERE run_id = ${runId}
     ORDER BY created_at ASC
   `;
@@ -463,14 +463,14 @@ export async function getEvalCase(runId: string, caseId: string): Promise<any | 
            agent_handoff_count, ttft_sample_count,
            prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens,
            estimated_cost_usd
-    FROM ao_eval_cases
+    FROM eval_cases
     WHERE run_id = ${runId} AND case_id = ${caseId}
     LIMIT 1
   `;
   return rows[0] ? decodeCaseJsonb(rows[0]) : null;
 }
 
-// `ao_eval_cases.run_id` has ON DELETE CASCADE, so deleting runs cleans
+// `eval_cases.run_id` has ON DELETE CASCADE, so deleting runs cleans
 // up their cases automatically.
 export async function deleteEvalRuns(runIds: string[]): Promise<number> {
   if (runIds.length === 0) return 0;
@@ -479,7 +479,7 @@ export async function deleteEvalRuns(runIds: string[]): Promise<number> {
   // ::uuid placeholder via sql.unsafe, the same pattern the list filters use.
   const placeholders = runIds.map((_, i) => `$${i + 1}::uuid`).join(", ");
   const rows = await sql.unsafe(
-    `DELETE FROM ao_eval_runs
+    `DELETE FROM eval_runs
      WHERE run_id IN (${placeholders})
      RETURNING run_id`,
     runIds,

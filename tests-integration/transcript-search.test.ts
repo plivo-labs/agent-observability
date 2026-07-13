@@ -20,7 +20,7 @@ function msg(role: "user" | "assistant", text: string) {
 
 async function transcriptOf(sessionId: string): Promise<string | null> {
   const rows = await sql.unsafe(
-    `SELECT transcript_text FROM ao_agent_transport_sessions WHERE session_id = $1`,
+    `SELECT transcript_text FROM agent_transport_sessions WHERE session_id = $1`,
     [sessionId],
   );
   return rows[0]?.transcript_text ?? null;
@@ -30,7 +30,7 @@ async function transcriptOf(sessionId: string): Promise<string | null> {
  *  match the migration's index expression). */
 async function searchIds(acct: string, q: string): Promise<string[]> {
   const rows = await sql.unsafe(
-    `SELECT session_id FROM ao_agent_transport_sessions
+    `SELECT session_id FROM agent_transport_sessions
      WHERE account_id = $1
        AND to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $2)
      ORDER BY ended_at DESC`,
@@ -185,7 +185,7 @@ const th = testRun("ftsh");
 async function snippetOf(acct: string, q: string): Promise<string | null> {
   const rows = await sql.unsafe(
     `SELECT ts_headline('english', transcript_text, websearch_to_tsquery('english', $2), $3) AS match_snippet
-     FROM ao_agent_transport_sessions
+     FROM agent_transport_sessions
      WHERE account_id = $1
        AND to_tsvector('english', transcript_text) @@ websearch_to_tsquery('english', $2)
      ORDER BY ended_at DESC LIMIT 1`,

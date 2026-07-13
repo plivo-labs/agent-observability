@@ -54,7 +54,7 @@ describeDb("alert evaluation semantics against real Postgres", () => {
     await evaluateRules();
     expect(await t.firingsFor(rule.id)).toHaveLength(1);
 
-    const [row] = await sql`SELECT last_fired_at FROM ao_alert_rules WHERE id = ${rule.id}`;
+    const [row] = await sql`SELECT last_fired_at FROM alert_rules WHERE id = ${rule.id}`;
     const stampAge = Date.now() - new Date(row.last_fired_at).getTime();
     expect(stampAge).toBeLessThan(60_000); // re-stamped to now, not left at -16min
   });
@@ -62,7 +62,7 @@ describeDb("alert evaluation semantics against real Postgres", () => {
   test("editing a rule does not reset suppression", async () => {
     const { rule } = await seedHotRule();
     await t.setLastFired(rule.id, 5);
-    await sql`UPDATE ao_alert_rules SET threshold_value = 0.01, updated_at = NOW() WHERE id = ${rule.id}`;
+    await sql`UPDATE alert_rules SET threshold_value = 0.01, updated_at = NOW() WHERE id = ${rule.id}`;
 
     await evaluateRules();
     expect(await t.firingsFor(rule.id)).toHaveLength(0); // still suppressed
@@ -200,8 +200,8 @@ describeDb("alert evaluation semantics against real Postgres", () => {
     // LEFT JOIN keeps it rather than dropping it.
     const [row] = await sql`
       SELECT COUNT(*)::int AS n
-      FROM ao_session_external_evals e
-      LEFT JOIN ao_agent_transport_sessions s ON s.session_id = e.session_id
+      FROM session_external_evals e
+      LEFT JOIN agent_transport_sessions s ON s.session_id = e.session_id
       WHERE e.session_id = ${orphan}
     `;
     expect(row.n).toBe(1);

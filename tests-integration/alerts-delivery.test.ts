@@ -105,7 +105,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     const [firing] = await t.firingsFor(rule.id);
     expect(firing.status).toBe("delivered");
     expect(firing.response_status).toBe(200);
-    const attempts = await sql`SELECT * FROM ao_alert_webhook_attempts WHERE rule_id = ${rule.id}`;
+    const attempts = await sql`SELECT * FROM alert_webhook_attempts WHERE rule_id = ${rule.id}`;
     expect(attempts).toHaveLength(1);
     expect(attempts[0].ok).toBe(true);
     expect(attempts[0].kind).toBe("firing");
@@ -132,7 +132,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     // Receiver recovers; force the retry due (simulating elapsed backoff —
     // exactly the state a process restart would resume from).
     respondWith = 200;
-    await sql`UPDATE ao_alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firing.id}`;
+    await sql`UPDATE alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firing.id}`;
     await runSweepOnce();
 
     [firing] = await t.firingsFor(rule.id);
@@ -140,7 +140,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     expect(firing.attempt_count).toBe(2);
 
     const attempts = await sql`
-      SELECT ok, response_status, attempt_number FROM ao_alert_webhook_attempts
+      SELECT ok, response_status, attempt_number FROM alert_webhook_attempts
       WHERE rule_id = ${rule.id} ORDER BY created_at
     `;
     expect(attempts).toHaveLength(2);
@@ -159,7 +159,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     await runSweepOnce(); // creates the firing, attempt 1 fails
     const [{ id: firingId }] = await t.firingsFor(rule.id);
     for (let attempt = 2; attempt <= MAX_ATTEMPTS; attempt++) {
-      await sql`UPDATE ao_alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firingId}`;
+      await sql`UPDATE alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firingId}`;
       await runSweepOnce();
     }
 
@@ -171,7 +171,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     // Recovery after exhaustion must NOT resurrect the firing.
     respondWith = 200;
     received.length = 0;
-    await sql`UPDATE ao_alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firingId}`;
+    await sql`UPDATE alert_firings SET next_attempt_at = NOW() - interval '1 second' WHERE id = ${firingId}`;
     await runSweepOnce();
     [firing] = await t.firingsFor(rule.id);
     expect(firing.status).toBe("failed");
@@ -179,7 +179,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     expect(received.filter((r) => r.headers["x-alert-firing-id"] === firingId)).toHaveLength(0);
 
     const attempts = await sql`
-      SELECT COUNT(*)::int AS n FROM ao_alert_webhook_attempts WHERE firing_id = ${firingId}
+      SELECT COUNT(*)::int AS n FROM alert_webhook_attempts WHERE firing_id = ${firingId}
     `;
     expect(attempts[0].n).toBe(MAX_ATTEMPTS); // exactly 6 audited attempts, no more
   });
@@ -189,7 +189,7 @@ describeDb("webhook delivery pipeline against real Postgres + HTTP", () => {
     const rule = await t.createRule({ account_id: acct, webhook_url: receiverUrl });
     const mkFiring = async (dueMinutesAgo: number, status = "pending") => {
       const rows = await sql`
-        INSERT INTO ao_alert_firings (
+        INSERT INTO alert_firings (
           rule_id, window_start, window_end, matched_count, total_count,
           observed_value, sample_session_ids, status, next_attempt_at
         ) VALUES (

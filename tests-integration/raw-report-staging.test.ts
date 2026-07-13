@@ -1,6 +1,6 @@
 /**
  * Integration test for COR-02: OTLP raw_report patches that arrive BEFORE
- * the recording row must be parked in ao_session_raw_report_patches and
+ * the recording row must be parked in session_raw_report_patches and
  * replayed (not silently dropped) once insertSession creates the row.
  * This is a real-SQL behavior the mocked unit suite can't prove.
  */
@@ -18,8 +18,8 @@ describeDb("OTLP-before-recording raw_report staging", () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM ao_session_raw_report_patches WHERE session_id LIKE ${RUN + "%"}`;
-    await sql`DELETE FROM ao_agent_transport_sessions WHERE session_id LIKE ${RUN + "%"}`;
+    await sql`DELETE FROM session_raw_report_patches WHERE session_id LIKE ${RUN + "%"}`;
+    await sql`DELETE FROM agent_transport_sessions WHERE session_id LIKE ${RUN + "%"}`;
   });
 
   test("a patch arriving before the row is staged, then replayed on drain", async () => {
@@ -34,11 +34,11 @@ describeDb("OTLP-before-recording raw_report staging", () => {
 
     // It must be parked, not dropped, and must NOT have created a session.
     const staged = await sql`
-      SELECT patch FROM ao_session_raw_report_patches WHERE session_id = ${SESSION_ID}
+      SELECT patch FROM session_raw_report_patches WHERE session_id = ${SESSION_ID}
     `;
     expect(staged).toHaveLength(1);
     const noRow = await sql`
-      SELECT 1 FROM ao_agent_transport_sessions WHERE session_id = ${SESSION_ID}
+      SELECT 1 FROM agent_transport_sessions WHERE session_id = ${SESSION_ID}
     `;
     expect(noRow).toHaveLength(0);
 
@@ -70,7 +70,7 @@ describeDb("OTLP-before-recording raw_report staging", () => {
     // staging row is gone.
     const [row] = await sql`
       SELECT session_metrics, raw_report
-      FROM ao_agent_transport_sessions WHERE session_id = ${SESSION_ID}
+      FROM agent_transport_sessions WHERE session_id = ${SESSION_ID}
     `;
     const metrics = typeof row.session_metrics === "string"
       ? JSON.parse(row.session_metrics) : row.session_metrics;
@@ -81,7 +81,7 @@ describeDb("OTLP-before-recording raw_report staging", () => {
     expect(rawReport.events).toHaveLength(1);
 
     const drained = await sql`
-      SELECT 1 FROM ao_session_raw_report_patches WHERE session_id = ${SESSION_ID}
+      SELECT 1 FROM session_raw_report_patches WHERE session_id = ${SESSION_ID}
     `;
     expect(drained).toHaveLength(0);
   });

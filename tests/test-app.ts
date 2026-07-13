@@ -18,7 +18,6 @@ export const mockInsertLiveKitEvaluation = mock(() => Promise.resolve());
 export const mockUpsertSessionOutcome = mock(() => Promise.resolve());
 export const mockApplySessionTagMetadata = mock(() => Promise.resolve());
 export const mockMergeSessionRawReport = mock(() => Promise.resolve());
-export const mockUpsertSessionAgentConfig = mock(() => Promise.resolve());
 export const mockSql: any = mock((..._args: any[]) => Promise.resolve([]));
 // Route `sql.unsafe(...)` through the same queue as `sql\`...\`` so the
 // existing `.mockResolvedValueOnce(...)` pattern works for both call styles.
@@ -71,17 +70,6 @@ export function registerAppMocks(): void {
     upsertSessionOutcome: mockUpsertSessionOutcome,
     applySessionTagMetadata: mockApplySessionTagMetadata,
     mergeSessionRawReport: mockMergeSessionRawReport,
-    upsertSessionAgentConfig: mockUpsertSessionAgentConfig,
-    tableExists: mock(() => Promise.resolve(true)),
-    SESSION_SATELLITE_TABLES: [
-      "ao_session_agent_config",
-      "ao_session_eval_verdicts",
-      "ao_session_external_evals",
-      "ao_session_tags",
-      "ao_session_outcomes",
-      "ao_session_raw_report_patches",
-      "ao_session_goal_analyses",
-    ],
   }));
 
   mock.module("../src/migrate.js", () => ({

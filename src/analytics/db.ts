@@ -83,12 +83,12 @@ export async function getFleetStats(
     sql.unsafe(
       `WITH win AS (
          SELECT id, session_id, agent_id, chat_history
-         FROM ao_agent_transport_sessions
+         FROM agent_transport_sessions
          WHERE ${WIN_WHERE}
        ),
        latest_outcomes AS (
          SELECT DISTINCT ON (session_id) session_id, outcome
-         FROM ao_session_outcomes
+         FROM session_outcomes
          WHERE session_id IN (SELECT session_id FROM win)
          ORDER BY session_id, COALESCE(observed_at, updated_at, created_at) DESC
        )
@@ -115,7 +115,7 @@ export async function getFleetStats(
     sql.unsafe(
       `WITH win AS (
          SELECT ended_at, chat_history
-         FROM ao_agent_transport_sessions
+         FROM agent_transport_sessions
          WHERE ${WIN_WHERE}
        )
        SELECT
@@ -132,7 +132,7 @@ export async function getFleetStats(
       `WITH win AS (
          SELECT id, session_id, agent_id, agent_name, ended_at, duration_ms,
                 session_metrics, chat_history, estimated_cost_usd
-         FROM ao_agent_transport_sessions
+         FROM agent_transport_sessions
          WHERE ${WIN_WHERE}
        ),
        per_agent AS (
@@ -169,7 +169,7 @@ export async function getFleetStats(
                 COUNT(*) FILTER (WHERE lo.outcome IN ('success', 'lk.success'))::int AS outcome_success
          FROM (
            SELECT DISTINCT ON (session_id) session_id, outcome
-           FROM ao_session_outcomes
+           FROM session_outcomes
            WHERE session_id IN (SELECT session_id FROM win)
            ORDER BY session_id, COALESCE(observed_at, updated_at, created_at) DESC
          ) lo
@@ -200,7 +200,7 @@ export async function getFleetStats(
       `SELECT account_id,
               COUNT(*)::int AS session_count,
               SUM(estimated_cost_usd)::float AS estimated_cost_usd
-       FROM ao_agent_transport_sessions
+       FROM agent_transport_sessions
        WHERE ${WIN_WHERE}
        GROUP BY account_id
        ORDER BY session_count DESC

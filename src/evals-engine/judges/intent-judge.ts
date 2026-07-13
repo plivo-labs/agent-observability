@@ -6,11 +6,11 @@ import { runLlmJudge } from "./run-llm-judge.js";
 import { renderNodeTranscript } from "./node-judges.js";
 import { INTENT_JSON } from "./schemas.js";
 
-// AO Eval Engine — intent identification judge. LLM-based, matching the reference engine's MetricIntent: given the node's
+// AO Eval Engine — intent identification judge. LLM-based, matching cx-sqs's MetricIntent: given the node's
 // available intents + the intent the agent chose + the conversation, the model returns `intent_not_found`
-// and `intent_wrongly_identified`; the SCORE is code-derived = 1.0 iff neither flag is set (the reference engine
-// post-processing). A simulation has no ground-truth "expected" intent, so this is a judgment
-// call, not a string compare — hence LLM, not programmatic. reference-engine token cap for intent: 1500.
+// and `intent_wrongly_identified`; the SCORE is code-derived = 1.0 iff neither flag is set (cx-sqs
+// node_evaluator.go postProcess). A simulation has no ground-truth "expected" intent, so this is a judgment
+// call, not a string compare — hence LLM, not programmatic. cx-sqs token cap for intent: 1500.
 
 function renderIntents(available: unknown[]): string {
   if (!available.length) return "(none)";
@@ -32,21 +32,6 @@ export async function runIntentJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: IntentIdentificationMetrics; usage: LlmUsage }> {
-  // No intents configured on the node → there is nothing to identify against;
-  // running the judge would force intent_not_found=true for every valid user
-  // request (rule 1 has an empty list to match). Neutral pass, no LLM call.
-  if (!Array.isArray(node.available_intents) || node.available_intents.length === 0) {
-    return {
-      data: {
-        intent_not_found: false,
-        intent_wrongly_identified: false,
-        score: 1.0,
-        reason: "No intents configured on this node — intent identification not applicable.",
-        technical_reason: "skipped: empty available_intents",
-      },
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-    };
-  }
   const res = await runLlmJudge({
     system: systemForIntent(renderIntents(node.available_intents), node.chosen_intent || "(none)"),
     input: {

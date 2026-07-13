@@ -122,7 +122,7 @@ export function buildFiringPayload(d: DueDelivery): string {
   });
 }
 
-/** Deliver one due firing; records the attempt in ao_alert_webhook_attempts. */
+/** Deliver one due firing; records the attempt in alert_webhook_attempts. */
 export async function deliverFiring(d: DueDelivery): Promise<DeliveryResult> {
   const result = await sendWebhook({
     url: d.webhook_url,
