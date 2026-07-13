@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { jsonbParam } from "../jsonb-param.js";
 import type { AlertRuleCreate, AlertRulePatch } from "./schema.js";
 
 export interface AlertRuleRow {
@@ -89,7 +90,7 @@ export async function insertAlertRule(input: AlertRuleCreate): Promise<AlertRule
       ${input.threshold_value}, ${input.min_samples},
       ${input.window_minutes}, ${input.webhook_url}, ${input.http_method},
       ${input.secret ?? null},
-      ${input.headers ?? null}::jsonb
+      ${jsonbParam(input.headers ?? null)}::text::jsonb
     )
     RETURNING *
   `;
@@ -115,7 +116,7 @@ export async function updateAlertRule(id: string, patch: AlertRulePatch): Promis
       min_samples = ${merged.min_samples}, window_minutes = ${merged.window_minutes},
       webhook_url = ${merged.webhook_url}, http_method = ${merged.http_method},
       secret = ${merged.secret},
-      headers = ${merged.headers ?? null}::jsonb,
+      headers = ${jsonbParam(merged.headers ?? null)}::text::jsonb,
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING *

@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { jsonbParam } from "../jsonb-param.js";
 import {
   ASSISTANT_MSG_WHERE,
   CHAT_HISTORY_ELEMS,
@@ -241,7 +242,7 @@ export async function evaluateRules(): Promise<number> {
           ) VALUES (
             ${rule.id}, ${windowStart}, ${now}, ${result.matched_count},
             ${result.total_count}, ${result.observed_value},
-            ${result.sample_session_ids ?? []}::jsonb
+            ${jsonbParam(result.sample_session_ids ?? [])}::text::jsonb
           )
         `;
       });
