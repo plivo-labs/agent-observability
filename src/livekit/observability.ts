@@ -5,14 +5,26 @@ import {
   mergeSessionRawReport,
   upsertSessionOutcome,
   upsertSessionTag,
+  upsertSessionAgentConfig,
 } from "../db.js";
 import type { DecodedOtlpLog } from "./protobuf.js";
+import { classifyErrorDurability } from "../error-durability.js";
 import { parseJsonValue } from "../raw-report.js";
+import { sanitizeForLog } from "../response.js";
 
 interface PersistResult {
   tags: number;
   evaluations: number;
   outcomes: number;
+  agentConfigs: number;
+  /** Session ids that received an agent config in this batch — i.e. became
+   *  eval-eligible (the opt-in). The route event-kicks these so they're judged
+   *  immediately instead of on the next sweep tick. */
+  evalSessions: string[];
+  /** Records dropped because persisting them fails deterministically
+   *  (constraint/shape errors) — visible in the ingest response so a sender
+   *  can notice data it thinks was accepted actually wasn't. */
+  skippedRecords: number;
 }
 
 interface RawReportPatch extends Record<string, unknown> {
@@ -142,10 +154,15 @@ function eventFromChatItem(log: DecodedOtlpLog): Record<string, unknown> | null 
 
   const item = normalizeChatItem(chatItem);
   const createdAt = parseTimestampSeconds(item.created_at) ?? timestampSeconds(log.timestamp);
+  // Opaque per-utterance node reference the sender may attach so downstream
+  // eval can group turns by the node that produced them. Correlates to a
+  // node `ref` in the agent config; AO never interprets its value.
+  const nodeRef = asString(log.attributes.node_ref) ?? asString(chatItem.node_ref);
 
   return {
     type: "conversation_item_added",
     created_at: createdAt,
+    ...(nodeRef ? { node_ref: nodeRef } : {}),
     item,
   };
 }
@@ -234,6 +251,15 @@ async function handleChatItem({ log, sessionId, rawReportPatches }: OtlpHandlerC
   }
 }
 
+// Reserved tag name: a client may deliver the agent config through the tag
+// channel (name = AGENT_CONFIG_TAG, metadata = the config). The config is the
+// eval opt-in; it's stored as agent config rather than a plain tag so it never
+// pollutes the session's tag list. Namespaced ("observability." prefix) so the
+// reserved name can't squat a tag a sender plausibly uses for its own
+// purposes; "agent.config" is accepted as a legacy alias for early senders.
+const AGENT_CONFIG_TAG = "observability.agent_config";
+const AGENT_CONFIG_TAG_LEGACY = "agent.config";
+
 async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
   const tag = asRecord(log.attributes.tag);
   const name = asString(tag?.name);
@@ -241,8 +267,70 @@ async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx)
     return;
   }
   const metadata = asRecord(tag?.metadata);
+  if (name === AGENT_CONFIG_TAG || name === AGENT_CONFIG_TAG_LEGACY) {
+    const stored = await storeAgentConfig(sessionId, metadata, observedAt, result);
+    if (!stored) {
+      // Metadata didn't parse as an agent config — keep it as a plain tag
+      // (visible, debuggable) instead of silently swallowing the record.
+      console.warn(`[otlp] ${AGENT_CONFIG_TAG} tag without a valid config (session=${sessionId.slice(0, 64)}) — stored as a plain tag`);
+      await persistTag(sessionId, name, metadata, observedAt);
+      result.tags += 1;
+    }
+    return;
+  }
   await persistTag(sessionId, name, metadata, observedAt);
   result.tags += 1;
+}
+
+// Caps on the judging surface one config can demand: each judged node costs
+// ~5 LLM calls, so an unbounded config would let a single ingested session
+// trigger an unbounded provider bill. Oversized configs are clamped (never
+// rejected) and the truncation is logged.
+const MAX_CONFIG_NODES = 150;
+const MAX_NODE_LIST_ITEMS = 100; // intents / variables per node
+const MAX_INSTRUCTIONS_CHARS = 50_000;
+
+function clampAgentConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const nodes = Array.isArray(config.nodes) ? config.nodes : [];
+  let clamped = false;
+  const boundedNodes = nodes.slice(0, MAX_CONFIG_NODES).map((n) => {
+    if (typeof n !== "object" || n === null) return n;
+    const node = { ...(n as Record<string, unknown>) };
+    if (typeof node.instructions === "string" && node.instructions.length > MAX_INSTRUCTIONS_CHARS) {
+      node.instructions = node.instructions.slice(0, MAX_INSTRUCTIONS_CHARS);
+      clamped = true;
+    }
+    for (const key of ["intents", "variables"]) {
+      if (Array.isArray(node[key]) && (node[key] as unknown[]).length > MAX_NODE_LIST_ITEMS) {
+        node[key] = (node[key] as unknown[]).slice(0, MAX_NODE_LIST_ITEMS);
+        clamped = true;
+      }
+    }
+    return node;
+  });
+  if (nodes.length > MAX_CONFIG_NODES) clamped = true;
+  if (clamped) {
+    console.warn(`[otlp] agent config clamped to ${MAX_CONFIG_NODES} nodes / ${MAX_NODE_LIST_ITEMS} intents+variables per node / ${MAX_INSTRUCTIONS_CHARS} instruction chars`);
+  }
+  return { ...config, nodes: boundedNodes };
+}
+
+/** Validate + store an agent config (from either the dedicated record or the
+ *  reserved tag). Requires at least one node; otherwise ignored. Returns
+ *  whether a config was stored. */
+async function storeAgentConfig(
+  sessionId: string,
+  config: Record<string, unknown> | null,
+  observedAt: Date | null,
+  result: PersistResult,
+): Promise<boolean> {
+  if (!config || !Array.isArray(config.nodes) || config.nodes.length === 0) {
+    return false;
+  }
+  await upsertSessionAgentConfig({ sessionId, config: clampAgentConfig(config), source: "livekit_otlp", observedAt });
+  result.agentConfigs += 1;
+  if (!result.evalSessions.includes(sessionId)) result.evalSessions.push(sessionId);
+  return true;
 }
 
 async function handleEvaluation({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
@@ -288,6 +376,13 @@ async function handleOutcome({ log, sessionId, observedAt, result }: OtlpHandler
   result.outcomes += 1;
 }
 
+// Dedicated record path (a client that can emit a custom OTLP record body uses
+// this; clients that can only emit tags use the reserved AGENT_CONFIG_TAG
+// instead — both land in the same store via storeAgentConfig).
+async function handleAgentConfig({ log, sessionId, observedAt, result }: OtlpHandlerCtx): Promise<void> {
+  await storeAgentConfig(sessionId, asRecord(log.attributes["agent.config"]), observedAt, result);
+}
+
 // String-keyed dispatch on log.body. Replaces the former linear
 // if-chain; an unknown body is simply ignored (no handler entry).
 const OTLP_HANDLERS: Record<string, OtlpHandler> = {
@@ -296,10 +391,24 @@ const OTLP_HANDLERS: Record<string, OtlpHandler> = {
   "tag": handleTag,
   "evaluation": handleEvaluation,
   "outcome": handleOutcome,
+  // The eval opt-in: sessions that carry an agent config get judged by the
+  // background eval sweeper; sessions without one are stored/displayed only.
+  "agent config": handleAgentConfig,
 };
 
+/** True when a persist error is environmental (connection/timeout/outage) —
+ *  the batch should abort and 503 so at-least-once senders retry. Everything
+ *  else (constraint violations, invalid input, oversize values) fails the
+ *  same way on every redelivery and is skipped per-record instead.
+ *  Classification lives in error-durability.ts (shared with the eval
+ *  sweeper); only the DEFAULT is this site's: unknown → transient, because
+ *  skipping a record drops ingested data and needs positive evidence. */
+function isTransientPersistError(e: unknown): boolean {
+  return classifyErrorDurability(e) !== "deterministic";
+}
+
 export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<PersistResult> {
-  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0 };
+  const result: PersistResult = { tags: 0, evaluations: 0, outcomes: 0, agentConfigs: 0, evalSessions: [], skippedRecords: 0 };
   const rawReportPatches = new Map<string, RawReportPatch>();
 
   for (const log of logs) {
@@ -315,11 +424,32 @@ export async function persistLiveKitOtlpLogs(logs: DecodedOtlpLog[]): Promise<Pe
       continue;
     }
 
-    await handler({ log, sessionId, observedAt, result, rawReportPatches });
+    try {
+      await handler({ log, sessionId, observedAt, result, rawReportPatches });
+    } catch (e) {
+      // Per-record isolation: a DETERMINISTIC persist failure (constraint /
+      // shape / size — would fail identically on every redelivery) must not
+      // poison the whole batch into an endless 503-retry loop; skip that one
+      // record and keep going. Transient failures (connection/timeout) still
+      // abort the batch so the route 503s and at-least-once senders retry.
+      if (isTransientPersistError(e)) {
+        throw e;
+      }
+      result.skippedRecords += 1;
+      console.error(`[otlp] record skipped (deterministic persist error, body=${sanitizeForLog(body ?? "")}): ${sanitizeForLog((e as Error).message)}`);
+    }
   }
 
   for (const [sessionId, patch] of rawReportPatches) {
-    await mergeSessionRawReport({ sessionId, patch });
+    try {
+      await mergeSessionRawReport({ sessionId, patch });
+    } catch (e) {
+      if (isTransientPersistError(e)) {
+        throw e;
+      }
+      result.skippedRecords += 1;
+      console.error(`[otlp] raw-report patch skipped (deterministic persist error): ${sanitizeForLog((e as Error).message)}`);
+    }
   }
 
   return result;

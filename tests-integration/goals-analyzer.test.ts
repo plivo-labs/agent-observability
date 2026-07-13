@@ -38,7 +38,7 @@ describeDb("goal analyzer end to end", () => {
     await runGoalSweepOnce({ provider });
 
     const rows = await sql`
-      SELECT verdict, tag, instructions, reasoning FROM session_external_evals
+      SELECT verdict, tag, instructions, reasoning FROM ao_session_external_evals
       WHERE session_id = ${s} AND source = 'goal'
     `;
     expect(rows).toHaveLength(1);
@@ -52,7 +52,7 @@ describeDb("goal analyzer end to end", () => {
     expect(provider.calls.length).toBe(callsAfterFirst);
 
     const dup = await sql`
-      SELECT count(*)::int AS n FROM session_external_evals
+      SELECT count(*)::int AS n FROM ao_session_external_evals
       WHERE session_id = ${s} AND source = 'goal'
     `;
     expect(dup[0].n).toBe(1);
@@ -75,19 +75,19 @@ describeDb("goal analyzer end to end", () => {
 
     await runGoalSweepOnce({ provider });
     const [afterFail] = await sql`
-      SELECT status, attempts FROM session_goal_analyses WHERE session_id = ${s}
+      SELECT status, attempts FROM ao_session_goal_analyses WHERE session_id = ${s}
     `;
     expect(afterFail.status).toBe("error");
     expect(afterFail.attempts).toBe(1);
 
     await runGoalSweepOnce({ provider });
     const [afterRetry] = await sql`
-      SELECT status, attempts FROM session_goal_analyses WHERE session_id = ${s}
+      SELECT status, attempts FROM ao_session_goal_analyses WHERE session_id = ${s}
     `;
     expect(afterRetry.status).toBe("done");
 
     const rows = await sql`
-      SELECT verdict, raw FROM session_external_evals
+      SELECT verdict, raw FROM ao_session_external_evals
       WHERE session_id = ${s} AND source = 'goal'
     `;
     expect(rows).toHaveLength(1);
