@@ -92,8 +92,8 @@ export function registerAgentRoutes(app: Hono) {
   // ── Conversation Evals (per-agent eval rollup) ──────────────────────────
   //
   // Lists sessions for the agent that have any conversation-eval data
-  // attached — ao_session_external_evals (LiveKit JudgeGroup verdicts) or
-  // ao_session_outcomes. Each row carries the full eval + tag arrays so
+  // attached — session_external_evals (LiveKit JudgeGroup verdicts) or
+  // session_outcomes. Each row carries the full eval + tag arrays so
   // the table can render verdict counts + chips without a second fetch.
   app.get("/api/agents/:agent_id/conversation-evals", async (c) => {
     const agentId = c.req.param("agent_id");
@@ -144,7 +144,7 @@ export function registerAgentRoutes(app: Hono) {
 
   // ── Conversation goals ───────────────────────────────────────────────────
   //
-  // Sessions of this agent carrying goal verdicts (ao_session_external_evals,
+  // Sessions of this agent carrying goal verdicts (session_external_evals,
   // source='goal'), grouped per session, plus an agent-wide summary the tab
   // header uses for the completion-rate stat.
   app.get("/api/agents/:agent_id/goal-results", async (c) => {

@@ -591,12 +591,6 @@ describe("GET /api/sessions/:id", () => {
 describe("DELETE /api/sessions", () => {
   beforeEach(() => {
     mockSql.mockReset();
-    // mockReset drops the base implementation, so once a test's queued
-    // mockResolvedValueOnce drains, further queries return undefined. The delete
-    // handler runs a second query (the pg_tables satellite probe) after the
-    // RETURNING row, so restore the resolve-[] default — mirrors the
-    // analytics-stats beforeEach below.
-    mockSql.mockImplementation((..._args: any[]) => Promise.resolve([]));
   });
 
   test("rejects without auth", async () => {

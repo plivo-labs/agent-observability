@@ -11,7 +11,7 @@
  * report body, OTLP agent_id/agent_name tag) calls this helper first.
  * The agent row is guaranteed to exist after the call; the caller then
  * INSERTs its session/eval row, protected by FK on sessions.agent_id /
- * ao_eval_runs.agent_id → ao_agents.agent_id.
+ * eval_runs.agent_id → agents.agent_id.
  */
 
 import { sql } from "../db.js";
@@ -54,11 +54,11 @@ function normalize(patch: AgentUpsertPatch): {
 export async function upsertAgent(patch: AgentUpsertPatch): Promise<void> {
   const n = normalize(patch);
   await sql`
-    INSERT INTO ao_agents (agent_id, account_id, agent_name)
+    INSERT INTO agents (agent_id, account_id, agent_name)
     VALUES (${n.agentId}, ${n.accountId}, ${n.agentName})
     ON CONFLICT (agent_id) DO UPDATE
-      SET agent_name = COALESCE(EXCLUDED.agent_name, ao_agents.agent_name),
-          account_id = COALESCE(EXCLUDED.account_id, ao_agents.account_id),
+      SET agent_name = COALESCE(EXCLUDED.agent_name, agents.agent_name),
+          account_id = COALESCE(EXCLUDED.account_id, agents.account_id),
           updated_at = NOW()
   `;
 }
@@ -74,11 +74,11 @@ export async function upsertAgentTx(
 ): Promise<void> {
   const n = normalize(patch);
   await tx`
-    INSERT INTO ao_agents (agent_id, account_id, agent_name)
+    INSERT INTO agents (agent_id, account_id, agent_name)
     VALUES (${n.agentId}, ${n.accountId}, ${n.agentName})
     ON CONFLICT (agent_id) DO UPDATE
-      SET agent_name = COALESCE(EXCLUDED.agent_name, ao_agents.agent_name),
-          account_id = COALESCE(EXCLUDED.account_id, ao_agents.account_id),
+      SET agent_name = COALESCE(EXCLUDED.agent_name, agents.agent_name),
+          account_id = COALESCE(EXCLUDED.account_id, agents.account_id),
           updated_at = NOW()
   `;
 }

@@ -13,7 +13,7 @@ import { getStatsCore } from "../stats-core.js";
 //
 // listAgents reads `agents` as the source of truth for identity, name,
 // and the most-recently-observed account; LEFT JOINs aggregates from
-// ao_agent_transport_sessions and ao_eval_runs grouped by agent_id.
+// agent_transport_sessions and eval_runs grouped by agent_id.
 
 /**
  * Modality enum for the agents view. Derived in SQL from the set of
@@ -27,7 +27,7 @@ export type Modality = "voice" | "text" | "mixed" | null;
 
 export interface AgentRow {
   /** Stable developer-supplied id — the primary key of the virtual entity.
-   * The join between sessions and ao_eval_runs happens on this column. May be
+   * The join between sessions and eval_runs happens on this column. May be
    * null on legacy rows from before producers were updated; the UI surfaces
    * those with an "(unknown id)" badge. */
   agent_id: string | null;
@@ -35,7 +35,7 @@ export interface AgentRow {
    * first (they always carry the human label), falling back to a CI-eval-
    * supplied name if no sessions have shipped one. May be null. */
   agent_name: string | null;
-  /** Most-recent account_id observed across either sessions or ao_eval_runs
+  /** Most-recent account_id observed across either sessions or eval_runs
    * for this agent. An agent that genuinely spans multiple accounts shows
    * its newest; sort breaks ties via last_session_at then last_eval_run_at. */
   account_id: string | null;
@@ -46,12 +46,12 @@ export interface AgentRow {
   /** Distinct transports observed across this agent's sessions (sorted
    * alphabetically). Empty for agents that only have eval runs. */
   transports: string[];
-  // From ao_agent_transport_sessions
+  // From agent_transport_sessions
   session_count: number;            // total sessions ever
   session_count_24h: number;        // sessions ended in the last 24h
   last_session_at: string | null;   // ISO timestamp
   p95_duration_ms: number | null;
-  // From ao_eval_runs
+  // From eval_runs
   eval_run_count: number;
   last_eval_run_at: string | null;
   eval_pass_rate: number | null;    // 0..1 over all cases across all runs
@@ -110,13 +110,13 @@ export async function listAgents(
            SELECT COALESCE(array_agg(t ORDER BY t), ARRAY[]::text[])
            FROM (
              SELECT DISTINCT transport AS t
-             FROM ao_agent_transport_sessions s2
-             WHERE s2.agent_id = ao_agent_transport_sessions.agent_id
+             FROM agent_transport_sessions s2
+             WHERE s2.agent_id = agent_transport_sessions.agent_id
                AND ($1::text IS NULL OR s2.account_id = $1)
                AND transport IS NOT NULL
            ) sub
          ) AS transports
-       FROM ao_agent_transport_sessions
+       FROM agent_transport_sessions
        WHERE agent_id IS NOT NULL
          AND ($1::text IS NULL OR account_id = $1)
        GROUP BY agent_id
@@ -131,7 +131,7 @@ export async function listAgents(
              THEN SUM(passed)::float / SUM(total)::float
            ELSE NULL
          END AS eval_pass_rate
-       FROM ao_eval_runs
+       FROM eval_runs
        WHERE agent_id IS NOT NULL
          AND ($1::text IS NULL OR account_id = $1)
        GROUP BY agent_id
@@ -151,7 +151,7 @@ export async function listAgents(
          evals.last_eval_run_at,
          evals.eval_pass_rate,
          a.updated_at AS agent_updated_at
-       FROM ao_agents a
+       FROM agents a
        LEFT JOIN sess  USING (agent_id)
        LEFT JOIN evals USING (agent_id)
        WHERE ($1::text IS NULL OR a.account_id = $1)
@@ -239,7 +239,7 @@ export interface AgentStatsBucket {
   session_count: number;
   avg_duration_ms: number | null;
   p95_user_perceived_ms: number | null;
-  /** Per-bucket sum of `ao_agent_transport_sessions.estimated_cost_usd`.
+  /** Per-bucket sum of `agent_transport_sessions.estimated_cost_usd`.
    *  Pre-aggregated server-side using the same priceFor() path eval-runs
    *  use, then summed across the bucket's sessions. Null when no session
    *  in the bucket carried a priceable usage record. */
@@ -257,7 +257,7 @@ export interface AgentStats {
   p50_user_perceived_ms: number | null;
   p95_user_perceived_ms: number | null;
   p99_user_perceived_ms: number | null;
-  llm_pass_rate: number | null;  // 0..1 over ao_session_external_evals rows
+  llm_pass_rate: number | null;  // 0..1 over session_external_evals rows
   ci_pass_rate: number | null;   // 0..1 over CI eval cases
   buckets: AgentStatsBucket[];
   transport_breakdown: Array<{ transport: string | null; count: number }>;
@@ -282,7 +282,7 @@ export async function getAgentStats(
     sql.unsafe(
       `WITH win AS (
          SELECT session_metrics
-         FROM ao_agent_transport_sessions
+         FROM agent_transport_sessions
          WHERE agent_id = $1 AND ended_at >= NOW() - $2::interval
            AND ($3::text IS NULL OR account_id = $3)
        ),
@@ -302,7 +302,7 @@ export async function getAgentStats(
     // Transport breakdown
     sql.unsafe(
       `SELECT transport, COUNT(*)::int AS count
-       FROM ao_agent_transport_sessions
+       FROM agent_transport_sessions
        WHERE agent_id = $1 AND ended_at >= NOW() - $2::interval
          AND ($3::text IS NULL OR account_id = $3)
        GROUP BY transport
@@ -341,9 +341,9 @@ export async function getAgentStats(
 // One row per session for an agent, with the same eval/tag/outcome data
 // the session-detail drawer renders, summarised for tabular display:
 //
-//   - Counts of pass / fail / maybe verdicts in ao_session_external_evals
+//   - Counts of pass / fail / maybe verdicts in session_external_evals
 //   - Distinct judge names (so the table can render chips per judge)
-//   - Outcome name + reason if ao_session_outcomes has a row
+//   - Outcome name + reason if session_outcomes has a row
 //   - The full `evaluations` and `tags` arrays so the row can drill-in
 //     without a second round-trip
 //
@@ -376,7 +376,7 @@ export interface ListConversationEvalsOpts {
   /** Free-text case-insensitive substring filter on `session_id`. */
   sessionId?: string | null;
   /** When true, restrict results to sessions with at least one
-   *  failing external eval verdict or a ao_session_outcomes row whose
+   *  failing external eval verdict or a session_outcomes row whose
    *  outcome is "fail" / "lk.fail". */
   failedOnly?: boolean;
 }
@@ -396,29 +396,29 @@ export async function listConversationEvals(
   const failedOnly = opts.failedOnly === true;
 
   // The base set: sessions for the agent that have at least one related
-  // row in ao_session_external_evals or ao_session_outcomes. We use EXISTS
+  // row in session_external_evals or session_outcomes. We use EXISTS
   // rather than JOIN to avoid duplicating session rows when an agent has
   // many evals on the same session.
   const result = await sql.unsafe(
     `WITH base AS (
        SELECT s.session_id, s.account_id, s.agent_id, s.agent_name,
               s.ended_at, s.duration_ms
-       FROM ao_agent_transport_sessions s
+       FROM agent_transport_sessions s
        WHERE s.agent_id = $1
          AND ($2::text IS NULL OR s.account_id = $2)
          AND ($5::text IS NULL OR LOWER(s.session_id) LIKE $5)
          AND (
-           EXISTS (SELECT 1 FROM ao_session_external_evals e
+           EXISTS (SELECT 1 FROM session_external_evals e
                    WHERE e.session_id = s.session_id)
            OR
-           EXISTS (SELECT 1 FROM ao_session_outcomes o
+           EXISTS (SELECT 1 FROM session_outcomes o
                    WHERE o.session_id = s.session_id)
          )
          AND (
            $6::bool = FALSE
-           OR EXISTS (SELECT 1 FROM ao_session_external_evals e
+           OR EXISTS (SELECT 1 FROM session_external_evals e
                       WHERE e.session_id = s.session_id AND e.verdict = 'fail')
-           OR EXISTS (SELECT 1 FROM ao_session_outcomes o
+           OR EXISTS (SELECT 1 FROM session_outcomes o
                       WHERE o.session_id = s.session_id
                         AND o.outcome IN ('lk.fail', 'fail'))
          )
@@ -447,14 +447,14 @@ export async function listConversationEvals(
                 'raw',          CASE WHEN jsonb_typeof(raw) IS NOT NULL THEN raw ELSE NULL END,
                 'created_at',   created_at
               ) ORDER BY COALESCE(observed_at, created_at) ASC) AS evaluations
-       FROM ao_session_external_evals
+       FROM session_external_evals
        WHERE session_id IN (SELECT session_id FROM paged)
        GROUP BY session_id
      ),
      oc AS (
        SELECT DISTINCT ON (session_id)
               session_id, outcome, reason AS outcome_reason
-       FROM ao_session_outcomes
+       FROM session_outcomes
        WHERE session_id IN (SELECT session_id FROM paged)
        ORDER BY session_id, COALESCE(observed_at, updated_at, created_at) DESC
      )
@@ -504,9 +504,9 @@ export async function listConversationEvals(
 // ── Conversation goals ───────────────────────────────────────────────────────
 
 export interface GoalVerdictRow {
-  /** Stable goal identifier (ao_session_external_evals.tag). */
+  /** Stable goal identifier (session_external_evals.tag). */
   name: string;
-  /** What the judge evaluated (ao_session_external_evals.instructions). */
+  /** What the judge evaluated (session_external_evals.instructions). */
   description: string;
   verdict: string;
   reasoning: string | null;
@@ -538,7 +538,7 @@ export interface ListGoalResultsOpts {
 }
 
 /**
- * Sessions of an agent that carry goal verdicts (ao_session_external_evals,
+ * Sessions of an agent that carry goal verdicts (session_external_evals,
  * source='goal'), grouped per session and paginated ended_at DESC, plus
  * an agent-wide verdict summary for the tab's completion-rate header.
  * Mirrors listConversationEvals' base/paged/ev CTE shape.
@@ -553,10 +553,10 @@ export async function listGoalResults(
   const result = await sql.unsafe(
     `WITH base AS (
        SELECT s.session_id, s.account_id, s.ended_at, s.duration_ms
-       FROM ao_agent_transport_sessions s
+       FROM agent_transport_sessions s
        WHERE s.agent_id = $1
          AND ($2::text IS NULL OR s.account_id = $2)
-         AND EXISTS (SELECT 1 FROM ao_session_external_evals e
+         AND EXISTS (SELECT 1 FROM session_external_evals e
                      WHERE e.session_id = s.session_id AND e.source = 'goal')
      ),
      paged AS (
@@ -576,14 +576,14 @@ export async function listGoalResults(
                 'what_went_wrong', raw->>'what_went_wrong',
                 'observed_at',     observed_at
               ) ORDER BY id) AS goals
-       FROM ao_session_external_evals
+       FROM session_external_evals
        WHERE source = 'goal' AND session_id IN (SELECT session_id FROM paged)
        GROUP BY session_id
      ),
      summary AS (
        SELECT COUNT(*) FILTER (WHERE e.verdict = 'met')::int   AS met_total,
               COUNT(*) FILTER (WHERE e.verdict = 'unmet')::int AS unmet_total
-       FROM ao_session_external_evals e
+       FROM session_external_evals e
        WHERE e.source = 'goal'
          AND e.session_id IN (SELECT session_id FROM base)
      )

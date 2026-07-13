@@ -2,8 +2,31 @@ import type { LlmProvider } from "../../llm/index.js";
 import type { FlowGraph } from "../../sim-engine/run-engine/flow-types.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { fromSimTranscript } from "../conversation-input.js";
-import type { EvalTurn, EvaluationResult, SimEvalOutcome } from "../types.js";
-import { zeroConversationMetrics } from "../judges/conversation-judges.js";
+import type { EvalTurn, EvaluationResult, SimConversationMetrics, SimEvalOutcome } from "../types.js";
+
+/** The all-default conversation_metrics cx-sqs emits for sim (zero-valued ConversationLevelMetrics{}). Cosmetic
+ *  raw-JSON parity — no sim consumer reads it; Phase 2 live eval populates the real values. */
+function defaultConversationMetrics(): SimConversationMetrics {
+  const det = () => ({ detected: false, detected_value: 0, reason: "", technical_reason: "" });
+  return {
+    answered: false,
+    voicemail_detected: det(),
+    cx_voicemail_detected: 0,
+    cx_call_screening_detected: 0,
+    bot_detected: det(),
+    call_screening: det(),
+    low_engagement: det(),
+    wrong_number: det(),
+    do_not_disturb: det(),
+    user_sentiment: { sentiment: "", reason: "", technical_reason: "" },
+    silent_call: false,
+    customer_engaged: false,
+    conversation_status: { status: "", reason: "", technical_reason: "" },
+    is_livekit: false,
+    is_agent_runner: false,
+    stt: { error_count: 0, recovered_count: 0 },
+  };
+}
 
 // AO Eval Engine — the run-path adapter (mirrors cx-sqs's EvaluatorAdapter, SkipConversationEval=true).
 // Builds the ConversationInput from the accumulated transcript, runs the node+goal evaluator, and NEVER
@@ -40,7 +63,7 @@ export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArg
       flow_uuid: args.flowUuid,
       flow_name: input.flow_name,
       run_uuid: args.runUuid,
-      conversation_metrics: zeroConversationMetrics(),
+      conversation_metrics: defaultConversationMetrics(),
       node_evaluations: scored.node_evaluations,
       ...(scored.goal_evaluation ? { goal_evaluation: scored.goal_evaluation } : {}),
     };

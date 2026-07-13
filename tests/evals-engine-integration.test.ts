@@ -120,7 +120,7 @@ describe("evaluateSimulationForRun (adapter — never throws)", () => {
       is_agent_runner: false,
       bot_detected: { detected: false, detected_value: 0 },
       user_sentiment: { sentiment: "" },
-      stt: { error_count: 0, recovered_count: 0, available: false },
+      stt: { error_count: 0, recovered_count: 0 },
     });
     // key order matches cx-sqs: flow_uuid, flow_name, run_uuid, conversation_metrics, node_evaluations, goal_evaluation
     expect(Object.keys(out.evaluation!)).toEqual([
