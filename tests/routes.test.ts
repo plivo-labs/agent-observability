@@ -313,7 +313,7 @@ describe("POST /observability/recordings/v0", () => {
   //   1. rawReport.agent_id (top-level field)
   //   2. rawReport.tags[] entry matching /^agent_id:.+/
   // When neither is present the route still accepts the upload with
-  // agentId=null — agent_transport_sessions.agent_id is nullable (mig
+  // agentId=null — ao_agent_transport_sessions.agent_id is nullable (mig
   // 014), and the OTLP "tag" body that arrives ~1s later carries
   // `agent_id:<uuid>` which `applySessionTagMetadata` backfills via
   // an UPDATE keyed on session_id. Same shape `account_id` follows.
@@ -328,6 +328,7 @@ describe("POST /observability/recordings/v0", () => {
       ],
     });
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -356,6 +357,7 @@ describe("POST /observability/recordings/v0", () => {
       items: [],
     });
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -381,6 +383,7 @@ describe("POST /observability/recordings/v0", () => {
       items: [],
     });
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -431,6 +434,7 @@ describe("POST /observability/recordings/v0", () => {
     });
 
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob([chatHistory], { type: "application/json" }));
 
     const res = await server.fetch(
@@ -560,6 +564,7 @@ describe("POST /observability/recordings/v0", () => {
 
   test("handles request with no chat history", async () => {
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
@@ -583,6 +588,7 @@ describe("POST /observability/recordings/v0", () => {
     mockInsertSession.mockImplementationOnce(() => Promise.reject(new Error("db down")));
 
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
 
     const res = await server.fetch(
       makeRequest("/observability/recordings/v0", {
@@ -602,6 +608,7 @@ describe("POST /observability/recordings/v0", () => {
 
   test("handles malformed chat history JSON gracefully", async () => {
     const form = new FormData();
+    form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
     form.append("chat_history", new Blob(["not valid json"], { type: "application/json" }));
 
     const res = await server.fetch(

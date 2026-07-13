@@ -25,10 +25,17 @@ services:
       AUTO_MIGRATE: "true"
       PORT: "9090"
       NODE_ENV: "production"
-      # The dedicated worker below owns the alert sweeper. Exactly one
-      # sweeper may run — remove the worker service AND this line to fall
-      # back to the zero-config inline sweeper.
+      # The dedicated worker below owns the alert + eval sweepers. Exactly
+      # one of each may run — remove the worker service AND these lines to
+      # fall back to the zero-config inline sweepers.
       ALERT_SWEEPER: "off"
+      # Single flag, read by both processes: "worker" means "the worker judges".
+      # On the API that branch is a silent no-op (only "inline" starts the API
+      # sweeper) — so the worker owns the eval sweep and the API doesn't emit the
+      # "disabled everywhere" warning that "off" would (which would be false here,
+      # since the worker judges). Set this to "inline" and drop the worker for a
+      # single-container deploy.
+      EVAL_SWEEPER: "worker"
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,6 +49,9 @@ services:
     environment:
       DATABASE_URL: postgres://observability:observability@postgres:5432/agent_observability
       NODE_ENV: "production"
+      # This worker owns the eval sweep (the API also sets EVAL_SWEEPER=worker
+      # above, which on the API is a no-op — only "inline" starts its sweeper).
+      EVAL_SWEEPER: "worker"
     depends_on:
       postgres:
         condition: service_healthy

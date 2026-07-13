@@ -17,7 +17,7 @@ const DESCRIPTION_MAX_CHARS = 500;
 export const TRANSCRIPT_MAX_CHARS = 48_000;
 
 /** A goal as defined in agent code. `name` is the stable identifier
- *  (filterable; stored in session_external_evals.tag), `description` is
+ *  (filterable; stored in ao_session_external_evals.tag), `description` is
  *  what the judge evaluates (stored in instructions). */
 export interface GoalSpec {
   name: string;

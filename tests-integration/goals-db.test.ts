@@ -1,6 +1,6 @@
 /**
  * Integration tests for the goal analyzer's db layer (migration 019):
- * candidate discovery across BOTH tag sources (session_tags for the OTLP
+ * candidate discovery across BOTH tag sources (ao_session_tags for the OTLP
  * path, raw_report.tags for the recording path), the atomic claim
  * protocol (fresh claims block, stale claims reclaim), completion, and
  * the error/attempt-cap bookkeeping. All of this lives in SQL — real
@@ -82,7 +82,7 @@ describeDb("goal analysis db layer", () => {
 
     // Back-date the claim beyond the 10-minute staleness window.
     await sql`
-      UPDATE session_goal_analyses
+      UPDATE ao_session_goal_analyses
       SET claimed_at = NOW() - interval '11 minutes'
       WHERE session_id = ${s}
     `;
@@ -128,7 +128,7 @@ describeDb("goal analysis db layer", () => {
 
     const rows = await sql`
       SELECT judge_name, tag, instructions, verdict, reasoning, raw
-      FROM session_external_evals
+      FROM ao_session_external_evals
       WHERE session_id = ${s} AND source = 'goal'
       ORDER BY id
     `;
@@ -142,7 +142,7 @@ describeDb("goal analysis db layer", () => {
     expect(rows[1].raw.what_went_wrong).toBe("Caller hung up");
 
     const [tracking] = await sql`
-      SELECT status, analyzed_at FROM session_goal_analyses WHERE session_id = ${s}
+      SELECT status, analyzed_at FROM ao_session_goal_analyses WHERE session_id = ${s}
     `;
     expect(tracking.status).toBe("done");
     expect(tracking.analyzed_at).not.toBeNull();
@@ -210,7 +210,7 @@ describeDb("goal analysis db layer", () => {
       expect(claimed).toContain(s);
       await markGoalAnalysisError(s, `boom ${attempt}`);
       const [row] = await sql`
-        SELECT attempts, status, last_error FROM session_goal_analyses WHERE session_id = ${s}
+        SELECT attempts, status, last_error FROM ao_session_goal_analyses WHERE session_id = ${s}
       `;
       expect(row.attempts).toBe(attempt);
       expect(row.status).toBe("error");

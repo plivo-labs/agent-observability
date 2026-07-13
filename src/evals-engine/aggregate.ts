@@ -12,7 +12,7 @@ import type {
 } from "./types.js";
 
 // AO Eval Engine — pure raw→contract mappers + the code-derived fields (never trusted from the LLM).
-// The derivations are copied from cx-sqs's node_evaluator.go so AO's numbers match the production engine:
+// The derivations are copied from the reference engine so AO's numbers match the validated implementation:
 //   * instruction adherence score = .35·objective + .25·procedure + .25·interaction + .15·policy  (clamped 0-1)
 //   * adherence_passed = objective.achieved ∧ procedure.passed ∧ policy.passed  (interaction excluded)
 //   * procedure.passed = no missed step has severity "critical"
@@ -44,9 +44,9 @@ export function mapNodeLoop(raw: NodeLoopRaw): NodeLoopMetrics {
 
 export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): InstructionsAdherenceMetrics {
   const objective = { ...raw.objective_progress, score: clamp01(raw.objective_progress.score) };
-  // Severity is normalized + enum'd by MissedStepZ; the toLowerCase here is belt-and-braces so
-  // this gate can never be defeated by casing even if the schema changes.
-  const procedurePassed = !raw.procedure_compliance.missed_steps.some((s) => s.severity.trim().toLowerCase() === "critical");
+  // Case-insensitive: a model emitting "Critical" must not silently convert a
+  // failed procedure into a pass.
+  const procedurePassed = !raw.procedure_compliance.missed_steps.some((s) => (s.severity ?? "").toLowerCase() === "critical");
   const procedure = { ...raw.procedure_compliance, passed: procedurePassed, score: clamp01(raw.procedure_compliance.score) };
   const interaction = { ...raw.interaction_quality, score: clamp01(raw.interaction_quality.score) };
   const policy = { ...raw.policy_boundary_compliance, score: clamp01(raw.policy_boundary_compliance.score) };
@@ -54,14 +54,29 @@ export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): Instru
   const score = clamp01(objective.score * 0.35 + procedure.score * 0.25 + interaction.score * 0.25 + policy.score * 0.15);
   const adherence_passed = objective.achieved && procedure.passed && policy.passed;
 
-  // Top-level reason/technical_reason aren't asked of the LLM; synthesize from the sub-metrics for the UI.
-  const failing: string[] = [];
-  if (!objective.achieved) failing.push("objective");
-  if (!procedure.passed) failing.push("procedure");
-  if (!policy.passed) failing.push("policy");
+  // Top-level reason/technical_reason aren't asked of the LLM; synthesize from
+  // the sub-metrics for the UI. Include each failing rubric's own reason (and
+  // procedure's missed steps) — a bare "failed on: procedure" gives the reader
+  // nothing to act on even though the judge explained itself in detail.
+  const failing: Array<{ part: string; detail: string }> = [];
+  if (!objective.achieved) failing.push({ part: "objective", detail: objective.reason });
+  if (!procedure.passed) {
+    const missed = raw.procedure_compliance.missed_steps
+      .filter((s) => (s.severity ?? "").toLowerCase() === "critical")
+      .map((s) => s.step || s.details)
+      .filter(Boolean)
+      .join("; ");
+    const detail = [procedure.reason, missed ? `Missed: ${missed}` : ""].filter(Boolean).join(" ");
+    failing.push({ part: "procedure", detail });
+  }
+  if (!policy.passed) failing.push({ part: "policy", detail: policy.reason });
+  const cap = (s: string) => `${s[0]!.toUpperCase()}${s.slice(1)}`;
   const reason = adherence_passed
     ? "Instructions followed across objective, procedure, and policy."
-    : `Adherence failed on: ${failing.join(", ")}.`;
+    : `Adherence failed on: ${failing.map((f) => f.part).join(", ")}.${failing
+        .filter((f) => f.detail)
+        .map((f) => ` ${cap(f.part)}: ${f.detail}`)
+        .join("")}`;
   const technical_reason = [objective.technical_reason, procedure.technical_reason, interaction.technical_reason, policy.technical_reason]
     .filter(Boolean)
     .join(" | ");

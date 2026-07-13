@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { jsonbParam } from "../jsonb-param.js";
 import type { AlertRuleCreate, AlertRulePatch } from "./schema.js";
 
 export interface AlertRuleRow {
@@ -61,7 +62,7 @@ export async function listAlertRules(
   const enabled = filters.enabled ?? null;
   const rows = await sql`
     SELECT *, COUNT(*) OVER()::int AS _total
-    FROM alert_rules
+    FROM ao_alert_rules
     WHERE (${agentId}::text IS NULL OR agent_id = ${agentId})
       AND (${accountId}::text IS NULL OR account_id = ${accountId})
       AND (${enabled}::boolean IS NULL OR enabled = ${enabled})
@@ -73,13 +74,13 @@ export async function listAlertRules(
 }
 
 export async function getAlertRule(id: string): Promise<AlertRuleRow | null> {
-  const rows = await sql`SELECT * FROM alert_rules WHERE id = ${id}`;
+  const rows = await sql`SELECT * FROM ao_alert_rules WHERE id = ${id}`;
   return rows[0] ? mapRule(rows[0]) : null;
 }
 
 export async function insertAlertRule(input: AlertRuleCreate): Promise<AlertRuleRow> {
   const rows = await sql`
-    INSERT INTO alert_rules (
+    INSERT INTO ao_alert_rules (
       name, enabled, account_id, agent_id, metric, judge_name,
       threshold_value, min_samples,
       window_minutes, webhook_url, http_method, secret, headers
@@ -89,7 +90,7 @@ export async function insertAlertRule(input: AlertRuleCreate): Promise<AlertRule
       ${input.threshold_value}, ${input.min_samples},
       ${input.window_minutes}, ${input.webhook_url}, ${input.http_method},
       ${input.secret ?? null},
-      ${input.headers ?? null}::jsonb
+      ${jsonbParam(input.headers ?? null)}::text::jsonb
     )
     RETURNING *
   `;
@@ -107,7 +108,7 @@ export async function updateAlertRule(id: string, patch: AlertRulePatch): Promis
     ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
   };
   const rows = await sql`
-    UPDATE alert_rules SET
+    UPDATE ao_alert_rules SET
       name = ${merged.name}, enabled = ${merged.enabled},
       account_id = ${merged.account_id}, agent_id = ${merged.agent_id},
       metric = ${merged.metric}, judge_name = ${merged.judge_name},
@@ -115,7 +116,7 @@ export async function updateAlertRule(id: string, patch: AlertRulePatch): Promis
       min_samples = ${merged.min_samples}, window_minutes = ${merged.window_minutes},
       webhook_url = ${merged.webhook_url}, http_method = ${merged.http_method},
       secret = ${merged.secret},
-      headers = ${merged.headers ?? null}::jsonb,
+      headers = ${jsonbParam(merged.headers ?? null)}::text::jsonb,
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING *
@@ -124,7 +125,7 @@ export async function updateAlertRule(id: string, patch: AlertRulePatch): Promis
 }
 
 export async function deleteAlertRule(id: string): Promise<boolean> {
-  const rows = await sql`DELETE FROM alert_rules WHERE id = ${id} RETURNING id`;
+  const rows = await sql`DELETE FROM ao_alert_rules WHERE id = ${id} RETURNING id`;
   return rows.length > 0;
 }
 
@@ -160,7 +161,7 @@ export async function listFirings(
 ): Promise<{ firings: AlertFiringRow[]; totalCount: number }> {
   const rows = await sql`
     SELECT *, COUNT(*) OVER()::int AS _total
-    FROM alert_firings
+    FROM ao_alert_firings
     WHERE rule_id = ${ruleId}
     ORDER BY created_at DESC
     LIMIT ${limit} OFFSET ${offset}
@@ -196,15 +197,15 @@ export async function claimDueFirings(limit = 50): Promise<DueDelivery[]> {
   // the same firing. markDelivered/markRetry/markFailed overwrite the lease.
   const rows = await sql`
     WITH due AS (
-      SELECT id FROM alert_firings
+      SELECT id FROM ao_alert_firings
       WHERE status = 'pending' AND next_attempt_at <= NOW()
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )
-    UPDATE alert_firings f
+    UPDATE ao_alert_firings f
     SET next_attempt_at = NOW() + ${CLAIM_LEASE}::interval, updated_at = NOW()
-    FROM due, alert_rules r
+    FROM due, ao_alert_rules r
     WHERE f.id = due.id AND r.id = f.rule_id
     RETURNING f.*,
               r.name AS rule_name, r.metric, r.judge_name,
@@ -220,7 +221,7 @@ export async function claimDueFirings(limit = 50): Promise<DueDelivery[]> {
 
 export async function markDelivered(id: string, responseStatus: number | null): Promise<void> {
   await sql`
-    UPDATE alert_firings SET
+    UPDATE ao_alert_firings SET
       status = 'delivered', response_status = ${responseStatus},
       attempt_count = attempt_count + 1,
       last_attempt_at = NOW(), last_error = NULL, updated_at = NOW()
@@ -235,7 +236,7 @@ export async function markRetry(
   responseStatus: number | null,
 ): Promise<void> {
   await sql`
-    UPDATE alert_firings SET
+    UPDATE ao_alert_firings SET
       attempt_count = attempt_count + 1,
       next_attempt_at = ${nextAttemptAt},
       last_attempt_at = NOW(),
@@ -250,7 +251,7 @@ export async function markFailed(
   responseStatus: number | null,
 ): Promise<void> {
   await sql`
-    UPDATE alert_firings SET
+    UPDATE ao_alert_firings SET
       status = 'failed',
       attempt_count = attempt_count + 1,
       last_attempt_at = NOW(),
@@ -276,7 +277,7 @@ export interface WebhookAttemptInput {
 
 export async function insertWebhookAttempt(input: WebhookAttemptInput): Promise<void> {
   await sql`
-    INSERT INTO alert_webhook_attempts (
+    INSERT INTO ao_alert_webhook_attempts (
       rule_id, firing_id, kind, url, http_method, attempt_number,
       ok, response_status, error, duration_ms
     ) VALUES (
@@ -309,8 +310,8 @@ export async function listWebhookAttempts(
 ): Promise<{ attempts: WebhookAttemptRow[]; totalCount: number }> {
   const rows = await sql`
     SELECT a.*, r.name AS rule_name, COUNT(*) OVER()::int AS _total
-    FROM alert_webhook_attempts a
-    LEFT JOIN alert_rules r ON r.id = a.rule_id
+    FROM ao_alert_webhook_attempts a
+    LEFT JOIN ao_alert_rules r ON r.id = a.rule_id
     WHERE (${ruleId}::uuid IS NULL OR a.rule_id = ${ruleId})
     ORDER BY a.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
@@ -341,7 +342,7 @@ export async function getWebhookStats(range = "7d"): Promise<{
       `SELECT COUNT(*)::int AS total_attempts,
               COUNT(*) FILTER (WHERE ok)::int AS accepted,
               AVG(duration_ms)::int AS avg_duration_ms
-       FROM alert_webhook_attempts
+       FROM ao_alert_webhook_attempts
        WHERE created_at >= NOW() - $1::interval`,
       [interval],
     ),
@@ -349,7 +350,7 @@ export async function getWebhookStats(range = "7d"): Promise<{
       `SELECT date_trunc($2, created_at) AS bucket_start,
               COUNT(*)::int AS attempts,
               COUNT(*) FILTER (WHERE ok)::int AS accepted
-       FROM alert_webhook_attempts
+       FROM ao_alert_webhook_attempts
        WHERE created_at >= NOW() - $1::interval
        GROUP BY date_trunc($2, created_at)
        ORDER BY bucket_start ASC`,
@@ -359,8 +360,8 @@ export async function getWebhookStats(range = "7d"): Promise<{
       `SELECT a.rule_id, r.name AS rule_name,
               COUNT(*)::int AS attempts,
               COUNT(*) FILTER (WHERE a.ok)::int AS accepted
-       FROM alert_webhook_attempts a
-       LEFT JOIN alert_rules r ON r.id = a.rule_id
+       FROM ao_alert_webhook_attempts a
+       LEFT JOIN ao_alert_rules r ON r.id = a.rule_id
        WHERE a.created_at >= NOW() - $1::interval
        GROUP BY a.rule_id, r.name
        ORDER BY attempts DESC

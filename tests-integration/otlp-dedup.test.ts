@@ -35,8 +35,8 @@ describeDb("OTLP redelivery dedup", () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM session_external_evals WHERE session_id LIKE ${RUN + "%"}`;
-    await sql`DELETE FROM agent_transport_sessions WHERE session_id LIKE ${RUN + "%"}`;
+    await sql`DELETE FROM ao_session_external_evals WHERE session_id LIKE ${RUN + "%"}`;
+    await sql`DELETE FROM ao_agent_transport_sessions WHERE session_id LIKE ${RUN + "%"}`;
   });
 
   test("a redelivered evaluation is inserted only once", async () => {
@@ -55,7 +55,7 @@ describeDb("OTLP redelivery dedup", () => {
     await insertLiveKitEvaluation(evalInput); // redelivery — identical payload
 
     const rows = await sql`
-      SELECT COUNT(*)::int AS n FROM session_external_evals
+      SELECT COUNT(*)::int AS n FROM ao_session_external_evals
       WHERE session_id = ${SESSION_ID} AND judge_name = 'task_completion'
     `;
     expect(rows[0].n).toBe(1);
@@ -67,7 +67,7 @@ describeDb("OTLP redelivery dedup", () => {
       raw: { name: "task_completion", verdict: "fail", reasoning: "regressed" },
     });
     const after = await sql`
-      SELECT COUNT(*)::int AS n FROM session_external_evals
+      SELECT COUNT(*)::int AS n FROM ao_session_external_evals
       WHERE session_id = ${SESSION_ID} AND judge_name = 'task_completion'
     `;
     expect(after[0].n).toBe(2);
@@ -75,7 +75,7 @@ describeDb("OTLP redelivery dedup", () => {
 
   const readRawReport = async () => {
     const [row] = await sql`
-      SELECT raw_report FROM agent_transport_sessions WHERE session_id = ${SESSION_ID}
+      SELECT raw_report FROM ao_agent_transport_sessions WHERE session_id = ${SESSION_ID}
     `;
     return typeof row.raw_report === "string" ? JSON.parse(row.raw_report) : row.raw_report;
   };

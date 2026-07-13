@@ -1,4 +1,5 @@
 import { sql } from "../db.js";
+import { jsonbParam } from "../jsonb-param.js";
 import {
   ASSISTANT_MSG_WHERE,
   CHAT_HISTORY_ELEMS,
@@ -19,7 +20,7 @@ import type { AlertMetric } from "./schema.js";
 // the firing transaction.
 //
 // Events are scoped to a rule's agent/account via a LEFT JOIN to
-// agent_transport_sessions — evals/outcomes don't carry agent_id
+// ao_agent_transport_sessions — evals/outcomes don't carry agent_id
 // themselves. Evals can arrive before their session row exists; windowed
 // re-evaluation is self-healing for that race (the next tick sees the
 // joined row).
@@ -83,8 +84,8 @@ async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult>
             COUNT(*) FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'fail')::int AS matched,
             (array_agg(DISTINCT e.session_id)
                FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'fail'))[1:20] AS session_ids
-     FROM session_external_evals e
-     LEFT JOIN agent_transport_sessions s ON s.session_id = e.session_id
+     FROM ao_session_external_evals e
+     LEFT JOIN ao_agent_transport_sessions s ON s.session_id = e.session_id
      WHERE e.created_at > NOW() - ${WINDOW_SQL}
        AND ($2::text IS NULL OR e.judge_name = $2)
        AND ($3::text IS NULL OR s.agent_id = $3)
@@ -103,8 +104,8 @@ async function evaluateOutcomeFailRate(rule: RuleToEvaluate): Promise<WindowResu
             COUNT(*) FILTER (WHERE regexp_replace(LOWER(o.outcome), '^lk\\.', '') IN ('fail', 'failure'))::int AS matched,
             (array_agg(DISTINCT o.session_id)
                FILTER (WHERE regexp_replace(LOWER(o.outcome), '^lk\\.', '') IN ('fail', 'failure')))[1:20] AS session_ids
-     FROM session_outcomes o
-     LEFT JOIN agent_transport_sessions s ON s.session_id = o.session_id
+     FROM ao_session_outcomes o
+     LEFT JOIN ao_agent_transport_sessions s ON s.session_id = o.session_id
      WHERE o.updated_at > NOW() - ${WINDOW_SQL}
        AND ($2::text IS NULL OR s.agent_id = $2)
        AND ($3::text IS NULL OR s.account_id = $3)`,
@@ -118,7 +119,7 @@ async function evaluateInterruptionRate(rule: RuleToEvaluate): Promise<WindowRes
   const rows = await runMetricQuery(
     `WITH win AS (
        SELECT session_id, chat_history
-       FROM agent_transport_sessions
+       FROM ao_agent_transport_sessions
        WHERE ended_at > NOW() - ${WINDOW_SQL}
          AND ($2::text IS NULL OR agent_id = $2)
          AND ($3::text IS NULL OR account_id = $3)
@@ -149,7 +150,7 @@ async function evaluateLatencyP95(rule: RuleToEvaluate): Promise<WindowResult> {
   const rows = await runMetricQuery(
     `WITH win AS (
        SELECT session_id, session_metrics
-       FROM agent_transport_sessions
+       FROM ao_agent_transport_sessions
        WHERE ended_at > NOW() - ${WINDOW_SQL}
          AND ($2::text IS NULL OR agent_id = $2)
          AND ($3::text IS NULL OR account_id = $3)
@@ -197,7 +198,7 @@ function evaluateMetric(rule: RuleToEvaluate): Promise<WindowResult> {
 }
 
 /**
- * Evaluate every enabled, non-suppressed rule; insert an alert_firings row
+ * Evaluate every enabled, non-suppressed rule; insert an ao_alert_firings row
  * (and stamp last_fired_at) for each rule whose metric exceeds its
  * threshold. Returns the number of new firings. Per-rule failures are
  * isolated — one bad rule never blocks the rest.
@@ -206,7 +207,7 @@ export async function evaluateRules(): Promise<number> {
   const rules: RuleToEvaluate[] = await sql`
     SELECT id, metric, judge_name, threshold_value, min_samples,
            window_minutes, agent_id, account_id
-    FROM alert_rules
+    FROM ao_alert_rules
     WHERE enabled
       AND (last_fired_at IS NULL
            OR last_fired_at <= NOW() - (window_minutes || ' minutes')::interval)
@@ -226,7 +227,7 @@ export async function evaluateRules(): Promise<number> {
         // the conditional UPDATE succeeds for exactly one evaluator per
         // window, so concurrent sweepers can't double-fire a rule.
         const claim = await tx`
-          UPDATE alert_rules SET last_fired_at = ${now}, updated_at = NOW()
+          UPDATE ao_alert_rules SET last_fired_at = ${now}, updated_at = NOW()
           WHERE id = ${rule.id}
             AND (last_fired_at IS NULL
                  OR last_fired_at <= NOW() - (window_minutes || ' minutes')::interval)
@@ -235,13 +236,13 @@ export async function evaluateRules(): Promise<number> {
         if (claim.length === 0) return;
         claimed = true;
         await tx`
-          INSERT INTO alert_firings (
+          INSERT INTO ao_alert_firings (
             rule_id, window_start, window_end, matched_count, total_count,
             observed_value, sample_session_ids
           ) VALUES (
             ${rule.id}, ${windowStart}, ${now}, ${result.matched_count},
             ${result.total_count}, ${result.observed_value},
-            ${result.sample_session_ids ?? []}::jsonb
+            ${jsonbParam(result.sample_session_ids ?? [])}::text::jsonb
           )
         `;
       });
