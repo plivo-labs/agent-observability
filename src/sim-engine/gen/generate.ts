@@ -52,11 +52,12 @@ export interface GenMetadata {
   /** The accepted stress allocation stopped short of the request even after pool
    *  expansion AND a replan — planned_count < requested is the flow's (well, the
    *  final plan's) real capacity, not a failure. Always false for smoke. */
-  capacity_limited?: boolean;
+  capacity_limited: boolean;
   /** Exact-count top-up wave (stress only): fresh slots planned for the shortfall
-   *  and how many of them saved. 0/0 when the first wave met the request. */
-  topup_planned?: number;
-  topup_saved?: number;
+   *  and how many of them saved. Always emitted — 0/0 when the first wave met the
+   *  request (and always in smoke, which has no top-up). */
+  topup_planned: number;
+  topup_saved: number;
   planner_usage: LlmUsage | null;
   writer_usages: LlmUsage[];
   /** Smoke-mode only (aiassist metadata parity, minus its unconsumed
@@ -234,10 +235,12 @@ async function runChunkWithRetry(
     ? pending.filter((slot) => (cleanOmissions.get(slot.slot_id) ?? 0) >= chunkAttemptBudget)
     : [];
   const declinedIds = new Set(declinedSlots.map((s) => s.slot_id));
-  const stillFailed: string[] = declinedSlots.map((s) => s.slot_id);
+  // Accumulates BOTH failure kinds: policy-skipped declines (seeded here) and
+  // fallback-exhausted slots (pushed after the fallback below).
+  const unsatisfiedSlotIds: string[] = [...declinedIds];
   if (declinedSlots.length > 0) {
     console.log(
-      `[sim-gen] writer chunk ${base.chunkIndex}: ${declinedSlots.length} slot(s) declined by ${chunkAttemptBudget} clean attempts — skipping solo fallback (${stillFailed.join(",")})`,
+      `[sim-gen] writer chunk ${base.chunkIndex}: ${declinedSlots.length} slot(s) declined by ${chunkAttemptBudget} clean attempts — skipping solo fallback (${unsatisfiedSlotIds.join(",")})`,
     );
   }
 
@@ -271,9 +274,9 @@ async function runChunkWithRetry(
   );
   for (const r of fallbackResults) {
     if (r.scenarios) scenarios.push(...r.scenarios);
-    else if (!consumed.has(r.slot.slot_id)) stillFailed.push(r.slot.slot_id);
+    else if (!consumed.has(r.slot.slot_id)) unsatisfiedSlotIds.push(r.slot.slot_id);
   }
-  return { scenarios, failedSlotIds: stillFailed, usages, incrementalDisabled };
+  return { scenarios, failedSlotIds: unsatisfiedSlotIds, usages, incrementalDisabled };
 }
 
 export async function* generateScenarios(input: GenerateInput): AsyncGenerator<GenEvent> {
@@ -422,8 +425,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // ── WRITER (parallel chunks + retries, in WAVES) ────────────────────────────────
   const writerStart = Date.now();
   input.signal?.throwIfAborted();
-  const chunkSize = WRITER_CHUNK_SIZE;
-  yield { type: "writing_started", planned_count: slots.length, chunk_count: Math.ceil(slots.length / chunkSize), chunk_size: chunkSize };
+  yield { type: "writing_started", planned_count: slots.length, chunk_count: Math.ceil(slots.length / WRITER_CHUNK_SIZE), chunk_size: WRITER_CHUNK_SIZE };
 
   // Chunks report through a single queue in COMPLETION order — the client sees each
   // chunk's scenarios the moment they exist (mid-stream when incremental, at chunk
@@ -453,7 +455,8 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const perChunkSaved = new Map<number, number>();
   let saved = 0;
   let deduped = 0;
-  let totalChunks = Math.ceil(slots.length / chunkSize);
+  // Cumulative chunk count across waves — owned by runWave (set at each wave start).
+  let totalChunks = 0;
   const admit = (scenario: RuntimeScenario, chunkIndex: number): boolean => {
     // Smoke units under one capability legitimately share all 8 coverage axes (same
     // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
@@ -474,7 +477,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // shared ledger. Used once for the planned slots and (optionally) once more for
   // the exact-count top-up — identical machinery, different slots.
   const runWave = async function* (waveSlots: Slot[], chunkBase: number): AsyncGenerator<GenEvent> {
-    const waveChunks = chunk(waveSlots, chunkSize);
+    const waveChunks = chunk(waveSlots, WRITER_CHUNK_SIZE);
     totalChunks = chunkBase + waveChunks.length;
     const queue = new AsyncQueue<WriterQueueEvent>();
     for (let i = 0; i < waveChunks.length; i++) {
@@ -558,8 +561,8 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         yield {
           type: "writing_started",
           planned_count: slots.length + topupPlanned,
-          chunk_count: totalChunks + Math.ceil(topupPlanned / chunkSize),
-          chunk_size: chunkSize,
+          chunk_count: totalChunks + Math.ceil(topupPlanned / WRITER_CHUNK_SIZE),
+          chunk_size: WRITER_CHUNK_SIZE,
         };
         yield* runWave(topup.slots, totalChunks);
         topupSaved = saved - savedBefore;

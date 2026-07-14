@@ -473,9 +473,11 @@ export function allocateScenarioSlots(
   // that predates this ladder, and such flows never exhaust their pool.
   let candidatePool = candidates;
   let poolExpanded = false;
-  let lastEnumN = requestedCount;
-  const enumBudgets = [2, 5].map((m) => Math.min(500, Math.max(100, requestedCount * m)));
-  let expansionStep = 0;
+  // Ascending, deduped, strictly greater than the base enumeration (requestedCount) —
+  // every entry is a genuine expansion, so no skip guard is needed in the loop.
+  const enumBudgets = [...new Set([2, 5].map((m) => Math.min(500, Math.max(100, requestedCount * m))))].filter(
+    (b) => b > requestedCount,
+  );
 
   while (selected.length < requestedCount) {
     let feasible = candidatePool.filter(
@@ -491,12 +493,10 @@ export function allocateScenarioSlots(
       feasible = candidatePool.filter((c) => !selectedKeys.has(c.coverage_key));
       if (feasible.length > 0) quotaRelaxed = true;
     }
-    while (feasible.length === 0 && expansionStep < enumBudgets.length) {
+    while (feasible.length === 0 && enumBudgets.length > 0) {
       // Unique candidates exhausted at the current enumeration budget — expand the
       // pool and keep filling toward the exact requested count.
-      const budget = enumBudgets[expansionStep++];
-      if (budget <= lastEnumN) continue;
-      lastEnumN = budget;
+      const budget = enumBudgets.shift()!;
       candidatePool = buildCandidates(
         capabilities,
         allocateCapabilityQuotas(capabilities, budget, existing),
@@ -576,12 +576,16 @@ export function allocateScenarioSlots(
     });
 
   const capacityLimited = selected.length < requestedCount;
-  const audit = auditAllocation(selected, requestedCount, typeQuotas, capabilities, {
-    capacityLimited,
-    quotaRelaxed,
-    poolExpanded,
-    coreCoverageExempt: opts.coreCoverageExempt,
-  });
+  // pool_expanded is observability, not a validity input — the audit takes exactly
+  // its validity inputs and the selection loop stamps its own telemetry.
+  const audit: AuditResult = {
+    ...auditAllocation(selected, requestedCount, typeQuotas, capabilities, {
+      capacityLimited,
+      quotaRelaxed,
+      coreCoverageExempt: opts.coreCoverageExempt,
+    }),
+    pool_expanded: poolExpanded,
+  };
   if (!audit.valid) throw new Error(`Allocator audit failed: ${JSON.stringify(audit)}`);
 
   return {
@@ -623,11 +627,10 @@ export function auditAllocation(
   requestedCount: number,
   typeQuotas: ScenarioTypeQuotas,
   capabilities: Capability[],
-  flags: { capacityLimited?: boolean; quotaRelaxed?: boolean; poolExpanded?: boolean; coreCoverageExempt?: boolean } = {},
-): AuditResult {
+  flags: { capacityLimited?: boolean; quotaRelaxed?: boolean; coreCoverageExempt?: boolean } = {},
+): Omit<AuditResult, "pool_expanded"> {
   const capacityLimited = flags.capacityLimited ?? false;
   const quotaRelaxed = flags.quotaRelaxed ?? false;
-  const poolExpanded = flags.poolExpanded ?? false;
   const invalidComboIds: AuditResult["invalid_combo_ids"] = [];
   const invalidRuntimePairs: AuditResult["invalid_pattern_runtime_pairs"] = [];
   const invalidScenarioTypeMockPairs: string[] = [];
@@ -689,7 +692,6 @@ export function auditAllocation(
     actual_slots: slots.length,
     capacity_limited: capacityLimited,
     quota_relaxed: quotaRelaxed,
-    pool_expanded: poolExpanded,
     scenario_type_counts: scenarioTypeCounts,
     expected_scenario_type_counts: typeQuotas,
     invalid_combo_ids: invalidComboIds,
