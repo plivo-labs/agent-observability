@@ -61,7 +61,14 @@ export const envSchema = z.object({
   // into status="incomplete" reason="max_output_tokens" — deterministically, so
   // all retries die the same way and the session lands status='error'
   // (prod ap-south-1, 2026-07-14). 0 restores the bare parity caps.
-  JUDGE_REASONING_HEADROOM_TOKENS: z.coerce.number().int().nonnegative().default(10_000),
+  //
+  // Sized against this repo's own reasoning-model precedent: the sim writer and
+  // user-simulator run UNCAPPED (maxTokens: null) and PLANNER_MAX_OUTPUT_TOKENS
+  // is 24000 — all on the same model class + Responses API. 25000 puts every
+  // judge (parity 1500-5000 → 26500-30000 total) clear of that bar. This is a
+  // CEILING, not a reservation: unused tokens cost nothing, so over-granting is
+  // ~free while under-granting silently loses the whole session's evals.
+  JUDGE_REASONING_HEADROOM_TOKENS: z.coerce.number().int().nonnegative().default(25_000),
   // Max sessions claimed per poll tick (bounds one sweep's work).
   EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().default(20),
   // Poll interval (ms) between eval sweeps.
