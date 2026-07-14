@@ -54,6 +54,14 @@ export const envSchema = z.object({
   // Global cap on simultaneous LLM judge calls across ALL sessions — the real
   // throughput ceiling. Raise this TOGETHER with the session/kick caps.
   EVAL_MAX_CONCURRENT_JUDGE_CALLS: z.coerce.number().int().positive().default(10),
+  // Extra max_output_tokens granted to every judge call ON TOP of its per-judge
+  // parity cap. The parity caps (1500-5000) were sized for non-reasoning models
+  // where max_tokens = visible output only; gpt-5.x on the Responses API counts
+  // invisible reasoning tokens against the same budget, so long sessions starve
+  // into status="incomplete" reason="max_output_tokens" — deterministically, so
+  // all retries die the same way and the session lands status='error'
+  // (prod ap-south-1, 2026-07-14). 0 restores the bare parity caps.
+  JUDGE_REASONING_HEADROOM_TOKENS: z.coerce.number().int().nonnegative().default(10_000),
   // Max sessions claimed per poll tick (bounds one sweep's work).
   EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().default(20),
   // Poll interval (ms) between eval sweeps.

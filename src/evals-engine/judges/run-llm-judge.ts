@@ -81,7 +81,14 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       role: "judge",
       system: args.system + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE,
       prompt: typeof args.input === "string" ? args.input : JSON.stringify(args.input),
-      maxTokens: args.maxTokens,
+      // The per-judge caps are reference-engine parity numbers sized for visible
+      // output only. Judge models are reasoning models (gpt-5.x) whose invisible
+      // reasoning tokens count against max_output_tokens on the Responses API, so
+      // the bare cap starves long sessions into status="incomplete"
+      // reason="max_output_tokens" on every retry (terminal eval_error). The
+      // headroom budgets for that reasoning spend; strict json_schema keeps the
+      // visible output near the parity size regardless.
+      maxTokens: args.maxTokens + (config.JUDGE_REASONING_HEADROOM_TOKENS ?? 10_000),
       // No `temperature`: judge models are reasoning models (gpt-5.x) and the prod
       // Vibe gateway hard-400s the parameter ("Unsupported parameter: 'temperature'",
       // 2026-07-13 — every prod sim eval failed on it). Dev's deployment merely
