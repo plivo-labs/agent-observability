@@ -10,17 +10,11 @@ const { normalizeFlow } = await import("../src/simulation/flow/flow-normalize.js
 const realShape = (await import("./fixtures/flow-real-shape.json")).default;
 import type { GenEvent } from "../src/sim-engine/gen/generate.js";
 import type { ProviderCompleteArgs } from "../src/sim-engine/../llm/types.js";
+// Static import is hoisted above the mock.module call, but the fixture is
+// runtime-inert (type-only imports + literals) so the config mock is unaffected.
+import { PLANNER_JSON } from "./fixtures/planner.js";
 
 const canonical = normalizeFlow(realShape) as unknown as Record<string, any>;
-
-const PLANNER_JSON = JSON.stringify({
-  agent_flow_description: "Refund agent.",
-  capabilities: [
-    { capability_id: "handle_refund", name: "Handle refund", description: "d", priority: "core", risk: "high", source_signals: ["s"], success_criteria: ["sc"], route_anchors: [{ source_node_id: "n-greet", intent_name: "wants_refund", target_node_type: "branch_v2", support: "fully_executable" }], action_anchors: [], variable_anchors: ["order_id"], recommended_conversation_patterns: [], boundary_patterns: [] },
-    { capability_id: "handle_status", name: "Handle status", description: "d", priority: "core", risk: "medium", source_signals: ["s"], success_criteria: ["sc"], route_anchors: [{ source_node_id: "n-greet", intent_name: "check_status", target_node_type: "ai_agent_v2", support: "fully_executable" }], action_anchors: [], variable_anchors: [], recommended_conversation_patterns: [], boundary_patterns: [] },
-  ],
-  planner_rationale: "r",
-});
 
 // Adaptive writer: returns one valid scenario per requested slot_id.
 const writerResponder = (args: ProviderCompleteArgs): string => {

@@ -14,45 +14,9 @@ import {
   modeQuotasSmoke,
   auditSmokeAllocation,
 } from "../src/sim-engine/gen/smoke-allocator.js";
-import type { PlannerWithInventory, Slot } from "../src/sim-engine/gen/types.js";
-import type { Capability, SmokeUnit } from "../src/sim-engine/gen/schemas.js";
-
-function cap(id: string, risk: "high" | "medium" | "low", overrides: Partial<Capability> = {}): Capability {
-  return {
-    capability_id: id,
-    name: id.replace(/_/g, " "),
-    description: "d",
-    priority: "core",
-    risk,
-    source_signals: ["s"],
-    success_criteria: ["sc"],
-    route_anchors: [{ source_node_id: "n-greet", intent_name: id, target_node_type: "branch_v2", support: "fully_executable" }],
-    action_anchors: [],
-    variable_anchors: ["order_id"],
-    recommended_conversation_patterns: [],
-    boundary_patterns: [],
-    smoke_units: [],
-    ...overrides,
-  } as Capability;
-}
-
-function makePlanner(caps: Capability[]): PlannerWithInventory {
-  return {
-    agent_flow_description: "x",
-    capabilities: caps,
-    blocked_or_deferred_outcomes: [],
-    planner_rationale: "r",
-    mechanical_inventory: {
-      nodes: [],
-      routes: [],
-      variables: [],
-      actions: [],
-      languages: ["en-US"],
-      start_node_param_keys: [],
-      is_outbound_call: false,
-    },
-  } as PlannerWithInventory;
-}
+import type { Slot } from "../src/sim-engine/gen/types.js";
+import type { SmokeUnit } from "../src/sim-engine/gen/schemas.js";
+import { cap, makePlanner } from "./fixtures/planner.js";
 
 describe("scenarioTypeQuotas — hand-computed", () => {
   test("matches aiassist for representative n", () => {
