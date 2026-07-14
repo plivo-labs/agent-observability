@@ -94,6 +94,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
         phloUuid: "agent-1",
         maxScenarios: 12,
         model: "m",
+        exactCountTopUp: false, // isolate wave-1 failure semantics from the top-up
         plannerProvider: new MockLLM([PLANNER_JSON]),
         writerProvider: new MockLLM([throwingWriter]),
       }),
@@ -257,15 +258,16 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
   });
 
   test("fallback fan-out is bounded: ≤ WRITER_FALLBACK_CONCURRENCY single-slot calls in flight", async () => {
-    // Chunk-level calls return nothing → EVERY slot lands in the fallback. This path
-    // fires exactly when the provider is degraded, so the burst must stay bounded —
-    // but still parallel (the P3 win the bound must not revert).
+    // Chunk-level calls THROW (transport-degraded provider) → EVERY slot lands in
+    // the fallback. Thrown attempts (unlike clean omissions, which are now
+    // model-declined and skip the fallback) keep the full rescue path. The burst
+    // must stay bounded — but still parallel (the P3 win the bound must not revert).
     const { WRITER_FALLBACK_CONCURRENCY } = await import("../src/sim-engine/gen/combos.js");
     let inFlight = 0;
     let peak = 0;
     const degraded = async (args: ProviderCompleteArgs): Promise<string> => {
       const ids = JSON.parse(args.user).expected_slot_ids as string[];
-      if (ids.length > 1) return JSON.stringify({ agent_flow_description: "x", scenario_items: [] });
+      if (ids.length > 1) throw new Error("degraded provider: chunk call failed");
       inFlight += 1;
       peak = Math.max(peak, inFlight);
       await new Promise((r) => setTimeout(r, 10)); // hold the slot so overlap is observable
@@ -592,4 +594,88 @@ describe("generateScenarios — G5 all-failed / partial", () => {
     expect(meta.metadata.saved_count).toBeLessThan(meta.metadata.planned_count);
     expect(meta.metadata.partial_success).toBe(true);
   });
+});
+
+describe("writer retry economy — model-declined slots skip the solo fallback", () => {
+  test("a slot omitted by every CLEAN chunk attempt is failed without solo-fallback calls", async () => {
+    // The provider answers healthily but never writes S004 (the low-capability-flow
+    // decline pattern, 2026-07-14 prod: 18/40 slots burned 2 solo calls each for
+    // zero yield). Expected calls: attempt 1 (4 slots) + attempt 2 (retry with the
+    // 1 remaining slot) = exactly 2 — and NO solo fallback after the clean decline.
+    const declineS004 = (args: ProviderCompleteArgs): string => {
+      const full = JSON.parse(writerResponder(args));
+      full.scenario_items = full.scenario_items.filter((it: any) => it.slot_id !== "S004");
+      return JSON.stringify(full);
+    };
+    const writerLlm = new MockLLM([declineS004]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        exactCountTopUp: false, // isolate the decline economy from the top-up wave
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(3);
+    expect(meta.failed_count).toBe(1);
+    expect(meta.failed_slot_ids).toEqual(["S004"]);
+    // Ledger invariant holds through the declined path too.
+    expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
+    // 2 chunk attempts total, zero solo-fallback calls (pre-fix: 4 calls).
+    expect(writerLlm.calls.length).toBe(2);
+  });
+
+  test("slots missing because an attempt THREW keep the full solo fallback", async () => {
+    // First chunk attempt dies mid-flight (transport), second attempt also thrown:
+    // no CLEAN omission was ever observed, so every slot keeps the rescue path and
+    // the run still completes fully via solo calls.
+    const flaky = (args: ProviderCompleteArgs): string => {
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      if (ids.length > 1) throw new Error("transport blip");
+      return writerResponder(args);
+    };
+    const writerLlm = new MockLLM([flaky]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.failed_count).toBe(0); // every slot rescued by the fallback
+    expect(meta.saved_count + meta.deduped_count).toBe(meta.planned_count);
+  });
+});
+
+
+describe("exact-count top-up", () => {
+  test("ONE top-up wave replaces declined slots with fresh coverage and reaches the requested count", async () => {
+    // Wave 1: the model declines S004 on every clean attempt (fails after the decline
+    // economy skips its solo fallback). Top-up: 1 fresh slot (new coverage_key, id
+    // continuing after the planned wave) — the mock writes it → exact count.
+    const declineS004 = (args: ProviderCompleteArgs): string => {
+      const full = JSON.parse(writerResponder(args));
+      full.scenario_items = full.scenario_items.filter((it: any) => it.slot_id !== "S004");
+      return JSON.stringify(full);
+    };
+    const writerLlm = new MockLLM([declineS004]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(4); // exact count reached
+    expect(meta.topup_planned).toBe(1);
+    expect(meta.topup_saved).toBe(1);
+    expect(meta.failed_count).toBe(1); // S004 stays honestly failed
+    expect(meta.planned_count).toBe(5); // 4 first-wave + 1 top-up
+    // Ledger invariant across waves: planned_total = saved + failed + deduped.
+    expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
+    // Every admitted scenario's coverage_key is unique across waves.
+    const keys = events.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.coverage_key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
 });

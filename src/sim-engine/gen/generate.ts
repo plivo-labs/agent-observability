@@ -46,6 +46,10 @@ export interface GenMetadata {
    *  ledger self-consistent: planned = saved + failed + deduped. */
   deduped_count: number;
   partial_success: boolean;
+  /** Exact-count top-up wave (stress only): fresh slots planned for the shortfall
+   *  and how many of them saved. 0/0 when the first wave met the request. */
+  topup_planned?: number;
+  topup_saved?: number;
   planner_usage: LlmUsage | null;
   writer_usages: LlmUsage[];
   /** Smoke-mode only (aiassist metadata parity, minus its unconsumed
@@ -95,6 +99,9 @@ export interface GenerateInput {
    *  callers and tests). The route wires SIM_GEN_PLANNER_CACHE_TTL_MS. A hit reuses
    *  the plan of a byte-identical prior request (see planner-cache.ts). */
   plannerCacheTtlMs?: number;
+  /** ONE bounded top-up wave when the first wave saves fewer than requested
+   *  (stress mode only; route wires SIM_GEN_TOPUP, default true). */
+  exactCountTopUp?: boolean;
   /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
    *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */
   signal?: AbortSignal;
@@ -164,6 +171,10 @@ async function runChunkWithRetry(
     );
   };
   let remaining = slots;
+  // Clean (non-throwing) chunk attempts that OMITTED a slot: the model answered
+  // healthily and still declined to write it. Distinct from transport/parse
+  // failures — those don't increment this and keep the full fallback budget.
+  const cleanOmissions = new Map<string, number>();
 
   for (let attempt = 1; attempt <= WRITER_CHUNK_RETRIES + 1 && remaining.length > 0; attempt++) {
     remaining = remaining.filter((s) => !consumed.has(s.slot_id));
@@ -175,10 +186,30 @@ async function runChunkWithRetry(
       incrementalDisabled ||= res.incrementalDisabled;
       const got = new Set(res.scenarios.map((s) => s.eval_metadata?.slot_id));
       remaining = remaining.filter((s) => !got.has(s.slot_id));
+      for (const s of remaining) {
+        if (!consumed.has(s.slot_id)) cleanOmissions.set(s.slot_id, (cleanOmissions.get(s.slot_id) ?? 0) + 1);
+      }
     } catch (err) {
       if (base.signal?.aborted) throw err; // abort is the ONLY rejection that escapes
       logAttemptFailure("chunk", attempt, err);
     }
+  }
+
+  // Retry economy: a slot omitted by EVERY chunk attempt while each attempt
+  // returned cleanly is model-declined — the model has repeatedly judged it
+  // indistinguishable from its siblings (dominant on low-capability flows:
+  // 2026-07-14 prod, 18/40 slots burned the full solo ladder for zero yield,
+  // ~half the writer wall-clock). Solo-retrying it re-asks the same question;
+  // skip the fallback and mark it failed now. Slots missing because an attempt
+  // THREW keep the full fallback — that's the transport-failure rescue path.
+  const chunkAttemptBudget = WRITER_CHUNK_RETRIES + 1;
+  const pending = remaining.filter((slot) => !consumed.has(slot.slot_id));
+  const declinedSlots = pending.filter((slot) => (cleanOmissions.get(slot.slot_id) ?? 0) >= chunkAttemptBudget);
+  const stillFailed: string[] = declinedSlots.map((s) => s.slot_id);
+  if (declinedSlots.length > 0) {
+    console.log(
+      `[sim-gen] writer chunk ${base.chunkIndex}: ${declinedSlots.length} slot(s) declined by ${chunkAttemptBudget} clean attempts — skipping solo fallback (${stillFailed.join(",")})`,
+    );
   }
 
   // Per-slot fallback: retry each still-missing slot on its own. Slots are
@@ -188,9 +219,8 @@ async function runChunkWithRetry(
   // slot's call on the struggling endpoint at once (retry amplification). Each
   // slot's attempts stay serial (same attempt budget as before), and one slot's
   // hard failure burns only its own budget — siblings are unaffected.
-  const stillFailed: string[] = [];
   const fallbackResults = await mapPool(
-    remaining.filter((slot) => !consumed.has(slot.slot_id)),
+    pending.filter((slot) => (cleanOmissions.get(slot.slot_id) ?? 0) < chunkAttemptBudget),
     WRITER_FALLBACK_CONCURRENCY,
     async (slot) => {
       for (let attempt = 1; attempt <= WRITER_SLOT_RETRIES + 1; attempt++) {
@@ -342,16 +372,15 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   if (cacheKey) plannerCacheSet(cacheKey, planner);
   const allocationMs = Date.now() - allocationStart;
 
-  // ── WRITER (parallel chunks + retries) ─────────────────────────────────────────
+  // ── WRITER (parallel chunks + retries, in WAVES) ────────────────────────────────
   const writerStart = Date.now();
   input.signal?.throwIfAborted();
-  const chunks = chunk(slots, WRITER_CHUNK_SIZE);
-  yield { type: "writing_started", planned_count: slots.length, chunk_count: chunks.length, chunk_size: WRITER_CHUNK_SIZE };
+  const chunkSize = WRITER_CHUNK_SIZE;
+  yield { type: "writing_started", planned_count: slots.length, chunk_count: Math.ceil(slots.length / chunkSize), chunk_size: chunkSize };
 
   // Chunks report through a single queue in COMPLETION order — the client sees each
   // chunk's scenarios the moment they exist (mid-stream when incremental, at chunk
-  // settle otherwise) instead of waiting for the slowest chunk (the previous
-  // Promise.all gated ALL emission on the last chunk + its retries). ALL scenarios —
+  // settle otherwise) instead of waiting for the slowest chunk. ALL scenarios —
   // incremental and final-parse alike — ride the queue as `scenario` events, so the
   // consumer has exactly one emit path; `chunk_done` is purely terminal bookkeeping.
   // runChunkWithRetry never rejects except on caller abort (hard LLM failures degrade
@@ -361,42 +390,15 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     | { kind: "scenario"; chunkIndex: number; scenario: RuntimeScenario }
     | { kind: "chunk_done"; chunkIndex: number; failedSlotIds: string[]; usages: LlmUsage[]; incrementalDisabled: boolean }
     | { kind: "abort"; err: unknown };
-  const queue = new AsyncQueue<WriterQueueEvent>();
   // Incremental emission (kill-switch: SIM_GEN_INCREMENTAL / GenerateInput.incrementalEmit,
-  // default ON — it's an output-timing improvement with identical output, unlike the
-  // planner cache which holds cross-request state and is opt-in): each scenario surfaces
-  // the moment its item completes in the LLM token stream. With the switch off (or a
-  // provider without text deltas) nothing streams mid-chunk and behavior is
+  // default ON): each scenario surfaces the moment its item completes in the LLM token
+  // stream. With the switch off (or a provider without text deltas) behavior is
   // chunk-granular, exactly as before.
   const incremental = input.incrementalEmit ?? true;
-  for (let i = 0; i < chunks.length; i++) {
-    const c = chunks[i];
-    runChunkWithRetry(
-      { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
-      c,
-      incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: i, scenario }) : undefined,
-    ).then(
-      (result) => {
-        for (const scenario of result.scenarios) queue.push({ kind: "scenario", chunkIndex: i, scenario });
-        queue.push({ kind: "chunk_done", chunkIndex: i, failedSlotIds: result.failedSlotIds, usages: result.usages, incrementalDisabled: result.incrementalDisabled });
-      },
-      (err) => {
-        if (input.signal?.aborted) {
-          queue.push({ kind: "abort", err });
-          return;
-        }
-        // Unreachable by design (runChunkWithRetry only rethrows aborts) — kept so an
-        // unexpected bug degrades to a failed chunk instead of hanging the consumer.
-        console.error(`[sim-gen] writer chunk ${i} rejected unexpectedly (generation ${generationId}): ${(err as Error).message}`);
-        queue.push({ kind: "chunk_done", chunkIndex: i, failedSlotIds: c.map((s) => s.slot_id), usages: [], incrementalDisabled: false });
-      },
-    );
-  }
 
-  // Emit scenarios as they arrive (mid-stream when incremental, at chunk settle
-  // otherwise); dedup by smoke_unit_id (smoke) / coverage_key (stress). `admit` is
-  // the single ledger owner — every delivered scenario passes through it exactly
-  // once, keeping the invariant planned = saved + failed + deduped.
+  // Shared writer ledger across waves. `admit` is the single ledger owner — every
+  // delivered scenario passes through it exactly once, keeping the invariant
+  // planned_total = saved + failed + deduped across the first wave AND the top-up.
   const writerUsages: LlmUsage[] = [];
   const failedSlotIds: string[] = [];
   let incrementalDisabled = false;
@@ -404,6 +406,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const perChunkSaved = new Map<number, number>();
   let saved = 0;
   let deduped = 0;
+  let totalChunks = Math.ceil(slots.length / chunkSize);
   const admit = (scenario: RuntimeScenario, chunkIndex: number): boolean => {
     // Smoke units under one capability legitimately share all 8 coverage axes (same
     // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
@@ -419,26 +422,61 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     ttfsMs ??= Date.now() - genStart;
     return true;
   };
-  let remainingChunks = chunks.length;
-  while (remainingChunks > 0) {
-    const ev = await queue.pop();
-    if (ev.kind === "abort") throw ev.err;
-    if (ev.kind === "scenario") {
-      // Every scenario (mid-stream or final-parse) arrives here — `admit` is the
-      // single ledger owner by construction, and each slot flows through it once
-      // (the writer excludes incrementally-delivered slots from its final result).
-      if (admit(ev.scenario, ev.chunkIndex)) {
-        yield { type: "scenario", scenario: ev.scenario };
-        yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
-      }
-      continue;
+
+  // One writer wave: fire every chunk concurrently, drain the queue, update the
+  // shared ledger. Used once for the planned slots and (optionally) once more for
+  // the exact-count top-up — identical machinery, different slots.
+  const runWave = async function* (waveSlots: Slot[], chunkBase: number): AsyncGenerator<GenEvent> {
+    const waveChunks = chunk(waveSlots, chunkSize);
+    totalChunks = chunkBase + waveChunks.length;
+    const queue = new AsyncQueue<WriterQueueEvent>();
+    for (let i = 0; i < waveChunks.length; i++) {
+      const abs = chunkBase + i;
+      const c = waveChunks[i];
+      runChunkWithRetry(
+        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: abs, provider: input.writerProvider, signal: input.signal },
+        c,
+        incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: abs, scenario }) : undefined,
+      ).then(
+        (result) => {
+          for (const scenario of result.scenarios) queue.push({ kind: "scenario", chunkIndex: abs, scenario });
+          queue.push({ kind: "chunk_done", chunkIndex: abs, failedSlotIds: result.failedSlotIds, usages: result.usages, incrementalDisabled: result.incrementalDisabled });
+        },
+        (err) => {
+          if (input.signal?.aborted) {
+            queue.push({ kind: "abort", err });
+            return;
+          }
+          // Unreachable by design (runChunkWithRetry only rethrows aborts) — kept so an
+          // unexpected bug degrades to a failed chunk instead of hanging the consumer.
+          console.error(`[sim-gen] writer chunk ${abs} rejected unexpectedly (generation ${generationId}): ${(err as Error).message}`);
+          queue.push({ kind: "chunk_done", chunkIndex: abs, failedSlotIds: c.map((s) => s.slot_id), usages: [], incrementalDisabled: false });
+        },
+      );
     }
-    remainingChunks -= 1;
-    writerUsages.push(...ev.usages);
-    failedSlotIds.push(...ev.failedSlotIds);
-    incrementalDisabled ||= ev.incrementalDisabled;
-    yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
-  }
+    let remainingChunks = waveChunks.length;
+    while (remainingChunks > 0) {
+      const ev = await queue.pop();
+      if (ev.kind === "abort") throw ev.err;
+      if (ev.kind === "scenario") {
+        // Every scenario (mid-stream or final-parse) arrives here — `admit` is the
+        // single ledger owner by construction, and each slot flows through it once
+        // (the writer excludes incrementally-delivered slots from its final result).
+        if (admit(ev.scenario, ev.chunkIndex)) {
+          yield { type: "scenario", scenario: ev.scenario };
+          yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: totalChunks, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
+        }
+        continue;
+      }
+      remainingChunks -= 1;
+      writerUsages.push(...ev.usages);
+      failedSlotIds.push(...ev.failedSlotIds);
+      incrementalDisabled ||= ev.incrementalDisabled;
+      yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: totalChunks, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
+    }
+  };
+
+  yield* runWave(slots, 0);
 
   // All-failed: every planned slot failed and nothing was saved. Throw (the route's
   // catch emits an SSE `error` event) instead of a `completed`/metadata event — mirrors
@@ -449,21 +487,59 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     throw new Error("Scenario generation failed for all planned slots.");
   }
 
+  // ── EXACT-COUNT TOP-UP (stress only, ONE bounded wave) ─────────────────────────
+  // When declines/dedups leave saved < requested, allocate the shortfall as FRESH
+  // slots (every first-wave coverage_key excluded — re-planning a declined key would
+  // just re-decline) and push them through the same wave machinery. Best-effort: a
+  // top-up failure never discards the first wave's results.
+  let topupPlanned = 0;
+  let topupSaved = 0;
+  if ((input.exactCountTopUp ?? true) && mode === "stress" && saved < input.maxScenarios) {
+    input.signal?.throwIfAborted();
+    const shortfall = input.maxScenarios - saved;
+    const usedKeys: Set<string> = new Set(slots.map((s) => s.coverage_key));
+    try {
+      const topup = allocateScenarioSlots(planner!, shortfall, existing, {
+        excludeKeys: usedKeys,
+        slotIdOffset: slots.length,
+        coreCoverageExempt: true,
+      });
+      if (topup.slots.length > 0) {
+        topupPlanned = topup.slots.length;
+        const savedBefore = saved;
+        console.log(
+          `[sim-gen] top-up generation=${generationId} shortfall=${shortfall} topup_planned=${topupPlanned} pool_expanded=${topup.audit.pool_expanded}`,
+        );
+        yield* runWave(topup.slots, totalChunks);
+        topupSaved = saved - savedBefore;
+      }
+    } catch (err) {
+      if (input.signal?.aborted) throw err;
+      console.error(`[sim-gen] top-up failed (generation ${generationId}): ${(err as Error).message}`);
+    }
+  }
+  const plannedTotal = slots.length + topupPlanned;
+
   const writerMs = Date.now() - writerStart;
+  // Full ledger in one greppable line (saved + failed + deduped = planned): the
+  // 2026-07-14 "saved=10/40" investigation needed SSE-event archaeology to learn
+  // planned/failed/deduped — never again.
   console.log(
-    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length}`,
+    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${plannedTotal} requested=${input.maxScenarios} failed=${failedSlotIds.length} deduped=${deduped} topup_planned=${topupPlanned} topup_saved=${topupSaved}`,
   );
   yield {
     type: "metadata",
     metadata: {
       requested_count: input.maxScenarios,
-      planned_count: slots.length,
+      planned_count: plannedTotal,
       saved_count: saved,
       failed_count: failedSlotIds.length,
       failed_slot_ids: failedSlotIds,
       deduped_count: deduped,
       // Partial success requires at least one saved scenario (aiassist parity).
-      partial_success: saved > 0 && saved < slots.length,
+      partial_success: saved > 0 && saved < plannedTotal,
+      topup_planned: topupPlanned,
+      topup_saved: topupSaved,
       planner_usage: plannerUsage,
       writer_usages: writerUsages,
       ...(mode === "smoke"
