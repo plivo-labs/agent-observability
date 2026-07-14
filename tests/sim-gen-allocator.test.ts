@@ -356,3 +356,49 @@ describe("smoke helpers", () => {
     expect(auditSmokeAllocation([base], 20).valid).toBe(true);
   });
 });
+
+describe("allocator — coverage capacity (deliberate divergence from the reference engine)", () => {
+  test("fills the EXACT requested count via pool expansion when the n-relative pool exhausts", () => {
+    // 1-capability flow at n=40 — the 2026-07-14 Tixtravel prod case exactly. The
+    // n=40 enumeration holds only ~29 unique coverage_keys; the reference padded to
+    // 40 by reusing keys (12 doomed dedup writes). Now the pool re-enumerates at a
+    // larger budget (buildCandidates breadth scales with n — the same fixture holds
+    // 100+ unique keys at n=100) and fills all 40 with UNIQUE keys.
+    const planner = makePlanner([cap("single_cap", "medium")]);
+    const r = allocateScenarioSlots(planner, 40);
+    expect(r.slots.length).toBe(40); // exact count
+    const keys = new Set(r.slots.map((s) => s.coverage_key));
+    expect(keys.size).toBe(40); // NEVER a duplicate coverage_key
+    expect(r.audit.duplicate_coverage_keys).toEqual([]);
+    expect(r.audit.pool_expanded).toBe(true); // the expansion is what made 40 possible
+    expect(r.audit.quota_relaxed).toBe(true);
+    expect(r.audit.capacity_limited).toBe(false);
+    expect(r.audit.valid).toBe(true);
+  });
+
+  test("top-up options: excludeKeys yields disjoint slots, slotIdOffset continues numbering", () => {
+    const planner = makePlanner([cap("single_cap", "medium")]);
+    const first = allocateScenarioSlots(planner, 5);
+    const used = new Set(first.slots.map((s) => s.coverage_key));
+    const topup = allocateScenarioSlots(planner, 3, [], {
+      excludeKeys: used,
+      slotIdOffset: first.slots.length,
+      coreCoverageExempt: true,
+    });
+    expect(topup.slots.length).toBe(3);
+    for (const s2 of topup.slots) expect(used.has(s2.coverage_key)).toBe(false); // disjoint
+    expect(topup.slots[0].slot_id).toBe("S006"); // numbering continues after the first wave
+    expect(topup.audit.valid).toBe(true);
+  });
+
+  test("multi-capability allocation is unchanged: exact count, not capacity_limited", () => {
+    const planner = makePlanner([cap("a", "high"), cap("b", "medium"), cap("c", "low")]);
+    const r = allocateScenarioSlots(planner, 10);
+    expect(r.slots.length).toBe(10);
+    expect(r.audit.capacity_limited).toBe(false);
+    expect(r.audit.quota_relaxed).toBe(false);
+    expect(r.audit.pool_expanded).toBe(false); // rich flows never expand — byte-identical path
+    expect(new Set(r.slots.map((s) => s.coverage_key)).size).toBe(10);
+    expect(r.audit.valid).toBe(true);
+  });
+});
