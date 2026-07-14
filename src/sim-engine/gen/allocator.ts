@@ -467,7 +467,10 @@ export function allocateScenarioSlots(
   // unique keys at n=40 yields 100+ at n=100 (2026-07-14 probe). When unique
   // candidates run out, re-enumerate at a larger budget and keep filling. The
   // selection prefix stays byte-identical (expansion only fires where the old code
-  // stopped), and the enumeration cost is bounded (~1s at 100, ~4.7s at 500).
+  // stopped). Cost: expansion triggers only on LOW-capability flows, where
+  // enumeration is cheap (1-cap n=40 incl. one expansion: ~49ms measured); the
+  // expensive enumerations (~1-2s at n=100 on many-cap flows) are the BASE build
+  // that predates this ladder, and such flows never exhaust their pool.
   let candidatePool = candidates;
   let poolExpanded = false;
   let lastEnumN = requestedCount;
@@ -507,10 +510,12 @@ export function allocateScenarioSlots(
       if (feasible.length > 0) quotaRelaxed = true;
     }
     if (feasible.length === 0) {
-      // Even the expanded enumeration is out of distinct coverage_keys: the flow's
-      // TRUE capacity is reached. Return short HONESTLY (planned_count < requested)
-      // instead of throwing — a throw would poison the planner cache and trigger a
-      // full replan (another ~35s planner call) that cannot manufacture capacity.
+      // Even the expanded enumeration is out of distinct coverage_keys: this PLAN's
+      // capacity is reached. Return short HONESTLY (planned_count < requested) and
+      // let the caller decide: generate.ts treats capacity_limited as a replan
+      // trigger while planner-retry attempts remain (a thin plan — not the flow —
+      // may be the real limit) and accepts the short result only on the final
+      // attempt, never caching a capacity-limited plan.
       break;
     }
 
@@ -544,8 +549,13 @@ export function allocateScenarioSlots(
     };
     selected.push(chosen);
     selectedKeys.add(chosen.coverage_key);
-    capRem[chosen.capability_id] -= 1;
-    typeRem[chosen.scenario_type] -= 1;
+    // Quota-relaxed (and expanded-pool) picks can come from a capability/type with
+    // no quota entry — `undefined - 1` is NaN, which would poison scoreCandidate
+    // (NaN survives its `?? 0`) and break the deterministic tiebreak chain for
+    // every later sibling of that capability. Coerce absent to 0; negatives are
+    // fine (stage-2 selection ignores quotas by design).
+    capRem[chosen.capability_id] = (capRem[chosen.capability_id] ?? 0) - 1;
+    typeRem[chosen.scenario_type] = (typeRem[chosen.scenario_type] ?? 0) - 1;
     for (const p of pairValues(chosen)) coveredPairs.add(p);
     for (const t of tripleValues(chosen)) coveredTriples.add(t);
   }
