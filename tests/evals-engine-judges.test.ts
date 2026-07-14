@@ -9,6 +9,7 @@ mock.module("../src/config.js", () => ({
     GENERATOR_MODEL: undefined,
     LLM_TIMEOUT_MS: 30000,
     LLM_MAX_RETRIES: 1,
+    JUDGE_REASONING_HEADROOM_TOKENS: 8000,
   },
 }));
 
@@ -61,6 +62,15 @@ describe("LLM node judges (MockLLM)", () => {
     expect((llm.calls[0]!.jsonSchema?.schema as any).additionalProperties).toBe(false);
     const sent = JSON.parse(llm.calls[0]!.user);
     expect(sent.node_transcript).toContain("order is 42");
+  });
+
+  test("judge calls add reasoning-token headroom on top of the parity cap", async () => {
+    // gpt-5.x on the Responses API spends invisible reasoning tokens against
+    // max_output_tokens; the parity caps alone starve the call into
+    // status="incomplete" reason="max_output_tokens" (prod eval_error, 2026-07-14).
+    const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
+    await runHallucinationJudge(node(), ctx(), llm);
+    expect(llm.calls[0]!.maxTokens).toBe(1500 + 8000);
   });
 
   test("loop: parses raw output", async () => {
