@@ -167,11 +167,11 @@ async function runChunkWithRetry(
     chunkIndex: number;
     provider?: LlmProvider;
     signal?: AbortSignal;
-    /** Enable the declined-slot retry economy (skip solo fallback for slots omitted
-     *  by every clean chunk attempt). STRESS ONLY: the top-up wave compensates for
-     *  skipped slots there; smoke has no top-up, so its units keep the full solo
-     *  ladder — a silent smoke shortfall has no rescue. */
-    declineEconomy?: boolean;
+    /** Solo-fallback policy for slots omitted by every CLEAN chunk attempt
+     *  (model-declined). "skip-declines" is the stress-mode retry economy — the
+     *  top-up wave compensates for skipped slots there. Smoke uses "full": it has
+     *  no top-up, so a silently-shortened suite would have no rescue. */
+    fallbackPolicy?: "full" | "skip-declines";
   },
   slots: Slot[],
   onScenario?: (s: RuntimeScenario) => void,
@@ -231,7 +231,7 @@ async function runChunkWithRetry(
   // THREW keep the full fallback — that's the transport-failure rescue path.
   const chunkAttemptBudget = WRITER_CHUNK_RETRIES + 1;
   const pending = remaining.filter((slot) => !consumed.has(slot.slot_id));
-  const declinedSlots = base.declineEconomy
+  const declinedSlots = base.fallbackPolicy === "skip-declines"
     ? pending.filter((slot) => (cleanOmissions.get(slot.slot_id) ?? 0) >= chunkAttemptBudget)
     : [];
   const declinedIds = new Set(declinedSlots.map((s) => s.slot_id));
@@ -484,7 +484,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       const abs = chunkBase + i;
       const c = waveChunks[i];
       runChunkWithRetry(
-        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: abs, provider: input.writerProvider, signal: input.signal, declineEconomy: mode === "stress" },
+        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: abs, provider: input.writerProvider, signal: input.signal, fallbackPolicy: mode === "stress" ? "skip-declines" : "full" },
         c,
         incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: abs, scenario }) : undefined,
       ).then(
