@@ -279,6 +279,104 @@ async function runChunkWithRetry(
   return { scenarios, failedSlotIds: unsatisfiedSlotIds, usages, incrementalDisabled };
 }
 
+/** What the allocation phase hands back to the pipeline — consumed exactly once. */
+interface AllocationOutcome {
+  slots: Slot[];
+  /** Stress only: the ACCEPTED allocation stopped short of the request even after
+   *  pool expansion and a replan. Always false for smoke. */
+  capacityLimited: boolean;
+  /** Smoke-mode metadata extras (aiassist parity) — absent for stress. */
+  smokeUnitsHash?: string;
+  droppedUnitIds?: string[];
+  /** The plan the slots were allocated FROM (a replan replaces the original), with
+   *  its accounting: a replan is a REAL planner call, so usage is captured and any
+   *  cache-hit claim is dropped (metadata must not report zero planning cost). */
+  planner: PlannerWithInventory;
+  plannerUsage: LlmUsage | null;
+  plannerCacheHit: boolean;
+}
+
+/** ALLOCATOR phase: up to ALLOCATION_RETRIES attempts, replanning with the failure
+ *  appended as an instruction hint between attempts (poison-pilling the planner
+ *  cache each time). Failures travel on an explicit `failure` channel: a
+ *  capacity-limited allocation on a non-final attempt is a RETRYABLE outcome (the
+ *  limit is a property of the plan — a thin planner output is its known failure
+ *  mode — and a replan can manufacture capacity a bigger enumeration budget
+ *  cannot), while allocator throws (audit-invalid, no candidates) funnel into the
+ *  same channel via catch. Only the final attempt accepts a short result. */
+async function* allocateWithReplan(args: {
+  mode: SimulationMode;
+  smokeCap: number;
+  maxScenarios: number;
+  existing: ExistingScenarioSummary[];
+  instructions: string;
+  cacheKey: string | null;
+  planner: PlannerWithInventory;
+  plannerUsage: LlmUsage | null;
+  plannerCacheHit: boolean;
+  plan: { flowJson: Dict; phloUuid: string; model: string; provider?: LlmProvider; signal?: AbortSignal };
+}): AsyncGenerator<GenEvent, AllocationOutcome> {
+  let { planner, plannerUsage, plannerCacheHit, instructions } = args;
+  let slots: Slot[] | null = null;
+  let capacityLimited = false;
+  let smokeUnitsHash: string | undefined;
+  let droppedUnitIds: string[] | undefined;
+  for (let attempt = 1; attempt <= ALLOCATION_RETRIES; attempt++) {
+    yield { type: "allocation_started", attempt, capability_count: planner.capabilities.length };
+    let failure: string | null = null;
+    try {
+      if (args.mode === "smoke") {
+        const result = allocateSmokeSlots({ planner, smokeCap: args.smokeCap });
+        slots = result.slots;
+        smokeUnitsHash = result.smoke_units_hash;
+        droppedUnitIds = result.dropped_unit_ids;
+      } else {
+        const result = allocateScenarioSlots(planner, args.maxScenarios, args.existing);
+        if (result.audit.capacity_limited && attempt < ALLOCATION_RETRIES) {
+          failure = `Allocator capacity-limited: the plan yields only ${result.slots.length} distinct scenario slots of ${args.maxScenarios} requested. Emit more (finer-grained) distinct capabilities so allocation can reach the requested count.`;
+        } else {
+          slots = result.slots;
+          capacityLimited = result.audit.capacity_limited;
+        }
+      }
+    } catch (e) {
+      failure = (e as Error).message;
+    }
+    if (!failure) {
+      yield { type: "allocation_done", attempt, planned_count: slots!.length };
+      break;
+    }
+    // The plan under this key failed allocation — poison-pill it (the replanned
+    // successor is re-stored by the caller once it passes).
+    if (args.cacheKey) plannerCacheDelete(args.cacheKey);
+    if (attempt >= ALLOCATION_RETRIES) throw new Error(`Allocator failed after ${ALLOCATION_RETRIES} attempts: ${failure}`);
+    // Replan with the failure appended to the instructions. In smoke mode the
+    // dominant failure is a planner that omitted smoke_units — say so explicitly
+    // (aiassist parity).
+    const retryHint =
+      args.mode === "smoke"
+        ? `[allocator retry] ${failure}. You MUST emit smoke_units under each capability.`
+        : `[allocator retry] ${failure}`;
+    instructions = `${instructions}\n\n${retryHint}`.trim();
+    const out = await planCapabilities({
+      flowJson: args.plan.flowJson,
+      phloUuid: args.plan.phloUuid,
+      model: args.plan.model,
+      existingSummaries: args.existing,
+      userInstructions: instructions,
+      simulationMode: args.mode,
+      smokeCap: args.smokeCap,
+      provider: args.plan.provider,
+      signal: args.plan.signal,
+    });
+    planner = out.planner;
+    plannerUsage = out.usage;
+    plannerCacheHit = false;
+  }
+  if (!slots) throw new Error("Allocator produced no slots");
+  return { slots, capacityLimited, smokeUnitsHash, droppedUnitIds, planner, plannerUsage, plannerCacheHit };
+}
+
 /** Everything a writer wave needs that is fixed for the whole generation. */
 interface WriterContext {
   flowJson: Dict;
@@ -477,72 +575,22 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
 
   // ── ALLOCATOR (2 attempts; replan on the 2nd) ──────────────────────────────────
   const allocationStart = Date.now();
-  let slots: Slot[] | null = null;
-  // Smoke-mode metadata extras (aiassist parity) — captured from the smoke allocation.
-  let smokeUnitsHashOut: string | undefined;
-  let droppedUnitIds: string[] | undefined;
-  // True when the accepted stress allocation stopped short of the request even after
-  // pool expansion. Drives: replan-with-hint while attempts remain, the top-up skip
-  // (re-allocating an exhausted pool is guaranteed-zero yield), cache exclusion
-  // (never serve a thin plan to identical reruns), and metadata honesty.
-  let capacityLimited = false;
-  for (let attempt = 1; attempt <= ALLOCATION_RETRIES; attempt++) {
-    yield { type: "allocation_started", attempt, capability_count: planner.capabilities.length };
-    try {
-      if (mode === "smoke") {
-        const result = allocateSmokeSlots({ planner, smokeCap });
-        slots = result.slots;
-        smokeUnitsHashOut = result.smoke_units_hash;
-        droppedUnitIds = result.dropped_unit_ids;
-      } else {
-        const result = allocateScenarioSlots(planner, input.maxScenarios, existing);
-        // A capacity-limited allocation on a non-final attempt is treated as an
-        // allocation failure: the limit is a property of THIS plan (a thin planner
-        // output is its known failure mode), and the replan-with-hint below can
-        // manufacture capacity a bigger enumeration budget cannot. Only the final
-        // attempt accepts the short result (honest planned_count < requested).
-        if (result.audit.capacity_limited && attempt < ALLOCATION_RETRIES) {
-          throw new Error(
-            `Allocator capacity-limited: the plan yields only ${result.slots.length} distinct scenario slots of ${input.maxScenarios} requested. Emit more (finer-grained) distinct capabilities so allocation can reach the requested count.`,
-          );
-        }
-        slots = result.slots;
-        capacityLimited = result.audit.capacity_limited;
-      }
-      yield { type: "allocation_done", attempt, planned_count: slots.length };
-      break;
-    } catch (e) {
-      // The plan under this key failed allocation — poison-pill it (the replanned
-      // successor is re-stored below once it passes).
-      if (cacheKey) plannerCacheDelete(cacheKey);
-      if (attempt >= ALLOCATION_RETRIES) throw new Error(`Allocator failed after ${ALLOCATION_RETRIES} attempts: ${(e as Error).message}`);
-      // Replan with the allocator error appended to the instructions. In smoke mode the
-      // dominant failure is a planner that omitted smoke_units — say so explicitly (aiassist parity).
-      const retryHint =
-        mode === "smoke"
-          ? `[allocator retry] ${(e as Error).message}. You MUST emit smoke_units under each capability.`
-          : `[allocator retry] ${(e as Error).message}`;
-      instructions = `${instructions}\n\n${retryHint}`.trim();
-      const out = await planCapabilities({
-        flowJson: input.flowJson,
-        phloUuid: input.phloUuid,
-        model: input.model,
-        existingSummaries: existing,
-        userInstructions: instructions,
-        simulationMode: mode,
-        smokeCap,
-        provider: input.plannerProvider,
-        signal: input.signal,
-      });
-      planner = out.planner;
-      // The replan is a REAL planner call: the metadata must not keep claiming a
-      // cache hit (planner_cache_hit + planner_usage:null would report zero planning
-      // cost on a generation that paid it in full — corrupting the timing evidence).
-      plannerUsage = out.usage;
-      plannerCacheHit = false;
-    }
-  }
-  if (!slots) throw new Error("Allocator produced no slots");
+  const alloc = yield* allocateWithReplan({
+    mode,
+    smokeCap,
+    maxScenarios: input.maxScenarios,
+    existing,
+    instructions,
+    cacheKey,
+    planner,
+    plannerUsage,
+    plannerCacheHit,
+    plan: { flowJson: input.flowJson, phloUuid: input.phloUuid, model: input.model, provider: input.plannerProvider, signal: input.signal },
+  });
+  const { slots, capacityLimited } = alloc;
+  planner = alloc.planner;
+  plannerUsage = alloc.plannerUsage;
+  plannerCacheHit = alloc.plannerCacheHit;
   // Cache only allocation-proven plans (keyed by the ORIGINAL request inputs, so a
   // replanned successor replaces its poisoned predecessor under the same key). A
   // capacity-limited plan is NOT proven — caching it would serve the thin plan to
@@ -647,7 +695,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       planner_usage: plannerUsage,
       writer_usages: ledger.usages,
       ...(mode === "smoke"
-        ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
+        ? { smoke_cap: smokeCap, smoke_units_hash: alloc.smokeUnitsHash, dropped_unit_ids: alloc.droppedUnitIds }
         : {}),
       planner_ms: plannerMs,
       allocation_ms: allocationMs,
