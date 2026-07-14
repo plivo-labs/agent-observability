@@ -279,6 +279,135 @@ async function runChunkWithRetry(
   return { scenarios, failedSlotIds: unsatisfiedSlotIds, usages, incrementalDisabled };
 }
 
+/** Everything a writer wave needs that is fixed for the whole generation. */
+interface WriterContext {
+  flowJson: Dict;
+  planner: PlannerWithInventory;
+  model: string;
+  generationId: string;
+  phloUuid: string;
+  provider?: LlmProvider;
+  signal?: AbortSignal;
+  fallbackPolicy: "full" | "skip-declines";
+  /** Emit each scenario mid-stream as its item completes in the LLM token stream
+   *  (SIM_GEN_INCREMENTAL kill-switch, default ON). Off = chunk-granular emission. */
+  incremental: boolean;
+  /** Generation start — anchors ttfsMs at the first admitted scenario. */
+  genStart: number;
+}
+
+// Chunks report through a single queue in COMPLETION order — the client sees each
+// chunk's scenarios the moment they exist (mid-stream when incremental, at chunk
+// settle otherwise) instead of waiting for the slowest chunk. ALL scenarios —
+// incremental and final-parse alike — ride the queue as `scenario` events, so the
+// consumer has exactly one emit path; `chunk_done` is purely terminal bookkeeping.
+// runChunkWithRetry never rejects except on caller abort (hard LLM failures degrade
+// to failed slots inside it), so every chunk promise pushes exactly one terminal
+// event and nothing rejects unhandled.
+type WriterQueueEvent =
+  | { kind: "scenario"; chunkIndex: number; scenario: RuntimeScenario }
+  | { kind: "chunk_done"; chunkIndex: number; failedSlotIds: string[]; usages: LlmUsage[]; incrementalDisabled: boolean }
+  | { kind: "abort"; err: unknown };
+
+/** The writer phase's single source of truth across waves. `admit` is the one
+ *  ledger gate — every delivered scenario passes through it exactly once, keeping
+ *  the invariant planned_total = saved + failed + deduped across the first wave
+ *  AND the exact-count top-up. Both `writing_started` announcements route through
+ *  `announceWriting`, so chunk events can never exceed the announced chunk_count. */
+class WriterLedger {
+  saved = 0;
+  deduped = 0;
+  /** Cumulative chunk count across waves — stamped at each wave start. */
+  totalChunks = 0;
+  /** Time from generation start to the FIRST admitted scenario (null = none saved). */
+  ttfsMs: number | null = null;
+  incrementalDisabled = false;
+  readonly failedSlotIds: string[] = [];
+  readonly usages: LlmUsage[] = [];
+  private readonly seenCoverage = new Set<string>();
+  private readonly perChunkSaved = new Map<number, number>();
+
+  constructor(private readonly ctx: WriterContext) {}
+
+  announceWriting(newSlotCount: number, cumulativePlannedCount: number): GenEvent {
+    return {
+      type: "writing_started",
+      planned_count: cumulativePlannedCount,
+      chunk_count: this.totalChunks + Math.ceil(newSlotCount / WRITER_CHUNK_SIZE),
+      chunk_size: WRITER_CHUNK_SIZE,
+    };
+  }
+
+  private admit(scenario: RuntimeScenario, chunkIndex: number): boolean {
+    // Smoke units under one capability legitimately share all 8 coverage axes (same
+    // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
+    // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
+    const key = scenario.eval_metadata?.smoke_unit_id || scenario.eval_metadata?.coverage_key || "";
+    if (key && this.seenCoverage.has(key)) {
+      this.deduped += 1; // counted so the shortfall is visible in metadata, not silent
+      return false;
+    }
+    if (key) this.seenCoverage.add(key);
+    this.saved += 1;
+    this.perChunkSaved.set(chunkIndex, (this.perChunkSaved.get(chunkIndex) ?? 0) + 1);
+    this.ttfsMs ??= Date.now() - this.ctx.genStart;
+    return true;
+  }
+
+  /** One writer wave: fire every chunk concurrently, drain the queue, update the
+   *  ledger. Used once for the planned slots and (optionally) once more for the
+   *  exact-count top-up — identical machinery, different slots. */
+  async *runWave(waveSlots: Slot[], chunkBase: number): AsyncGenerator<GenEvent> {
+    const waveChunks = chunk(waveSlots, WRITER_CHUNK_SIZE);
+    this.totalChunks = chunkBase + waveChunks.length;
+    const queue = new AsyncQueue<WriterQueueEvent>();
+    for (let i = 0; i < waveChunks.length; i++) {
+      const abs = chunkBase + i;
+      const c = waveChunks[i];
+      runChunkWithRetry(
+        { flowJson: this.ctx.flowJson, planner: this.ctx.planner, model: this.ctx.model, generationId: this.ctx.generationId, phloUuid: this.ctx.phloUuid, chunkIndex: abs, provider: this.ctx.provider, signal: this.ctx.signal, fallbackPolicy: this.ctx.fallbackPolicy },
+        c,
+        this.ctx.incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: abs, scenario }) : undefined,
+      ).then(
+        (result) => {
+          for (const scenario of result.scenarios) queue.push({ kind: "scenario", chunkIndex: abs, scenario });
+          queue.push({ kind: "chunk_done", chunkIndex: abs, failedSlotIds: result.failedSlotIds, usages: result.usages, incrementalDisabled: result.incrementalDisabled });
+        },
+        (err) => {
+          if (this.ctx.signal?.aborted) {
+            queue.push({ kind: "abort", err });
+            return;
+          }
+          // Unreachable by design (runChunkWithRetry only rethrows aborts) — kept so an
+          // unexpected bug degrades to a failed chunk instead of hanging the consumer.
+          console.error(`[sim-gen] writer chunk ${abs} rejected unexpectedly (generation ${this.ctx.generationId}): ${(err as Error).message}`);
+          queue.push({ kind: "chunk_done", chunkIndex: abs, failedSlotIds: c.map((s) => s.slot_id), usages: [], incrementalDisabled: false });
+        },
+      );
+    }
+    let remainingChunks = waveChunks.length;
+    while (remainingChunks > 0) {
+      const ev = await queue.pop();
+      if (ev.kind === "abort") throw ev.err;
+      if (ev.kind === "scenario") {
+        // Every scenario (mid-stream or final-parse) arrives here — `admit` is the
+        // single ledger gate by construction, and each slot flows through it once
+        // (the writer excludes incrementally-delivered slots from its final result).
+        if (this.admit(ev.scenario, ev.chunkIndex)) {
+          yield { type: "scenario", scenario: ev.scenario };
+          yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: this.totalChunks, scenario_index: (this.perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: this.saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
+        }
+        continue;
+      }
+      remainingChunks -= 1;
+      this.usages.push(...ev.usages);
+      this.failedSlotIds.push(...ev.failedSlotIds);
+      this.incrementalDisabled ||= ev.incrementalDisabled;
+      yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: this.totalChunks, chunk_saved_count: this.perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
+    }
+  }
+}
+
 export async function* generateScenarios(input: GenerateInput): AsyncGenerator<GenEvent> {
   const mode: SimulationMode = input.simulationMode ?? "stress";
   // Effective smoke-unit cap. The route resolves it from the request/env (clamped to
@@ -289,7 +418,6 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const generationId = crypto.randomUUID();
   let instructions = input.testCaseGenerationInstructions ?? "";
   const genStart = Date.now();
-  let ttfsMs: number | null = null; // stamped at the first `scenario` yield
 
   // ── PLANNER (2 attempts; cached across byte-identical requests) ────────────────
   const plannerStart = Date.now();
@@ -422,111 +550,23 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   if (cacheKey && !capacityLimited) plannerCacheSet(cacheKey, planner);
   const allocationMs = Date.now() - allocationStart;
 
-  // ── WRITER (parallel chunks + retries, in WAVES) ────────────────────────────────
+  // ── WRITER (parallel chunks + retries, in WAVES via WriterLedger) ───────────────
   const writerStart = Date.now();
   input.signal?.throwIfAborted();
-  yield { type: "writing_started", planned_count: slots.length, chunk_count: Math.ceil(slots.length / WRITER_CHUNK_SIZE), chunk_size: WRITER_CHUNK_SIZE };
-
-  // Chunks report through a single queue in COMPLETION order — the client sees each
-  // chunk's scenarios the moment they exist (mid-stream when incremental, at chunk
-  // settle otherwise) instead of waiting for the slowest chunk. ALL scenarios —
-  // incremental and final-parse alike — ride the queue as `scenario` events, so the
-  // consumer has exactly one emit path; `chunk_done` is purely terminal bookkeeping.
-  // runChunkWithRetry never rejects except on caller abort (hard LLM failures degrade
-  // to failed slots inside it), so every chunk promise pushes exactly one terminal
-  // event and nothing rejects unhandled.
-  type WriterQueueEvent =
-    | { kind: "scenario"; chunkIndex: number; scenario: RuntimeScenario }
-    | { kind: "chunk_done"; chunkIndex: number; failedSlotIds: string[]; usages: LlmUsage[]; incrementalDisabled: boolean }
-    | { kind: "abort"; err: unknown };
-  // Incremental emission (kill-switch: SIM_GEN_INCREMENTAL / GenerateInput.incrementalEmit,
-  // default ON): each scenario surfaces the moment its item completes in the LLM token
-  // stream. With the switch off (or a provider without text deltas) behavior is
-  // chunk-granular, exactly as before.
-  const incremental = input.incrementalEmit ?? true;
-
-  // Shared writer ledger across waves. `admit` is the single ledger owner — every
-  // delivered scenario passes through it exactly once, keeping the invariant
-  // planned_total = saved + failed + deduped across the first wave AND the top-up.
-  const writerUsages: LlmUsage[] = [];
-  const failedSlotIds: string[] = [];
-  let incrementalDisabled = false;
-  const seenCoverage = new Set<string>();
-  const perChunkSaved = new Map<number, number>();
-  let saved = 0;
-  let deduped = 0;
-  // Cumulative chunk count across waves — owned by runWave (set at each wave start).
-  let totalChunks = 0;
-  const admit = (scenario: RuntimeScenario, chunkIndex: number): boolean => {
-    // Smoke units under one capability legitimately share all 8 coverage axes (same
-    // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
-    // smoke_unit_id; stress keeps coverage_key (its allocator guarantees uniqueness).
-    const key = scenario.eval_metadata?.smoke_unit_id || scenario.eval_metadata?.coverage_key || "";
-    if (key && seenCoverage.has(key)) {
-      deduped += 1; // counted so the shortfall is visible in metadata, not silent
-      return false;
-    }
-    if (key) seenCoverage.add(key);
-    saved += 1;
-    perChunkSaved.set(chunkIndex, (perChunkSaved.get(chunkIndex) ?? 0) + 1);
-    ttfsMs ??= Date.now() - genStart;
-    return true;
-  };
-
-  // One writer wave: fire every chunk concurrently, drain the queue, update the
-  // shared ledger. Used once for the planned slots and (optionally) once more for
-  // the exact-count top-up — identical machinery, different slots.
-  const runWave = async function* (waveSlots: Slot[], chunkBase: number): AsyncGenerator<GenEvent> {
-    const waveChunks = chunk(waveSlots, WRITER_CHUNK_SIZE);
-    totalChunks = chunkBase + waveChunks.length;
-    const queue = new AsyncQueue<WriterQueueEvent>();
-    for (let i = 0; i < waveChunks.length; i++) {
-      const abs = chunkBase + i;
-      const c = waveChunks[i];
-      runChunkWithRetry(
-        { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: abs, provider: input.writerProvider, signal: input.signal, fallbackPolicy: mode === "stress" ? "skip-declines" : "full" },
-        c,
-        incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: abs, scenario }) : undefined,
-      ).then(
-        (result) => {
-          for (const scenario of result.scenarios) queue.push({ kind: "scenario", chunkIndex: abs, scenario });
-          queue.push({ kind: "chunk_done", chunkIndex: abs, failedSlotIds: result.failedSlotIds, usages: result.usages, incrementalDisabled: result.incrementalDisabled });
-        },
-        (err) => {
-          if (input.signal?.aborted) {
-            queue.push({ kind: "abort", err });
-            return;
-          }
-          // Unreachable by design (runChunkWithRetry only rethrows aborts) — kept so an
-          // unexpected bug degrades to a failed chunk instead of hanging the consumer.
-          console.error(`[sim-gen] writer chunk ${abs} rejected unexpectedly (generation ${generationId}): ${(err as Error).message}`);
-          queue.push({ kind: "chunk_done", chunkIndex: abs, failedSlotIds: c.map((s) => s.slot_id), usages: [], incrementalDisabled: false });
-        },
-      );
-    }
-    let remainingChunks = waveChunks.length;
-    while (remainingChunks > 0) {
-      const ev = await queue.pop();
-      if (ev.kind === "abort") throw ev.err;
-      if (ev.kind === "scenario") {
-        // Every scenario (mid-stream or final-parse) arrives here — `admit` is the
-        // single ledger owner by construction, and each slot flows through it once
-        // (the writer excludes incrementally-delivered slots from its final result).
-        if (admit(ev.scenario, ev.chunkIndex)) {
-          yield { type: "scenario", scenario: ev.scenario };
-          yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: totalChunks, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
-        }
-        continue;
-      }
-      remainingChunks -= 1;
-      writerUsages.push(...ev.usages);
-      failedSlotIds.push(...ev.failedSlotIds);
-      incrementalDisabled ||= ev.incrementalDisabled;
-      yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: totalChunks, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
-    }
-  };
-
-  yield* runWave(slots, 0);
+  const ledger = new WriterLedger({
+    flowJson: input.flowJson,
+    planner,
+    model: input.model,
+    generationId,
+    phloUuid: input.phloUuid,
+    provider: input.writerProvider,
+    signal: input.signal,
+    fallbackPolicy: mode === "stress" ? "skip-declines" : "full",
+    incremental: input.incrementalEmit ?? true,
+    genStart,
+  });
+  yield ledger.announceWriting(slots.length, slots.length);
+  yield* ledger.runWave(slots, 0);
 
   // ── EXACT-COUNT TOP-UP (stress only, ONE bounded wave) ─────────────────────────
   // When declines/dedups leave saved < requested, allocate the shortfall as FRESH
@@ -539,33 +579,27 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // yield for seconds of synchronous enumeration.
   let topupPlanned = 0;
   let topupSaved = 0;
-  if ((input.exactCountTopUp ?? true) && mode === "stress" && !capacityLimited && saved < input.maxScenarios) {
+  if ((input.exactCountTopUp ?? true) && mode === "stress" && !capacityLimited && ledger.saved < input.maxScenarios) {
     input.signal?.throwIfAborted();
-    const shortfall = input.maxScenarios - saved;
+    const shortfall = input.maxScenarios - ledger.saved;
     const usedKeys: Set<string> = new Set(slots.map((s) => s.coverage_key));
     try {
-      const topup = allocateScenarioSlots(planner!, shortfall, existing, {
+      const topup = allocateScenarioSlots(planner, shortfall, existing, {
         excludeKeys: usedKeys,
         slotIdOffset: slots.length,
         coreCoverageExempt: true,
       });
       if (topup.slots.length > 0) {
         topupPlanned = topup.slots.length;
-        const savedBefore = saved;
+        const savedBefore = ledger.saved;
         console.log(
           `[sim-gen] top-up generation=${generationId} shortfall=${shortfall} topup_planned=${topupPlanned} pool_expanded=${topup.audit.pool_expanded}`,
         );
-        // Re-announce the writer phase with CUMULATIVE totals: top-up chunk events
-        // carry chunk_index ≥ the first announcement's chunk_count, so a consumer
-        // sizing progress from writing_started would otherwise see "chunk 5 of 4".
-        yield {
-          type: "writing_started",
-          planned_count: slots.length + topupPlanned,
-          chunk_count: totalChunks + Math.ceil(topupPlanned / WRITER_CHUNK_SIZE),
-          chunk_size: WRITER_CHUNK_SIZE,
-        };
-        yield* runWave(topup.slots, totalChunks);
-        topupSaved = saved - savedBefore;
+        // Re-announce with CUMULATIVE totals: top-up chunk events carry chunk_index
+        // ≥ the first announcement's chunk_count otherwise ("chunk 5 of 4").
+        yield ledger.announceWriting(topupPlanned, slots.length + topupPlanned);
+        yield* ledger.runWave(topup.slots, ledger.totalChunks);
+        topupSaved = ledger.saved - savedBefore;
       }
     } catch (err) {
       if (input.signal?.aborted) throw err;
@@ -580,7 +614,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // `completed` when count==0. Emitting a completed event with partial_success=true
   // here would make the console show "completed" AND a partial-success banner
   // implying scenarios exist, when none were saved.
-  if (saved === 0 && plannedTotal > 0) {
+  if (ledger.saved === 0 && plannedTotal > 0) {
     throw new Error("Scenario generation failed for all planned slots.");
   }
 
@@ -589,38 +623,38 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // 2026-07-14 "saved=10/40" investigation needed SSE-event archaeology to learn
   // planned/failed/deduped — never again.
   console.log(
-    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${plannedTotal} requested=${input.maxScenarios} failed=${failedSlotIds.length} deduped=${deduped} topup_planned=${topupPlanned} topup_saved=${topupSaved} capacity_limited=${capacityLimited}`,
+    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ledger.ttfsMs} saved=${ledger.saved}/${plannedTotal} requested=${input.maxScenarios} failed=${ledger.failedSlotIds.length} deduped=${ledger.deduped} topup_planned=${topupPlanned} topup_saved=${topupSaved} capacity_limited=${capacityLimited}`,
   );
   yield {
     type: "metadata",
     metadata: {
       requested_count: input.maxScenarios,
       planned_count: plannedTotal,
-      saved_count: saved,
-      failed_count: failedSlotIds.length,
-      failed_slot_ids: failedSlotIds,
-      deduped_count: deduped,
+      saved_count: ledger.saved,
+      failed_count: ledger.failedSlotIds.length,
+      failed_slot_ids: ledger.failedSlotIds,
+      deduped_count: ledger.deduped,
       // Partial success requires at least one saved scenario (aiassist parity) and
       // measures against what the USER asked for, not internal planning volume: a
       // topped-up run that delivered the full request is a success even though
       // plannedTotal exceeds it, and a capacity-limited short delivery is partial
       // even though every planned slot saved. Smoke's request is its unit list, so
       // plannedTotal is the honest denominator there.
-      partial_success: saved > 0 && saved < (mode === "stress" ? input.maxScenarios : plannedTotal),
+      partial_success: ledger.saved > 0 && ledger.saved < (mode === "stress" ? input.maxScenarios : plannedTotal),
       capacity_limited: capacityLimited,
       topup_planned: topupPlanned,
       topup_saved: topupSaved,
       planner_usage: plannerUsage,
-      writer_usages: writerUsages,
+      writer_usages: ledger.usages,
       ...(mode === "smoke"
         ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
         : {}),
       planner_ms: plannerMs,
       allocation_ms: allocationMs,
       writer_ms: writerMs,
-      ttfs_ms: ttfsMs,
+      ttfs_ms: ledger.ttfsMs,
       planner_cache_hit: plannerCacheHit,
-      incremental_disabled: incrementalDisabled,
+      incremental_disabled: ledger.incrementalDisabled,
     },
   };
 }
