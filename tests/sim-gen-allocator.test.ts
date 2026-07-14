@@ -3,6 +3,7 @@ import {
   scenarioTypeQuotas,
   allocateScenarioSlots,
   allocateCapabilityQuotas,
+  auditAllocation,
   existingCoverage,
 } from "../src/sim-engine/gen/allocator.js";
 import {
@@ -389,6 +390,30 @@ describe("allocator — coverage capacity (deliberate divergence from the refere
     for (const s2 of topup.slots) expect(used.has(s2.coverage_key)).toBe(false); // disjoint
     expect(topup.slots[0].slot_id).toBe("S006"); // numbering continues after the first wave
     expect(topup.audit.valid).toBe(true);
+  });
+
+  test("honest-short semantics: a short allocation audits valid ONLY under capacity_limited; duplicates stay fatal", () => {
+    // The selection loop's honest-short break is a defensive corner (real pattern
+    // libraries hold thousands of unique keys per capability — a 2026-07-14 probe
+    // extracted 1200 unique keys from ONE capability without exhausting it), so the
+    // branch is pinned at the audit contract it relies on: capacity_limited waives
+    // the exact-count rule and NOTHING else.
+    const planner = makePlanner([cap("single_cap", "medium")]);
+    const short = allocateScenarioSlots(planner, 6).slots.slice(0, 3);
+
+    const flagged = auditAllocation(short, 6, scenarioTypeQuotas(6), planner.capabilities, { capacityLimited: true, quotaRelaxed: true });
+    expect(flagged.valid).toBe(true); // 3 < 6 is acceptable when capacity-limited
+    expect(flagged.capacity_limited).toBe(true);
+
+    // The SAME short set without the flag must fail the exact-count rule — a silent
+    // short delivery can never audit clean.
+    const unflagged = auditAllocation(short, 6, scenarioTypeQuotas(6), planner.capabilities, { quotaRelaxed: true });
+    expect(unflagged.valid).toBe(false);
+
+    // Uniqueness stays a hard constraint even when capacity-limited.
+    const dup = auditAllocation([short[0], short[0]], 6, scenarioTypeQuotas(6), planner.capabilities, { capacityLimited: true, quotaRelaxed: true });
+    expect(dup.valid).toBe(false);
+    expect(dup.duplicate_coverage_keys.length).toBeGreaterThan(0);
   });
 
   test("multi-capability allocation is unchanged: exact count, not capacity_limited", () => {

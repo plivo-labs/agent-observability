@@ -435,6 +435,35 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     expect(meta.dropped_unit_ids).toEqual([]);
   });
 
+  test("a cleanly-omitted smoke unit KEEPS its solo fallback (decline economy is stress-only)", async () => {
+    // The first two writer calls (the chunk attempts) cleanly omit one unit; the
+    // solo fallback (call 3) writes it. Smoke has no top-up wave to compensate, so
+    // applying the stress decline economy here would permanently shorten the suite
+    // — the economy must stay off in smoke mode.
+    let omit: string | null = null;
+    let calls = 0;
+    const declineTwice = (args: ProviderCompleteArgs): string => {
+      calls++;
+      const ids = JSON.parse(args.user).expected_slot_ids as string[];
+      omit ??= ids[ids.length - 1];
+      const full = JSON.parse(writerResponder(args));
+      if (calls <= 2) full.scenario_items = full.scenario_items.filter((it: any) => it.slot_id !== omit);
+      return JSON.stringify(full);
+    };
+    const writerLlm = new MockLLM([declineTwice]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        simulationMode: "smoke", smokeCap: 20,
+        plannerProvider: new MockLLM([SMOKE_PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(3); // the omitted unit was rescued solo
+    expect(meta.failed_count).toBe(0);
+    expect(writerLlm.calls.length).toBe(3); // 2 chunk attempts + exactly 1 solo rescue
+  });
+
   test("smoke cap drops overflow units and reports them in metadata", async () => {
     const events = await collect(
       generateScenarios({
@@ -625,6 +654,37 @@ describe("writer retry economy — model-declined slots skip the solo fallback",
     expect(writerLlm.calls.length).toBe(2);
   });
 
+  test("a validation-REJECTED slot is not a decline: it keeps the solo fallback", async () => {
+    // Both chunk attempts write S004 with an empty goal — writer-side validation
+    // rejects it (rejectionReasons: missing_goal), so the model ENGAGED with the
+    // slot; it didn't decline it. The focused solo call is exactly the rescue that
+    // historically fixes this class. Pre-fix, absence from res.scenarios was
+    // conflated with a clean decline and the slot failed with no solo call.
+    let calls = 0;
+    const badGoalTwice = (args: ProviderCompleteArgs): string => {
+      calls++;
+      const full = JSON.parse(writerResponder(args));
+      if (calls <= 2) {
+        full.scenario_items = full.scenario_items.map((it: any) =>
+          it.slot_id === "S004" ? { ...it, scenario: { ...it.scenario, goal: "" } } : it,
+        );
+      }
+      return JSON.stringify(full);
+    };
+    const writerLlm = new MockLLM([badGoalTwice]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        exactCountTopUp: false, // isolate the fallback path from the top-up wave
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(4); // S004 rescued by the solo retry
+    expect(meta.failed_count).toBe(0);
+    expect(writerLlm.calls.length).toBe(3); // 2 chunk attempts + exactly 1 solo rescue
+  });
+
   test("slots missing because an attempt THREW keep the full solo fallback", async () => {
     // First chunk attempt dies mid-flight (transport), second attempt also thrown:
     // no CLEAN omission was ever observed, so every slot keeps the rescue path and
@@ -673,9 +733,44 @@ describe("exact-count top-up", () => {
     expect(meta.planned_count).toBe(5); // 4 first-wave + 1 top-up
     // Ledger invariant across waves: planned_total = saved + failed + deduped.
     expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
+    // The USER's request was fully delivered — internal over-planning (5 planned
+    // for a 4-ask) must not surface as a partial-success banner.
+    expect(meta.partial_success).toBe(false);
+    // The writer phase is re-announced for the top-up wave with CUMULATIVE totals,
+    // so chunk events never exceed the last announced chunk_count.
+    const ws = events.filter((e) => e.type === "writing_started") as any[];
+    expect(ws.length).toBe(2);
+    expect(ws[1].planned_count).toBe(5);
+    expect(ws[1].chunk_count).toBe(2);
     // Every admitted scenario's coverage_key is unique across waves.
     const keys = events.filter((e) => e.type === "scenario").map((e: any) => e.scenario.eval_metadata.coverage_key);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  test("a fully-declined first wave is rescued by the top-up instead of hard-failing", async () => {
+    // Every wave-1 slot (S001..S004) is declined by both clean chunk attempts —
+    // saved=0 after wave 1. Pre-fix the all-failed throw fired HERE, with the
+    // top-up sitting unreachable one block below; now the top-up's fresh slots
+    // (S005+) rescue the run and the throw fires only if THEY also fail.
+    const wave1 = new Set(["S001", "S002", "S003", "S004"]);
+    const declineWave1 = (args: ProviderCompleteArgs): string => {
+      const full = JSON.parse(writerResponder(args));
+      full.scenario_items = full.scenario_items.filter((it: any) => !wave1.has(it.slot_id));
+      return JSON.stringify(full);
+    };
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([declineWave1]),
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    expect(meta.saved_count).toBe(4); // exact count via the rescue wave
+    expect(meta.topup_planned).toBe(4);
+    expect(meta.topup_saved).toBe(4);
+    expect(meta.failed_slot_ids).toEqual(["S001", "S002", "S003", "S004"]);
+    expect(meta.partial_success).toBe(false); // the request was fully delivered
+    expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
   });
 
 });
