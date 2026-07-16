@@ -108,3 +108,61 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.low_engagement.detected).toBe(false);
   });
 });
+
+describe("low-engagement silence floor (LOWE-3)", () => {
+  // The agent talked, the caller never did. Every judge says "not detected" —
+  // the floor must fire regardless, because it does not consult the judge.
+  const SILENT_CALLEE = "Agent: Hi, is this Priya?\nAgent: Hello? Can you hear me?";
+
+  test("agent spoke, caller never did => low_engagement fires deterministically", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ full_transcript: SILENT_CALLEE }), llm);
+
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.low_engagement.available).toBe(true);
+    expect(cm.answered).toBe(true);
+    expect(cm.conversation_status.status).toBe("low_engagement");
+    // The caller WAS silent — must not regress when `answered` flips true.
+    expect(cm.silent_call).toBe(true);
+    expect(cm.customer_engaged).toBe(false);
+  });
+
+  test("floor fires even when the judge call failed (available:false)", async () => {
+    // Unparseable output => safeJudge returns its unavailable fallback. Silence
+    // needs no LLM, so the floor must still fire.
+    const llm = new MockLLM(["not json at all"]);
+    const cm = await evaluateConversationMetrics(ctx({ full_transcript: SILENT_CALLEE }), llm);
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.low_engagement.available).toBe(true);
+  });
+
+  test("caller spoke => floor does not apply, judge verdict is respected", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ full_transcript: "Agent: Hi, is this Priya?\nUser: Yes, what is this about?" }),
+      llm,
+    );
+    expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.answered).toBe(true);
+    expect(cm.silent_call).toBe(false);
+  });
+
+  test("empty transcript => unanswered, floor does not invent engagement", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ full_transcript: "" }), llm);
+    expect(cm.answered).toBe(false);
+    expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.conversation_status.status).toBe("unanswered");
+    expect(cm.silent_call).toBe(true);
+  });
+
+  test("voicemail still wins over the floor via the exclusivity ladder", async () => {
+    const llm = new MockLLM([responder({ voicemail: true })]);
+    const cm = await evaluateConversationMetrics(ctx({ full_transcript: SILENT_CALLEE }), llm);
+
+    expect(cm.voicemail_detected.detected).toBe(true);
+    expect(cm.low_engagement.detected).toBe(false); // suppressed, not co-fired
+    expect(cm.low_engagement.technical_reason).toContain("superseded");
+    expect(cm.conversation_status.status).toBe("voicemail_detected");
+  });
+});

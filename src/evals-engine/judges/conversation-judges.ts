@@ -229,9 +229,26 @@ export function sentimentPassed(sentiment: string): boolean {
   return !/negativ|confus/i.test(sentiment);
 }
 
-/** True if the transcript has any non-empty user utterance. */
-function isAnswered(ctx: ConversationInput): boolean {
+/** True if the caller said anything. */
+function callerSpoke(ctx: ConversationInput): boolean {
   return /(^|\n)User:\s*\S/.test(ctx.full_transcript);
+}
+
+/** True if the agent said anything. An agent turn only exists once the call
+ *  connected, so this is transcript-level proof that the media path opened. */
+function agentSpoke(ctx: ConversationInput): boolean {
+  return /(^|\n)Agent:\s*\S/.test(ctx.full_transcript);
+}
+
+/** True if the call connected. AO has no telephony answer signal here —
+ *  duration_ms/answered_at live on the session row and are never plumbed into
+ *  buildSessionEvalInput — so connection is inferred from the transcript:
+ *  either side speaking proves somebody picked up. Keying this on the CALLER
+ *  alone (the pre-LOWE-3 behaviour) mislabelled every agent-spoke/caller-silent
+ *  call "unanswered", which let the low_engagement judge pass it: its criteria
+ *  only apply "after a human answered". */
+function isAnswered(ctx: ConversationInput): boolean {
+  return callerSpoke(ctx) || agentSpoke(ctx);
 }
 
 /** Voice unless the transport is clearly a text channel. Unknown transport ⇒
@@ -277,6 +294,29 @@ export function zeroConversationMetrics(): SimConversationMetrics {
   };
 }
 
+/** LOWE-3 — the deterministic low-engagement floor.
+ *
+ *  The agent spoke and the caller never did. That is countable, and the LLM
+ *  judge measurably cannot count it: 0/13 on the Round 4 zero-caller-turn set
+ *  against legacy's 13/13. Its prompt enumerates what brief user messages look
+ *  like, so with NO user messages nothing matches and it passes.
+ *
+ *  Authoritative, not advisory. It overrides the judge's verdict AND applies
+ *  when the judge call failed (`available:false`) — observing silence needs no
+ *  LLM. Voicemail / call-screening / bot still win: this returns a plain
+ *  DetectionResult that the exclusivity ladder below suppresses exactly as it
+ *  would a judge-produced one, which is what stops it firing on answering
+ *  machines. */
+function silenceFloor(ctx: ConversationInput, judged: DetectionResult): DetectionResult {
+  if (callerSpoke(ctx) || !agentSpoke(ctx)) return judged;
+  return {
+    detected: true,
+    reason: "The caller never spoke — the agent talked but got no response at all.",
+    technical_reason: "silence floor: >=1 agent turn, 0 caller turns (deterministic; judge not consulted)",
+    available: true,
+  };
+}
+
 /**
  * Score the conversation axis over the transcript and return real
  * `conversation_metrics`. Voice-only detections (voicemail / bot / call-screening
@@ -302,6 +342,10 @@ export async function evaluateConversationMetrics(
     voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);
 
+  // Deterministic floor before the ladder: the ladder then suppresses it under
+  // voicemail/screening/bot exactly as it would any judge verdict.
+  const lowEngFloored = silenceFloor(ctx, lowEng);
+
   // ── mutual exclusivity on the emitted booleans (cx-sqs priority) ──
   // Voicemail + call-screening may co-exist and take top priority; either one
   // suppresses every lower detection (bot, wrong_number, do_not_disturb,
@@ -314,7 +358,7 @@ export async function evaluateConversationMetrics(
   let botFired = bot.available && bot.detected;
   let wrongFired = wrong.available && wrong.detected;
   let dndFired = dnd.available && dnd.detected;
-  let lowFired = lowEng.available && lowEng.detected;
+  let lowFired = lowEngFloored.available && lowEngFloored.detected;
 
   if (vmFired || screenFired) {
     botFired = false;
@@ -332,7 +376,7 @@ export async function evaluateConversationMetrics(
   const botFinal = botFired ? det(bot) : suppressed(bot);
   const wrongFinal = wrongFired ? det(wrong) : suppressed(wrong);
   const dndFinal = dndFired ? det(dnd) : suppressed(dnd);
-  const lowFinal = lowFired ? det(lowEng) : suppressed(lowEng);
+  const lowFinal = lowFired ? det(lowEngFloored) : suppressed(lowEngFloored);
 
   // Fixed priority order for the final status label (from finalized outcomes).
   let status = "answered";
@@ -358,7 +402,10 @@ export async function evaluateConversationMetrics(
       available: sentiment.available,
       passed: sentiment.available ? sentimentPassed(sentiment.sentiment) : undefined,
     },
-    silent_call: !answered,
+    // Caller-side silence, NOT connection state: `answered` now counts an agent
+    // turn as proof of connection (see isAnswered), so keying this off it would
+    // report the caller-silent calls as non-silent — backwards.
+    silent_call: !callerSpoke(ctx),
     customer_engaged: customerEngaged,
     conversation_status: { status, reason: "", technical_reason: "" },
     // Platform-neutral: the ingest path makes no runtime claim (was hardcoded
