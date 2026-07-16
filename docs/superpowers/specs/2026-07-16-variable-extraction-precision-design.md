@@ -12,11 +12,11 @@ The current prompt uses three omission thresholds: a value merely "available in 
 
 ## Decision
 
-Use an applicability-first rubric and repeat the exact per-variable rules plus a compact decision contract after the long call payload. When the main judge proposes a defect, use a compact focused review to verify the proposal against only the rule and transcript. Explicit-speech violations bypass that leniency review so vague speech can never be promoted into a precise bucket.
+Use an applicability-first rubric and repeat the exact per-variable rules plus a compact decision contract after the long call payload. When the main judge proposes a defect, use a compact focused review to verify the proposal against only the rule and transcript. Stored-value violations of an explicit-speech rule bypass that leniency review so vague speech can never be promoted into a precise bucket; proposed omissions still receive precision review.
 
-Two narrow safeguards are allowed because live replay demonstrated that the model could state the correct rule and still violate it:
+Two narrow focused safeguards are allowed because live replay demonstrated that the model could state the correct rule and still violate it:
 
-- A structured final-batch cutoff may clear omissions only when the configured recording step is before transfer/end, the transfer/end turn is marked interrupted, the caller replies, no later agent/tool turn exists, no variables were stored, and no incorrect values are present.
+- A structured final-batch cutoff signal is true only when the configured recording step is before transfer/end, the transfer/end turn is marked interrupted, the caller replies, and no later agent/tool turn exists. A missing candidate is cleared only when the schedule explicitly batches all lead data and the candidate's own rule does not require immediate/earlier recording; other candidates continue to focused review.
 - Config-default disagreements receive a focused contradiction review so an explicit wrong-person/dispute exception is preserved. No other defect can be added by a review.
 
 Only one PR will be opened, targeting `dev`. Nothing will be opened against `main` or another production branch.
@@ -57,9 +57,9 @@ An omission may be excused when structured turn order proves the transcript ende
 
 - Rewrite the Variable Extraction rubric in `src/evals-engine/judges/instructions.ts` so every occurrence of the decision boundary uses the authoritative contract.
 - Update `OUT_VARIABLE` to match the same explicit-statement and incorrect-value rules.
-- Render a judge classification beside each variable rule and repeat the exact rules plus compact decision contract at the end of the variable judge's user payload.
-- Add focused config-default and proposed-defect reviews. These reviews may only confirm or remove defects proposed by the main judge; they cannot add new ones. Preserve explicit-speech violations without a leniency review.
-- Add the narrowly structured final-batch cutoff guard described above.
+- Render high-confidence judge classification hints beside variable rules and repeat the exact rules plus compact decision contract at the end of the variable judge's user payload. The exact rule remains authoritative when a free-form rule cannot be classified confidently.
+- Add focused config-default and proposed-defect reviews. These reviews may only confirm or remove defects proposed by the main judge; they cannot add new ones. Preserve stored explicit-speech violations without a leniency review while still reviewing proposed omissions.
+- Add the narrowly structured, candidate-specific final-batch cutoff guard described above and pass its schedule evidence to the main and focused-review payloads.
 - Add calibration assertions in `tests/evals-engine-judge-calibration.test.ts` for every Round 4 root-cause carve-out and for the load-bearing strictness rules.
 - Expand `scripts/overfire-smoke.ts` with anonymized Variable Extraction cases covering clean derived/sibling/gated/config-directed/agent-authored/backend/truncated inputs and defective explicit-omission/invented-classification inputs.
 - Do not commit Round 4 customer transcripts or other audit data.
@@ -78,7 +78,7 @@ The PR body will report commands, model/provider used for live validation, confu
 ## Safety and Non-goals
 
 - No shared input-plumbing, public result schema, aggregation, database, or UI changes.
-- No broad heuristic verdict rewriting; only the exact structured cutoff guard is deterministic.
+- No broad deterministic verdict rewriting. The only deterministic removal is the candidate-specific final-batch guard above; focused reviews can only remove unconfirmed proposed defects and cannot add defects.
 - No Hallucination judge changes in this PR.
 - No customer audit data committed to the repository.
 - No PR targeting `main` or production.

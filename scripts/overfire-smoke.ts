@@ -266,10 +266,14 @@ async function run() {
         purchase_goal: "The caller-stated purchase goal.",
       },
       extracted_variables: {},
-      turns: [{ node_uuid: "n1", user: "Budget is 50 lakh, Bengaluru, for my own home.", agent: "Let me explain the transfer process— [interrupted]", intent: "" }],
-      turn_count: 1,
+      turns: [
+        { node_uuid: "n1", user: "Budget is 50 lakh, Bengaluru, for my own home.", agent: "", intent: "" },
+        { node_uuid: "n1", user: "", agent: "Let me explain the transfer process— [interrupted]", intent: "" },
+        { node_uuid: "n1", user: "Okay", agent: "", intent: "" },
+      ],
+      turn_count: 3,
     }),
-    baseCtx({ full_transcript: "User: Budget is 50 lakh, Bengaluru, for my own home.\nAgent: Let me explain the transfer process— [interrupted]" }),
+    baseCtx({ full_transcript: "User: Budget is 50 lakh, Bengaluru, for my own home.\nAgent: Let me explain the transfer process— [interrupted]\nUser: Okay" }),
     true,
   );
 

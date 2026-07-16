@@ -132,6 +132,7 @@ function variablePayload(node: NodeEvalInput, ctx: ConversationInput): Record<st
   return {
     ...nodePayload(node, ctx),
     variable_rules: node.variable_rules ?? {},
+    variable_recording_schedule: recordingScheduleExcerpt(node),
     variable_judge_contract:
       "Judge only whether applicable caller-provided information was captured correctly. " +
       "Each variable's recording rule is authoritative; do not invent prerequisites or exceptions. " +
@@ -143,11 +144,31 @@ function variablePayload(node: NodeEvalInput, ctx: ConversationInput): Record<st
   };
 }
 
+function recordingScheduleExcerpt(node: NodeEvalInput): string {
+  return node.node_prompt
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        /submit|submission|record|extract|capture/i.test(line) &&
+        /transfer|handoff|ending|end\b/i.test(line),
+    )
+    .slice(0, 5)
+    .join("\n")
+    .slice(0, 2000);
+}
+
 function finalRecordingBatchCutOff(node: NodeEvalInput): boolean {
-  const spoken = node.turns.filter((turn) => !turn.evidence && !turn.idle && (turn.user || turn.agent));
-  const last = spoken.at(-1);
-  const previous = spoken.at(-2);
-  if (!last?.user || last.agent || !previous?.agent.toLowerCase().includes("[interrupted]")) return false;
+  const chronological = node.turns.filter((turn) => !turn.idle && (turn.user || turn.agent));
+  const last = chronological.at(-1);
+  const previous = chronological.at(-2);
+  if (
+    !last?.user ||
+    last.agent ||
+    last.evidence ||
+    !previous?.agent.toLowerCase().includes("[interrupted]") ||
+    previous.evidence
+  ) return false;
 
   const prompt = node.node_prompt.toLowerCase();
   return (
@@ -156,16 +177,37 @@ function finalRecordingBatchCutOff(node: NodeEvalInput): boolean {
   );
 }
 
+function finalBatchCoversVariable(node: NodeEvalInput, variableName: string): boolean {
+  if (!finalRecordingBatchCutOff(node)) return false;
+
+  const schedule = recordingScheduleExcerpt(node).toLowerCase();
+  const schedulesAllLeadData =
+    /lead (?:data|details)[\s\S]{0,120}(?:submit|submission|record)/.test(schedule) ||
+    /(?:submit|submission|record)[\s\S]{0,120}(?:all |remaining )?lead (?:data|details)/.test(schedule) ||
+    /record them[\s\S]{0,80}(?:before|prior to)[\s\S]{0,80}(?:transfer|handoff|ending|end\b)/.test(schedule);
+  if (!schedulesAllLeadData) return false;
+
+  const rule = node.variable_rules?.[variableName]?.toLowerCase() ?? "";
+  return !/immediately|at once|as soon as|after each|record (?:it|this|the value) (?:when|after)/.test(rule);
+}
+
 function judgeClassification(variableName: string, rule: string | undefined): string {
   const normalizedRule = rule?.toLowerCase() ?? "";
   if (isConfigDirectedDefaultRule(normalizedRule)) {
     return "CONFIG-DIRECTED DEFAULT — valid without an affirmative caller utterance; apply only explicitly stated exceptions";
   }
-  if (/(?:summary|status|disposition|outcome|classification|internal[_ -]?score|remarks?)/i.test(variableName)) {
-    return "WORKFLOW FIELD — never missing caller information; do not place in missing_variables or incorrect_variables";
-  }
-  if (/backend|platform|initial context|tool result|lookup result|runtime/.test(normalizedRule)) {
+  if (
+    /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/.test(
+      normalizedRule,
+    )
+  ) {
     return "PLATFORM/BACKEND FIELD — outside caller extraction";
+  }
+  if (
+    /(?:summary|status|disposition|outcome|classification|internal[_ -]?score|remarks?)/i.test(variableName) ||
+    /agent-authored|workflow (?:field|status|disposition|label)|mapped (?:workflow )?(?:status|disposition|outcome)|internal score/.test(normalizedRule)
+  ) {
+    return "WORKFLOW FIELD — never missing caller information; do not place in missing_variables or incorrect_variables";
   }
   return "CALLER-CAPTURE CANDIDATE — still require applicability and an explicit caller-provided value";
 }
@@ -185,6 +227,33 @@ function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
     promptTokens: a.promptTokens + b.promptTokens,
     completionTokens: a.completionTokens + b.completionTokens,
     totalTokens: a.totalTokens + b.totalTokens,
+  };
+}
+
+type VariableIssueKey = `missing:${string}` | `incorrect:${string}`;
+
+function reconcileRejectedVariableIssues(
+  data: VariableExtractionRaw,
+  requiredVariables: string[],
+  actualEntries: Array<[string, unknown]>,
+  rejected: Set<VariableIssueKey>,
+  successReason: string,
+  reviewLabel: string,
+): VariableExtractionRaw {
+  if (rejected.size === 0) return data;
+
+  const missingVariables = data.missing_variables.filter((name) => !rejected.has(`missing:${name}`));
+  const incorrectVariables = data.incorrect_variables.filter((name) => !rejected.has(`incorrect:${name}`));
+  const hasExtraVariable = actualEntries.some(([name]) => !requiredVariables.includes(name));
+  const successful = !hasExtraVariable && missingVariables.length === 0 && incorrectVariables.length === 0;
+  return {
+    ...data,
+    extraction_successful: successful,
+    score: successful ? 1.0 : data.score,
+    reason: successful ? successReason : data.reason,
+    technical_reason: `${data.technical_reason || ""} ${reviewLabel}: ${[...rejected].join(", ")}.`.trim(),
+    missing_variables: missingVariables,
+    incorrect_variables: incorrectVariables,
   };
 }
 
@@ -278,26 +347,19 @@ export async function runVariableExtractionJudge(
     provider,
   });
 
-  // A model can acknowledge the final-batch cutoff and still list the pending
-  // values as missing. When the structured event order proves that no recorder
-  // turn occurred, and there are no stored values that could be incorrect or
-  // extra, omission is impossible by construction. Keep this guard deliberately
-  // narrow so completed calls and wrong stored values remain model-judged.
-  if (
-    actualEntries.length === 0 &&
-    finalRecordingBatchCutOff(node) &&
-    result.data.incorrect_variables.length === 0
-  ) {
-    result.data = {
-      ...result.data,
-      extraction_successful: true,
-      score: 1.0,
-      reason: "The configured final recording batch had no turn in which to run.",
-      technical_reason: `${result.data.technical_reason || ""} Overridden by structured final-batch cutoff: interrupted ending/transfer, caller reply, and no later agent or tool turn.`.trim(),
-      missing_variables: [],
-      incorrect_variables: [],
-    };
-  }
+  const cutoffRejected = new Set<VariableIssueKey>(
+    result.data.missing_variables
+      .filter((name) => finalBatchCoversVariable(node, name))
+      .map((name) => `missing:${name}` as const),
+  );
+  result.data = reconcileRejectedVariableIssues(
+    result.data,
+    node.required_variables,
+    actualEntries,
+    cutoffRejected,
+    "The configured final recording batch had no turn in which to run.",
+    "Cleared by structured final-batch schedule",
+  );
 
   const defaultCandidates = result.data.incorrect_variables.filter(
     (name) =>
@@ -326,24 +388,19 @@ export async function runVariableExtractionJudge(
       });
       result.usage = addUsage(result.usage, review.usage);
 
-      const cleared = new Set(
+      const cleared = new Set<VariableIssueKey>(
         review.data.reviews
           .filter((entry) => defaultCandidates.includes(entry.variable_name) && !entry.exception_established)
-          .map((entry) => entry.variable_name),
+          .map((entry) => `incorrect:${entry.variable_name}` as const),
       );
-      if (cleared.size > 0) {
-        const incorrectVariables = result.data.incorrect_variables.filter((name) => !cleared.has(name));
-        const hasExtraVariable = actualEntries.some(([name]) => !node.required_variables.includes(name));
-        const successful = !hasExtraVariable && result.data.missing_variables.length === 0 && incorrectVariables.length === 0;
-        result.data = {
-          ...result.data,
-          extraction_successful: successful,
-          score: successful ? 1.0 : result.data.score,
-          reason: successful ? "Configured default values are valid; the caller established no rule exception." : result.data.reason,
-          technical_reason: `${result.data.technical_reason || ""} Cleared by focused config-default review: ${[...cleared].join(", ")}.`.trim(),
-          incorrect_variables: incorrectVariables,
-        };
-      }
+      result.data = reconcileRejectedVariableIssues(
+        result.data,
+        node.required_variables,
+        actualEntries,
+        cleared,
+        "Configured default values are valid; the caller established no rule exception.",
+        "Cleared by focused config-default review",
+      );
     } catch {
       // The primary verdict remains usable if the narrow review is unavailable.
     }
@@ -351,7 +408,6 @@ export async function runVariableExtractionJudge(
 
   const focusedCandidates = [
     ...result.data.missing_variables
-      .filter((name) => !isExplicitSpeechRule(node.variable_rules?.[name]))
       .map((name) => ({
         variable_name: name,
         issue_type: "missing" as const,
@@ -377,10 +433,13 @@ export async function runVariableExtractionJudge(
           "Verify ONLY the proposed variable defects against the exact recording rule and caller transcript. " +
           "For missing: confirm only when the caller explicitly stated an applicable value in that variable's own terms and it was not stored. Reject inferred/derived values, absent defaults such as not_asked or no_questions, unopened paths, duplicate/sibling demands, workflow fields, and backend/platform/tool/lookup data. " +
           "For incorrect: confirm only when the stored value materially conflicts with the caller or the exact rule. A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. " +
+          "When final_recording_batch_cutoff is true, use recording_schedule to identify pending final-batch fields. If the schedule says to submit/record the lead data once before transfer/end and the candidate rule has no earlier timing, reject that omission; preserve a candidate whose exact rule or schedule separately requires immediate/earlier recording. " +
           "Do not add new defects. Return one review for every candidate and cite only caller words or the exact rule.",
         input: {
           candidates: focusedCandidates,
           node_transcript: renderNodeTranscript(node),
+          final_recording_batch_cutoff: finalRecordingBatchCutOff(node),
+          recording_schedule: recordingScheduleExcerpt(node),
         },
         schema: FocusedDefectReviewZ,
         jsonSchema: FOCUSED_DEFECT_REVIEW_JSON,
@@ -389,29 +448,22 @@ export async function runVariableExtractionJudge(
       });
       result.usage = addUsage(result.usage, review.usage);
 
-      const rejected = new Set(
+      const rejected = new Set<VariableIssueKey>(
         review.data.reviews
           .filter((entry) => {
             const key = `${entry.issue_type}:${entry.variable_name}`;
             return !entry.defect_confirmed && focusedCandidates.some((candidate) => `${candidate.issue_type}:${candidate.variable_name}` === key);
           })
-          .map((entry) => `${entry.issue_type}:${entry.variable_name}`),
+          .map((entry) => `${entry.issue_type}:${entry.variable_name}` as VariableIssueKey),
       );
-      if (rejected.size > 0) {
-        const missingVariables = result.data.missing_variables.filter((name) => !rejected.has(`missing:${name}`));
-        const incorrectVariables = result.data.incorrect_variables.filter((name) => !rejected.has(`incorrect:${name}`));
-        const hasExtraVariable = actualEntries.some(([name]) => !node.required_variables.includes(name));
-        const successful = !hasExtraVariable && missingVariables.length === 0 && incorrectVariables.length === 0;
-        result.data = {
-          ...result.data,
-          extraction_successful: successful,
-          score: successful ? 1.0 : result.data.score,
-          reason: successful ? "All applicable caller-provided variables were captured correctly." : result.data.reason,
-          technical_reason: `${result.data.technical_reason || ""} Unconfirmed proposals removed by focused defect review: ${[...rejected].join(", ")}.`.trim(),
-          missing_variables: missingVariables,
-          incorrect_variables: incorrectVariables,
-        };
-      }
+      result.data = reconcileRejectedVariableIssues(
+        result.data,
+        node.required_variables,
+        actualEntries,
+        rejected,
+        "All applicable caller-provided variables were captured correctly.",
+        "Unconfirmed proposals removed by focused defect review",
+      );
     } catch {
       // Keep the primary verdict if this precision-only verification is unavailable.
     }
