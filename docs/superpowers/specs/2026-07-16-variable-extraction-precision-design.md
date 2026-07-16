@@ -22,6 +22,17 @@ Two narrow focused safeguards are allowed because live replay demonstrated that 
 
 Only one PR will be opened, targeting `dev`. Nothing will be opened against `main` or another production branch.
 
+## Review Remediation
+
+PR review identified four changes required before merge:
+
+- Deterministic workflow exclusion must require corroborating rule semantics. A workflow-shaped name alone, such as `visa_status`, cannot suppress a real caller-capture defect.
+- Move the variable-extraction implementation into a dedicated `judges/variable-extraction.ts` module so `node-judges.ts` remains the thin collection of node judges and does not amplify conflicts with other judge-tuning PRs.
+- Replace the two copy-pasted guarded-review pipelines with one typed orchestration helper. Independent config-default and focused-defect reviews run concurrently, their usage is combined, and all rejected issue keys are reconciled once before verdict canonicalization.
+- Preserve the evidence-backed deterministic final-batch safeguard, but centralize its schedule vocabulary and computed context in named constants/helpers shared by payload construction, deterministic clearing, and focused review input. Do not broaden it to arbitrary flow-specific nouns.
+
+PR #106 is not a runtime dependency. It only introduces a shared test-config fixture in files that this PR also touches. The four substantive remediations proceed independently; after #106 merges, this branch will rebase onto `dev` and adopt `TEST_JUDGE_CONFIG` without duplicating its fixture.
+
 ## Authoritative Evaluation Contract
 
 The prompt will use one consistent contract in its introduction, numbered criteria, incorrect-value test, ambiguity guidance, and JSON-output instruction.
@@ -64,6 +75,7 @@ An omission may be excused when structured turn order proves the transcript ende
 - Add focused config-default and proposed-defect reviews. These reviews may only confirm or remove defects proposed by the main judge; they cannot add new ones. Preserve stored explicit-speech violations without a leniency review while still reviewing proposed omissions.
 - Add the narrowly structured, candidate-specific final-batch cutoff guard described above and pass its schedule evidence to the main and focused-review payloads.
 - Canonicalize the final boolean from missing/incorrect arrays plus the configured-name check so the judge cannot emit an unnamed failure.
+- Add regression coverage proving that caller-stated variables with workflow-shaped names remain judgeable while genuinely agent-authored workflow fields and platform/backend fields remain excluded.
 - Add calibration assertions in `tests/evals-engine-judge-calibration.test.ts` for every Round 4 root-cause carve-out and for the load-bearing strictness rules.
 - Expand `scripts/overfire-smoke.ts` with anonymized Variable Extraction cases covering clean derived/sibling/gated/config-directed/agent-authored/backend/truncated inputs and defective explicit-omission/invented-classification inputs.
 - Do not commit Round 4 customer transcripts or other audit data.
