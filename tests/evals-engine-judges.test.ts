@@ -393,6 +393,43 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.missing_variables).toEqual([]);
   });
 
+  test("variable extraction: unquantified flow-specific details do not clear unrelated omissions", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "booking reference missing",
+        technical_reason: "caller stated the value",
+        missing_variables: ["booking_reference"],
+        incorrect_variables: [],
+      }),
+      JSON.stringify({
+        reviews: [
+          { variable_name: "booking_reference", issue_type: "missing", defect_confirmed: true, evidence: "Caller said AB42." },
+        ],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        node_prompt: "Before transfer, record booking details.",
+        required_variables: ["booking_reference"],
+        variable_rules: { booking_reference: "Capture the booking reference provided by the caller." },
+        extracted_variables: {},
+        turns: [
+          { node_uuid: "n1", user: "The reference is AB42", agent: "", intent: "" },
+          { node_uuid: "n1", user: "", agent: "I will transfer you now [interrupted]", intent: "" },
+          { node_uuid: "n1", user: "Okay", agent: "", intent: "" },
+        ],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(data.extraction_successful).toBe(false);
+    expect(data.missing_variables).toEqual(["booking_reference"]);
+  });
+
   test("variable extraction: cutoff review preserves a confirmed non-batch omission", async () => {
     const llm = new MockLLM([
       JSON.stringify({
