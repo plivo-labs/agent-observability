@@ -152,7 +152,10 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
   });
 
   test("all-evidence transcript with a question mark stays clean", async () => {
-    const evidence = 'Tool_Call: lookup({"query":"is the order ready?"})';
+    // The legacy Agent: prefix makes this a real discriminator: using `||` or
+    // reading full_transcript directly would mistake the tool argument for a
+    // delivered agent question and fire the deterministic silent-call gate.
+    const evidence = 'Agent: Tool_Call: lookup({"query":"is the order ready?"})';
     const llm = new MockLLM([responder({ low: false })]);
     const cm = await evaluateConversationMetrics(
       ctx({ transport: "livekit", full_transcript: evidence, speech_transcript: "" }),
