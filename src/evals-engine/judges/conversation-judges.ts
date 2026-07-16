@@ -317,14 +317,53 @@ export async function evaluateConversationMetrics(
   // Otherwise resolve by bot > wrong_number > do_not_disturb > low_engagement.
   // `botFired` is already false on non-voice (voiceOnlySkip), so the same block
   // yields the text-channel priority (wrong > dnd > low).
-  const vmFired = voicemail.available && voicemail.detected;
-  const screenFired = screening.available && screening.detected;
+  let vmFired = voicemail.available && voicemail.detected;
+  let screenFired = screening.available && screening.detected;
   let botFired = bot.available && bot.detected;
   let wrongFired = wrong.available && wrong.detected;
   let dndFired = dnd.available && dnd.detected;
   let lowFired = lowEng.available && lowEng.detected;
 
-  if (vmFired || screenFired) {
+  // ── a dead call is decided in CODE, not by the LLM ──
+  // LOW_ENGAGEMENT is written around "a real human answered … but only gave minimal
+  // greetings", and passes when "the metric does not apply". A transcript with no
+  // caller speech falls outside that definition, so the judge correctly returns
+  // not-detected — and the strongest possible case of low engagement scores clean.
+  //
+  // This is measured, not theorised. Round-4 prod audit (315 paired calls): AO's fire
+  // rate climbs as the caller says less — 1.8% at 6+ turns, 11.5% at 3-5, 17.9% at 2,
+  // 61.1% at 1 — then collapses to 0.0% at zero turns, inverting the trend exactly at
+  // the precondition's boundary (P≈4.7e-06). Legacy fires on 13/13 of those calls. AO's
+  // own stored reasoning says it outright: "No human response was recorded, so low
+  // engagement does not apply."
+  //
+  // So the definition is the defect, and re-wording it would ask the model to contradict
+  // its own criteria. isAnswered() is a deterministic regex over the transcript WE judged,
+  // so decide it here instead.
+  //
+  // Opportunity gate: an agent that delivered a one-way announcement and never asked
+  // anything gave the caller nothing to respond to — a completed message, not a
+  // disengaged caller. Requiring a delivered question reproduces the blind auditor 13/13
+  // on the round-4 sample (legacy's unconditional rule gets 11/13, over-firing on
+  // announcement calls). Read the SPEECH transcript so a Tool_Call's arguments can never
+  // trip the gate; `??` (not `||`) because an all-evidence transcript filters to "" and
+  // must stay empty here rather than falling back to the tool-bearing full transcript.
+  const speech = ctx.speech_transcript ?? ctx.full_transcript;
+  const agentAsked = /(^|\n)Agent:[^\n]*\?/.test(speech);
+  const silentFired = voice && !answered && agentAsked;
+
+  if (silentFired) {
+    // Silence outranks every counterparty detection: voicemail / bot / screening all
+    // require the FAR END to have said something (a real mailbox greeting reaches us
+    // through STT as a User: turn). On a transcript with no caller speech, any of them
+    // firing did so on our own Agent: lines and is a false positive by construction.
+    vmFired = false;
+    screenFired = false;
+    botFired = false;
+    wrongFired = false;
+    dndFired = false;
+    lowFired = true;
+  } else if (vmFired || screenFired) {
     botFired = false;
     wrongFired = false;
     dndFired = false;
@@ -340,7 +379,25 @@ export async function evaluateConversationMetrics(
   const botFinal = botFired ? det(bot) : suppressed(bot);
   const wrongFinal = wrongFired ? det(wrong) : suppressed(wrong);
   const dndFinal = dndFired ? det(dnd) : suppressed(dnd);
-  const lowFinal = lowFired ? det(lowEng) : suppressed(lowEng);
+  // det() re-reads the RAW verdict, so `lowFired ? det(lowEng)` would emit detected:false
+  // on the silent path and silently undo the rule above — synthesize the verdict instead.
+  const lowFinal = silentFired
+    ? {
+        detected: true,
+        detected_value: 1,
+        reason: "The caller never spoke. The agent asked and got no response for the whole call.",
+        technical_reason:
+          "derived in code: zero user turns in the judged transcript (isAnswered=false) with a delivered agent question",
+        available: true,
+      }
+    : lowFired
+      ? det(lowEng)
+      : suppressed(lowEng);
+  // voicemail_detected / call_screening are emitted RAW below, never via suppressed(), so
+  // a detection we just un-fired would still fan out a failing row for a call we have
+  // declared silent.
+  const vmFinal = silentFired ? suppressed(voicemail) : det(voicemail);
+  const screenFinal = silentFired ? suppressed(screening) : det(screening);
 
   // Fixed priority order for the final status label (from finalized outcomes).
   let status = "answered";
@@ -353,9 +410,9 @@ export async function evaluateConversationMetrics(
 
   return {
     answered,
-    voicemail_detected: det(voicemail),
+    voicemail_detected: vmFinal,
     bot_detected: botFinal,
-    call_screening: det(screening),
+    call_screening: screenFinal,
     low_engagement: lowFinal,
     wrong_number: wrongFinal,
     do_not_disturb: dndFinal,

@@ -9,6 +9,10 @@ mock.module("../src/config.js", () => ({
     GENERATOR_MODEL: undefined,
     LLM_TIMEOUT_MS: 30000,
     LLM_MAX_RETRIES: 1,
+    // run-llm-judge.ts reads this at module load for its global judge-call semaphore.
+    // Omitting it leaves the limit undefined, so acquireJudgeSlot() never grants a slot
+    // and EVERY test in this file hangs to timeout — the whole suite was silently dead.
+    EVAL_MAX_CONCURRENT_JUDGE_CALLS: 10,
   },
 }));
 
@@ -66,6 +70,74 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.voicemail_detected.available).toBe(true);
     expect(cm.bot_detected.available).toBe(true);
     expect(cm.stt.available).toBe(true);
+  });
+
+  // ── a dead call is decided in code, not by the LLM ──
+  // LOW_ENGAGEMENT is defined around "a real human answered", so the judge correctly
+  // returns not-detected on a transcript with no caller speech — scoring the strongest
+  // case of low engagement as clean. Round-4 prod: AO fired on 0/13 such calls while
+  // legacy fired on 13/13. These pin the code path that overrides it.
+  const SILENT =
+    "Agent: Hi, this is Neha. Am I speaking with Alex?\n" +
+    "Agent: Are you still there? I'm happy to assist whenever you're ready\n" +
+    "Agent: Are you still there? I'm happy to assist whenever you're ready";
+
+  test("silent call: fires low_engagement even though the judge says not-detected", async () => {
+    // The LLM is told to report detected:false — exactly what prod does on these calls.
+    const llm = new MockLLM([responder({ low: false })]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ transport: "livekit", full_transcript: SILENT, speech_transcript: SILENT }),
+      llm,
+    );
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.low_engagement.available).toBe(true);
+    // Synthesized, not det() re-reading the raw verdict — otherwise this silently no-ops.
+    expect(cm.low_engagement.reason).toContain("never spoke");
+    expect(cm.answered).toBe(false);
+    expect(cm.silent_call).toBe(true);
+    expect(cm.customer_engaged).toBe(false);
+    // The taxonomy survives: "nobody spoke" stays separable from "human stonewalled".
+    expect(cm.conversation_status.status).toBe("unanswered");
+  });
+
+  test("silent call: a counterparty detection cannot suppress it, and is not fanned out", async () => {
+    // A message-taking receptionist's own greeting can trip VOICEMAIL (it has no role
+    // guard). On a transcript with no caller speech that is a false positive by
+    // construction — silence must outrank it, and the voicemail row must not survive.
+    const llm = new MockLLM([responder({ voicemail: true, screening: true, low: false })]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ transport: "livekit", full_transcript: SILENT, speech_transcript: SILENT }),
+      llm,
+    );
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.voicemail_detected.detected).toBe(false);
+    expect(cm.call_screening.detected).toBe(false);
+  });
+
+  test("silent call with no question asked stays clean (opportunity gate)", async () => {
+    // A one-way announcement gave the caller nothing to respond to — a completed
+    // message, not a disengaged caller. Legacy over-fires here; the gate is why AO
+    // matched ground truth 13/13 on the round-4 silent calls where legacy got 11/13.
+    const announce = "Agent: Hi, this is Acme. Your order has shipped. Our team will contact you shortly.";
+    const llm = new MockLLM([responder({ low: false })]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ transport: "livekit", full_transcript: announce, speech_transcript: announce }),
+      llm,
+    );
+    expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.answered).toBe(false);
+  });
+
+  test("answered call is untouched by the silent path (LLM still decides)", async () => {
+    const llm = new MockLLM([responder({ low: false })]);
+    const cm = await evaluateConversationMetrics(ctx({ transport: "livekit" }), llm);
+    expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.answered).toBe(true);
+
+    const llm2 = new MockLLM([responder({ low: true })]);
+    const cm2 = await evaluateConversationMetrics(ctx({ transport: "livekit" }), llm2);
+    expect(cm2.low_engagement.detected).toBe(true);
+    expect(cm2.conversation_status.status).toBe("low_engagement");
   });
 
   test("mutual exclusivity: bot fires → low_engagement is suppressed (no co-fire)", async () => {
