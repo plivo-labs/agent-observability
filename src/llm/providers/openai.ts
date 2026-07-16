@@ -84,7 +84,8 @@ function extractResponsesText(r: ResponsesResult): string {
  * Build the shared { url, headers, body } for a Responses API POST. Both the
  * non-streaming and streaming callers differ only by `stream:true`, so the
  * key check, base-URL normalize, auth header, and body assembly (model / input /
- * max_output_tokens / temperature / top_p / strict json_schema) live here once.
+ * max_output_tokens / temperature / top_p / reasoning effort / strict json_schema)
+ * live here once.
  * `maxTokens === 0` means "no cap" → the field is omitted.
  */
 function buildResponsesRequest(
