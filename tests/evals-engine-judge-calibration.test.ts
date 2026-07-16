@@ -14,6 +14,7 @@ mock.module("../src/config.js", () => ({
 
 const {
   HALLUCINATION,
+  systemForHallucination,
   VARIABLE_EXTRACTION,
   LOOP_DETECTION,
   INSTRUCTION_ADHERENCE,
@@ -47,6 +48,68 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(HALLUCINATION).toContain("USER ECHO IS GROUNDED");
     expect(HALLUCINATION).toContain("HINT LINES ARE AIDS, NOT ARBITERS");
     expect(HALLUCINATION).toContain("the user's words win");
+  });
+
+  test("hallucination: only caller-facing agent speech can become an accusation target", () => {
+    const prompt = systemForHallucination();
+    expect(prompt).toContain("CANDIDATE CLAIMS — SPOKEN AGENT LINES ONLY");
+    expect(prompt).toContain("Only text from actual `Agent:` speech lines");
+    expect(prompt).toContain("NEVER accusation targets");
+    expect(prompt).toContain("remain valid grounding EVIDENCE");
+    expect(prompt).toContain("Tool_Call:");
+    expect(prompt).toContain("Tool_Result:");
+    expect(prompt).toContain("System_Note:");
+    expect(prompt).toContain("Agent_Handoff:");
+  });
+
+  test("hallucination: forbidden behavior and stored values stay in their own judges", () => {
+    const prompt = systemForHallucination();
+    expect(prompt).toContain("SCOPE — OTHER JUDGES");
+    expect(prompt).toContain("forbidden, premature, or unauthorized");
+    expect(prompt).toContain("not whether the agent was allowed to say it");
+    expect(prompt).toContain("Wrong or invented values that appear only in stored data");
+    expect(prompt).toContain("plausibly supports the mistaken reading");
+    expect(prompt).toContain("Applying a configured criterion to a caller-proposed scenario");
+    expect(prompt).toContain("must not re-grade whether the instructions allowed");
+    expect(prompt).toContain("A new specific property of the scenario");
+  });
+
+  test("hallucination: imperatives, reassurance, and placeholder artifacts are not facts", () => {
+    const prompt = systemForHallucination();
+    expect(prompt).toContain("IMPERATIVES, recommendations, and suggestions");
+    expect(prompt).toContain("assert no outcome");
+    expect(prompt).toContain("Generic reassurance carrying no specific factual detail");
+    expect(prompt).toContain("Quote the agent's exact words");
+    expect(prompt).toContain("<fill_your_data>");
+    expect(prompt).toContain("%order_id%");
+    expect(prompt).toContain("bare slot identifiers");
+    expect(prompt).toContain("Do not judge whether an imperative's advice is correct");
+    expect(prompt).toContain("Do not search for proof that the advice will work");
+  });
+
+  test("hallucination: runtime normalization and successful actions ground equivalent speech", () => {
+    const prompt = systemForHallucination();
+    expect(prompt).toContain("country-code prefix, SIP wrapper, spaces, or punctuation");
+    expect(prompt).toContain("definite promise to perform a concrete, externally verifiable action");
+    expect(prompt).toContain("asserts that the capability/path exists");
+    expect(prompt).toContain("no instruction, tool/handoff, action result, or other valid source");
+    expect(prompt).toContain("A successful non-recording action result");
+    expect(prompt).toContain("A bookkeeping record_* call alone");
+  });
+
+  test("hallucination: a failure must identify the spoken claim and complete the evidence search", () => {
+    const prompt = systemForHallucination();
+    expect(prompt).toContain("EVIDENCE SEARCH — REQUIRED BEFORE FAILING");
+    expect(prompt).toContain("node_prompt and global_prompt can be long");
+    expect(prompt).toContain("# Initial Context");
+    expect(prompt).toContain("Search the node instructions");
+    expect(prompt).toContain("HARD GROUNDING GATE");
+    expect(prompt).toContain("MUST NOT produce hallucinated=true");
+    expect(prompt).toContain("did not need to be spoken to, explained to, or confirmed by the caller");
+    expect(prompt).toContain("Do not acknowledge that a source grounds a claim and then fail it");
+    expect(prompt).toContain("Unsupported spoken claim:");
+    expect(prompt).toContain("Sources checked:");
+    expect(prompt).toContain("If either part is missing, return hallucinated=false");
   });
 
   test("variable extraction: spoken-date equivalence both ways; empty set is not a free pass", () => {

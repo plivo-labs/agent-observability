@@ -1,4 +1,5 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import { renderFullTranscript } from "../conversation-input.js";
 import { IDLE_TAG } from "../types.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import {
@@ -24,17 +25,9 @@ import { HALLUCINATION_JSON, NODE_LOOP_JSON, VARIABLE_EXTRACTION_JSON, INSTRUCTI
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
 // reference-engine token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.
 
-/** Render a node's turns as "User: …\nAgent: …" lines (the node transcript the judges read). */
+/** Render the node transcript with the shared conversation evidence rules. */
 export function renderNodeTranscript(node: NodeEvalInput): string {
-  return node.turns
-    .map((t) => {
-      const lines: string[] = [];
-      if (t.user) lines.push(`User: ${t.user}`);
-      if (t.agent) lines.push(`Agent: ${t.agent}`);
-      return lines.join("\n");
-    })
-    .filter(Boolean)
-    .join("\n");
+  return renderFullTranscript(node.turns);
 }
 
 /** Shared user payload for the node judges (superset; each judge reads what it needs, like the reference engine).
