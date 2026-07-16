@@ -129,6 +129,12 @@ export const envSchema = z.object({
   SIMULATOR_MODEL: z.string().optional(),
   GENERATOR_MODEL: z.string().optional(),
 
+  // Reasoning effort for the judge role. Unset => omit the parameter and inherit
+  // the model's default (AO's shipped behaviour); legacy pins "none". Left
+  // optional deliberately: the right value is an open question the literature
+  // does not answer, so it is a swept dial, not a guessed default.
+  JUDGE_REASONING_EFFORT: z.enum(["none", "low", "medium", "high"]).optional(),
+
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).default(1),

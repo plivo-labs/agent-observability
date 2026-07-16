@@ -37,6 +37,11 @@ export interface ProviderCompleteArgs {
   temperature?: number;
   /** Nucleus sampling top_p; provider default when undefined. */
   topP?: number;
+  /** Reasoning effort for reasoning models (gpt-5.x, Responses API). Undefined
+   *  => omit the parameter and inherit the model's own default — which is what
+   *  AO shipped until now, while the legacy engine pins "none". Honored only on
+   *  the Responses path; the Chat path has no equivalent and ignores it. */
+  reasoningEffort?: "none" | "low" | "medium" | "high";
   /**
    * Strict JSON-schema for structured output (OpenAI/Azure). When set, the
    * provider forces the response to match this schema exactly — guarantees the
@@ -93,6 +98,8 @@ export interface CompleteJSONOptions<T> {
   temperature?: number;
   /** Nucleus sampling top_p. */
   topP?: number;
+  /** Reasoning effort for reasoning models; see ProviderCompleteArgs.reasoningEffort. */
+  reasoningEffort?: "none" | "low" | "medium" | "high";
   /** Strict JSON-schema for structured output — guarantees required fields (OpenAI/Azure). */
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   /** Override the wire API for this call ("chat" | "responses"); defaults to OPENAI_API_MODE. */

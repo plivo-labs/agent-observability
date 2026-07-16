@@ -125,6 +125,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         maxTokens,
         temperature: opts.temperature,
         topP: opts.topP,
+        reasoningEffort: opts.reasoningEffort,
         jsonSchema: opts.jsonSchema,
         stream: opts.stream,
         apiMode: opts.apiMode,

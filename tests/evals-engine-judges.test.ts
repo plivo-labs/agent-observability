@@ -218,3 +218,31 @@ describe("strict json_schema passed by every LLM judge (cx-sqs parity)", () => {
     check(goalLlm, "eval_goal");
   });
 });
+
+describe("reasoning effort plumbing", () => {
+  test("unconfigured => the parameter is not sent", async () => {
+    // The config mock at the top of this file has no JUDGE_REASONING_EFFORT, so
+    // run-llm-judge forwards undefined and the provider omits it — today's
+    // behaviour, byte for byte.
+    const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "ok", technical_reason: "ok" })]);
+    await runHallucinationJudge(node(), ctx(), llm);
+    expect(llm.calls[0]?.reasoningEffort).toBeUndefined();
+  });
+
+  test("completeJSON forwards an explicit effort to the provider", async () => {
+    const { completeJSON } = await import("../src/llm/index.js");
+    const { z } = await import("zod");
+    const llm = new MockLLM([JSON.stringify({ ok: true })]);
+
+    await completeJSON({
+      schema: z.object({ ok: z.boolean() }),
+      role: "judge",
+      system: "s",
+      prompt: "p",
+      reasoningEffort: "none",
+      provider: llm,
+    });
+
+    expect(llm.calls[0]?.reasoningEffort).toBe("none");
+  });
+});

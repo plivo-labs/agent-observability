@@ -91,7 +91,7 @@ function buildResponsesRequest(
   args: ProviderCompleteArgs,
   opts: { stream: boolean },
 ): { url: string; headers: Record<string, string>; body: Record<string, unknown> } {
-  const { system, user, model, maxTokens, temperature, topP, jsonSchema } = args;
+  const { system, user, model, maxTokens, temperature, topP, jsonSchema, reasoningEffort } = args;
   if (!config.OPENAI_API_KEY) {
     throw new Error("LLM_PROVIDER=openai but OPENAI_API_KEY is not set");
   }
@@ -110,6 +110,7 @@ function buildResponsesRequest(
     ...(maxTokens ? { max_output_tokens: maxTokens } : {}),
     ...(temperature !== undefined ? { temperature } : {}),
     ...(topP !== undefined ? { top_p: topP } : {}),
+    ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     // Strict structured output when a schema is supplied; otherwise free JSON (the
     // planner relies on the JSON_ONLY_HINT + zod validation in completeJSON).
     ...(jsonSchema

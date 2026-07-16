@@ -82,6 +82,11 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       system: args.system + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE,
       prompt: typeof args.input === "string" ? args.input : JSON.stringify(args.input),
       maxTokens: args.maxTokens,
+      // Undefined => omitted => the model's default, which is what AO has always
+      // sent. Reasoning tokens bill against max_output_tokens on the Responses
+      // API; this dial exists as an unmeasured control we can now sweep against
+      // the labelled set to see whether pinning it changes accuracy or spend.
+      reasoningEffort: config.JUDGE_REASONING_EFFORT,
       // No `temperature`: judge models are reasoning models (gpt-5.x) and the prod
       // Vibe gateway hard-400s the parameter ("Unsupported parameter: 'temperature'",
       // 2026-07-13 — every prod sim eval failed on it). Dev's deployment merely
