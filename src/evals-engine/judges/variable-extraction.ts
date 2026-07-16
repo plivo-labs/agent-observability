@@ -60,7 +60,8 @@ const BATCH_SCOPE_BEFORE_ACTION = new RegExp(
 const BATCH_PRONOUN_SCHEDULE = new RegExp(
   `\\brecord them\\b[\\s\\S]{0,80}\\b(?:before|prior to)\\b[\\s\\S]{0,80}\\b${TERMINAL_ACTION}\\b`,
 );
-const NAMED_BATCH_OBJECT = /\b[a-z][a-z0-9_-]{1,30} (?:data|details|information)\b/;
+const LEGACY_LEAD_BATCH_OBJECT = /\blead (?:data|details)\b/;
+const INTERRUPTED_TERMINAL_TURN = /\b(?:transfer|handoff|ending|end)\b/i;
 const EARLY_RECORDING_RULE = /immediately|at once|as soon as|after each|record (?:it|this|the value) (?:when|after)/;
 
 const WORKFLOW_RULE_EVIDENCE =
@@ -104,6 +105,7 @@ function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
     !last.agent &&
     !last.evidence &&
     previous?.agent.toLowerCase().includes("[interrupted]") &&
+    INTERRUPTED_TERMINAL_TURN.test(previous.agent) &&
     !previous.evidence
   );
   const prompt = node.node_prompt.toLowerCase();
@@ -114,7 +116,7 @@ function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
     (BATCH_SCOPE_AFTER_ACTION.test(schedule) ||
       BATCH_SCOPE_BEFORE_ACTION.test(schedule) ||
       BATCH_PRONOUN_SCHEDULE.test(schedule) ||
-      NAMED_BATCH_OBJECT.test(schedule));
+      LEGACY_LEAD_BATCH_OBJECT.test(schedule));
 
   return { cutoffConfirmed, recordingSchedule, schedulesCompleteBatch };
 }
@@ -390,24 +392,20 @@ export async function runVariableExtractionJudge(
       : undefined,
   ]);
 
-  if (defaultReview) {
-    result.usage = addUsage(result.usage, defaultReview.usage);
-    const candidateKeys = new Set(defaultCandidates.map((candidate) => `${candidate.issue_type}:${candidate.variable_name}`));
-    const cleared = defaultReview.data.reviews
+  for (const review of [
+    { result: defaultReview, candidates: defaultCandidates, note: "Cleared by focused config-default review" },
+    { result: focusedReview, candidates: focusedCandidates, note: "Cleared by focused defect review" },
+  ]) {
+    if (!review.result) continue;
+    result.usage = addUsage(result.usage, review.result.usage);
+    const candidateKeys = new Set(
+      review.candidates.map((candidate) => `${candidate.issue_type}:${candidate.variable_name}`),
+    );
+    const cleared = review.result.data.reviews
       .filter((entry) => candidateKeys.has(`${entry.issue_type}:${entry.variable_name}`) && !entry.defect_confirmed)
       .map((entry) => `${entry.issue_type}:${entry.variable_name}` as VariableIssueKey);
     for (const key of cleared) rejected.add(key);
-    if (cleared.length > 0) reviewNotes.push("Cleared by focused config-default review");
-  }
-
-  if (focusedReview) {
-    result.usage = addUsage(result.usage, focusedReview.usage);
-    const candidateKeys = new Set(focusedCandidates.map((candidate) => `${candidate.issue_type}:${candidate.variable_name}`));
-    const cleared = focusedReview.data.reviews
-      .filter((entry) => candidateKeys.has(`${entry.issue_type}:${entry.variable_name}`) && !entry.defect_confirmed)
-      .map((entry) => `${entry.issue_type}:${entry.variable_name}` as VariableIssueKey);
-    for (const key of cleared) rejected.add(key);
-    if (cleared.length > 0) reviewNotes.push("Cleared by focused defect review");
+    if (cleared.length > 0) reviewNotes.push(review.note);
   }
 
   result.data = reconcileRejectedVariableIssues(
