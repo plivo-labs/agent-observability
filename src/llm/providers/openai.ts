@@ -84,14 +84,15 @@ function extractResponsesText(r: ResponsesResult): string {
  * Build the shared { url, headers, body } for a Responses API POST. Both the
  * non-streaming and streaming callers differ only by `stream:true`, so the
  * key check, base-URL normalize, auth header, and body assembly (model / input /
- * max_output_tokens / temperature / top_p / strict json_schema) live here once.
+ * max_output_tokens / temperature / top_p / reasoning effort / strict json_schema)
+ * live here once.
  * `maxTokens === 0` means "no cap" → the field is omitted.
  */
 function buildResponsesRequest(
   args: ProviderCompleteArgs,
   opts: { stream: boolean },
 ): { url: string; headers: Record<string, string>; body: Record<string, unknown> } {
-  const { system, user, model, maxTokens, temperature, topP, jsonSchema } = args;
+  const { system, user, model, maxTokens, temperature, topP, jsonSchema, reasoningEffort } = args;
   if (!config.OPENAI_API_KEY) {
     throw new Error("LLM_PROVIDER=openai but OPENAI_API_KEY is not set");
   }
@@ -110,6 +111,7 @@ function buildResponsesRequest(
     ...(maxTokens ? { max_output_tokens: maxTokens } : {}),
     ...(temperature !== undefined ? { temperature } : {}),
     ...(topP !== undefined ? { top_p: topP } : {}),
+    ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     // Strict structured output when a schema is supplied; otherwise free JSON (the
     // planner relies on the JSON_ONLY_HINT + zod validation in completeJSON).
     ...(jsonSchema
