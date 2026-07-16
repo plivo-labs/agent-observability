@@ -1,5 +1,7 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createHmac } from "node:crypto";
+
+const realFetch = globalThis.fetch;
 
 const mockInsertWebhookAttempt = mock(() => Promise.resolve());
 
@@ -48,6 +50,10 @@ describe("alerts/deliver", () => {
   beforeEach(() => {
     fetchCalls = [];
     mockInsertWebhookAttempt.mockClear();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
   });
 
   test("2xx delivery is ok and records an audit row", async () => {
