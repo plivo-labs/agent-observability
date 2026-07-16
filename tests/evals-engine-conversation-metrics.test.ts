@@ -165,4 +165,49 @@ describe("low-engagement silence floor (LOWE-3)", () => {
     expect(cm.low_engagement.technical_reason).toContain("superseded");
     expect(cm.conversation_status.status).toBe("voicemail_detected");
   });
+
+  test("a tool call alone is not agent speech: full_transcript renders it as an Agent: line, but speech_transcript (what was actually said) is empty => unanswered, floor must not fire", async () => {
+    // Regression: renderFullTranscript emits ANY non-empty t.agent as `Agent:`,
+    // including synthetic evidence lines (Tool_Call/Tool_Result/Agent_Handoff/
+    // System_Note). Reading full_transcript for agentSpoke() would make a bare
+    // tool call look like the agent talked, firing low_engagement (and flipping
+    // `answered`) on a call where nobody ever spoke — a new false positive.
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({
+        full_transcript: 'Agent: Tool_Call: lookup_account({"id":"7"})',
+        speech_transcript: "",
+      }),
+      llm,
+    );
+
+    expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.answered).toBe(false);
+    expect(cm.conversation_status.status).toBe("unanswered");
+    expect(cm.silent_call).toBe(true);
+  });
+
+  test("floor still fires on real speech when a tool ALSO fired (fix does not over-correct)", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({
+        full_transcript:
+          'Agent: Tool_Call: lookup_account({"id":"7"})\nAgent: Hi, is this Priya?',
+        speech_transcript: "Agent: Hi, is this Priya?",
+      }),
+      llm,
+    );
+
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.answered).toBe(true);
+    expect(cm.conversation_status.status).toBe("low_engagement");
+  });
+
+  test("sim path (no speech_transcript) => behaviour unchanged, falls back to full_transcript", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ full_transcript: "Agent: Hi, is this Priya?" }), llm);
+
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.answered).toBe(true);
+  });
 });

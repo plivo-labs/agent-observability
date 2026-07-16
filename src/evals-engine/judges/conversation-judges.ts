@@ -229,15 +229,23 @@ export function sentimentPassed(sentiment: string): boolean {
   return !/negativ|confus/i.test(sentiment);
 }
 
+/** The speech-only view: what was actually SAID on the call. `full_transcript`
+ *  is the wrong view here — it renders synthetic evidence turns (Tool_Call /
+ *  Tool_Result / Agent_Handoff / System_Note) as `Agent:` lines, because
+ *  renderFullTranscript emits any non-empty `t.agent` regardless of `t.evidence`.
+ *  Reading it would make a tool call look like agent speech and fire the silence
+ *  floor on a call where nobody spoke. Absent on the sim path => fall back. */
+const speechOf = (ctx: ConversationInput): string => ctx.speech_transcript ?? ctx.full_transcript;
+
 /** True if the caller said anything. */
 function callerSpoke(ctx: ConversationInput): boolean {
-  return /(^|\n)User:\s*\S/.test(ctx.full_transcript);
+  return /(^|\n)User:\s*\S/.test(speechOf(ctx));
 }
 
 /** True if the agent said anything. An agent turn only exists once the call
  *  connected, so this is transcript-level proof that the media path opened. */
 function agentSpoke(ctx: ConversationInput): boolean {
-  return /(^|\n)Agent:\s*\S/.test(ctx.full_transcript);
+  return /(^|\n)Agent:\s*\S/.test(speechOf(ctx));
 }
 
 /** True if the call connected. AO has no telephony answer signal here —
