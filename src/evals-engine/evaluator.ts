@@ -3,9 +3,9 @@ import type { ConversationInput, NodeEvaluation, NodeGoalEvaluation } from "./ty
 import {
   runHallucinationJudge,
   runLoopJudge,
-  runVariableExtractionJudge,
   runInstructionAdherenceJudge,
 } from "./judges/node-judges.js";
+import { runVariableExtractionJudge } from "./judges/variable-extraction.js";
 import { runIntentJudge } from "./judges/intent-judge.js";
 import { runGoalJudge } from "./judges/goal-judge.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "./aggregate.js";

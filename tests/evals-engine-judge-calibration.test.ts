@@ -19,6 +19,7 @@ const {
   LOOP_DETECTION,
   INSTRUCTION_ADHERENCE,
   GOAL_EVALUATION,
+  systemForVariableExtraction,
 } = await import("../src/evals-engine/judges/instructions.js");
 const { MockLLM } = await import("../src/llm/index.js");
 const { evaluateConversationMetrics } = await import("../src/evals-engine/judges/conversation-judges.js");
@@ -116,6 +117,85 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(VARIABLE_EXTRACTION).toContain("USER'S OWN WORDS");
     expect(VARIABLE_EXTRACTION).toContain("parsing aids, not arbiters");
     expect(VARIABLE_EXTRACTION).toContain("EMPTY extraction set is not automatically a pass");
+  });
+
+  test("variable extraction: only caller-stated values can be missing", () => {
+    expect(VARIABLE_EXTRACTION).toContain("ONLY when the caller EXPLICITLY STATED");
+    expect(VARIABLE_EXTRACTION).toContain('"Available in the context" is NOT the test');
+    expect(VARIABLE_EXTRACTION).toContain("inferred, implied, derived, computed, bucketed, classified, or summarized");
+    expect(VARIABLE_EXTRACTION).toContain("already captured under another expected variable");
+    expect(VARIABLE_EXTRACTION).toContain("a gate that never opened");
+    expect(VARIABLE_EXTRACTION).toContain("backend identifier");
+    expect(VARIABLE_EXTRACTION).toContain("tool or lookup result");
+  });
+
+  test("variable extraction: applicability follows the path the call actually took", () => {
+    expect(VARIABLE_EXTRACTION).toContain("APPLICABILITY FIRST");
+    expect(VARIABLE_EXTRACTION).toContain("Determine the active path");
+    expect(VARIABLE_EXTRACTION).toContain("not interested, busy/callback, wrong person, voicemail, or early termination");
+    expect(VARIABLE_EXTRACTION).toContain("Caller-capture variables");
+    expect(VARIABLE_EXTRACTION).toContain("Rule-produced variables");
+    expect(VARIABLE_EXTRACTION).toContain("Platform/backend variables");
+    expect(VARIABLE_EXTRACTION).toContain("does NOT mean every variable is unconditionally required");
+    expect(VARIABLE_EXTRACTION).toContain("later qualification variables are INAPPLICABLE");
+    expect(VARIABLE_EXTRACTION).toContain("An absent rule-produced default or workflow field is never a missing caller variable");
+    expect(VARIABLE_EXTRACTION).toContain("a fallback no/default for an unreached busy or not-interested branch");
+  });
+
+  test("variable extraction: config-directed and agent-authored values use their own grounding rules", () => {
+    expect(VARIABLE_EXTRACTION).toContain("Agent-composed fields are OUT OF SCOPE");
+    expect(VARIABLE_EXTRACTION).toContain("NEVER place an agent-composed field in missing_variables or incorrect_variables");
+    expect(VARIABLE_EXTRACTION).toContain("belong to instruction adherence");
+    expect(VARIABLE_EXTRACTION).toContain("A value the config DIRECTS is correct by definition");
+    expect(VARIABLE_EXTRACTION).toContain("active branch");
+    expect(VARIABLE_EXTRACTION).toContain("cannot be found in the transcript");
+    expect(VARIABLE_EXTRACTION).toContain('"yes unless the caller disputes"');
+    expect(VARIABLE_EXTRACTION).toContain("does not require an affirmative reply");
+    expect(VARIABLE_EXTRACTION).toContain("NEVER mark that configured yes value incorrect");
+    expect(VARIABLE_EXTRACTION).toContain("workflow metadata inside a summary");
+    expect(VARIABLE_EXTRACTION).toContain("even when that metadata conflicts with the transcript");
+    expect(VARIABLE_EXTRACTION).toContain("variable's own recording rule is authoritative");
+    expect(VARIABLE_EXTRACTION).toContain("Do not invent an identity, confirmation, or reached-question prerequisite");
+    expect(VARIABLE_EXTRACTION).toContain("An exception applies only when the transcript establishes that exception");
+  });
+
+  test("variable extraction: approximation stays grounded and truncation stays narrow", () => {
+    expect(VARIABLE_EXTRACTION).toContain("does NOT cover bucketing, thresholding, or classifying a vague utterance");
+    expect(VARIABLE_EXTRACTION).toContain("EXPLICIT-SPEECH GATE OVERRIDES CONFIG MAPPINGS");
+    expect(VARIABLE_EXTRACTION).toContain('"a lot" cannot become "more than six"');
+    expect(VARIABLE_EXTRACTION).toContain("TRUNCATED CALL OVERRIDE");
+    expect(VARIABLE_EXTRACTION).toContain("transcript demonstrably ends mid-turn");
+    expect(VARIABLE_EXTRACTION).toContain("transcript then ends with a caller reply and no following agent or tool turn");
+    expect(VARIABLE_EXTRACTION).toContain("Do not argue that the values could have been recorded earlier");
+    expect(VARIABLE_EXTRACTION).toContain("Apply truncation before checking omissions");
+    expect(VARIABLE_EXTRACTION).toContain("missing_variables MUST be empty for that pending batch");
+    expect(VARIABLE_EXTRACTION).toContain('"before any ending outcome or transfer" is a final-batch instruction');
+    expect(VARIABLE_EXTRACTION).toContain("ends with a caller reply and no following agent or tool turn");
+    expect(VARIABLE_EXTRACTION).toContain("treat it as truncated by definition");
+    expect(VARIABLE_EXTRACTION).toContain("A completed call that simply never recorded");
+    expect(VARIABLE_EXTRACTION).toContain("Caller-capture values must be grounded in what the caller actually said");
+  });
+
+  test("variable extraction: the emitted JSON instruction preserves the same decision boundary", () => {
+    const system = systemForVariableExtraction("- customer_name", "(none)");
+    const output = system.slice(system.indexOf("Return ONLY a JSON object"));
+    expect(output).toContain("HARD EXCLUSIONS");
+    expect(output).toContain("caller EXPLICITLY STATED");
+    expect(output).toContain("never inferred, derived, defaulted, duplicated, backend, tool, or lookup values");
+    expect(output).toContain("pending a final recording batch prevented by truncation");
+    expect(output).toContain("configured yes-when-not-disputed default");
+    expect(output).toContain("caller reply after an interrupted transfer");
+    expect(output).toContain("not config-directed defaults");
+    expect(output).not.toContain("required variables the user provided");
+  });
+
+  test("variable extraction: authoritative examples cover both precision and recall", () => {
+    expect(VARIABLE_EXTRACTION).toContain("AUTHORITATIVE DECISION EXAMPLES");
+    expect(VARIABLE_EXTRACTION).toContain("PASS — configured no-dispute default");
+    expect(VARIABLE_EXTRACTION).toContain("PASS — final-batch cutoff");
+    expect(VARIABLE_EXTRACTION).toContain("PASS — early not-interested path");
+    expect(VARIABLE_EXTRACTION).toContain("FAIL — completed-call omission");
+    expect(VARIABLE_EXTRACTION).toContain("FAIL — invented precise bucket");
   });
 
   test("goal evaluation: a conditional goal whose trigger never occurred is not a failure", () => {

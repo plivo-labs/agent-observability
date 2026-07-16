@@ -65,7 +65,7 @@ describe("buildSessionEvalInput", () => {
   });
 
   test("node transcript never renders an evidence line as agent speech", async () => {
-    const { renderNodeTranscript } = await import("../src/evals-engine/judges/node-judges.js");
+    const { renderNodeTranscript } = await import("../src/evals-engine/judges/node-judge-payload.js");
     const { input } = buildSessionEvalInput(cfg(), [
       ev("node-A", "user", "How much did I spend?"),
       { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "spend", arguments: { year: 2026 } } },
