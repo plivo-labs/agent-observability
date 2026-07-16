@@ -1,23 +1,13 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
 
 // Mock config so importing the llm module (via the judges) doesn't parse real env.
 mock.module("../src/config.js", () => ({
-  config: {
-    LLM_PROVIDER: "anthropic",
-    JUDGE_MODEL: undefined,
-    SIMULATOR_MODEL: undefined,
-    GENERATOR_MODEL: undefined,
-    LLM_TIMEOUT_MS: 30000,
-    LLM_MAX_RETRIES: 1,
-    // run-llm-judge.ts reads this at module load for its global judge-call semaphore.
-    // Omitting it leaves the limit undefined, so acquireJudgeSlot() never grants a slot
-    // and EVERY test in this file hangs to timeout — the whole suite was silently dead.
-    EVAL_MAX_CONCURRENT_JUDGE_CALLS: 10,
-  },
+  config: TEST_JUDGE_CONFIG,
 }));
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { evaluateConversationMetrics } = await import("../src/evals-engine/judges/conversation-judges.js");
+const { evaluateConversationMetrics, resolveOutcomes } = await import("../src/evals-engine/judges/conversation-judges.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
 const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
@@ -47,6 +37,24 @@ function responder(detect: Partial<Record<"voicemail" | "bot" | "screening" | "l
     return "{}";
   };
 }
+
+const detection = (detected = false) => ({
+  detected,
+  reason: detected ? "detected" : "clean",
+  technical_reason: "test",
+  available: true,
+});
+
+type DetectionRaws = Parameters<typeof resolveOutcomes>[0];
+const raws = (over: Partial<DetectionRaws> = {}): DetectionRaws => ({
+  voicemail: detection(),
+  bot: detection(),
+  screening: detection(),
+  lowEngagement: detection(),
+  wrongNumber: detection(),
+  doNotDisturb: detection(),
+  ...over,
+});
 
 describe("evaluateConversationMetrics — anti-over-fire logic", () => {
   test("channel gate: voice-only detections do not run on a text channel", async () => {
@@ -100,6 +108,21 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.conversation_status.status).toBe("unanswered");
   });
 
+  test("resolveOutcomes directly derives silence and normalizes every emitted detection", () => {
+    const resolved = resolveOutcomes(
+      raws({ voicemail: detection(true), screening: detection(true) }),
+      ctx({ transport: "livekit", full_transcript: SILENT, speech_transcript: SILENT }),
+    );
+
+    expect(resolved.low_engagement.detected).toBe(true);
+    expect(resolved.voicemail_detected.detected).toBe(false);
+    expect(resolved.call_screening.detected).toBe(false);
+    expect(resolved.bot_detected.detected).toBe(false);
+    expect(resolved.wrong_number.detected).toBe(false);
+    expect(resolved.do_not_disturb.detected).toBe(false);
+    expect(resolved.conversation_status.status).toBe("unanswered");
+  });
+
   test("silent call: a counterparty detection cannot suppress it, and is not fanned out", async () => {
     // A message-taking receptionist's own greeting can trip VOICEMAIL (it has no role
     // guard). On a transcript with no caller speech that is a false positive by
@@ -128,6 +151,19 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.answered).toBe(false);
   });
 
+  test("all-evidence transcript with a question mark stays clean", async () => {
+    const evidence = 'Tool_Call: lookup({"query":"is the order ready?"})';
+    const llm = new MockLLM([responder({ low: false })]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ transport: "livekit", full_transcript: evidence, speech_transcript: "" }),
+      llm,
+    );
+
+    expect(cm.answered).toBe(false);
+    expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.silent_call).toBe(true);
+  });
+
   test("answered call is untouched by the silent path (LLM still decides)", async () => {
     const llm = new MockLLM([responder({ low: false })]);
     const cm = await evaluateConversationMetrics(ctx({ transport: "livekit" }), llm);
@@ -140,41 +176,49 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm2.conversation_status.status).toBe("low_engagement");
   });
 
-  test("mutual exclusivity: bot fires → low_engagement is suppressed (no co-fire)", async () => {
-    // Both bot and low-engagement judges say detected:true; exclusivity must keep
-    // only the higher-priority bot outcome so the two can't both fan out.
-    const llm = new MockLLM([responder({ bot: true, low: true })]);
-    const cm = await evaluateConversationMetrics(ctx(), llm);
+  test("mutual exclusivity: bot fires → low_engagement is suppressed (no co-fire)", () => {
+    const cm = resolveOutcomes(raws({ bot: detection(true), lowEngagement: detection(true) }), ctx());
     expect(cm.bot_detected.detected).toBe(true);
     expect(cm.low_engagement.detected).toBe(false); // suppressed by bot
     expect(cm.conversation_status.status).toBe("bot_detected");
   });
 
-  test("mutual exclusivity: voicemail suppresses both bot and low_engagement", async () => {
-    const llm = new MockLLM([responder({ voicemail: true, bot: true, low: true })]);
-    const cm = await evaluateConversationMetrics(ctx(), llm);
+  test("mutual exclusivity: voicemail suppresses both bot and low_engagement", () => {
+    const cm = resolveOutcomes(
+      raws({ voicemail: detection(true), bot: detection(true), lowEngagement: detection(true) }),
+      ctx(),
+    );
     expect(cm.voicemail_detected.detected).toBe(true);
     expect(cm.bot_detected.detected).toBe(false); // superseded
     expect(cm.low_engagement.detected).toBe(false); // superseded
     expect(cm.conversation_status.status).toBe("voicemail_detected");
   });
 
-  test("mutual exclusivity: call_screening/voicemail suppresses wrong_number + do_not_disturb (no co-fire)", async () => {
+  test("mutual exclusivity: call_screening/voicemail suppresses wrong_number + do_not_disturb (no co-fire)", () => {
     // Regression: the top-priority voicemail/screening branch must clear EVERY
     // lower detection. It previously cleared only bot + low_engagement, so
     // call_screening + wrong_number both stayed detected and the sweeper fanned
     // two separate failing alert rows off a single call.
-    const llm = new MockLLM([responder({ screening: true, wrong: true, dnd: true, low: true })]);
-    const cm = await evaluateConversationMetrics(ctx(), llm);
+    const cm = resolveOutcomes(
+      raws({
+        screening: detection(true),
+        wrongNumber: detection(true),
+        doNotDisturb: detection(true),
+        lowEngagement: detection(true),
+      }),
+      ctx(),
+    );
     expect(cm.call_screening.detected).toBe(true);
     expect(cm.wrong_number.detected).toBe(false); // superseded
     expect(cm.do_not_disturb.detected).toBe(false); // superseded
     expect(cm.low_engagement.detected).toBe(false); // superseded
   });
 
-  test("wrong_number outranks do_not_disturb + low_engagement", async () => {
-    const llm = new MockLLM([responder({ wrong: true, dnd: true, low: true })]);
-    const cm = await evaluateConversationMetrics(ctx(), llm);
+  test("wrong_number outranks do_not_disturb + low_engagement", () => {
+    const cm = resolveOutcomes(
+      raws({ wrongNumber: detection(true), doNotDisturb: detection(true), lowEngagement: detection(true) }),
+      ctx(),
+    );
     expect(cm.wrong_number.detected).toBe(true);
     expect(cm.do_not_disturb.detected).toBe(false);
     expect(cm.low_engagement.detected).toBe(false);
