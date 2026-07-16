@@ -4,6 +4,7 @@
 // imports the real config first would cache it and the mock would silently no-op.
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { envSchema } from "../src/schema.js";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 // Mutable config object — the provider reads config.* at call time, so flipping a field
 // between tests (mode / auth style) takes effect without re-importing.
@@ -13,7 +14,7 @@ const cfg: Record<string, unknown> = {
   OPENAI_API_KEY: "test-key",
   OPENAI_BASE_URL: "https://gw.example/openai/v1",
 };
-mock.module("../src/config.js", () => ({ config: cfg, dbConfigured: false }));
+mock.module("../src/config.js", () => ({ ...TEST_CONFIG_MODULE_DEFAULTS, config: cfg }));
 
 const { openaiProvider } = await import("../src/llm/providers/openai.js");
 

@@ -1,7 +1,9 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 // Mock config so importing the llm module (via planner) doesn't parse real env.
 mock.module("../src/config.js", () => ({
+  ...TEST_CONFIG_MODULE_DEFAULTS,
   config: {
     LLM_PROVIDER: "anthropic",
     JUDGE_MODEL: undefined,
@@ -115,4 +117,3 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
     ).rejects.toThrow();
   });
 });
-
