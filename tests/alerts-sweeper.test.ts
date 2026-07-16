@@ -1,4 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+
+const realFetch = globalThis.fetch;
 
 // Leaf-dependency mocks only — the sweeper exercises the REAL engine and
 // deliver modules (bun's module registry is shared across test files, so
@@ -102,6 +104,10 @@ describe("alerts/sweeper runSweepOnce", () => {
     mockMarkRetry.mockClear();
     mockMarkFailed.mockClear();
     mockInsertWebhookAttempt.mockClear();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
   });
 
   test("delivers a due firing end to end and marks it delivered", async () => {
