@@ -152,7 +152,7 @@ function payload(ctx: ConversationInput): Record<string, unknown> {
   return { flow_name: ctx.flow_name, conversation_history: ctx.speech_transcript || ctx.full_transcript };
 }
 
-type DetectionResult = { detected: boolean; reason: string; technical_reason: string; available: boolean };
+export type DetectionResult = { detected: boolean; reason: string; technical_reason: string; available: boolean };
 
 /** A voice-only detection that did not run on this (non-voice) channel. Marked
  *  unavailable so fan-out skips it — never emitted as a real pass/fail. */
@@ -257,6 +257,15 @@ const det = (v: DetectionResult) => ({
   available: v.available !== false,
 });
 
+/** Build a code-derived detection in the same raw shape as an LLM verdict so
+ * every final outcome can flow through the same det()/suppressed() emission. */
+const derivedDetection = (reason: string, technicalReason: string): DetectionResult => ({
+  detected: true,
+  reason,
+  technical_reason: technicalReason,
+  available: true,
+});
+
 /** Emit a detection whose raw verdict was overruled by mutual exclusivity. Keeps
  *  `available:true` (the judge ran) but reports not-detected, so it fans out as a
  *  clean "not this outcome" rather than co-firing with the winner. */
@@ -285,6 +294,122 @@ export function zeroConversationMetrics(): SimConversationMetrics {
   };
 }
 
+export interface ConversationDetectionRaws {
+  voicemail: DetectionResult;
+  bot: DetectionResult;
+  screening: DetectionResult;
+  lowEngagement: DetectionResult;
+  wrongNumber: DetectionResult;
+  doNotDisturb: DetectionResult;
+}
+
+type ResolvedOutcomes = Pick<
+  SimConversationMetrics,
+  | "answered"
+  | "voicemail_detected"
+  | "bot_detected"
+  | "call_screening"
+  | "low_engagement"
+  | "wrong_number"
+  | "do_not_disturb"
+  | "silent_call"
+  | "customer_engaged"
+  | "conversation_status"
+>;
+
+/** Pure conversation-outcome resolver. It owns the deterministic silent-call
+ * gate, mutual exclusivity, normalized emission, and final status derivation;
+ * LLM orchestration only supplies the six raw detection verdicts. */
+export function resolveOutcomes(raws: ConversationDetectionRaws, ctx: ConversationInput): ResolvedOutcomes {
+  const { voicemail, bot, screening, lowEngagement, wrongNumber, doNotDisturb } = raws;
+  const answered = isAnswered(ctx);
+  const voice = isVoiceChannel(ctx.transport);
+
+  let vmFired = voicemail.available && voicemail.detected;
+  let screenFired = screening.available && screening.detected;
+  let botFired = bot.available && bot.detected;
+  let wrongFired = wrongNumber.available && wrongNumber.detected;
+  let dndFired = doNotDisturb.available && doNotDisturb.detected;
+  let lowFired = lowEngagement.available && lowEngagement.detected;
+
+  // ── a dead call is decided in CODE, not by the LLM ──
+  // LOW_ENGAGEMENT is written around "a real human answered … but only gave minimal
+  // greetings", and passes when "the metric does not apply". A transcript with no
+  // caller speech falls outside that definition, so the judge correctly returns
+  // not-detected — and the strongest possible case of low engagement scores clean.
+  //
+  // This is measured, not theorised. Round-4 prod audit (315 paired calls): AO's fire
+  // rate climbs as the caller says less — 1.8% at 6+ turns, 11.5% at 3-5, 17.9% at 2,
+  // 61.1% at 1 — then collapses to 0.0% at zero turns, inverting the trend exactly at
+  // the precondition's boundary (P≈4.7e-06). Legacy fires on 13/13 of those calls. AO's
+  // own stored reasoning says it outright: "No human response was recorded, so low
+  // engagement does not apply."
+  //
+  // Opportunity gate: a one-way announcement gave the caller nothing to respond to.
+  // Read the SPEECH transcript so a Tool_Call's arguments can never trip the gate;
+  // `??` (not `||`) preserves an explicitly empty all-evidence transcript.
+  const speech = ctx.speech_transcript ?? ctx.full_transcript;
+  const agentAsked = /(^|\n)Agent:[^\n]*\?/.test(speech);
+  const silentFired = voice && !answered && agentAsked;
+  const effectiveLow = silentFired
+    ? derivedDetection(
+        "The caller never spoke. The agent asked and got no response for the whole call.",
+        "derived in code: zero user turns in the judged transcript (isAnswered=false) with a delivered agent question",
+      )
+    : lowEngagement;
+
+  if (silentFired) {
+    // Silence outranks every counterparty detection: those detections require
+    // speech from the far end, while this transcript contains none.
+    vmFired = false;
+    screenFired = false;
+    botFired = false;
+    wrongFired = false;
+    dndFired = false;
+    lowFired = true;
+  } else if (vmFired || screenFired) {
+    botFired = false;
+    wrongFired = false;
+    dndFired = false;
+    lowFired = false;
+  } else if (botFired) {
+    wrongFired = false; dndFired = false; lowFired = false;
+  } else if (wrongFired) {
+    dndFired = false; lowFired = false;
+  } else if (dndFired) {
+    lowFired = false;
+  }
+
+  // Every detection follows the same finalization rule. This prevents a raw
+  // verdict from leaking around a deterministic override on any output path.
+  const voicemailFinal = vmFired ? det(voicemail) : suppressed(voicemail);
+  const screeningFinal = screenFired ? det(screening) : suppressed(screening);
+  const botFinal = botFired ? det(bot) : suppressed(bot);
+  const wrongFinal = wrongFired ? det(wrongNumber) : suppressed(wrongNumber);
+  const dndFinal = dndFired ? det(doNotDisturb) : suppressed(doNotDisturb);
+  const lowFinal = lowFired ? det(effectiveLow) : suppressed(effectiveLow);
+
+  let status = "answered";
+  if (!answered) status = "unanswered";
+  else if (vmFired) status = "voicemail_detected";
+  else if (botFired) status = "bot_detected";
+  else if (screenFired) status = "call_screening";
+  else if (lowFired) status = "low_engagement";
+
+  return {
+    answered,
+    voicemail_detected: voicemailFinal,
+    bot_detected: botFinal,
+    call_screening: screeningFinal,
+    low_engagement: lowFinal,
+    wrong_number: wrongFinal,
+    do_not_disturb: dndFinal,
+    silent_call: !answered,
+    customer_engaged: answered && !lowFired,
+    conversation_status: { status, reason: "", technical_reason: "" },
+  };
+}
+
 /**
  * Score the conversation axis over the transcript and return real
  * `conversation_metrics`. Voice-only detections (voicemail / bot / call-screening
@@ -295,7 +420,6 @@ export async function evaluateConversationMetrics(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<SimConversationMetrics> {
-  const answered = isAnswered(ctx);
   const voice = isVoiceChannel(ctx.transport);
   const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
 
@@ -310,55 +434,13 @@ export async function evaluateConversationMetrics(
     voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);
 
-  // ── mutual exclusivity on the emitted booleans (cx-sqs priority) ──
-  // Voicemail + call-screening may co-exist and take top priority; either one
-  // suppresses every lower detection (bot, wrong_number, do_not_disturb,
-  // low_engagement) so the sweeper never fans two failing rows off one call.
-  // Otherwise resolve by bot > wrong_number > do_not_disturb > low_engagement.
-  // `botFired` is already false on non-voice (voiceOnlySkip), so the same block
-  // yields the text-channel priority (wrong > dnd > low).
-  const vmFired = voicemail.available && voicemail.detected;
-  const screenFired = screening.available && screening.detected;
-  let botFired = bot.available && bot.detected;
-  let wrongFired = wrong.available && wrong.detected;
-  let dndFired = dnd.available && dnd.detected;
-  let lowFired = lowEng.available && lowEng.detected;
-
-  if (vmFired || screenFired) {
-    botFired = false;
-    wrongFired = false;
-    dndFired = false;
-    lowFired = false;
-  } else if (botFired) {
-    wrongFired = false; dndFired = false; lowFired = false;
-  } else if (wrongFired) {
-    dndFired = false; lowFired = false;
-  } else if (dndFired) {
-    lowFired = false;
-  }
-
-  const botFinal = botFired ? det(bot) : suppressed(bot);
-  const wrongFinal = wrongFired ? det(wrong) : suppressed(wrong);
-  const dndFinal = dndFired ? det(dnd) : suppressed(dnd);
-  const lowFinal = lowFired ? det(lowEng) : suppressed(lowEng);
-
-  // Fixed priority order for the final status label (from finalized outcomes).
-  let status = "answered";
-  if (!answered) status = "unanswered";
-  else if (vmFired) status = "voicemail_detected";
-  else if (botFired) status = "bot_detected";
-  else if (screenFired) status = "call_screening";
-  else if (lowFired) status = "low_engagement";
-  const customerEngaged = answered && !lowFired;
+  const outcomes = resolveOutcomes(
+    { voicemail, bot, screening, lowEngagement: lowEng, wrongNumber: wrong, doNotDisturb: dnd },
+    ctx,
+  );
 
   return {
-    answered,
-    voicemail_detected: det(voicemail),
-    bot_detected: botFinal,
-    call_screening: det(screening),
-    low_engagement: lowFinal,
-    wrong_number: wrongFinal,
-    do_not_disturb: dndFinal,
+    ...outcomes,
     user_sentiment: {
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,
@@ -366,9 +448,6 @@ export async function evaluateConversationMetrics(
       available: sentiment.available,
       passed: sentiment.available ? sentimentPassed(sentiment.sentiment) : undefined,
     },
-    silent_call: !answered,
-    customer_engaged: customerEngaged,
-    conversation_status: { status, reason: "", technical_reason: "" },
     // Platform-neutral: the ingest path makes no runtime claim (was hardcoded
     // true here and overridden to false by the only caller).
     is_livekit: false,

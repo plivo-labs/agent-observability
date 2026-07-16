@@ -8,6 +8,7 @@
  */
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { MockLLM } from "../src/llm/mock.js";
+import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
 
 const mockClaim = mock(() => Promise.resolve([] as string[]));
 const mockLoad = mock(() =>
@@ -27,12 +28,9 @@ mock.module("../src/goals/db.js", () => ({
 // completeJSON reads LLM_TIMEOUT_MS (AbortSignal.timeout) + LLM_PROVIDER; the
 // injected MockLLM bypasses provider resolution and the key checks.
 const fakeConfig: Record<string, unknown> = {
-  LLM_PROVIDER: "anthropic",
+  ...TEST_JUDGE_CONFIG,
   ANTHROPIC_API_KEY: undefined,
   OPENAI_API_KEY: undefined,
-  JUDGE_MODEL: undefined,
-  LLM_TIMEOUT_MS: 30_000,
-  LLM_MAX_RETRIES: 1,
   GOAL_ANALYZER: "inline",
 };
 mock.module("../src/config.js", () => ({

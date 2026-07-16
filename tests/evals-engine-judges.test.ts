@@ -1,15 +1,9 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
 
 // Mock config so importing the llm module (via the judges) doesn't parse real env.
 mock.module("../src/config.js", () => ({
-  config: {
-    LLM_PROVIDER: "anthropic",
-    JUDGE_MODEL: undefined,
-    SIMULATOR_MODEL: undefined,
-    GENERATOR_MODEL: undefined,
-    LLM_TIMEOUT_MS: 30000,
-    LLM_MAX_RETRIES: 1,
-  },
+  config: TEST_JUDGE_CONFIG,
 }));
 
 const { MockLLM } = await import("../src/llm/index.js");
