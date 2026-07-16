@@ -70,6 +70,252 @@ describe("LLM node judges (MockLLM)", () => {
     expect(llm.calls[0]!.system).toContain("42");
   });
 
+  test("variable extraction: variable rules and decision boundary are repeated after the call payload", async () => {
+    const llm = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
+    await runVariableExtractionJudge(
+      node({ variable_rules: { order_id: "Capture only when the caller explicitly states it." } }),
+      ctx(),
+      llm,
+    );
+
+    const sent = JSON.parse(llm.calls[0]!.user);
+    expect(sent.variable_rules).toEqual({ order_id: "Capture only when the caller explicitly states it." });
+    expect(sent.variable_judge_contract).toContain("recording rule is authoritative");
+    expect(sent.variable_judge_contract).toContain("unreached or inapplicable");
+    expect(sent.variable_judge_contract).toContain("backend, platform, tool, and lookup values");
+    expect(Object.keys(sent).at(-1)).toBe("variable_judge_contract");
+  });
+
+  test("variable extraction: configured defaults are labelled for the judge", async () => {
+    const llm = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
+    await runVariableExtractionJudge(
+      node({
+        required_variables: ["remember_form"],
+        variable_rules: { remember_form: "Extract yes if the caller remembers or does not dispute filling the form." },
+        extracted_variables: { remember_form: "yes" },
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls[0]!.system).toContain("CONFIG-DIRECTED DEFAULT");
+    expect(llm.calls[0]!.system).toContain("valid without an affirmative caller utterance");
+  });
+
+  test("variable extraction: structured cutoff is called out after the long node prompt", async () => {
+    const llm = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
+    await runVariableExtractionJudge(
+      node({
+        node_prompt: "Submit lead data before any transfer.",
+        extracted_variables: {},
+        turns: [
+          { node_uuid: "n1", user: "", agent: "Let me transfer you now [interrupted]", intent: "" },
+          { node_uuid: "n1", user: "Okay", agent: "", intent: "" },
+        ],
+      }),
+      ctx(),
+      llm,
+    );
+
+    const sent = JSON.parse(llm.calls[0]!.user);
+    expect(sent.variable_judge_contract).toContain("FINAL RECORDING BATCH CUTOFF CONFIRMED");
+    expect(sent.variable_judge_contract).toContain("missing_variables must be empty for that pending batch");
+  });
+
+  test("variable extraction: final-batch cutoff cannot overfire when the model ignores the signal", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.25,
+        reason: "lead data missing",
+        technical_reason: "values were said earlier",
+        missing_variables: ["order_id"],
+        incorrect_variables: [],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        node_prompt: "Submit lead data before any transfer.",
+        extracted_variables: {},
+        turns: [
+          { node_uuid: "n1", user: "my order is 42", agent: "", intent: "" },
+          { node_uuid: "n1", user: "", agent: "Let me transfer you now [interrupted]", intent: "" },
+          { node_uuid: "n1", user: "Okay", agent: "", intent: "" },
+        ],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(data.extraction_successful).toBe(true);
+    expect(data.score).toBe(1);
+    expect(data.missing_variables).toEqual([]);
+    expect(data.incorrect_variables).toEqual([]);
+    expect(data.technical_reason).toContain("structured final-batch cutoff");
+  });
+
+  test("variable extraction: configured default gets a focused exception review", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "identity was not confirmed",
+        technical_reason: "the caller did not answer the identity question",
+        missing_variables: [],
+        incorrect_variables: ["remember_form"],
+      }),
+      JSON.stringify({
+        reviews: [{ variable_name: "remember_form", exception_established: false, evidence: "No exception was stated." }],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["remember_form"],
+        variable_rules: {
+          remember_form: "Extract yes if the caller remembers or does not dispute. Extract no for a wrong person.",
+        },
+        extracted_variables: { remember_form: "yes" },
+        turns: [{ node_uuid: "n1", user: "Please call this afternoon", agent: "Sure", intent: "" }],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.incorrect_variables).toEqual([]);
+    expect(data.technical_reason).toContain("focused config-default review");
+  });
+
+  test("variable extraction: focused review preserves an explicitly established default exception", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "wrong person",
+        technical_reason: "caller said this is the wrong number",
+        missing_variables: [],
+        incorrect_variables: ["remember_form"],
+      }),
+      JSON.stringify({
+        reviews: [{ variable_name: "remember_form", exception_established: true, evidence: "Caller said wrong number." }],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["remember_form"],
+        variable_rules: {
+          remember_form: "Extract yes if the caller remembers or does not dispute. Extract no for a wrong person.",
+        },
+        extracted_variables: { remember_form: "yes" },
+        turns: [{ node_uuid: "n1", user: "This is the wrong number", agent: "Sorry", intent: "" }],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(data.extraction_successful).toBe(false);
+    expect(data.incorrect_variables).toEqual(["remember_form"]);
+  });
+
+  test("variable extraction: focused defect review removes derived/default omissions and rule-authorized values", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.25,
+        reason: "several defects",
+        technical_reason: "main review",
+        missing_variables: ["graduation_year", "preferred_university"],
+        incorrect_variables: ["callback_time"],
+      }),
+      JSON.stringify({
+        reviews: [
+          { variable_name: "graduation_year", issue_type: "missing", defect_confirmed: false, evidence: "Only derivable." },
+          { variable_name: "preferred_university", issue_type: "missing", defect_confirmed: false, evidence: "Default only." },
+          { variable_name: "callback_time", issue_type: "incorrect", defect_confirmed: false, evidence: "Rule allows counselor time." },
+        ],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["graduation_year", "preferred_university", "callback_time"],
+        variable_rules: {
+          graduation_year: "Capture the graduation year if stated; otherwise not_provided.",
+          preferred_university: "Capture the chosen university; if not asked, capture not_asked.",
+          callback_time: "Capture a preferred callback or counselor-review time.",
+        },
+        extracted_variables: { callback_time: "16:00" },
+        turns: [
+          { node_uuid: "n1", user: "I graduated last year", agent: "Which university?", intent: "" },
+          { node_uuid: "n1", user: "Please have the counselor call at 4 PM", agent: "Noted", intent: "" },
+        ],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.missing_variables).toEqual([]);
+    expect(data.incorrect_variables).toEqual([]);
+    expect(data.technical_reason).toContain("focused defect review");
+  });
+
+  test("variable extraction: focused defect review preserves a real caller-stated omission", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "order id missing",
+        technical_reason: "main review",
+        missing_variables: ["order_id"],
+        incorrect_variables: [],
+      }),
+      JSON.stringify({
+        reviews: [
+          { variable_name: "order_id", issue_type: "missing", defect_confirmed: true, evidence: "Caller said 42." },
+        ],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({ extracted_variables: {} }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(data.extraction_successful).toBe(false);
+    expect(data.missing_variables).toEqual(["order_id"]);
+  });
+
+  test("variable extraction: explicit-speech rule violations bypass leniency review", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "precise bucket was invented",
+        technical_reason: "caller said only a lot",
+        missing_variables: [],
+        incorrect_variables: ["team_size_bucket"],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["team_size_bucket"],
+        variable_rules: { team_size_bucket: "Capture the exact bucket only when the caller explicitly states the team size." },
+        extracted_variables: { team_size_bucket: "more than six" },
+        turns: [{ node_uuid: "n1", user: "We have a lot of callers", agent: "Okay", intent: "" }],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(1);
+    expect(data.extraction_successful).toBe(false);
+    expect(data.incorrect_variables).toEqual(["team_size_bucket"]);
+  });
+
   test("instruction adherence: returns the 4 sub-metrics", async () => {
     const raw = {
       objective_progress: { achieved: true, score: 1, reason_code: "goal_achieved", reason: "", technical_reason: "" },

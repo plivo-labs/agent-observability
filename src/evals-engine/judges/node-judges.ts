@@ -1,5 +1,6 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
+import { z } from "zod";
 import { IDLE_TAG } from "../types.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import {
@@ -20,6 +21,78 @@ import {
 } from "./instructions.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { HALLUCINATION_JSON, NODE_LOOP_JSON, VARIABLE_EXTRACTION_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
+
+const ConfigDefaultReviewZ = z.object({
+  reviews: z.array(
+    z.object({
+      variable_name: z.string(),
+      exception_established: z.boolean(),
+      evidence: z.string().default(""),
+    }),
+  ),
+});
+
+const CONFIG_DEFAULT_REVIEW_JSON = {
+  name: "eval_variable_config_default_review",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["reviews"],
+    properties: {
+      reviews: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["variable_name", "exception_established", "evidence"],
+          properties: {
+            variable_name: { type: "string" },
+            exception_established: { type: "boolean" },
+            evidence: { type: "string" },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+const FocusedDefectReviewZ = z.object({
+  reviews: z.array(
+    z.object({
+      variable_name: z.string(),
+      issue_type: z.enum(["missing", "incorrect"]),
+      defect_confirmed: z.boolean(),
+      evidence: z.string().default(""),
+    }),
+  ),
+});
+
+const FOCUSED_DEFECT_REVIEW_JSON = {
+  name: "eval_variable_focused_defect_review",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["reviews"],
+    properties: {
+      reviews: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["variable_name", "issue_type", "defect_confirmed", "evidence"],
+          properties: {
+            variable_name: { type: "string" },
+            issue_type: { type: "string", enum: ["missing", "incorrect"] },
+            defect_confirmed: { type: "boolean" },
+            evidence: { type: "string" },
+          },
+        },
+      },
+    },
+  },
+} as const;
 
 // AO Eval Engine — the four LLM node judges (per AI node). Each returns its RAW output (Zod-validated);
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
@@ -47,6 +120,71 @@ function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string
     ...(hasEntries(node.extracted_variables) ? { extracted_variables: node.extracted_variables } : {}),
     ...(hasEntries(ctx.global_variables) ? { global_variables: ctx.global_variables } : {}),
     ...(hasEntries(ctx.pronunciation_guides) ? { pronunciation_guides: ctx.pronunciation_guides } : {}),
+  };
+}
+
+/** Keep the variable judge's decisive inputs at the end of its user payload.
+ * Node prompts can be very long and instruction-shaped; repeating this compact
+ * data contract after them prevents the model from replacing the configured
+ * extraction rule with a workflow assumption from the agent prompt. */
+function variablePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
+  const cutoffConfirmed = finalRecordingBatchCutOff(node);
+  return {
+    ...nodePayload(node, ctx),
+    variable_rules: node.variable_rules ?? {},
+    variable_judge_contract:
+      "Judge only whether applicable caller-provided information was captured correctly. " +
+      "Each variable's recording rule is authoritative; do not invent prerequisites or exceptions. " +
+      "Anything from an unreached or inapplicable path is not missing. " +
+      "Absent workflow defaults and backend, platform, tool, and lookup values are not caller extraction. " +
+      (cutoffConfirmed
+        ? "FINAL RECORDING BATCH CUTOFF CONFIRMED from structured turn order: missing_variables must be empty for that pending batch."
+        : "If an interrupted ending/transfer is followed by the caller and no later agent/tool turn, the configured final recording batch had no opportunity to run."),
+  };
+}
+
+function finalRecordingBatchCutOff(node: NodeEvalInput): boolean {
+  const spoken = node.turns.filter((turn) => !turn.evidence && !turn.idle && (turn.user || turn.agent));
+  const last = spoken.at(-1);
+  const previous = spoken.at(-2);
+  if (!last?.user || last.agent || !previous?.agent.toLowerCase().includes("[interrupted]")) return false;
+
+  const prompt = node.node_prompt.toLowerCase();
+  return (
+    /(?:submit|record|extract|capture)[\s\S]{0,160}\bbefore\b[\s\S]{0,80}\b(?:transfer|handoff|ending|end)\b/.test(prompt) ||
+    /\bbefore\b[\s\S]{0,80}\b(?:transfer|handoff|ending|end)\b[\s\S]{0,160}(?:submit|record|extract|capture)/.test(prompt)
+  );
+}
+
+function judgeClassification(variableName: string, rule: string | undefined): string {
+  const normalizedRule = rule?.toLowerCase() ?? "";
+  if (isConfigDirectedDefaultRule(normalizedRule)) {
+    return "CONFIG-DIRECTED DEFAULT — valid without an affirmative caller utterance; apply only explicitly stated exceptions";
+  }
+  if (/(?:summary|status|disposition|outcome|classification|internal[_ -]?score|remarks?)/i.test(variableName)) {
+    return "WORKFLOW FIELD — never missing caller information; do not place in missing_variables or incorrect_variables";
+  }
+  if (/backend|platform|initial context|tool result|lookup result|runtime/.test(normalizedRule)) {
+    return "PLATFORM/BACKEND FIELD — outside caller extraction";
+  }
+  return "CALLER-CAPTURE CANDIDATE — still require applicability and an explicit caller-provided value";
+}
+
+function isConfigDirectedDefaultRule(rule: string | undefined): boolean {
+  return /does not dispute|unless (?:the )?caller disputes|configured default|by default/.test(rule?.toLowerCase() ?? "");
+}
+
+function isExplicitSpeechRule(rule: string | undefined): boolean {
+  return /(?:only )?when (?:the )?caller explicitly (?:states?|says?|provides?|confirms?)|only if (?:the )?caller explicitly|only when explicitly supported|when (?:the )?caller states? it/.test(
+    rule?.toLowerCase() ?? "",
+  );
+}
+
+function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
   };
 }
 
@@ -124,20 +262,162 @@ export async function runVariableExtractionJudge(
     ? node.required_variables
         .map((v) => {
           const rule = node.variable_rules?.[v];
-          return rule ? `- ${v} — recording rule: ${rule}` : `- ${v}`;
+          const classification = judgeClassification(v, rule);
+          return rule ? `- ${v} — judge classification: ${classification} — recording rule: ${rule}` : `- ${v} — judge classification: ${classification}`;
         })
         .join("\n")
     : "(none)";
   const actualEntries = Object.entries(node.extracted_variables ?? {});
   const actual = actualEntries.length ? actualEntries.map(([k, v]) => `- ${k}: ${JSON.stringify(v)}`).join("\n") : "(none)";
-  return runLlmJudge({
+  const result = await runLlmJudge({
     system: systemForVariableExtraction(expected, actual),
-    input: nodePayload(node, ctx),
+    input: variablePayload(node, ctx),
     schema: VariableExtractionRawZ,
     jsonSchema: VARIABLE_EXTRACTION_JSON,
     maxTokens: 3000,
     provider,
   });
+
+  // A model can acknowledge the final-batch cutoff and still list the pending
+  // values as missing. When the structured event order proves that no recorder
+  // turn occurred, and there are no stored values that could be incorrect or
+  // extra, omission is impossible by construction. Keep this guard deliberately
+  // narrow so completed calls and wrong stored values remain model-judged.
+  if (
+    actualEntries.length === 0 &&
+    finalRecordingBatchCutOff(node) &&
+    result.data.incorrect_variables.length === 0
+  ) {
+    result.data = {
+      ...result.data,
+      extraction_successful: true,
+      score: 1.0,
+      reason: "The configured final recording batch had no turn in which to run.",
+      technical_reason: `${result.data.technical_reason || ""} Overridden by structured final-batch cutoff: interrupted ending/transfer, caller reply, and no later agent or tool turn.`.trim(),
+      missing_variables: [],
+      incorrect_variables: [],
+    };
+  }
+
+  const defaultCandidates = result.data.incorrect_variables.filter(
+    (name) =>
+      Object.hasOwn(node.extracted_variables, name) &&
+      isConfigDirectedDefaultRule(node.variable_rules?.[name]),
+  );
+  if (defaultCandidates.length > 0) {
+    try {
+      const review = await runLlmJudge({
+        system:
+          "Review ONLY whether the caller explicitly established an exception to each configured default. " +
+          "The variable's recording rule is authoritative. An unanswered question, missing identity confirmation, silence, a busy/callback request, or model uncertainty is NOT an exception. " +
+          "Set exception_established=true only when the caller's words actually satisfy an exception written in that variable's rule; cite that caller evidence. Return one review per candidate.",
+        input: {
+          candidates: defaultCandidates.map((name) => ({
+            variable_name: name,
+            recording_rule: node.variable_rules?.[name] ?? "",
+            stored_value: node.extracted_variables[name],
+          })),
+          node_transcript: renderNodeTranscript(node),
+        },
+        schema: ConfigDefaultReviewZ,
+        jsonSchema: CONFIG_DEFAULT_REVIEW_JSON,
+        maxTokens: 600,
+        provider,
+      });
+      result.usage = addUsage(result.usage, review.usage);
+
+      const cleared = new Set(
+        review.data.reviews
+          .filter((entry) => defaultCandidates.includes(entry.variable_name) && !entry.exception_established)
+          .map((entry) => entry.variable_name),
+      );
+      if (cleared.size > 0) {
+        const incorrectVariables = result.data.incorrect_variables.filter((name) => !cleared.has(name));
+        const hasExtraVariable = actualEntries.some(([name]) => !node.required_variables.includes(name));
+        const successful = !hasExtraVariable && result.data.missing_variables.length === 0 && incorrectVariables.length === 0;
+        result.data = {
+          ...result.data,
+          extraction_successful: successful,
+          score: successful ? 1.0 : result.data.score,
+          reason: successful ? "Configured default values are valid; the caller established no rule exception." : result.data.reason,
+          technical_reason: `${result.data.technical_reason || ""} Cleared by focused config-default review: ${[...cleared].join(", ")}.`.trim(),
+          incorrect_variables: incorrectVariables,
+        };
+      }
+    } catch {
+      // The primary verdict remains usable if the narrow review is unavailable.
+    }
+  }
+
+  const focusedCandidates = [
+    ...result.data.missing_variables
+      .filter((name) => !isExplicitSpeechRule(node.variable_rules?.[name]))
+      .map((name) => ({
+        variable_name: name,
+        issue_type: "missing" as const,
+        recording_rule: node.variable_rules?.[name] ?? "",
+      })),
+    ...result.data.incorrect_variables
+      .filter(
+        (name) =>
+          !isConfigDirectedDefaultRule(node.variable_rules?.[name]) &&
+          !isExplicitSpeechRule(node.variable_rules?.[name]),
+      )
+      .map((name) => ({
+        variable_name: name,
+        issue_type: "incorrect" as const,
+        recording_rule: node.variable_rules?.[name] ?? "",
+        stored_value: node.extracted_variables[name],
+      })),
+  ];
+  if (focusedCandidates.length > 0) {
+    try {
+      const review = await runLlmJudge({
+        system:
+          "Verify ONLY the proposed variable defects against the exact recording rule and caller transcript. " +
+          "For missing: confirm only when the caller explicitly stated an applicable value in that variable's own terms and it was not stored. Reject inferred/derived values, absent defaults such as not_asked or no_questions, unopened paths, duplicate/sibling demands, workflow fields, and backend/platform/tool/lookup data. " +
+          "For incorrect: confirm only when the stored value materially conflicts with the caller or the exact rule. A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. " +
+          "Do not add new defects. Return one review for every candidate and cite only caller words or the exact rule.",
+        input: {
+          candidates: focusedCandidates,
+          node_transcript: renderNodeTranscript(node),
+        },
+        schema: FocusedDefectReviewZ,
+        jsonSchema: FOCUSED_DEFECT_REVIEW_JSON,
+        maxTokens: 1000,
+        provider,
+      });
+      result.usage = addUsage(result.usage, review.usage);
+
+      const rejected = new Set(
+        review.data.reviews
+          .filter((entry) => {
+            const key = `${entry.issue_type}:${entry.variable_name}`;
+            return !entry.defect_confirmed && focusedCandidates.some((candidate) => `${candidate.issue_type}:${candidate.variable_name}` === key);
+          })
+          .map((entry) => `${entry.issue_type}:${entry.variable_name}`),
+      );
+      if (rejected.size > 0) {
+        const missingVariables = result.data.missing_variables.filter((name) => !rejected.has(`missing:${name}`));
+        const incorrectVariables = result.data.incorrect_variables.filter((name) => !rejected.has(`incorrect:${name}`));
+        const hasExtraVariable = actualEntries.some(([name]) => !node.required_variables.includes(name));
+        const successful = !hasExtraVariable && missingVariables.length === 0 && incorrectVariables.length === 0;
+        result.data = {
+          ...result.data,
+          extraction_successful: successful,
+          score: successful ? 1.0 : result.data.score,
+          reason: successful ? "All applicable caller-provided variables were captured correctly." : result.data.reason,
+          technical_reason: `${result.data.technical_reason || ""} Unconfirmed proposals removed by focused defect review: ${[...rejected].join(", ")}.`.trim(),
+          missing_variables: missingVariables,
+          incorrect_variables: incorrectVariables,
+        };
+      }
+    } catch {
+      // Keep the primary verdict if this precision-only verification is unavailable.
+    }
+  }
+
+  return result;
 }
 
 export async function runInstructionAdherenceJudge(
