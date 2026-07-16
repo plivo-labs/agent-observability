@@ -188,6 +188,38 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.incorrect_variables).toEqual([]);
   });
 
+  test("variable extraction: a caller-capture status name is not deterministically excluded", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "visa status missing",
+        technical_reason: "caller stated the status",
+        missing_variables: ["visa_status"],
+        incorrect_variables: [],
+      }),
+      JSON.stringify({
+        reviews: [
+          { variable_name: "visa_status", issue_type: "missing", defect_confirmed: true, evidence: "Caller said the visa is approved." },
+        ],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["visa_status"],
+        variable_rules: { visa_status: "Capture the caller's stated visa status." },
+        extracted_variables: {},
+        turns: [{ node_uuid: "n1", user: "My visa is approved", agent: "Thanks", intent: "" }],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(data.extraction_successful).toBe(false);
+    expect(data.missing_variables).toEqual(["visa_status"]);
+  });
+
   test("variable extraction: structured cutoff is called out after the long node prompt", async () => {
     const llm = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
     await runVariableExtractionJudge(
@@ -205,7 +237,7 @@ describe("LLM node judges (MockLLM)", () => {
 
     const sent = JSON.parse(llm.calls[0]!.user);
     expect(sent.variable_judge_contract).toContain("FINAL RECORDING BATCH CUTOFF CONFIRMED");
-    expect(sent.variable_judge_contract).toContain("missing_variables must be empty for that pending batch");
+    expect(sent.variable_judge_contract).toContain("unless its own rule required earlier recording");
     expect(sent.variable_recording_schedule).toContain("Submit lead data before any transfer");
   });
 
@@ -292,6 +324,38 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.missing_variables).toEqual([]);
   });
 
+  test("variable extraction: final-batch cutoff uses generic batch details rather than lead-only wording", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "booking reference missing",
+        technical_reason: "main review",
+        missing_variables: ["booking_reference"],
+        incorrect_variables: [],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        node_prompt: "Before transfer, record all booking details in one final submission.",
+        required_variables: ["booking_reference"],
+        variable_rules: { booking_reference: "Capture the booking reference provided by the caller." },
+        extracted_variables: {},
+        turns: [
+          { node_uuid: "n1", user: "The reference is AB42", agent: "", intent: "" },
+          { node_uuid: "n1", user: "", agent: "I will transfer you now [interrupted]", intent: "" },
+          { node_uuid: "n1", user: "Okay", agent: "", intent: "" },
+        ],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(1);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.missing_variables).toEqual([]);
+  });
+
   test("variable extraction: cutoff review preserves a confirmed non-batch omission", async () => {
     const llm = new MockLLM([
       JSON.stringify({
@@ -340,7 +404,9 @@ describe("LLM node judges (MockLLM)", () => {
         incorrect_variables: ["remember_form"],
       }),
       JSON.stringify({
-        reviews: [{ variable_name: "remember_form", exception_established: false, evidence: "No exception was stated." }],
+        reviews: [
+          { variable_name: "remember_form", issue_type: "incorrect", defect_confirmed: false, evidence: "No exception was stated." },
+        ],
       }),
     ]);
     const { data } = await runVariableExtractionJudge(
@@ -373,7 +439,9 @@ describe("LLM node judges (MockLLM)", () => {
         incorrect_variables: ["remember_form"],
       }),
       JSON.stringify({
-        reviews: [{ variable_name: "remember_form", exception_established: true, evidence: "Caller said wrong number." }],
+        reviews: [
+          { variable_name: "remember_form", issue_type: "incorrect", defect_confirmed: true, evidence: "Caller said wrong number." },
+        ],
       }),
     ]);
     const { data } = await runVariableExtractionJudge(
