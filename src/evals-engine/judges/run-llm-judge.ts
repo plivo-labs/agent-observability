@@ -47,7 +47,10 @@ export interface JudgeResult<T> {
 // Env-configurable (consul-tunable) — this is the TRUE throughput ceiling
 // shared by the poller and the event-kick; size it against the judge LLM
 // endpoint's rate limit. Default (10) preserves prior behavior.
-const MAX_CONCURRENT_JUDGE_CALLS = config.EVAL_MAX_CONCURRENT_JUDGE_CALLS;
+// Keep a runtime fallback even though config.ts supplies the production default:
+// tests and embedders may replace the config module with a partial object. An
+// undefined comparison would reject every acquire and deadlock the whole suite.
+const MAX_CONCURRENT_JUDGE_CALLS = config.EVAL_MAX_CONCURRENT_JUDGE_CALLS ?? 10;
 let activeJudgeCalls = 0;
 const judgeWaiters: Array<() => void> = [];
 
