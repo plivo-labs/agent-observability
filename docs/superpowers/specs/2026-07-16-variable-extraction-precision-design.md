@@ -18,6 +18,7 @@ Two narrow focused safeguards are allowed because live replay demonstrated that 
 
 - A structured final-batch cutoff signal is true only when the configured recording step is before transfer/end, the transfer/end turn is marked interrupted, the caller replies, and no later agent/tool turn exists. A missing candidate is cleared only when the schedule explicitly batches all lead data and the candidate's own rule does not require immediate/earlier recording; other candidates continue to focused review.
 - Config-default disagreements receive a focused contradiction review so an explicit wrong-person/dispute exception is preserved. No other defect can be added by a review.
+- High-confidence workflow and platform/backend fields are excluded before config-default routing, even when their free-form rules contain default wording.
 
 Only one PR will be opened, targeting `dev`. Nothing will be opened against `main` or another production branch.
 
@@ -45,6 +46,8 @@ Backend IDs and tool/lookup-result values are not caller extractions and must ne
 
 An extracted value is incorrect only when it is malformed, semantically different from the supported value, contradicts the caller, or asserts unsupported facts, and the configuration does not direct that value.
 
+The final boolean must agree with the structured evidence: a failure requires at least one missing variable, incorrect variable, or unconfigured stored name. Empty defect arrays with only configured names normalize to success.
+
 Defaults, active-branch payloads, mappings, normalizations, and context sourcing explicitly directed by the variable rule are valid even when their literal representation was not spoken. The variable's rule is authoritative for extraction semantics; node instructions determine path and opportunity but cannot invent a new prerequisite. Agent-authored summaries, labels, dispositions, and workflow classifications are outside this judge and belong to Instruction Adherence or Hallucination.
 
 ### Approximation and truncation
@@ -60,6 +63,7 @@ An omission may be excused when structured turn order proves the transcript ende
 - Render high-confidence judge classification hints beside variable rules and repeat the exact rules plus compact decision contract at the end of the variable judge's user payload. The exact rule remains authoritative when a free-form rule cannot be classified confidently.
 - Add focused config-default and proposed-defect reviews. These reviews may only confirm or remove defects proposed by the main judge; they cannot add new ones. Preserve stored explicit-speech violations without a leniency review while still reviewing proposed omissions.
 - Add the narrowly structured, candidate-specific final-batch cutoff guard described above and pass its schedule evidence to the main and focused-review payloads.
+- Canonicalize the final boolean from missing/incorrect arrays plus the configured-name check so the judge cannot emit an unnamed failure.
 - Add calibration assertions in `tests/evals-engine-judge-calibration.test.ts` for every Round 4 root-cause carve-out and for the load-bearing strictness rules.
 - Expand `scripts/overfire-smoke.ts` with anonymized Variable Extraction cases covering clean derived/sibling/gated/config-directed/agent-authored/backend/truncated inputs and defective explicit-omission/invented-classification inputs.
 - Do not commit Round 4 customer transcripts or other audit data.

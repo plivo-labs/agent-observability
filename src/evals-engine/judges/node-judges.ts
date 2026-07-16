@@ -172,8 +172,8 @@ function finalRecordingBatchCutOff(node: NodeEvalInput): boolean {
 
   const prompt = node.node_prompt.toLowerCase();
   return (
-    /(?:submit|record|extract|capture)[\s\S]{0,160}\bbefore\b[\s\S]{0,80}\b(?:transfer|handoff|ending|end)\b/.test(prompt) ||
-    /\bbefore\b[\s\S]{0,80}\b(?:transfer|handoff|ending|end)\b[\s\S]{0,160}(?:submit|record|extract|capture)/.test(prompt)
+    /(?:submit|submission|record|extract|capture)[\s\S]{0,160}\bbefore\b[\s\S]{0,80}\b(?:transfer|handoff|ending|end)\b/.test(prompt) ||
+    /\bbefore\b[\s\S]{0,80}\b(?:transfer|handoff|ending|end)\b[\s\S]{0,160}(?:submit|submission|record|extract|capture)/.test(prompt)
   );
 }
 
@@ -193,23 +193,35 @@ function finalBatchCoversVariable(node: NodeEvalInput, variableName: string): bo
 
 function judgeClassification(variableName: string, rule: string | undefined): string {
   const normalizedRule = rule?.toLowerCase() ?? "";
+  const outOfScope = outOfScopeVariableKind(variableName, normalizedRule);
+  if (outOfScope === "platform") {
+    return "PLATFORM/BACKEND FIELD — outside caller extraction";
+  }
+  if (outOfScope === "workflow") {
+    return "WORKFLOW FIELD — never missing caller information; do not place in missing_variables or incorrect_variables";
+  }
   if (isConfigDirectedDefaultRule(normalizedRule)) {
     return "CONFIG-DIRECTED DEFAULT — valid without an affirmative caller utterance; apply only explicitly stated exceptions";
   }
+  return "CALLER-CAPTURE CANDIDATE — still require applicability and an explicit caller-provided value";
+}
+
+function outOfScopeVariableKind(variableName: string, rule: string | undefined): "platform" | "workflow" | undefined {
+  const normalizedRule = rule?.toLowerCase() ?? "";
   if (
     /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/.test(
       normalizedRule,
     )
   ) {
-    return "PLATFORM/BACKEND FIELD — outside caller extraction";
+    return "platform";
   }
   if (
     /(?:summary|status|disposition|outcome|classification|internal[_ -]?score|remarks?)/i.test(variableName) ||
     /agent-authored|workflow (?:field|status|disposition|label)|mapped (?:workflow )?(?:status|disposition|outcome)|internal score/.test(normalizedRule)
   ) {
-    return "WORKFLOW FIELD — never missing caller information; do not place in missing_variables or incorrect_variables";
+    return "workflow";
   }
-  return "CALLER-CAPTURE CANDIDATE — still require applicability and an explicit caller-provided value";
+  return undefined;
 }
 
 function isConfigDirectedDefaultRule(rule: string | undefined): boolean {
@@ -254,6 +266,24 @@ function reconcileRejectedVariableIssues(
     technical_reason: `${data.technical_reason || ""} ${reviewLabel}: ${[...rejected].join(", ")}.`.trim(),
     missing_variables: missingVariables,
     incorrect_variables: incorrectVariables,
+  };
+}
+
+function canonicalizeVariableVerdict(
+  data: VariableExtractionRaw,
+  requiredVariables: string[],
+  actualEntries: Array<[string, unknown]>,
+): VariableExtractionRaw {
+  const hasExtraVariable = actualEntries.some(([name]) => !requiredVariables.includes(name));
+  const successful = !hasExtraVariable && data.missing_variables.length === 0 && data.incorrect_variables.length === 0;
+  if (data.extraction_successful === successful) return data;
+
+  return {
+    ...data,
+    extraction_successful: successful,
+    score: successful ? 1.0 : Math.min(data.score, 0.75),
+    reason: successful ? "All applicable caller-provided variables were captured correctly." : data.reason,
+    technical_reason: `${data.technical_reason || ""} Verdict normalized from structured missing/incorrect arrays and configured variable names.`.trim(),
   };
 }
 
@@ -346,6 +376,23 @@ export async function runVariableExtractionJudge(
     maxTokens: 3000,
     provider,
   });
+
+  const outOfScopeRejected = new Set<VariableIssueKey>([
+    ...result.data.missing_variables
+      .filter((name) => outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined)
+      .map((name) => `missing:${name}` as const),
+    ...result.data.incorrect_variables
+      .filter((name) => outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined)
+      .map((name) => `incorrect:${name}` as const),
+  ]);
+  result.data = reconcileRejectedVariableIssues(
+    result.data,
+    node.required_variables,
+    actualEntries,
+    outOfScopeRejected,
+    "Only workflow or platform/backend fields were proposed as defects; caller extraction is correct.",
+    "Cleared as out-of-scope workflow/platform fields",
+  );
 
   const cutoffRejected = new Set<VariableIssueKey>(
     result.data.missing_variables
@@ -468,6 +515,8 @@ export async function runVariableExtractionJudge(
       // Keep the primary verdict if this precision-only verification is unavailable.
     }
   }
+
+  result.data = canonicalizeVariableVerdict(result.data, node.required_variables, actualEntries);
 
   return result;
 }

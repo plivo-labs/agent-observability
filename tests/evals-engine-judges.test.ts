@@ -70,6 +70,43 @@ describe("LLM node judges (MockLLM)", () => {
     expect(llm.calls[0]!.system).toContain("42");
   });
 
+  test("variable extraction: final boolean cannot fail without a structured defect", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "generic concern",
+        technical_reason: "no variable defect identified",
+        missing_variables: [],
+        incorrect_variables: [],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(node(), ctx(), llm);
+
+    expect(data.extraction_successful).toBe(true);
+    expect(data.score).toBe(1);
+  });
+
+  test("variable extraction: an unconfigured stored name remains a failure", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "extra variable",
+        technical_reason: "unexpected_field is not configured",
+        missing_variables: [],
+        incorrect_variables: [],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({ extracted_variables: { order_id: "42", unexpected_field: "x" } }),
+      ctx(),
+      llm,
+    );
+
+    expect(data.extraction_successful).toBe(false);
+  });
+
   test("variable extraction: variable rules and decision boundary are repeated after the call payload", async () => {
     const llm = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
     await runVariableExtractionJudge(
@@ -119,6 +156,36 @@ describe("LLM node judges (MockLLM)", () => {
 
     expect(llm.calls[0]!.system).toContain("property_key — judge classification: PLATFORM/BACKEND FIELD");
     expect(llm.calls[0]!.system).toContain("routing_result — judge classification: WORKFLOW FIELD");
+  });
+
+  test("variable extraction: workflow and backend fields stay out of scope even when their rules say default", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.25,
+        reason: "workflow issues",
+        technical_reason: "main review",
+        missing_variables: ["property_key"],
+        incorrect_variables: ["outcome_status"],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["property_key", "outcome_status"],
+        variable_rules: {
+          property_key: "Internal identifier returned by the listing action; empty by default.",
+          outcome_status: "Agent-authored workflow status; use completed by default.",
+        },
+        extracted_variables: { outcome_status: "follow_up" },
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(1);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.missing_variables).toEqual([]);
+    expect(data.incorrect_variables).toEqual([]);
   });
 
   test("variable extraction: structured cutoff is called out after the long node prompt", async () => {
@@ -193,6 +260,36 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.missing_variables).toEqual([]);
     expect(data.incorrect_variables).toEqual([]);
     expect(data.technical_reason).toContain("structured final-batch schedule");
+  });
+
+  test("variable extraction: final-batch cutoff recognizes submission-action wording", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "lead value missing",
+        technical_reason: "main review",
+        missing_variables: ["order_id"],
+        incorrect_variables: [],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        node_prompt: "Before any ending outcome or transfer, use the lead data submission action once with all known details.",
+        extracted_variables: {},
+        turns: [
+          { node_uuid: "n1", user: "Order 42", agent: "", intent: "" },
+          { node_uuid: "n1", user: "", agent: "Let me transfer you now [interrupted]", intent: "" },
+          { node_uuid: "n1", user: "Okay", agent: "", intent: "" },
+        ],
+      }),
+      ctx(),
+      llm,
+    );
+
+    expect(llm.calls).toHaveLength(1);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.missing_variables).toEqual([]);
   });
 
   test("variable extraction: cutoff review preserves a confirmed non-batch omission", async () => {
