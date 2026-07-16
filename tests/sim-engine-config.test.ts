@@ -1,10 +1,12 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
 
 // Mock config so importing sim-engine/config doesn't parse real env (which would
 // require DATABASE_URL and could process.exit). This mock is a FULLY-configured,
 // QUEUE-mode deploy so the derived gates below have a concrete shape to assert.
 mock.module("../src/config.js", () => ({
   config: {
+    ...TEST_JUDGE_CONFIG,
     LLM_PROVIDER: "openai",
     OPENAI_API_KEY: "sk-test",
     ANTHROPIC_API_KEY: undefined,
