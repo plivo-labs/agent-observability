@@ -397,7 +397,8 @@ export function resolveOutcomes(raws: ConversationDetectionRaws, ctx: Conversati
     wrong_number: wrongFinal,
     do_not_disturb: dndFinal,
     silent_call: !answered,
-    customer_engaged: answered && !lowFired,
+    customer_engaged:
+      answered && !vmFired && !screenFired && !botFired && !wrongFired && !dndFired && !lowFired,
     conversation_status: { status, reason: "", technical_reason: "" },
   };
 }
