@@ -88,6 +88,7 @@ describe("buildSessionEvalInput", () => {
     // hallucination judge and chosen-intent evidence for the intent judge.
     expect(t).toContain('Tool_Call: spend({"year":2026})');
     expect(t).toContain('Tool_Result: spend -> {"total":"$1,234"}');
+    expect(t).toContain("Agent_Handoff: billing");
 
     // Real agent speech keeps its prefix.
     expect(t).toContain("Agent: You spent $1,234.");

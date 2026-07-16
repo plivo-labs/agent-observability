@@ -50,16 +50,18 @@ function availableIntents(config: Record<string, unknown> | null): unknown[] {
   return Array.isArray(intents) ? intents : [];
 }
 
-/** Render the whole conversation as "User: …\nAgent: …" lines (context for hallucination/loop/goal). */
+/** Render turns for node and full-conversation judge context.
+ *
+ * Evidence turns render bare because Tool_Call:/Tool_Result:/System_Note:/
+ * Agent_Handoff: are runtime events, not words the agent spoke. They remain in
+ * the transcript as grounding and intent evidence. This is the single home for
+ * the evidence-rendering rule so node_transcript and conversation_history cannot
+ * drift into different speaker attribution.
+ */
 export function renderFullTranscript(turns: EvalTurn[]): string {
   const lines: string[] = [];
   for (const t of turns) {
     if (t.user) lines.push(`User: ${t.user}`);
-    // Evidence turns render bare — same rule as renderNodeTranscript (see the note
-    // there). This rendering reaches the node judges as `conversation_history`, so
-    // prefixing it here would re-introduce `Agent: Tool_Call: …` on the very field the
-    // hallucination judge cross-checks the node transcript against. `speech_transcript`
-    // filters evidence turns out before calling this, so the branch is a no-op there.
     if (t.agent) lines.push(t.evidence ? t.agent : `Agent: ${t.agent}`);
   }
   return lines.join("\n");

@@ -40,7 +40,7 @@ The structured output schema remains unchanged. Requiring the evidence trace ins
 
 ### Recall boundary
 
-This precision PR will not add a broad rule that treats every forward commitment as a hallucination. Such a rule risks converting normal statements such as “I’ll check” or “we’ll get that scheduled” into false positives. Unsupported capability promises will be considered separately after the precision replay can demonstrate a safe discriminator.
+This precision PR will not add a broad rule that treats every forward commitment as a hallucination. Normal process narration remains exempt, and an instruction, offered tool/handoff, or successful action grounds the corresponding path. The Round 4 replay supplied a safe discriminator for the narrower recall case: a definite promise of a concrete, externally verifiable future action is an unsupported capability claim only when no valid source establishes that action path.
 
 ## Validation
 
