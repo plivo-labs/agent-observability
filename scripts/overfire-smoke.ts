@@ -18,7 +18,8 @@
  * exercises the exact path production uses. Read-only; makes ~15 judge calls.
  * Set SMOKE_JUDGE=variable to run only the Variable Extraction cases.
  */
-import { runInstructionAdherenceJudge, runHallucinationJudge, runLoopJudge, runVariableExtractionJudge } from "../src/evals-engine/judges/node-judges.js";
+import { runInstructionAdherenceJudge, runHallucinationJudge, runLoopJudge } from "../src/evals-engine/judges/node-judges.js";
+import { runVariableExtractionJudge } from "../src/evals-engine/judges/variable-extraction.js";
 import { deriveInstructionAdherence } from "../src/evals-engine/aggregate.js";
 import type { ConversationInput, NodeEvalInput } from "../src/evals-engine/types.js";
 
@@ -86,7 +87,7 @@ async function run() {
     // drift from the production adherence_passed logic it exists to guard.
     const adherence = deriveInstructionAdherence(data);
     check("adherence: wording deviation on a met objective is NOT critical", adherence.adherence_passed,
-      `objective_achieved=${adherence.objective_progress.achieved} procedure_passed=${adherence.procedure_compliance.passed} policy_passed=${adherence.policy_boundary_compliance.passed}`);
+      `objective_achieved=${adherence.objective_progress?.achieved} procedure_passed=${adherence.procedure_compliance?.passed} policy_passed=${adherence.policy_boundary_compliance?.passed}`);
   }
 
   // 2) HALLUCINATION — agent cites a value present only in global_variables.
@@ -249,7 +250,7 @@ async function run() {
     }),
     baseCtx({
       full_transcript: "User: Show me a two-bedroom near downtown.\nTool_Result: {\"property_id\":\"internal-742\",\"monthly_rent\":2200,\"property_size\":950}\nAgent: I found one that may work.",
-      global_variables: { property_id: "internal-742", monthly_rent: 2200, property_size: 950 },
+      global_variables: { property_id: "internal-742", monthly_rent: "2200", property_size: "950" },
     }),
     true,
   );

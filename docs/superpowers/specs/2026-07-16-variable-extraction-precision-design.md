@@ -1,7 +1,7 @@
 # Variable Extraction Judge Precision Design
 
-**Date:** 2026-07-16  
-**Target:** `dev` only  
+**Date:** 2026-07-16
+**Target:** `dev` only
 **Scope:** Variable Extraction judge prompt, judge-specific input shaping, narrow precision guards, and regression validation
 
 ## Problem

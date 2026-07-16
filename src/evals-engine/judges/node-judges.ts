@@ -18,9 +18,6 @@ import { nodePayload } from "./node-judge-payload.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { HALLUCINATION_JSON, NODE_LOOP_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
 
-export { renderNodeTranscript } from "./node-judge-payload.js";
-export { runVariableExtractionJudge } from "./variable-extraction.js";
-
 // AO Eval Engine — the four LLM node judges (per AI node). Each returns its RAW output (Zod-validated);
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
 // reference-engine token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.

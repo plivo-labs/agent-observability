@@ -7,9 +7,10 @@ mock.module("../src/config.js", () => ({
 }));
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { runHallucinationJudge, runLoopJudge, runVariableExtractionJudge, runInstructionAdherenceJudge } = await import(
+const { runHallucinationJudge, runLoopJudge, runInstructionAdherenceJudge } = await import(
   "../src/evals-engine/judges/node-judges.js"
 );
+const { runVariableExtractionJudge } = await import("../src/evals-engine/judges/variable-extraction.js");
 const { runIntentJudge } = await import("../src/evals-engine/judges/intent-judge.js");
 const { runGoalJudge } = await import("../src/evals-engine/judges/goal-judge.js");
 type NodeEvalInput = import("../src/evals-engine/types.js").NodeEvalInput;
