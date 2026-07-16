@@ -1,5 +1,5 @@
 import { describe, test, expect, mock } from "bun:test";
-import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
+import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
 // Regression guard for the benchmark-round-2 judge calibrations (2026-07-12
 // AO-vs-legacy ground-truth audit). Each rule below fixed a verified over-fire
@@ -8,9 +8,7 @@ import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
 // prompts may be reworded around them.
 
 // Mock config so importing the llm module (via the judges) doesn't parse real env.
-mock.module("../src/config.js", () => ({
-  config: TEST_JUDGE_CONFIG,
-}));
+mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const {
   HALLUCINATION,

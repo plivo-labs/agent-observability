@@ -1,16 +1,15 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 // QUAL-01: the default zero-config deployment has neither auth pair set.
 // That open path was previously untested — a regression could silently
 // open or close ingest. Mock config with both modes disabled and assert
 // the middleware lets requests through.
 mock.module("../src/config.js", () => ({
+  ...TEST_CONFIG_MODULE_DEFAULTS,
   config: { LIVEKIT_API_KEY: undefined, LIVEKIT_API_SECRET: undefined },
   basicAuthEnabled: false,
   liveKitAuthEnabled: false,
-  // Full export surface so the shared module shape stays a superset — an
-  // incomplete mock breaks files that import s3Enabled from config.
-  s3Enabled: false,
 }));
 
 const { nativeLiveKitUploadAuth } = await import("../src/livekit/auth.js");
