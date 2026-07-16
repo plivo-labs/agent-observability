@@ -346,12 +346,12 @@ async function run() {
   if (!variableOnly) {
   // 7) ADHERENCE — transcript carries internal-event lines (Tool_Call/Agent_Handoff/System_Note).
   //    These are runtime annotations rendered as context, NOT agent speech. A mis-calibrated judge
-  //    reads them as the agent revealing internals / breaking a silent handoff and fails adherence.
+  //    reads them as the agent revealing internal tools or routing details and fails adherence.
   //    Calibrated verdict: adherence_passed=true, no CRITICAL missed step.
   {
     const node = baseNode({
       node_name: "route_to_billing",
-      node_prompt: "When the caller asks about a charge, hand off to billing SILENTLY. NEVER mention internal tools, systems, or transfers to the caller.",
+      node_prompt: "When the caller asks about a charge, hand off to billing. Do not expose internal tools, system events, or specialist routing details. A neutral transition such as 'One moment while I connect you to the right person' is allowed.",
       turns: [
         { node_uuid: "n1", user: "why was I charged twice?", agent: "Let me pull that up for you right away.", intent: "" },
         { node_uuid: "n1", user: "", agent: "Tool_Call: lookup_charges(account=***)", intent: "" },
@@ -368,7 +368,7 @@ async function run() {
     const objectiveMet = data.objective_progress?.achieved === true;
     const policyOk = data.policy_boundary_compliance?.passed === true;
     const adherencePassed = objectiveMet && !crit && policyOk;
-    check("adherence: Tool_Call/Handoff/System_Note lines are NOT agent speech (no silent-handoff/reveal fail)", adherencePassed,
+    check("adherence: Tool_Call/Handoff/System_Note lines are NOT agent speech", adherencePassed,
       `objective_achieved=${objectiveMet} critical_missed=${crit} policy_passed=${policyOk}`);
   }
   }
