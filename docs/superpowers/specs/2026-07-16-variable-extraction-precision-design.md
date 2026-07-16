@@ -82,7 +82,7 @@ The PR body will report commands, model/provider used for live validation, confu
 ## Safety and Non-goals
 
 - No shared input-plumbing, public result schema, aggregation, database, or UI changes.
-- No broad deterministic verdict rewriting. The only deterministic removal is the candidate-specific final-batch guard above; focused reviews can only remove unconfirmed proposed defects and cannot add defects.
+- No broad deterministic verdict rewriting. Deterministic changes are limited to the candidate-specific final-batch guard, high-confidence workflow/platform exclusions, and boolean normalization from named defects plus unconfigured stored names; focused reviews can only remove unconfirmed proposed defects and cannot add defects.
 - No Hallucination judge changes in this PR.
 - No customer audit data committed to the repository.
 - No PR targeting `main` or production.
