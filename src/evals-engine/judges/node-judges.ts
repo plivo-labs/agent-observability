@@ -24,13 +24,35 @@ import { HALLUCINATION_JSON, NODE_LOOP_JSON, VARIABLE_EXTRACTION_JSON, INSTRUCTI
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
 // reference-engine token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.
 
-/** Render a node's turns as "User: …\nAgent: …" lines (the node transcript the judges read). */
+/** Render a node's turns as "User: …\nAgent: …" lines (the node transcript the judges read).
+ *
+ *  Evidence turns render BARE — no "Agent: " prefix. They are runtime events
+ *  (Tool_Call:/Tool_Result:/System_Note:/Agent_Handoff:) that already carry their own
+ *  label, and every judge prompt describes them that way: "lines labelled Tool_Call:,
+ *  Tool_Result:, System_Note:, or Agent_Handoff:" (instructions.ts — loop rule 3,
+ *  adherence TRANSCRIPT NOTE, hallucination rule 8). None of them mentions an "Agent: "
+ *  prefix, because none was intended.
+ *
+ *  Prefixing an evidence line made it formally indistinguishable from words the agent
+ *  spoke to the caller: the hallucination judge read `Agent: Tool_Call:
+ *  record_conversation_summary({"outcome":"Completed"})` as the agent ASSERTING that
+ *  outcome, and charged the summary's contents as fabricated speech. These agents flush
+ *  a record_* summary on nearly every call, so it fired constantly (round-4 prod audit:
+ *  ~18 of 34 hallucination over-fires traced here; 7 real hallucinations in 315 calls
+ *  against 38 flags raised).
+ *
+ *  Evidence lines are still EMITTED — they are grounding for the hallucination judge
+ *  (evidence source 2) and chosen-intent evidence for the intent judge. Only the
+ *  misleading speaker attribution is removed. `t.evidence` is set by the ingest builder
+ *  (session-evals.ts) and is the same flag `speech_transcript` filters on, so the two
+ *  renderings now agree about what counts as speech.
+ */
 export function renderNodeTranscript(node: NodeEvalInput): string {
   return node.turns
     .map((t) => {
       const lines: string[] = [];
       if (t.user) lines.push(`User: ${t.user}`);
-      if (t.agent) lines.push(`Agent: ${t.agent}`);
+      if (t.agent) lines.push(t.evidence ? t.agent : `Agent: ${t.agent}`);
       return lines.join("\n");
     })
     .filter(Boolean)

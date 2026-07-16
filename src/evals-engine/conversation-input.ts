@@ -55,7 +55,12 @@ export function renderFullTranscript(turns: EvalTurn[]): string {
   const lines: string[] = [];
   for (const t of turns) {
     if (t.user) lines.push(`User: ${t.user}`);
-    if (t.agent) lines.push(`Agent: ${t.agent}`);
+    // Evidence turns render bare — same rule as renderNodeTranscript (see the note
+    // there). This rendering reaches the node judges as `conversation_history`, so
+    // prefixing it here would re-introduce `Agent: Tool_Call: …` on the very field the
+    // hallucination judge cross-checks the node transcript against. `speech_transcript`
+    // filters evidence turns out before calling this, so the branch is a no-op there.
+    if (t.agent) lines.push(t.evidence ? t.agent : `Agent: ${t.agent}`);
   }
   return lines.join("\n");
 }

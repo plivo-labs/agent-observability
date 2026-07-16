@@ -64,6 +64,44 @@ describe("buildSessionEvalInput", () => {
     expect(input.nodes[0].turn_count).toBe(4);
   });
 
+  test("node transcript never renders an evidence line as agent speech", async () => {
+    const { renderNodeTranscript } = await import("../src/evals-engine/judges/node-judges.js");
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "user", "How much did I spend?"),
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "spend", arguments: { year: 2026 } } },
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call_output", name: "spend", output: { total: "$1,234" } } },
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "agent_handoff", name: "billing" } },
+      ev("node-A", "assistant", "You spent $1,234."),
+    ]);
+    const t = renderNodeTranscript(input.nodes[0]);
+
+    // Every judge prompt describes these as "lines labelled Tool_Call:/Tool_Result:/
+    // System_Note:/Agent_Handoff:" — none mentions an "Agent: " prefix. Prefixing them
+    // makes a runtime event indistinguishable from words the agent spoke to the caller,
+    // which is what let the hallucination judge charge record_* arguments as fabricated
+    // speech. Evidence lines carry their own label; they must render bare.
+    expect(t).not.toContain("Agent: Tool_Call:");
+    expect(t).not.toContain("Agent: Tool_Result:");
+    expect(t).not.toContain("Agent: Agent_Handoff");
+
+    // …and they must still be PRESENT: they are grounding evidence for the
+    // hallucination judge and chosen-intent evidence for the intent judge.
+    expect(t).toContain('Tool_Call: spend({"year":2026})');
+    expect(t).toContain('Tool_Result: spend -> {"total":"$1,234"}');
+
+    // Real agent speech keeps its prefix.
+    expect(t).toContain("Agent: You spent $1,234.");
+    expect(t).toContain("User: How much did I spend?");
+
+    // The SAME rule must hold for full_transcript: it reaches every node judge as
+    // `conversation_history` (node-judges.ts nodePayload), so leaving the prefix here
+    // would re-introduce the bug on the field the judge cross-checks against.
+    expect(input.full_transcript).not.toContain("Agent: Tool_Call:");
+    expect(input.full_transcript).not.toContain("Agent: Tool_Result:");
+    expect(input.full_transcript).toContain('Tool_Call: spend({"year":2026})');
+    expect(input.full_transcript).toContain("Agent: You spent $1,234.");
+  });
+
   test("fills extracted_variables from the variable's declared recording tool", () => {
     const config: AgentConfig = {
       nodes: [{
