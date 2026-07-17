@@ -1,17 +1,9 @@
 import { describe, test, expect, mock } from "bun:test";
 import type { ProviderCompleteArgs } from "../src/llm/types.js";
 import type { FlowGraph, FlowNode } from "../src/sim-engine/run-engine/flow-types.js";
+import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
-mock.module("../src/config.js", () => ({
-  config: {
-    LLM_PROVIDER: "anthropic",
-    JUDGE_MODEL: undefined,
-    SIMULATOR_MODEL: undefined,
-    GENERATOR_MODEL: undefined,
-    LLM_TIMEOUT_MS: 30000,
-    LLM_MAX_RETRIES: 1,
-  },
-}));
+mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
 const { fromSimTranscript } = await import("../src/evals-engine/conversation-input.js");

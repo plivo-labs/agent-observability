@@ -1,6 +1,8 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 mock.module("../src/config.js", () => ({
+  ...TEST_CONFIG_MODULE_DEFAULTS,
   config: { LLM_PROVIDER: "anthropic", JUDGE_MODEL: undefined, SIMULATOR_MODEL: undefined, GENERATOR_MODEL: undefined, LLM_TIMEOUT_MS: 30000, LLM_MAX_RETRIES: 1 },
 }));
 

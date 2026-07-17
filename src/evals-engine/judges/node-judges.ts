@@ -3,59 +3,24 @@ import { IDLE_TAG } from "../types.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import {
   HallucinationRawZ,
-  VariableExtractionRawZ,
   NodeLoopRawZ,
   InstructionAdherenceRawZ,
   type HallucinationRaw,
-  type VariableExtractionRaw,
   type NodeLoopRaw,
   type InstructionAdherenceRaw,
 } from "./types.js";
 import {
   systemForHallucination,
   systemForLoop,
-  systemForVariableExtraction,
   systemForInstructionAdherence,
 } from "./instructions.js";
+import { nodePayload } from "./node-judge-payload.js";
 import { runLlmJudge } from "./run-llm-judge.js";
-import { HALLUCINATION_JSON, NODE_LOOP_JSON, VARIABLE_EXTRACTION_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
+import { HALLUCINATION_JSON, NODE_LOOP_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
 
 // AO Eval Engine — the four LLM node judges (per AI node). Each returns its RAW output (Zod-validated);
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
 // reference-engine token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.
-
-/** Render a node's turns as "User: …\nAgent: …" lines (the node transcript the judges read). */
-export function renderNodeTranscript(node: NodeEvalInput): string {
-  return node.turns
-    .map((t) => {
-      const lines: string[] = [];
-      if (t.user) lines.push(`User: ${t.user}`);
-      if (t.agent) lines.push(`Agent: ${t.agent}`);
-      return lines.join("\n");
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-/** Shared user payload for the node judges (superset; each judge reads what it needs, like the reference engine).
- *  Grounding evidence (extracted_variables / global_variables / pronunciation_guides) is included when present so
- *  the hallucination judge can trace claims to it — a value the runtime supplied must not read as fabricated.
- *  Empty maps are omitted to keep the payload clean. */
-function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
-  const hasEntries = (m: Record<string, unknown> | undefined): m is Record<string, unknown> => !!m && Object.keys(m).length > 0;
-  return {
-    global_prompt: ctx.global_prompt,
-    node_name: node.node_name,
-    node_prompt: node.node_prompt,
-    available_intents: node.available_intents,
-    chosen_intent: node.chosen_intent,
-    node_transcript: renderNodeTranscript(node),
-    conversation_history: ctx.full_transcript,
-    ...(hasEntries(node.extracted_variables) ? { extracted_variables: node.extracted_variables } : {}),
-    ...(hasEntries(ctx.global_variables) ? { global_variables: ctx.global_variables } : {}),
-    ...(hasEntries(ctx.pronunciation_guides) ? { pronunciation_guides: ctx.pronunciation_guides } : {}),
-  };
-}
 
 export async function runHallucinationJudge(
   node: NodeEvalInput,
@@ -102,49 +67,6 @@ export async function runLoopJudge(
   const stripped = idleFreeTranscript(ctx);
   const loopCtx: ConversationInput = stripped === ctx.full_transcript ? ctx : { ...ctx, full_transcript: stripped };
   return runLlmJudge({ system: systemForLoop(), input: nodePayload(loopNode, loopCtx), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider });
-}
-
-export async function runVariableExtractionJudge(
-  node: NodeEvalInput,
-  ctx: ConversationInput,
-  provider?: LlmProvider,
-): Promise<{ data: VariableExtractionRaw; usage: LlmUsage }> {
-  // No variables configured and none extracted → nothing to judge; a neutral
-  // pass avoids the model speculating about variables that don't exist.
-  if (node.required_variables.length === 0 && Object.keys(node.extracted_variables ?? {}).length === 0) {
-    return {
-      data: {
-        extraction_successful: true,
-        score: 1.0,
-        reason: "No variables configured on this node — extraction not applicable.",
-        technical_reason: "skipped: empty required_variables and extracted_variables",
-        missing_variables: [],
-        incorrect_variables: [],
-      } as VariableExtractionRaw,
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-    };
-  }
-  // Render each variable with its recording rule so conditional rules
-  // ("leave empty unless the caller confirms…") are judged against, not
-  // guessed at — prompt step 5 depends on the rule being visible here.
-  const expected = node.required_variables.length
-    ? node.required_variables
-        .map((v) => {
-          const rule = node.variable_rules?.[v];
-          return rule ? `- ${v} — recording rule: ${rule}` : `- ${v}`;
-        })
-        .join("\n")
-    : "(none)";
-  const actualEntries = Object.entries(node.extracted_variables ?? {});
-  const actual = actualEntries.length ? actualEntries.map(([k, v]) => `- ${k}: ${JSON.stringify(v)}`).join("\n") : "(none)";
-  return runLlmJudge({
-    system: systemForVariableExtraction(expected, actual),
-    input: nodePayload(node, ctx),
-    schema: VariableExtractionRawZ,
-    jsonSchema: VARIABLE_EXTRACTION_JSON,
-    maxTokens: 3000,
-    provider,
-  });
 }
 
 export async function runInstructionAdherenceJudge(

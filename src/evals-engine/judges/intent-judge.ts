@@ -3,7 +3,7 @@ import type { ConversationInput, NodeEvalInput, IntentIdentificationMetrics } fr
 import { IntentIdentificationRawZ } from "./types.js";
 import { systemForIntent } from "./instructions.js";
 import { runLlmJudge } from "./run-llm-judge.js";
-import { renderNodeTranscript } from "./node-judges.js";
+import { renderNodeTranscript } from "./node-judge-payload.js";
 import { INTENT_JSON } from "./schemas.js";
 
 // AO Eval Engine — intent identification judge. LLM-based, matching the reference engine's MetricIntent: given the node's

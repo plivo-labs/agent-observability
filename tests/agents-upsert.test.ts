@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 //
@@ -16,6 +17,7 @@ const mockSqlTag = mock((_strings: TemplateStringsArray, ...values: any[]) => {
 });
 
 mock.module("../src/config.js", () => ({
+  ...TEST_CONFIG_MODULE_DEFAULTS,
   config: {
     DATABASE_URL: "postgres://test/test",
     PORT: 9090,
