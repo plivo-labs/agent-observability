@@ -1,10 +1,8 @@
 import { describe, test, expect, mock } from "bun:test";
-import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
+import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
 // Mock config so importing the llm module (via the judges) doesn't parse real env.
-mock.module("../src/config.js", () => ({
-  config: TEST_JUDGE_CONFIG,
-}));
+mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
 const { evaluateConversationMetrics, resolveOutcomes } = await import("../src/evals-engine/judges/conversation-judges.js");
@@ -172,10 +170,12 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     const cm = await evaluateConversationMetrics(ctx({ transport: "livekit" }), llm);
     expect(cm.low_engagement.detected).toBe(false);
     expect(cm.answered).toBe(true);
+    expect(cm.customer_engaged).toBe(true);
 
     const llm2 = new MockLLM([responder({ low: true })]);
     const cm2 = await evaluateConversationMetrics(ctx({ transport: "livekit" }), llm2);
     expect(cm2.low_engagement.detected).toBe(true);
+    expect(cm2.customer_engaged).toBe(false);
     expect(cm2.conversation_status.status).toBe("low_engagement");
   });
 
@@ -183,6 +183,7 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     const cm = resolveOutcomes(raws({ bot: detection(true), lowEngagement: detection(true) }), ctx());
     expect(cm.bot_detected.detected).toBe(true);
     expect(cm.low_engagement.detected).toBe(false); // suppressed by bot
+    expect(cm.customer_engaged).toBe(false);
     expect(cm.conversation_status.status).toBe("bot_detected");
   });
 
@@ -194,6 +195,7 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.voicemail_detected.detected).toBe(true);
     expect(cm.bot_detected.detected).toBe(false); // superseded
     expect(cm.low_engagement.detected).toBe(false); // superseded
+    expect(cm.customer_engaged).toBe(false);
     expect(cm.conversation_status.status).toBe("voicemail_detected");
   });
 
@@ -215,6 +217,7 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.wrong_number.detected).toBe(false); // superseded
     expect(cm.do_not_disturb.detected).toBe(false); // superseded
     expect(cm.low_engagement.detected).toBe(false); // superseded
+    expect(cm.customer_engaged).toBe(false);
   });
 
   test("wrong_number outranks do_not_disturb + low_engagement", () => {
@@ -225,5 +228,11 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.wrong_number.detected).toBe(true);
     expect(cm.do_not_disturb.detected).toBe(false);
     expect(cm.low_engagement.detected).toBe(false);
+    expect(cm.customer_engaged).toBe(false);
+  });
+
+  test("do_not_disturb excludes customer engagement", () => {
+    const cm = resolveOutcomes(raws({ doNotDisturb: detection(true) }), ctx());
+    expect(cm.customer_engaged).toBe(false);
   });
 });

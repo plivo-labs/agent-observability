@@ -12,3 +12,18 @@ export const TEST_JUDGE_CONFIG = {
   LLM_MAX_RETRIES: 1,
   EVAL_MAX_CONCURRENT_JUDGE_CALLS: 10,
 } as const;
+
+/** Complete src/config.js module shape for Bun's process-wide module mocks.
+ * A judge test can load before unrelated route/auth tests in CI, so omitting
+ * named exports here would make those later imports fail at module linkage. */
+export const TEST_CONFIG_MODULE_DEFAULTS = {
+  dbConfigured: false,
+  s3Enabled: false,
+  basicAuthEnabled: false,
+  liveKitAuthEnabled: false,
+} as const;
+
+export const TEST_JUDGE_CONFIG_MODULE = {
+  ...TEST_CONFIG_MODULE_DEFAULTS,
+  config: TEST_JUDGE_CONFIG,
+} as const;

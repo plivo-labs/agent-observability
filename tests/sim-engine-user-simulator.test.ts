@@ -1,8 +1,10 @@
 import { describe, test, expect, mock } from "bun:test";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 // completeJSON reads config (model selection, timeout, retries) even when a provider is
 // injected, so mock it exactly like the sim-gen tests do — no real env, no network.
 mock.module("../src/config.js", () => ({
+  ...TEST_CONFIG_MODULE_DEFAULTS,
   config: {
     LLM_PROVIDER: "anthropic",
     JUDGE_MODEL: undefined,

@@ -1,10 +1,8 @@
 import { describe, test, expect, mock } from "bun:test";
 import type { ProviderCompleteArgs } from "../src/llm/types.js";
-import { TEST_JUDGE_CONFIG } from "./fixtures/judge-config.js";
+import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
-mock.module("../src/config.js", () => ({
-  config: TEST_JUDGE_CONFIG,
-}));
+mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
 const { evaluateSimulation } = await import("../src/evals-engine/index.js");

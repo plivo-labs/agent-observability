@@ -1,10 +1,12 @@
 import { describe, test, expect, mock } from "bun:test";
 import { z } from "zod";
+import { TEST_CONFIG_MODULE_DEFAULTS } from "./fixtures/judge-config.js";
 
 // Mock config so importing the llm module doesn't parse real env (which would
 // require DATABASE_URL and process.exit). Tests inject MockLLM directly, so the
 // real provider SDKs are never loaded.
 mock.module("../src/config.js", () => ({
+  ...TEST_CONFIG_MODULE_DEFAULTS,
   config: {
     LLM_PROVIDER: "anthropic",
     JUDGE_MODEL: undefined,
