@@ -92,8 +92,15 @@ export async function runInstructionAdherenceJudge(
   }
   // AO has no per-node scenario "objective", so leave that slot "(none)" (the prompt marks it Optional).
   // Filling it with a copy of the instructions would tell the model objective==instructions — noise.
+  // The rubric anchors mandatory-step identification to the {instructions} slot, so a mandated
+  // line that lives in the GLOBAL prompt must appear there too — global_prompt in the payload
+  // JSON alone is under-weighted. The neutral-pass gate above stays keyed to node_prompt:
+  // a node with no instructions of its own is still skipped, global prompt or not.
+  const instructions = ctx.global_prompt?.trim()
+    ? `Global instructions (apply to every node):\n${ctx.global_prompt.trim()}\n\n---\n\nNode instructions:\n${node.node_prompt}`
+    : node.node_prompt;
   return runLlmJudge({
-    system: systemForInstructionAdherence(node.node_prompt, "(none)"),
+    system: systemForInstructionAdherence(instructions, "(none)"),
     input: nodePayload(node, ctx),
     schema: InstructionAdherenceRawZ,
     jsonSchema: INSTRUCTION_ADHERENCE_JSON,

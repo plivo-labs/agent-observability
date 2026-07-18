@@ -719,6 +719,27 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.objective_progress.achieved).toBe(true);
     expect(data.procedure_compliance.missed_steps).toEqual([]);
   });
+
+  test("instruction adherence: global prompt joins the instructions slot; absent → node prompt only", async () => {
+    const raw = {
+      objective_progress: { achieved: true, score: 1, reason_code: "goal_achieved", reason: "", technical_reason: "" },
+      procedure_compliance: { score: 1, reason_code: "", missed_steps: [], reason: "", technical_reason: "" },
+      interaction_quality: { score: 0.9, reason_code: "", issues: [], reason: "", technical_reason: "" },
+      policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+    };
+    // A mandated line living in the global prompt must be visible where the rubric
+    // anchors mandatory steps ({instructions}), not only in the payload JSON.
+    const withGlobal = new MockLLM([JSON.stringify(raw)]);
+    await runInstructionAdherenceJudge(node(), ctx({ global_prompt: "Always announce the recorded line." }), withGlobal);
+    expect(withGlobal.calls[0]!.system).toContain("Global instructions (apply to every node):");
+    expect(withGlobal.calls[0]!.system).toContain("Always announce the recorded line.");
+
+    const noGlobal = new MockLLM([JSON.stringify(raw)]);
+    await runInstructionAdherenceJudge(node(), ctx({ global_prompt: "" }), noGlobal);
+    expect(noGlobal.calls[0]!.system).not.toContain("Global instructions (apply to every node):");
+    // SCRIPTED CONTENT DELIVERY narrowing is present either way.
+    expect(noGlobal.calls[0]!.system).toContain("SCRIPTED CONTENT DELIVERY");
+  });
 });
 
 describe("intent judge (LLM, cx-sqs MetricIntent)", () => {
@@ -741,6 +762,16 @@ describe("intent judge (LLM, cx-sqs MetricIntent)", () => {
     const { data } = await runIntentJudge(node(), ctx(), llm);
     expect(data.score).toBe(0);
     expect(data.intent_not_found).toBe(true);
+  });
+  test("rubric pins: unfired-mandated-intent branch and consent gate are in the prompt", async () => {
+    // R5 EM measurement: these branches take intent-defect recall 4/24 → 19/24.
+    // Pin their anchor phrases so a prompt regression fails deterministically.
+    const llm = new MockLLM([JSON.stringify({ intent_not_found: false, intent_wrongly_identified: false, reason: "" })]);
+    await runIntentJudge(node(), ctx(), llm);
+    const sys = llm.calls[0]!.system!;
+    expect(sys).toContain("PLATFORM FACT — an intent fires ONLY via a line labelled Tool_Call:/Agent_Handoff:");
+    expect(sys).toContain("SUPPRESSION — narrow"); // silent-routing suppression survives
+    expect(sys).toContain("Consent gate:");
   });
 });
 
