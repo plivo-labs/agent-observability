@@ -13,6 +13,7 @@
 // map verdicts to whatever node identity it uses.
 
 import type { LlmProvider } from "../../llm/index.js";
+import type { SessionMetrics } from "../../metrics.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { evaluateConversationMetrics, zeroConversationMetrics } from "../judges/conversation-judges.js";
@@ -492,13 +493,17 @@ export async function evaluateIngestedSession(
   /** Session transport/channel, from the session row. Gates the voice-only
    *  conversation detections so they don't fire on text (chat/SMS/WhatsApp). */
   transport?: string,
+  /** Per-turn timing metrics for the code-derived dead-air judge.
+   *  Omitted by the sim path and by sessions ingested without per-turn metrics;
+   *  it then reports `available:false` rather than a clean verdict. */
+  signals?: SessionMetrics | null,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
 
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()
-      ? evaluateConversationMetrics(input, provider)
+      ? evaluateConversationMetrics(input, provider, signals)
       : Promise.resolve(zeroConversationMetrics()),
     input.nodes.length
       ? evaluateSimulation(input, { provider })
