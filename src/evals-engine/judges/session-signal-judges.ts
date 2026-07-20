@@ -64,14 +64,26 @@ const fired = (reason: string, technicalReason: string): DetectionResult => ({
 /**
  * A single RESPONSE silence at or above this is a defect on its own.
  *
- * ⚠️ PROVISIONAL — set by reasoning, not measured. Reference points: human
- * turn-taking gaps run ~200ms, voice-AI response targets are sub-second, ~2s
- * already reads as broken to a caller, and contact-centre dead-air standards
- * commonly flag around 3s (which is why metrics.ts measures from there). 5s sits
- * clear of that 3s measurement floor while still being lenient. Set this from the
- * observed p95 of real response gaps before treating it as validated.
+ * MEASURED, not guessed. Distribution over 2,552 production sessions
+ * (2,953 response gaps, round-6 exports, both regions):
+ *
+ *   p50 1,868ms   p90 5,108ms   p95 9,031ms   p99 10,219ms   max 24,301ms
+ *
+ * Fire rate by candidate threshold, per session on its worst response gap:
+ *
+ *    5,000ms -> 21.5% of sessions      10,000ms ->  2.7%
+ *    8,000ms -> 17.4%                  12,000ms ->  1.7%
+ *
+ * 10s is chosen for the cliff between those two bands: ~15% of sessions have
+ * their worst gap in an 8-10s cluster (p95 9.0s, p99 10.2s sit almost on top of
+ * each other), which looks like a systemic timeout rather than organic spread.
+ * Sitting just above it flags genuine outliers instead of the routine tail —
+ * 2.7% is a defect rate, 21.5% would be noise.
+ *
+ * Re-measure if the pipeline's latency profile changes; the cluster is the thing
+ * to watch, not the number.
  */
-export const DEAD_AIR_RESPONSE_MS = 5000;
+export const DEAD_AIR_RESPONSE_MS = 10000;
 /** Or this many counted (≥3s) RESPONSE gaps in one call. */
 export const DEAD_AIR_EVENT_COUNT = 3;
 

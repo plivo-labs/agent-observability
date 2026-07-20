@@ -144,14 +144,18 @@ describe("evaluateDeadAir", () => {
     expect(r.available).toBe(true);
 
     // ...and does fire when the agent's own gap crosses it.
+    // The caller pause stays deliberately LARGER than the agent's gap, so a
+    // reason string quoting the wrong one is unmistakable.
+    const agentGap = DEAD_AIR_RESPONSE_MS + 1000;
+    const callerPause = agentGap * 2;
     const r2 = evaluateDeadAir(
       metricsWith({
         voice: {
           dead_air: deadAirBlock({
-            count: 2, max_ms: 20000, total_ms: 26000,
+            count: 2, max_ms: callerPause, total_ms: callerPause + agentGap,
             events: [
-              { turn_number: 1, kind: "inter_turn", gap_ms: 20000 },
-              { turn_number: 3, kind: "response", gap_ms: DEAD_AIR_RESPONSE_MS + 1000 },
+              { turn_number: 1, kind: "inter_turn", gap_ms: callerPause },
+              { turn_number: 3, kind: "response", gap_ms: agentGap },
             ],
           }),
         },
@@ -159,7 +163,10 @@ describe("evaluateDeadAir", () => {
     );
     expect(r2.detected).toBe(true);
     expect(r2.reason).toContain("turn 3");
-    expect(r2.reason).toContain("6.0s"); // the response gap, not the 20s caller pause
+    // Quotes the agent's gap, never the (larger) caller pause. Derived from the
+    // constant so a future threshold change doesn't silently invalidate this.
+    expect(r2.reason).toContain(`${(agentGap / 1000).toFixed(1)}s`);
+    expect(r2.reason).not.toContain(`${(callerPause / 1000).toFixed(1)}s`);
   });
 
   test("is UNAVAILABLE when the block carries no per-event kinds", () => {
