@@ -12,6 +12,7 @@ import {
   type EvalClaim,
 } from "./db.js";
 import { sanitizeForLog } from "../response.js";
+import { buildSessionMetrics } from "../metrics.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
 import { sentimentPassed } from "./judges/conversation-judges.js";
@@ -93,6 +94,12 @@ export async function fanOutExternalEvals(
       ["low_engagement", cm.low_engagement],
       ["wrong_number", cm.wrong_number],
       ["do_not_disturb", cm.do_not_disturb],
+      // Code-derived signal judges. They ride the same array precisely so they
+      // reuse the `available === false` skip below — a session without turn
+      // timestamps must fan out nothing, not a pass.
+      ["dead_air", cm.dead_air],
+      ["latency_ux", cm.latency_ux],
+      ["agent_script_switch", cm.agent_script_switch],
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
@@ -261,7 +268,30 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       return false;
     }
 
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined);
+    // Timing signals for the code-derived judges. buildSessionMetrics returns
+    // null when neither chat history nor per-turn metrics are present, and
+    // leaves `voice.dead_air` unset when no gap was measurable — both of which
+    // those judges surface as `available:false`, never as a clean call.
+    const signals = buildSessionMetrics(
+      Array.isArray(source.chatHistory) ? source.chatHistory : null,
+      source.sessionMetrics ?? null,
+      events.length,
+      {
+        startedAt: source.sessionCreatedAt,
+        durationMs:
+          source.sessionCreatedAt && source.sessionEndedAt
+            ? source.sessionEndedAt.getTime() - source.sessionCreatedAt.getTime()
+            : null,
+      },
+    );
+
+    const verdicts = await evaluateIngestedSession(
+      source.config as AgentConfig,
+      events,
+      undefined,
+      source.transport ?? undefined,
+      signals,
+    );
     if (ownershipLost) {
       // Another sweeper adopted the claim mid-judge — its results win; ours
       // are discarded so the session is never double-completed/fanned out.

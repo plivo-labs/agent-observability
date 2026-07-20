@@ -230,7 +230,7 @@ export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: numb
 /** Everything the eval sweeper needs to judge one session. */
 export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at
+    SELECT c.config, s.chat_history, s.session_metrics, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at
     FROM ao_session_agent_config c
     JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
@@ -244,6 +244,10 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     sessionId,
     config: parse(row.config) as Record<string, unknown>,
     chatHistory: parse(row.chat_history),
+    // Raw per-turn metrics — the timing source the code-derived signal judges
+    // read (dead air, response latency). Absent on sessions ingested without
+    // per-turn metrics, which those judges report as `available:false`.
+    sessionMetrics: parse(row.session_metrics),
     rawReport: parse(row.raw_report),
     sessionCreatedAt: row.session_created_at ? new Date(row.session_created_at) : null,
     sessionEndedAt: row.session_ended_at ? new Date(row.session_ended_at) : null,

@@ -106,7 +106,7 @@ interface MetricsSummary {
   };
 }
 
-interface SessionMetrics {
+export interface SessionMetrics {
   turns: TurnRecord[];
   tool_calls: ToolCallRecord[];
   summary: MetricsSummary;
