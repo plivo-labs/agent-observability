@@ -461,11 +461,19 @@ export async function evaluateConversationMetrics(
   // ungated version would fire on the majority of calls. Machine-answered calls
   // are marked unavailable, matching how the non-voice channel skip already
   // behaves, so they fan out as nothing rather than as passes.
+  // "Can't confirm a human" must be treated as "not a human", NOT as "human".
+  // runDetection fails open — a provider timeout on the voicemail classifier
+  // returns {detected:false, available:false}. Reading only `.detected` would
+  // let a real voicemail whose classifier call happened to fail read as
+  // human-answered, and we would then accuse the agent of making a recording
+  // wait 8 seconds. An axis that could not be decided withholds the gate.
+  const confirmsMachine = (d: { detected: boolean; available: boolean }) =>
+    d.detected || d.available === false;
   const humanAnswered =
     outcomes.answered &&
-    !outcomes.voicemail_detected.detected &&
-    !outcomes.bot_detected.detected &&
-    !outcomes.call_screening.detected;
+    !confirmsMachine(outcomes.voicemail_detected) &&
+    !confirmsMachine(outcomes.bot_detected) &&
+    !confirmsMachine(outcomes.call_screening);
   const notHuman = skippedDetection(
     "no human on the call (unanswered, voicemail, bot, or screening) — response UX not applicable",
   );

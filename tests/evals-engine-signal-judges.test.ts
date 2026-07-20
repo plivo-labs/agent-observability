@@ -219,6 +219,32 @@ describe("evaluateAgentScriptSwitch", () => {
     expect(r.detected).toBe(false);
   });
 
+  // A turn's own text can contain newlines, so only its FIRST physical line
+  // carries the role prefix. Measured at 6/329 calls on the EM corpus. Before
+  // continuation lines inherited the speaker above them, both of these were wrong.
+  test("regression: a script switch on a CONTINUATION line of an agent turn is caught", () => {
+    const r = evaluateAgentScriptSwitch(
+      "User: hi there\nAgent: Hello, this is your bank calling.\nनमस्ते, आपका खाता ब्लॉक हो गया है।",
+    );
+    expect(r.detected).toBe(true);
+    expect(r.reason).toContain("Devanagari");
+  });
+
+  test("regression: a caller's CONTINUATION line counts as caller script usage", () => {
+    // The caller did use Devanagari — on line 2 of their turn. Attributing only
+    // prefixed lines would call this a unilateral agent switch. It is not.
+    const r = evaluateAgentScriptSwitch(
+      "User: hello\nनमस्ते, मुझे हिंदी में बात करनी है\nAgent: नमस्ते, बिल्कुल।",
+    );
+    expect(r.detected).toBe(false);
+    expect(r.available).toBe(true);
+  });
+
+  test("text before any role prefix is dropped, not misattributed", () => {
+    const r = evaluateAgentScriptSwitch("नमस्ते orphan preamble\nAgent: Hello there.");
+    expect(r.detected).toBe(false);
+  });
+
   test("an explicit expected script overrides the caller comparison", () => {
     // Caller happens to use Devanagari, but the agent is configured for Latin.
     const r = evaluateAgentScriptSwitch("User: नमस्ते\nAgent: नमस्ते जी", "Latin");

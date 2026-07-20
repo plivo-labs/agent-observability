@@ -221,16 +221,46 @@ const SCRIPTS: Array<{ name: string; re: RegExp }> = [
   { name: "Telugu", re: /[ఀ-౿]/u },
 ];
 
-/** Agent speech lines only. Never the full transcript: tool payloads and
- *  System_Note lines are internal and routinely carry non-Latin data that the
- *  caller never heard. This is the LOWE-3 lesson (commit 1dc81cc) — the silence
- *  floor mis-fired for exactly this reason before it moved to speech_transcript. */
-function agentSpeechLines(speechTranscript: string): string[] {
-  return speechTranscript
-    .split("\n")
-    .filter((l) => /^\s*Agent:/.test(l))
-    .map((l) => l.replace(/^\s*Agent:\s*/, "").trim())
-    .filter(Boolean);
+/**
+ * Split a rendered transcript into (speaker, text) pairs.
+ *
+ * A turn's text may itself contain newlines — `renderFullTranscript`
+ * (conversation-input.ts) emits ONE array element per turn and joins with "\n",
+ * so a multi-sentence agent turn lands as several physical lines of which only
+ * the FIRST carries the "Agent:" prefix. Measured on the Equate-Media corpus:
+ * 6/329 calls (1.8%) contain such continuation lines.
+ *
+ * Attributing only prefixed lines would make every continuation invisible, which
+ * breaks BOTH directions: a script switch on line 2 of an agent turn is missed
+ * (a fabricated clean verdict), and a caller's own non-Latin continuation line is
+ * missed, so a legitimate same-script call is wrongly flagged as unilateral.
+ * Continuation lines therefore inherit the speaker of the line above them.
+ *
+ * Reads speech only. Never the full transcript: tool payloads and System_Note
+ * lines are internal and routinely carry non-Latin data the caller never heard.
+ * This is the LOWE-3 lesson (commit 1dc81cc) — the silence floor mis-fired for
+ * exactly this reason before it moved to speech_transcript.
+ */
+function speechByRole(speechTranscript: string): { agent: string[]; user: string[] } {
+  const agent: string[] = [];
+  const user: string[] = [];
+  let current: "agent" | "user" | null = null;
+
+  for (const rawLine of speechTranscript.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const match = /^(Agent|User):\s*(.*)$/.exec(line);
+    if (match) {
+      current = match[1] === "Agent" ? "agent" : "user";
+      const text = match[2].trim();
+      if (text) (current === "agent" ? agent : user).push(text);
+      continue;
+    }
+    // Continuation of the turn above. Before the first prefixed line there is no
+    // speaker to attribute to, so such a line is dropped rather than guessed.
+    if (current) (current === "agent" ? agent : user).push(line);
+  }
+  return { agent, user };
 }
 
 /**
@@ -252,16 +282,13 @@ export function evaluateAgentScriptSwitch(
   if (!speechTranscript?.trim()) {
     return unavailable("no speech transcript on this session — script switch undecidable");
   }
-  const agentLines = agentSpeechLines(speechTranscript);
+  const { agent: agentLines, user: callerLines } = speechByRole(speechTranscript);
   if (agentLines.length === 0) {
     return unavailable("no agent speech lines in the transcript — script switch undecidable");
   }
 
   const agentText = agentLines.join("\n");
-  const callerText = speechTranscript
-    .split("\n")
-    .filter((l) => /^\s*User:/.test(l))
-    .join("\n");
+  const callerText = callerLines.join("\n");
 
   const agentScripts = SCRIPTS.filter((s) => s.re.test(agentText)).map((s) => s.name);
   if (agentScripts.length === 0) {

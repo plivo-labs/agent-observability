@@ -200,6 +200,12 @@ export interface SessionEvalSource {
   sessionId: string;
   config: Record<string, unknown>;
   chatHistory: unknown;
+  /** Raw per-turn metrics (`ao_agent_transport_sessions.session_metrics`) — the
+   *  timing source the code-derived signal judges read. Written only by the
+   *  multipart recording ingest, so it is null for a session whose recording
+   *  has not landed (or never will, for an OTLP-only sender); those judges then
+   *  report `available:false` rather than a clean verdict. */
+  sessionMetrics: unknown;
   rawReport: unknown;
   /** When the session row was ingested — lets the sweeper give a young
    *  session whose transcript hasn't fully landed a grace period instead of
