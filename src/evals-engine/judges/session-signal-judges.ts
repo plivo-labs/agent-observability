@@ -57,9 +57,18 @@ const fired = (reason: string, technicalReason: string): DetectionResult => ({
 // observable; a judge should not fail a call for one 3s pause, which is ordinary
 // on a phone line. These are the "this hurt the caller" thresholds.
 
-/** A single silence at or above this is a defect on its own. */
-export const DEAD_AIR_SINGLE_MS = 8000;
-/** Or this many counted (≥3s) gaps in one call. */
+/**
+ * A single RESPONSE silence at or above this is a defect on its own.
+ *
+ * ⚠️ PROVISIONAL — set by reasoning, not measured. Reference points: human
+ * turn-taking gaps run ~200ms, voice-AI response targets are sub-second, ~2s
+ * already reads as broken to a caller, and contact-centre dead-air standards
+ * commonly flag around 3s (which is why metrics.ts measures from there). 5s sits
+ * clear of that 3s measurement floor while still being lenient. Set this from the
+ * observed p95 of real response gaps before treating it as validated.
+ */
+export const DEAD_AIR_RESPONSE_MS = 5000;
+/** Or this many counted (≥3s) RESPONSE gaps in one call. */
 export const DEAD_AIR_EVENT_COUNT = 3;
 /** p95 of user-perceived response latency at or above this fails the call. */
 export const LATENCY_P95_MS = 5000;
@@ -71,18 +80,23 @@ export const INTERRUPTION_MIN_AGENT_TURNS = 5;
 const secs = (ms: number) => (ms / 1000).toFixed(1);
 
 /**
- * DEAD AIR — the caller sat in silence long enough to notice.
+ * DEAD AIR — the agent left the caller hanging.
  *
  * Inputs: `summary.voice.dead_air`, computed in metrics.ts from turn timestamps.
  * That block is only populated when at least one gap was measurable
  * (`gapMeasured`), so its absence means "this session carried no timestamps",
  * which is unavailable — NOT clean.
  *
- * Counts both gap kinds metrics.ts distinguishes: `response` (caller stopped, agent
- * had not yet started — the agent is the cause) and `inter_turn` (agent stopped,
- * caller had not yet started — often the caller thinking). Both are dead air to the
- * person on the phone; the reason string names which so a reviewer can tell them
- * apart without opening the raw payload.
+ * Scores `response` gaps ONLY — caller stopped speaking, agent had not yet
+ * started. That is the agent hanging, and the only half the agent is responsible
+ * for.
+ *
+ * `inter_turn` gaps (agent stopped, caller had not yet started) are excluded
+ * entirely: they measure the CALLER's think-time, so firing on them would report
+ * "the agent left the caller waiting" about a pause the caller chose to take —
+ * wrong verdict, backwards sentence. They ARE counted in the block's aggregates,
+ * which is exactly why this reads the event list rather than `max_ms`/`count`:
+ * those totals mix both kinds and cannot be un-mixed after the fact.
  */
 export function evaluateDeadAir(metrics: SessionMetrics | null): DetectionResult {
   const deadAir = metrics?.summary?.voice?.dead_air;
@@ -91,31 +105,49 @@ export function evaluateDeadAir(metrics: SessionMetrics | null): DetectionResult
       "no turn timestamps on this session, so no gap was measurable — dead air undecidable",
     );
   }
+  // The kind breakdown is mandatory, because the aggregates on the block
+  // (count/max_ms/total_ms) MIX both kinds and cannot be un-mixed. Without the
+  // event list there is no way to tell an agent stall from a caller pause, and
+  // guessing would mean accusing the agent of the caller's think-time.
+  if (!Array.isArray(deadAir.events)) {
+    return unavailable(
+      "dead-air totals carry no per-event kind breakdown, so agent stalls can't be separated from caller pauses — undecidable",
+    );
+  }
 
-  const { count, max_ms, total_ms, threshold_ms, events } = deadAir;
-  const worst = events?.reduce(
-    (acc: { turn_number: number; kind: string; gap_ms: number } | null, e) =>
-      acc === null || e.gap_ms > acc.gap_ms ? e : acc,
-    null,
-  );
+  // RESPONSE gaps only: caller stopped speaking, agent had not yet started.
+  // `inter_turn` gaps (agent stopped, caller had not yet started) are the CALLER
+  // thinking, and firing an agent-side defect on them would be blaming the agent
+  // for the other party's hesitation. They are deliberately not scored at all.
+  const responses = deadAir.events.filter((e) => e.kind === "response");
+  const threshold = deadAir.threshold_ms;
+  const skipped = deadAir.events.length - responses.length;
+  const ignored = skipped > 0 ? `; ${skipped} inter-turn gap(s) ignored (caller think-time)` : "";
 
-  if (max_ms >= DEAD_AIR_SINGLE_MS) {
-    const where = worst ? ` at turn ${worst.turn_number} (${worst.kind})` : "";
+  if (responses.length === 0) {
+    return clean(`no agent response gap over ${threshold}ms${ignored}`);
+  }
+
+  const count = responses.length;
+  const total = responses.reduce((sum, e) => sum + e.gap_ms, 0);
+  const worst = responses.reduce((acc, e) => (e.gap_ms > acc.gap_ms ? e : acc), responses[0]);
+
+  if (worst.gap_ms >= DEAD_AIR_RESPONSE_MS) {
     return fired(
-      `The caller waited ${secs(max_ms)}s in silence${where}.`,
-      `longest gap ${max_ms}ms >= ${DEAD_AIR_SINGLE_MS}ms; ${count} gap(s) over ${threshold_ms}ms totalling ${total_ms}ms`,
+      `The agent left the caller waiting ${secs(worst.gap_ms)}s at turn ${worst.turn_number}.`,
+      `longest RESPONSE gap ${worst.gap_ms}ms >= ${DEAD_AIR_RESPONSE_MS}ms; ${count} response gap(s) over ${threshold}ms totalling ${total}ms${ignored}`,
     );
   }
 
   if (count >= DEAD_AIR_EVENT_COUNT) {
     return fired(
-      `The call stalled ${count} times, for ${secs(total_ms)}s of silence in total.`,
-      `${count} gap(s) >= ${threshold_ms}ms meets the count rule of ${DEAD_AIR_EVENT_COUNT}; longest ${max_ms}ms`,
+      `The agent was slow to respond ${count} times, ${secs(total)}s of silence in total.`,
+      `${count} RESPONSE gap(s) >= ${threshold}ms meets the count rule of ${DEAD_AIR_EVENT_COUNT}; longest ${worst.gap_ms}ms${ignored}`,
     );
   }
 
   return clean(
-    `${count} gap(s) over ${threshold_ms}ms, longest ${max_ms}ms — under the ${DEAD_AIR_SINGLE_MS}ms single-gap and ${DEAD_AIR_EVENT_COUNT}-event rules`,
+    `${count} response gap(s) over ${threshold}ms, longest ${worst.gap_ms}ms — under the ${DEAD_AIR_RESPONSE_MS}ms single-gap and ${DEAD_AIR_EVENT_COUNT}-event rules${ignored}`,
   );
 }
 
