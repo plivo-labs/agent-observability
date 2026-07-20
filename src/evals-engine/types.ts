@@ -255,6 +255,19 @@ export interface SimConversationMetrics {
    *  or errored) so consumers don't read the zero counts as a confident "clean
    *  call". `error_count`/`recovered_count` are only meaningful when available. */
   stt: { error_count: number; recovered_count: number; available: boolean };
+  /** Long silences the caller sat through. Decided in CODE from turn timestamps,
+   *  not by an LLM — see judges/session-signal-judges.ts. `available:false` when
+   *  the session carried no timestamps, or when no human answered (the axis is
+   *  meaningless against a recording). */
+  dead_air: CmDetection;
+  /** Slow responses / the agent talking over the caller. Code-derived, and
+   *  per-call — distinct from the fleet-level windowed alert rules on
+   *  `latency_perceived_p95` / `interruption_rate` (migration 017). */
+  latency_ux: CmDetection;
+  /** The agent replied in a writing system the caller never used. Code-derived,
+   *  SCRIPT-level only: same-script language switches (e.g. Spanish in an English
+   *  call) are NOT covered and need an LLM. */
+  agent_script_switch: CmDetection;
 }
 
 /** What `evaluateSimulation` returns: the node + goal axes only.

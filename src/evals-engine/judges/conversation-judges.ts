@@ -24,7 +24,13 @@
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
+import type { SessionMetrics } from "../../metrics.js";
 import { runLlmJudge } from "./run-llm-judge.js";
+import {
+  evaluateDeadAir,
+  evaluateLatencyUx,
+  evaluateAgentScriptSwitch,
+} from "./session-signal-judges.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
 const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
@@ -291,6 +297,9 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     is_livekit: false,
     is_agent_runner: false,
     stt: skippedStt(),
+    dead_air: d(),
+    latency_ux: d(),
+    agent_script_switch: d(),
   };
 }
 
@@ -420,6 +429,7 @@ export function resolveOutcomes(raws: ConversationDetectionRaws, ctx: Conversati
 export async function evaluateConversationMetrics(
   ctx: ConversationInput,
   provider?: LlmProvider,
+  signals?: SessionMetrics | null,
 ): Promise<SimConversationMetrics> {
   const voice = isVoiceChannel(ctx.transport);
   const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
@@ -440,8 +450,62 @@ export async function evaluateConversationMetrics(
     ctx,
   );
 
+  // ── code-derived signal judges ──────────────────────────────────────────────
+  // Deliberately OUTSIDE the mutual-exclusivity ladder above: that ladder picks
+  // among rival descriptions of WHAT the call was (voicemail vs bot vs screening),
+  // while these describe HOW it went. A voicemail call can also stall.
+  //
+  // But the response-UX pair is gated on a human actually being on the line.
+  // "The caller waited 8.2s in silence" is a false accusation when the far end
+  // was a recording — and on EM-shaped traffic (~77% voicemail/screening) an
+  // ungated version would fire on the majority of calls. Machine-answered calls
+  // are marked unavailable, matching how the non-voice channel skip already
+  // behaves, so they fan out as nothing rather than as passes.
+  // "Can't confirm a human" must be treated as "not a human", NOT as "human".
+  // runDetection fails open — a provider timeout on the voicemail classifier
+  // returns {detected:false, available:false}. Reading only `.detected` would
+  // let a real voicemail whose classifier call happened to fail read as
+  // human-answered, and we would then accuse the agent of making a recording
+  // wait 8 seconds. An axis that could not be decided withholds the gate.
+  //
+  // But `available:false` is OVERLOADED: on a text channel these three are
+  // skippedDetection unconditionally (voice-only gating), not because anything
+  // failed. Failing closed on that would silently make every chat/SMS session
+  // "not human" — a real regression, since those sessions have no machine
+  // answering them at all. The fail-closed reading therefore applies only where
+  // the machine axes actually ran.
+  const confirmsMachine = (d: { detected: boolean; available: boolean }) =>
+    d.detected || (voice && d.available === false);
+  const humanAnswered =
+    outcomes.answered &&
+    !confirmsMachine(outcomes.voicemail_detected) &&
+    !confirmsMachine(outcomes.bot_detected) &&
+    !confirmsMachine(outcomes.call_screening);
+  const notHuman = skippedDetection(
+    "no human on the call (unanswered, voicemail, bot, or screening) — response UX not applicable",
+  );
+
+  // Dead air is voice-only BY DECISION, not by accident. It is a telephony
+  // concept measured from speech-pipeline timestamps (metrics.ts files it under
+  // `summary.voice` for that reason), and a 12-second gap between two chat
+  // messages is ordinary asynchronous messaging, not a defect. Response latency
+  // is channel-agnostic, so latency_ux is NOT gated this way — its interruption
+  // half self-disables on text anyway, for want of agent-turn speech data.
+  const deadAir = !voice
+    ? skippedDetection("dead air is a voice-channel measure — not applicable on a text channel")
+    : humanAnswered
+      ? evaluateDeadAir(signals ?? null)
+      : notHuman;
+  const latencyUx = humanAnswered ? evaluateLatencyUx(signals ?? null) : notHuman;
+  // Script switch is NOT gated: an agent speaking the wrong script into a
+  // voicemail is still the agent doing the wrong thing.
+  const scriptSwitch = evaluateAgentScriptSwitch(ctx.speech_transcript ?? ctx.full_transcript);
+
   return {
     ...outcomes,
+    dead_air: det(deadAir),
+    latency_ux: det(latencyUx),
+    agent_script_switch: det(scriptSwitch),
     user_sentiment: {
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,
