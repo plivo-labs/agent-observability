@@ -90,15 +90,13 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // terminal reason="max_output_tokens", identically on all 3 retries, evals
       // lost (prod ap-south-1, 2026-07-14). Keep this and the per-judge caps in
       // lockstep — raising effort without raising the caps reintroduces the outage.
-      // Runtime fallbacks: tests and embedders may replace the config module with a
-      // partial object; an undefined here would silently drop the parameter or NaN
-      // the timeout.
+      // Runtime fallback: tests and embedders may replace the config module with a
+      // partial object, and an undefined here would silently drop the parameter.
       reasoningEffort: config.JUDGE_REASONING_EFFORT ?? "none",
-      // Judges send a whole transcript and run non-streaming, so the 30s global
-      // default is far tighter than the reference allows the identical call (180s,
-      // providerclient/client.go:22). Without this, freeing the token budget just
-      // converts a truncation error into a timeout error.
-      timeoutMs: config.JUDGE_TIMEOUT_MS ?? 180_000,
+      // No per-judge timeout override: judges inherit LLM_TIMEOUT_MS, which prod
+      // already raises to 300s — ABOVE the reference engine's 180s. An earlier
+      // revision of this change set a 180s judge-specific default and would have
+      // silently CUT prod's timeout; the schema default (30s) is not what prod runs.
       // No `temperature`: judge models are reasoning models (gpt-5.x) and the prod
       // Vibe gateway hard-400s the parameter ("Unsupported parameter: 'temperature'",
       // 2026-07-13 — every prod sim eval failed on it). Dev's deployment merely
