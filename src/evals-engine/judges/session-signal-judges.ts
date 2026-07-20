@@ -80,6 +80,8 @@ const fired = (reason: string, technicalReason: string): DetectionResult => ({
  * Sitting just above it flags genuine outliers instead of the routine tail —
  * 2.7% is a defect rate, 21.5% would be noise.
  *
+ * Method: agent response gap = assistant.started_speaking_at minus the preceding
+ * user.stopped_speaking_at, per turn (the same ttfa metrics.ts computes).
  * Re-measure if the pipeline's latency profile changes; the cluster is the thing
  * to watch, not the number.
  */
