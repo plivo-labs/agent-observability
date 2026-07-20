@@ -355,3 +355,49 @@ describe("evaluateConversationMetrics — UX gate treats unavailable as non-huma
     expect(cm.latency_ux.available).toBe(false);
   });
 });
+
+// `available:false` is overloaded: on a text channel voicemail/bot/screening are
+// skippedDetection by CHANNEL GATING, not because a judge failed. Failing closed
+// on that reading silently made every chat/SMS session "not human".
+describe("evaluateConversationMetrics — text-channel signal judges", () => {
+  const stalled = {
+    turns: [], tool_calls: [],
+    summary: {
+      total_turns: 3, p95_user_perceived_ms: 9000,
+      voice: { dead_air: { threshold_ms: 3000, count: 1, total_ms: 12000, max_ms: 12000,
+        events: [{ turn_number: 2, kind: "response" as const, gap_ms: 12000 }] } },
+    },
+  } as any;
+
+  test("regression: a human-answered CHAT session still scores response latency", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ transport: "chat" }), llm, stalled);
+    expect(cm.latency_ux.available).toBe(true);
+    expect(cm.latency_ux.detected).toBe(true);
+    expect(cm.latency_ux.reason).toContain("95th percentile");
+  });
+
+  test("dead air is voice-only, and says so rather than claiming no human answered", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ transport: "chat" }), llm, stalled);
+    expect(cm.dead_air.available).toBe(false);
+    expect(cm.dead_air.technical_reason).toContain("voice-channel measure");
+    expect(cm.dead_air.technical_reason).not.toContain("no human");
+  });
+
+  test("on VOICE, an unavailable machine axis still fails closed", async () => {
+    // The finding-3 behavior must survive the channel carve-out.
+    const llm = new MockLLM([
+      (args: { system?: string }) => {
+        const s = args.system ?? "";
+        if (s.includes("reached voicemail")) return "not json at all";
+        if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
+        if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+        return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+      },
+    ]);
+    const cm = await evaluateConversationMetrics(ctx(), llm, stalled);
+    expect(cm.latency_ux.available).toBe(false);
+    expect(cm.dead_air.available).toBe(false);
+  });
+});

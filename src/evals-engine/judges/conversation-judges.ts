@@ -467,8 +467,15 @@ export async function evaluateConversationMetrics(
   // let a real voicemail whose classifier call happened to fail read as
   // human-answered, and we would then accuse the agent of making a recording
   // wait 8 seconds. An axis that could not be decided withholds the gate.
+  //
+  // But `available:false` is OVERLOADED: on a text channel these three are
+  // skippedDetection unconditionally (voice-only gating), not because anything
+  // failed. Failing closed on that would silently make every chat/SMS session
+  // "not human" — a real regression, since those sessions have no machine
+  // answering them at all. The fail-closed reading therefore applies only where
+  // the machine axes actually ran.
   const confirmsMachine = (d: { detected: boolean; available: boolean }) =>
-    d.detected || d.available === false;
+    d.detected || (voice && d.available === false);
   const humanAnswered =
     outcomes.answered &&
     !confirmsMachine(outcomes.voicemail_detected) &&
@@ -478,7 +485,17 @@ export async function evaluateConversationMetrics(
     "no human on the call (unanswered, voicemail, bot, or screening) — response UX not applicable",
   );
 
-  const deadAir = humanAnswered ? evaluateDeadAir(signals ?? null) : notHuman;
+  // Dead air is voice-only BY DECISION, not by accident. It is a telephony
+  // concept measured from speech-pipeline timestamps (metrics.ts files it under
+  // `summary.voice` for that reason), and a 12-second gap between two chat
+  // messages is ordinary asynchronous messaging, not a defect. Response latency
+  // is channel-agnostic, so latency_ux is NOT gated this way — its interruption
+  // half self-disables on text anyway, for want of agent-turn speech data.
+  const deadAir = !voice
+    ? skippedDetection("dead air is a voice-channel measure — not applicable on a text channel")
+    : humanAnswered
+      ? evaluateDeadAir(signals ?? null)
+      : notHuman;
   const latencyUx = humanAnswered ? evaluateLatencyUx(signals ?? null) : notHuman;
   // Script switch is NOT gated: an agent speaking the wrong script into a
   // voicemail is still the agent doing the wrong thing.
