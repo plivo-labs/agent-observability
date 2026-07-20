@@ -129,9 +129,27 @@ export const envSchema = z.object({
   SIMULATOR_MODEL: z.string().optional(),
   GENERATOR_MODEL: z.string().optional(),
 
+  // Reasoning effort for the judge role, sent as `reasoning: {effort}` on the
+  // Responses API. Defaults to "none" for reference-engine parity: cx-sqs-worker
+  // pins effort "none" in prod (config/env.ctmpl:92) and AO's per-judge output
+  // caps (1500-5000) are copied verbatim from that engine. Those caps were sized
+  // for VISIBLE output only — at any higher effort the model's invisible reasoning
+  // tokens bill against the same max_output_tokens budget, long sessions truncate
+  // into status="incomplete" reason="max_output_tokens", all 3 retries fail
+  // identically, and the session's evals are lost (prod ap-south-1, 2026-07-14).
+  // AO never sent this parameter, so every verdict to date inherited whatever the
+  // model's default effort was. Raise it only together with the output caps.
+  JUDGE_REASONING_EFFORT: z.enum(["none", "low", "medium", "high"]).default("none"),
+
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).default(1),
+  // Judges get their own, longer per-attempt timeout: they send a whole transcript
+  // and (unlike the sim writer) run non-streaming, so the 30s global is far tighter
+  // than the reference engine allows the identical call. cx-sqs-worker gives every
+  // judge 180s (providerclient/client.go:22). Matching it removes the risk that
+  // freeing the token budget merely converts a truncation error into a timeout.
+  JUDGE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 
   // ── Simulation engine ───────────────────────────────────────────────────────
   // Capability-gated (see src/sim-engine/config.ts), NOT all-or-nothing:

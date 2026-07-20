@@ -11,6 +11,9 @@ export const TEST_JUDGE_CONFIG = {
   LLM_TIMEOUT_MS: 30_000,
   LLM_MAX_RETRIES: 1,
   EVAL_MAX_CONCURRENT_JUDGE_CALLS: 10,
+  // Reference-engine parity knobs read by run-llm-judge on every judge call.
+  JUDGE_REASONING_EFFORT: "none",
+  JUDGE_TIMEOUT_MS: 180_000,
 } as const;
 
 /** Complete src/config.js module shape for Bun's process-wide module mocks.

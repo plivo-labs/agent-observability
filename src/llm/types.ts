@@ -38,6 +38,15 @@ export interface ProviderCompleteArgs {
   /** Nucleus sampling top_p; provider default when undefined. */
   topP?: number;
   /**
+   * Reasoning effort for reasoning models (gpt-5.x) on the Responses API.
+   * Undefined => omit the parameter and inherit the model's own default. The
+   * reference engine pins "none" (cx-sqs-worker config/env.ctmpl:92), which is
+   * what makes its 1500-5000 output caps sufficient: at effort "none" almost
+   * none of max_output_tokens is spent on invisible reasoning tokens.
+   * Honored only on the Responses path; the Chat path has no equivalent.
+   */
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+  /**
    * Strict JSON-schema for structured output (OpenAI/Azure). When set, the
    * provider forces the response to match this schema exactly — guarantees the
    * required fields instead of the looser json_object "valid JSON" contract.
@@ -93,6 +102,8 @@ export interface CompleteJSONOptions<T> {
   temperature?: number;
   /** Nucleus sampling top_p. */
   topP?: number;
+  /** Reasoning effort for reasoning models; see ProviderCompleteArgs.reasoningEffort. */
+  reasoningEffort?: "none" | "low" | "medium" | "high";
   /** Strict JSON-schema for structured output — guarantees required fields (OpenAI/Azure). */
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   /** Override the wire API for this call ("chat" | "responses"); defaults to OPENAI_API_MODE. */
