@@ -272,6 +272,16 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
     // null when neither chat history nor per-turn metrics are present, and
     // leaves `voice.dead_air` unset when no gap was measurable — both of which
     // those judges surface as `available:false`, never as a clean call.
+    //
+    // INGEST COUPLING, deliberate and worth knowing: `chat_history` and
+    // `session_metrics` are written ONLY by the multipart recording ingest
+    // (db.ts insertSession). The native OTLP path merges into `raw_report` and
+    // never touches either column. So a session judged before its recording
+    // lands — or one from an OTLP-only sender that never uploads a recording —
+    // yields null signals, and dead_air/latency_ux self-disable. That is the
+    // safe direction (no fabricated passes), but it is silent, so the debug
+    // line below exists to make a wholesale regression visible rather than
+    // letting the two judges quietly become dead weight for a slice of traffic.
     const signals = buildSessionMetrics(
       Array.isArray(source.chatHistory) ? source.chatHistory : null,
       source.sessionMetrics ?? null,
@@ -284,6 +294,14 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
             : null,
       },
     );
+    if (!signals?.summary?.voice?.dead_air) {
+      // Not a warning: for an OTLP-only sender this is the expected steady
+      // state, and warning per session would be pure noise. It is a breadcrumb
+      // for "why is dead_air never firing in this environment".
+      console.debug(
+        `[evals] session=${sanitizeForLog(sessionId)} has no measurable turn timings — dead_air/latency_ux self-disabled (recording payload absent?)`,
+      );
+    }
 
     const verdicts = await evaluateIngestedSession(
       source.config as AgentConfig,
