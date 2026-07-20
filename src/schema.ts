@@ -143,12 +143,6 @@ export const envSchema = z.object({
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).default(1),
-  // Judges get their own, longer per-attempt timeout: they send a whole transcript
-  // and (unlike the sim writer) run non-streaming, so the 30s global is far tighter
-  // than the reference engine allows the identical call. cx-sqs-worker gives every
-  // judge 180s (providerclient/client.go:22). Matching it removes the risk that
-  // freeing the token budget merely converts a truncation error into a timeout.
-  JUDGE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 
   // ── Simulation engine ───────────────────────────────────────────────────────
   // Capability-gated (see src/sim-engine/config.ts), NOT all-or-nothing:
