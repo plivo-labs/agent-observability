@@ -13,10 +13,9 @@ grounding evidence. The simulation evaluator must provide the same evidence.
 
 ## Scope
 
-This change affects simulation evaluator input and adds a narrow hallucination
-judge guard required when tool evidence becomes visible. It does not change tool
-execution, simulation mocks, durable transcript payloads, run pass/fail rules,
-or live-session ingestion.
+This change affects simulation evaluator input only. It does not change judge
+instructions, tool execution, simulation mocks, durable transcript payloads,
+run pass/fail rules, live-session ingestion, or real-session judging behavior.
 
 ## Design
 
@@ -53,30 +52,12 @@ implementation supplies evidence to hallucination, adherence, intent,
 variable, loop, and goal judges. Keeping tool calls on their original turn
 preserves simulation turn counts and node grouping.
 
-## Evidence Semantics
+## Judge Behavior
 
-Simulation mocks replace external execution; they do not remove the need for an
-honest evidence contract:
-
-- A `Tool_Call` proves that the agent invoked the named tool or selected the
-  named handoff path. By itself it does not prove successful completion or any
-  returned value.
-- A non-error `Tool_Result` proves exactly the outcome represented by its
-  output. A deterministic mocked result is authoritative scenario evidence and
-  is judged like a real result.
-- An error result proves failure, never success.
-- A null-output call proves invocation only. Handoffs may legitimately have no
-  result because the call itself is the routing signal.
-- Evidence is claim-scoped. A tool grounds only spoken content it contains or
-  directly implies. An unrelated successful tool cannot ground another name,
-  number, currency, date, price, status, or condition.
-- Claims are evaluated at the turn where the agent made them. A later user
-  correction or unrelated action does not retroactively ground an earlier
-  unsupported assertion.
-
-The last two rules are added to the hallucination rubric because live replay
-showed that exposing an unrelated successful handoff could otherwise suppress
-a genuine unsupported-currency detection.
+This PR does not add or change any judge instruction. Simulation calls and
+results use the same `Tool_Call` / `Tool_Result` evidence labels already used
+for real sessions, and the existing shared judge rubric interprets both paths.
+The PR must not introduce stricter call/result requirements for real sessions.
 
 ## LiveKit Contract
 
@@ -109,18 +90,18 @@ Add simulation-path regression tests covering:
 6. Successful mocked output renders as ordinary authoritative result evidence.
 7. Failed tool output is visibly marked `ERROR` and cannot resemble success.
 8. The six audited false-positive boundaries remain clean after tool evidence
-   is added, while the unsupported-currency true-positive control still fires.
+   is added under the existing, unchanged judge prompt.
 
 Run the focused eval-engine tests, typecheck, and the full test suite before
-opening a PR targeting `dev`. Run the seven privacy-safe live judge boundaries
+opening a PR targeting `dev`. Run the six privacy-safe live judge boundaries
 with `bun run scripts/sim-tool-evidence-smoke.ts`; the script exits non-zero if
-any false-positive boundary overfires or the true-positive control is missed.
+any false-positive boundary overfires.
 
 ## Out of Scope
 
 - Changing how LiveKit executes or mocks tools.
 - Synthesizing outputs for calls that returned no output.
-- Changing goal applicability, run counters, adherence calibration, or judge
-  prompts outside the narrow claim-scoping/error-semantics guard above.
+- Changing goal applicability, run counters, adherence calibration, or any
+  shared judge prompt.
 - Enforcing `required_mocked_actions` coverage or failing mock-incomplete
   scenarios; that belongs to a LiveKit/scenario-generation follow-up.
