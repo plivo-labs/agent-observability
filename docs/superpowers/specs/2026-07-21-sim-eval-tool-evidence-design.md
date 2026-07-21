@@ -13,9 +13,10 @@ grounding evidence. The simulation evaluator must provide the same evidence.
 
 ## Scope
 
-This change affects only simulation evaluator input. It does not change tool
+This change affects simulation evaluator input and adds a narrow hallucination
+judge guard required when tool evidence becomes visible. It does not change tool
 execution, simulation mocks, durable transcript payloads, run pass/fail rules,
-judge prompts, or live-session ingestion.
+or live-session ingestion.
 
 ## Design
 
@@ -36,8 +37,13 @@ Rendering rules:
 - Emit `Tool_Call: <name>(<arguments>)` for every entry with a non-empty name.
 - Preserve JSON argument strings without double encoding. Serialize object or
   scalar arguments as JSON. Missing arguments render as an empty argument list.
-- Emit `Tool_Result: <name> -> <output>` only when the response contains a
-  non-null output. Preserve string outputs and JSON-serialize other values.
+- For a non-error call, emit `Tool_Result: <name> -> <output>` only when the
+  response contains a non-null output. Preserve string outputs and
+  JSON-serialize other values.
+- When `is_error` is true, render the result as
+  `Tool_Result: <name> -> ERROR: <output>`. If the error has no output, render
+  `Tool_Result: <name> -> ERROR`. A failed result must remain distinguishable
+  from a successful one.
 - Treat calls and results as evidence, never as `Agent:` speech.
 - Ignore malformed entries without throwing or dropping the surrounding turn.
 - Do not fabricate a result for handoff calls whose output is `null`.
@@ -46,6 +52,31 @@ Both `full_transcript` and each node transcript use the shared renderer, so one
 implementation supplies evidence to hallucination, adherence, intent,
 variable, loop, and goal judges. Keeping tool calls on their original turn
 preserves simulation turn counts and node grouping.
+
+## Evidence Semantics
+
+Simulation mocks replace external execution; they do not remove the need for an
+honest evidence contract:
+
+- A `Tool_Call` proves that the agent invoked the named tool or selected the
+  named handoff path. By itself it does not prove successful completion or any
+  returned value.
+- A non-error `Tool_Result` proves exactly the outcome represented by its
+  output. A deterministic mocked result is authoritative scenario evidence and
+  is judged like a real result.
+- An error result proves failure, never success.
+- A null-output call proves invocation only. Handoffs may legitimately have no
+  result because the call itself is the routing signal.
+- Evidence is claim-scoped. A tool grounds only spoken content it contains or
+  directly implies. An unrelated successful tool cannot ground another name,
+  number, currency, date, price, status, or condition.
+- Claims are evaluated at the turn where the agent made them. A later user
+  correction or unrelated action does not retroactively ground an earlier
+  unsupported assertion.
+
+The last two rules are added to the hallucination rubric because live replay
+showed that exposing an unrelated successful handoff could otherwise suppress
+a genuine unsupported-currency detection.
 
 ## LiveKit Contract
 
@@ -58,6 +89,13 @@ When action mocks are configured, LiveKit returns the mocked output on the tool
 call. When no output exists, as with the handoff calls in run `79fa6f82`, AO
 renders the call only.
 
+AO does not synthesize missing results. Scenario generation and LiveKit remain
+responsible for supplying deterministic `action_mocks` for action, lookup, or
+HTTP tools whose returned content is required by the scenario. A follow-up can
+preflight `required_mocked_actions` and mark a scenario mock-incomplete instead
+of allowing the judge to infer an unavailable result. That validation is not
+part of this PR.
+
 ## Verification
 
 Add simulation-path regression tests covering:
@@ -68,6 +106,10 @@ Add simulation-path regression tests covering:
 3. JSON argument strings are not double encoded.
 4. Malformed tool-call entries are ignored without throwing.
 5. Node turn counts remain unchanged.
+6. Successful mocked output renders as ordinary authoritative result evidence.
+7. Failed tool output is visibly marked `ERROR` and cannot resemble success.
+8. The six audited false-positive boundaries remain clean after tool evidence
+   is added, while the unsupported-currency true-positive control still fires.
 
 Run the focused eval-engine tests, typecheck, and the full test suite before
 opening a PR targeting `dev`.
@@ -77,4 +119,6 @@ opening a PR targeting `dev`.
 - Changing how LiveKit executes or mocks tools.
 - Synthesizing outputs for calls that returned no output.
 - Changing goal applicability, run counters, adherence calibration, or judge
-  prompts.
+  prompts outside the narrow claim-scoping/error-semantics guard above.
+- Enforcing `required_mocked_actions` coverage or failing mock-incomplete
+  scenarios; that belongs to a LiveKit/scenario-generation follow-up.
