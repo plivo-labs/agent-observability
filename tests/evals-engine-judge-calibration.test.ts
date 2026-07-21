@@ -96,6 +96,17 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(prompt).toContain("A bookkeeping record_* call alone");
   });
 
+  test("hallucination: tool evidence is claim-scoped and later corrections do not erase prior invention", () => {
+    const prompt = systemForHallucination();
+    expect(prompt).toContain("CLAIM-SCOPED GROUNDING");
+    expect(prompt).toContain("unrelated tool or handoff");
+    expect(prompt).toContain("does not retroactively ground");
+    expect(prompt).toContain("at the turn where it was made");
+    expect(prompt).toContain("A `Tool_Call` alone proves only invocation");
+    expect(prompt).toContain("An `ERROR` result proves failure");
+    expect(prompt).toContain("authoritative scenario evidence");
+  });
+
   test("hallucination: a failure must identify the spoken claim and complete the evidence search", () => {
     const prompt = systemForHallucination();
     expect(prompt).toContain("EVIDENCE SEARCH — REQUIRED BEFORE FAILING");

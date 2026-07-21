@@ -141,6 +141,52 @@ describe("fromSimTranscript", () => {
     expect(input.full_transcript).not.toContain("Tool_Result:");
     expect(input.nodes[0]!.turn_count).toBe(1);
   });
+
+  test("distinguishes successful mocked results from failed tool outcomes", () => {
+    const turns = [{
+      node_uuid: "A1",
+      user: "Check the plan and save it.",
+      agent: "I checked the plan.",
+      intent: "provide_plan",
+      tool_calls: [
+        {
+          name: "lookup_price",
+          arguments: '{"plan":"pro"}',
+          output: { price: 99, currency: "USD" },
+          mocked: true,
+          is_error: false,
+        },
+        {
+          name: "lookup_inventory",
+          arguments: "{}",
+          output: "timeout",
+          mocked: true,
+          is_error: true,
+        },
+        {
+          name: "save_lead",
+          arguments: "{}",
+          output: null,
+          mocked: true,
+          is_error: true,
+        },
+      ],
+    }] as EvalTurn[];
+
+    const input = fromSimTranscript({ turns, graph: GRAPH, flowObj: FLOW_OBJ, variablesByNode: {} });
+
+    expect(input.full_transcript).toBe([
+      "User: Check the plan and save it.",
+      'Tool_Call: lookup_price({"plan":"pro"})',
+      'Tool_Result: lookup_price -> {"price":99,"currency":"USD"}',
+      "Tool_Call: lookup_inventory({})",
+      "Tool_Result: lookup_inventory -> ERROR: timeout",
+      "Tool_Call: save_lead({})",
+      "Tool_Result: save_lead -> ERROR",
+      "Agent: I checked the plan.",
+    ].join("\n"));
+    expect(input.nodes[0]!.turn_count).toBe(1);
+  });
 });
 
 describe("evaluateSimulationForRun (adapter — never throws)", () => {

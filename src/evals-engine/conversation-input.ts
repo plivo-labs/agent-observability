@@ -76,7 +76,13 @@ function renderToolEvidence(toolCalls: unknown[] | undefined): string[] {
     const name = typeof call.name === "string" ? call.name.trim() : "";
     if (!name) continue;
     lines.push(`Tool_Call: ${name}(${serializeToolArguments(call.arguments)})`);
-    if (Object.prototype.hasOwnProperty.call(call, "output") && call.output !== null && call.output !== undefined) {
+    const hasOutput = Object.prototype.hasOwnProperty.call(call, "output")
+      && call.output !== null
+      && call.output !== undefined;
+    if (call.is_error === true) {
+      const detail = hasOutput ? serializeEvidenceValue(call.output) : "";
+      lines.push(`Tool_Result: ${name} -> ERROR${detail ? `: ${detail}` : ""}`);
+    } else if (hasOutput) {
       lines.push(`Tool_Result: ${name} -> ${serializeEvidenceValue(call.output)}`);
     }
   }
