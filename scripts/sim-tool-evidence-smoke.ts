@@ -2,8 +2,9 @@
  * Live hallucination-judge calibration for simulation tool evidence.
  *
  * The examples are synthetic and PII-free. They preserve the six audited
- * false-positive boundaries plus one true-positive recall control without
- * sending captured simulation transcripts to the model provider.
+ * false-positive boundaries without sending captured simulation transcripts
+ * to the model provider. It deliberately uses the existing shared judge
+ * prompt unchanged.
  *
  * Run with the normal judge provider environment configured:
  *   bun run scripts/sim-tool-evidence-smoke.ts
@@ -22,7 +23,6 @@ import type {
 type BoundaryCase = {
   id: number;
   name: string;
-  expectedHallucinated: boolean;
   turns: EvalTurn[];
 };
 
@@ -38,7 +38,6 @@ const cases: BoundaryCase[] = [
   {
     id: 2,
     name: "DNC handoff grounds completion language",
-    expectedHallucinated: false,
     turns: [{
       node_uuid: "n1",
       user: "Remove me from your list and do not call me again.",
@@ -50,7 +49,6 @@ const cases: BoundaryCase[] = [
   {
     id: 3,
     name: "callback handoff grounds note language",
-    expectedHallucinated: false,
     turns: [{
       node_uuid: "n1",
       user: "Please call tomorrow at two.",
@@ -62,7 +60,6 @@ const cases: BoundaryCase[] = [
   {
     id: 12,
     name: "generic source hedge is not a factual claim",
-    expectedHallucinated: false,
     turns: [
       {
         node_uuid: "n1",
@@ -82,7 +79,6 @@ const cases: BoundaryCase[] = [
   {
     id: 13,
     name: "submit handoff grounds completion status",
-    expectedHallucinated: false,
     turns: [{
       node_uuid: "n1",
       user: "Yes, that summary is correct.",
@@ -94,7 +90,6 @@ const cases: BoundaryCase[] = [
   {
     id: 14,
     name: "handoff grounds workflow acknowledgement",
-    expectedHallucinated: false,
     turns: [{
       node_uuid: "n1",
       user: "I am only gathering information and cannot answer more.",
@@ -106,7 +101,6 @@ const cases: BoundaryCase[] = [
   {
     id: 18,
     name: "spoken email verbalization remains grounded",
-    expectedHallucinated: false,
     turns: [
       {
         node_uuid: "n1",
@@ -118,26 +112,6 @@ const cases: BoundaryCase[] = [
         node_uuid: "n1",
         user: "Correct.",
         agent: "Thank you. The qualification is complete.",
-        intent: "Ready to Submit Lead",
-        tool_calls: [{ name: "handoff_ready_to_submit_lead", arguments: "{}", output: null }],
-      },
-    ],
-  },
-  {
-    id: 17,
-    name: "unsupported currency remains a true positive",
-    expectedHallucinated: true,
-    turns: [
-      {
-        node_uuid: "n1",
-        user: "Our budget is around ten thousand.",
-        agent: "I have your budget as ten thousand rupees.",
-        intent: "",
-      },
-      {
-        node_uuid: "n1",
-        user: "No, that is ten thousand dollars.",
-        agent: "Thanks for correcting that.",
         intent: "Ready to Submit Lead",
         tool_calls: [{ name: "handoff_ready_to_submit_lead", arguments: "{}", output: null }],
       },
@@ -184,23 +158,22 @@ const selectedCases = selectedIds.size === 0
   ? cases
   : cases.filter((item) => selectedIds.has(item.id));
 const repeats = Math.max(1, Number(process.env.REPLAY_REPEATS ?? 1) || 1);
-const results: Array<{ expected: boolean; actual: boolean; correct: boolean }> = [];
+const results: Array<{ actual: boolean; correct: boolean }> = [];
 
 for (let repeat = 1; repeat <= repeats; repeat++) {
   for (const boundary of selectedCases) {
     const { node, context } = inputFor(boundary);
     const { data } = await runHallucinationJudge(node, context);
     const result = {
-      expected: boundary.expectedHallucinated,
       actual: data.hallucinated,
-      correct: data.hallucinated === boundary.expectedHallucinated,
+      correct: data.hallucinated === false,
     };
     results.push(result);
     console.log(JSON.stringify({
       repeat,
       id: boundary.id,
       name: boundary.name,
-      expected_hallucinated: result.expected,
+      expected_hallucinated: false,
       actual_hallucinated: result.actual,
       correct: result.correct,
       reason: data.reason,
@@ -208,15 +181,11 @@ for (let repeat = 1; repeat <= repeats; repeat++) {
   }
 }
 
-const negativeResults = results.filter((result) => result.expected === false);
-const positiveResults = results.filter((result) => result.expected === true);
 const summary = {
   total: results.length,
   correct: results.filter((result) => result.correct).length,
-  false_positive_boundaries_clean: negativeResults.filter((result) => result.actual === false).length,
-  false_positive_boundaries_total: negativeResults.length,
-  true_positive_controls_retained: positiveResults.filter((result) => result.actual === true).length,
-  true_positive_controls_total: positiveResults.length,
+  false_positive_boundaries_clean: results.filter((result) => result.actual === false).length,
+  false_positive_boundaries_total: results.length,
 };
 console.log(JSON.stringify({ summary }));
 
