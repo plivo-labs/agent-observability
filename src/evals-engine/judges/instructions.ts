@@ -122,21 +122,30 @@ const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the cal
 const OUT_GOAL = `Return ONLY a JSON object with one entry per goal (use the exact goal_name given):
 {"goals": [{"goal_name": string, "achieved": boolean, "reason": string, "technical_reason": string}]}`;
 
+// ── transcript legend ───────────────────────────────────────────────────────────────
+// The judge transcript labels each line. Tool_Call/Tool_Result lines were previously dropped from
+// the sim transcript, which starved the grounding judges (a tool-backed action looked unsupported).
+// Now that they are rendered, this legend tells every transcript-reading judge how to read them:
+// they ARE evidence, but they are NOT agent speech (so adherence/loop must not penalize them).
+const TRANSCRIPT_LEGEND = `Transcript legend: "User:" is the caller; "Agent:" is what the agent actually said aloud; "Tool_Call:" is a tool/function the agent invoked (name and, when present, arguments); "Tool_Result:" is a tool's returned output. Tool_Call/Tool_Result lines ARE valid evidence — use them to ground facts and to confirm actions the agent took (e.g. submitting a lead, honoring a do-not-call request, capturing a callback). They are NOT words the agent spoke to the user: never treat a Tool_Call/Tool_Result line as agent speech, and never penalize adherence, tone, or turn shape because such a line appears.`;
+
 // ── composed system prompts (criteria body + output section) ───────────────────────
 
 const compose = (body: string, output: string) => `${body}\n\n${output}`;
+/** Compose with the transcript legend, for judges that read the conversation transcript. */
+const composeT = (body: string, output: string) => `${body}\n\n${TRANSCRIPT_LEGEND}\n\n${output}`;
 
-export const systemForHallucination = (): string => compose(HALLUCINATION, OUT_HALLUCINATION);
-export const systemForLoop = (): string => compose(LOOP_DETECTION, OUT_LOOP);
+export const systemForHallucination = (): string => composeT(HALLUCINATION, OUT_HALLUCINATION);
+export const systemForLoop = (): string => composeT(LOOP_DETECTION, OUT_LOOP);
 
 export const systemForVariableExtraction = (expectedVariables: string, actualVariables: string): string =>
-  compose(fill(VARIABLE_EXTRACTION, { expected_variables: expectedVariables, actual_variables: actualVariables }), OUT_VARIABLE);
+  composeT(fill(VARIABLE_EXTRACTION, { expected_variables: expectedVariables, actual_variables: actualVariables }), OUT_VARIABLE);
 
 export const systemForInstructionAdherence = (instructions: string, objective: string): string =>
-  compose(fill(INSTRUCTION_ADHERENCE, { instructions, objective }), OUT_INSTRUCTION);
+  composeT(fill(INSTRUCTION_ADHERENCE, { instructions, objective }), OUT_INSTRUCTION);
 
 export const systemForIntent = (availableIntents: string, chosenIntent: string): string =>
   compose(fill(INTENT_IDENTIFICATION, { available_intents: availableIntents, chosen_intent: chosenIntent }), OUT_INTENT);
 
 export const systemForGoal = (goals: string, flowHistory: string): string =>
-  compose(fill(GOAL_EVALUATION, { goals, flow_history: flowHistory }), OUT_GOAL);
+  composeT(fill(GOAL_EVALUATION, { goals, flow_history: flowHistory }), OUT_GOAL);

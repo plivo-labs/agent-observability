@@ -14,6 +14,17 @@
 
 // ── INPUT ───────────────────────────────────────────────────────────────────────
 
+/** A tool/function call the agent made on a turn — the eval-relevant slice of a turn's `tool_calls`.
+ *  Rendered into the judge transcript as `Tool_Call:` / `Tool_Result:` lines so grounding judges
+ *  (hallucination/loop) see tool-backed actions instead of treating them as unsupported claims. */
+export interface EvalToolCall {
+  name: string;
+  /** Raw arguments string as the framework recorded it ("" or "{}" when none). */
+  arguments?: string;
+  /** Tool result/output when the tool actually executed. `null`/absent in the simulator (mock). */
+  output?: string | null;
+}
+
 /** One conversational turn that ran at a node (the eval-relevant slice of a turn_completed event). */
 export interface EvalTurn {
   node_uuid: string;
@@ -23,6 +34,8 @@ export interface EvalTurn {
   agent: string;
   /** Intent the agent/framework selected on this turn ("" when none). */
   intent: string;
+  /** Tool/function calls the agent made on this turn (may be empty). Fed to the judge transcript. */
+  tool_calls?: EvalToolCall[];
 }
 
 /** A single AI node the scenario visited, with the config + turns needed to score it. */

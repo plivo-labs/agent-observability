@@ -6,11 +6,13 @@
 // failure never blocks the scenario. Phase 2 will add `evaluateLiveSession` (conversation axis) here.
 
 export { evaluateSimulation, type EvaluateSimulationOpts } from "./evaluator.js";
+export { normalizeToolCalls } from "./conversation-input.js";
 export type {
   ConversationInput,
   NodeEvalInput,
   GoalInput,
   EvalTurn,
+  EvalToolCall,
   NodeGoalEvaluation,
   EvaluationResult,
   NodeEvaluation,

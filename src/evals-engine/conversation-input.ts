@@ -1,5 +1,5 @@
 import type { FlowGraph } from "../sim-engine/run-engine/flow-types.js";
-import type { ConversationInput, EvalTurn, GoalInput, NodeEvalInput } from "./types.js";
+import type { ConversationInput, EvalToolCall, EvalTurn, GoalInput, NodeEvalInput } from "./types.js";
 
 // AO Eval Engine — build the eval input from a simulation run. Mirrors cx-sqs's transcript_builder.go:
 // group the turn log by node, and for each AI node collect the config (instructions / intents /
@@ -50,12 +50,47 @@ function availableIntents(config: Record<string, unknown> | null): unknown[] {
   return Array.isArray(intents) ? intents : [];
 }
 
-/** Render the whole conversation as "User: …\nAgent: …" lines (context for hallucination/loop/goal). */
+/** Normalize a turn's raw `tool_calls` (recorded as `unknown[]` by the run engine) into the
+ *  eval-relevant `{name, arguments?, output?}` slice. Skips entries without a string `name`. */
+export function normalizeToolCalls(raw: unknown): EvalToolCall[] {
+  if (!Array.isArray(raw)) return [];
+  const out: EvalToolCall[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.name !== "string" || o.name === "") continue;
+    const tc: EvalToolCall = { name: o.name };
+    if (typeof o.arguments === "string") tc.arguments = o.arguments;
+    if (o.output === null || typeof o.output === "string") tc.output = o.output as string | null;
+    out.push(tc);
+  }
+  return out;
+}
+
+/** Render a turn's tool calls as `Tool_Call: name(args)` (+ `Tool_Result: name -> output` when the
+ *  tool actually returned something). Args are shown only when non-empty; the simulator records no
+ *  output (mock), so `Tool_Result` lines appear only on the live/prod path where tools execute. */
+export function renderToolCallLines(turn: EvalTurn): string[] {
+  const lines: string[] = [];
+  for (const tc of turn.tool_calls ?? []) {
+    if (!tc?.name) continue;
+    const args = (tc.arguments ?? "").trim();
+    lines.push(args && args !== "{}" ? `Tool_Call: ${tc.name}(${args})` : `Tool_Call: ${tc.name}`);
+    const out = tc.output == null ? "" : String(tc.output).trim();
+    if (out) lines.push(`Tool_Result: ${tc.name} -> ${out}`);
+  }
+  return lines;
+}
+
+/** Render the whole conversation as "User: …\nAgent: …" plus `Tool_Call:`/`Tool_Result:` lines — the
+ *  context the hallucination/loop/goal judges read. Tool lines are included so tool-backed actions
+ *  (DNC / callback / lead submission) are grounded instead of being flagged as unsupported claims. */
 export function renderFullTranscript(turns: EvalTurn[]): string {
   const lines: string[] = [];
   for (const t of turns) {
     if (t.user) lines.push(`User: ${t.user}`);
     if (t.agent) lines.push(`Agent: ${t.agent}`);
+    lines.push(...renderToolCallLines(t));
   }
   return lines.join("\n");
 }

@@ -50,7 +50,7 @@ import {
 import { emitScenarioStarted, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
 import { evaluateSimulationForRun } from "../../evals-engine/integration/sim-adapter.js";
-import type { EvalTurn } from "../../evals-engine/index.js";
+import { normalizeToolCalls, type EvalTurn } from "../../evals-engine/index.js";
 
 type Scenario = z.infer<typeof ScenarioSchema>;
 
@@ -354,7 +354,7 @@ class ScenarioRunner implements AINodeExecutor {
     // 10b. Accumulate the eval transcript (node_uuid + user/agent text + chosen intent) for the
     //      post-run evaluator. Every executed AI turn is recorded (including transitions) so the
     //      grouped-by-node view the eval engine builds matches what actually ran.
-    this.evalTurns.push({ node_uuid: node.id, user: userMsg, agent: agentMessage, intent });
+    this.evalTurns.push({ node_uuid: node.id, user: userMsg, agent: agentMessage, intent, tool_calls: normalizeToolCalls(resp.tool_calls) });
 
     // 11. Per-turn timing (mirrors scenario_runner.go "Turn total") — split sim vs /turn latency
     //     so a parity comparison against cx-sqs can pinpoint which call dominates.

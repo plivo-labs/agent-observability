@@ -17,19 +17,22 @@ import {
   systemForInstructionAdherence,
 } from "./instructions.js";
 import { runLlmJudge } from "./run-llm-judge.js";
+import { renderToolCallLines } from "../conversation-input.js";
 import { HALLUCINATION_JSON, NODE_LOOP_JSON, VARIABLE_EXTRACTION_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
 
 // AO Eval Engine — the four LLM node judges (per AI node). Each returns its RAW output (Zod-validated);
 // mapping to the console contract + the code-derived fields (adherence weighting / passed) is aggregate.ts.
 // cx-sqs token caps: instruction 5000, variable 3000, hallucination 1500, loop 1500.
 
-/** Render a node's turns as "User: …\nAgent: …" lines (the node transcript the judges read). */
+/** Render a node's turns as "User: …\nAgent: …" plus `Tool_Call:`/`Tool_Result:` lines (the node
+ *  transcript the judges read). Tool lines are included so grounding judges see tool-backed actions. */
 export function renderNodeTranscript(node: NodeEvalInput): string {
   return node.turns
     .map((t) => {
       const lines: string[] = [];
       if (t.user) lines.push(`User: ${t.user}`);
       if (t.agent) lines.push(`Agent: ${t.agent}`);
+      lines.push(...renderToolCallLines(t));
       return lines.join("\n");
     })
     .filter(Boolean)
