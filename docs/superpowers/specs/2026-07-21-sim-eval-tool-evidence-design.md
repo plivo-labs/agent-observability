@@ -112,7 +112,9 @@ Add simulation-path regression tests covering:
    is added, while the unsupported-currency true-positive control still fires.
 
 Run the focused eval-engine tests, typecheck, and the full test suite before
-opening a PR targeting `dev`.
+opening a PR targeting `dev`. Run the seven privacy-safe live judge boundaries
+with `bun run scripts/sim-tool-evidence-smoke.ts`; the script exits non-zero if
+any false-positive boundary overfires or the true-positive control is missed.
 
 ## Out of Scope
 
