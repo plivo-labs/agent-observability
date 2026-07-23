@@ -56,6 +56,17 @@ describe("LLM node judges (MockLLM)", () => {
     expect(sent.node_transcript).toContain("order is 42");
   });
 
+  test("every judge call carries the configured reasoning effort", async () => {
+    // The per-judge output caps (1500-5000) are copied from cx-sqs, which pins
+    // effort "none". AO never sent the parameter, so judges inherited the model's
+    // default effort and spent the visible-output budget on invisible reasoning
+    // tokens → terminal reason="max_output_tokens" (prod, 2026-07-14).
+    const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
+    await runHallucinationJudge(node(), ctx(), llm);
+    expect(llm.calls[0]!.reasoningEffort).toBe("none");
+    expect(llm.calls[0]!.maxTokens).toBe(1500); // parity cap unchanged — effort is what makes it sufficient
+  });
+
   test("loop: parses raw output", async () => {
     const llm = new MockLLM([JSON.stringify({ loop_detected: false, score: 1, reason: "no loop" })]);
     const { data } = await runLoopJudge(node(), ctx(), llm);

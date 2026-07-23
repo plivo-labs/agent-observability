@@ -79,6 +79,22 @@ describe("openaiProvider — Responses API mode", () => {
     expect(res.usage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 });
   });
 
+  // Wire-shape, not provider-args: the whole failure this parameter fixes happens
+  // at the serialized-body level, so assert on the actual JSON that leaves the process.
+  test("sends reasoning.effort verbatim when set — including the truthy-but-falsy-looking \"none\"", async () => {
+    stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
+    await openaiProvider.complete({ ...baseArgs, reasoningEffort: "none" });
+    const body = JSON.parse(String(lastReq?.init.body));
+    expect(body.reasoning).toEqual({ effort: "none" });
+  });
+
+  test("omits the reasoning key entirely when unset (not reasoning:{} or reasoning:undefined)", async () => {
+    stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
+    await openaiProvider.complete(baseArgs);
+    const body = JSON.parse(String(lastReq?.init.body));
+    expect("reasoning" in body).toBe(false);
+  });
+
   test("planner (no jsonSchema) omits text.format", async () => {
     stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
     await openaiProvider.complete(baseArgs);
