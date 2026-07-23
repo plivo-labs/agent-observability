@@ -236,3 +236,142 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.customer_engaged).toBe(false);
   });
 });
+
+// ── code-derived signal judges: the human-answered gate ───────────────────────
+// Dead air and response latency describe how a HUMAN experienced the call. On a
+// voicemail/bot/screening/unanswered call the far end is a recording, so those
+// axes must report `available:false` (fanned out as nothing) rather than either
+// firing ("the caller waited 8s") or passing ("responsiveness was fine").
+// This matters disproportionately on Equate-Media-shaped traffic, where ~77% of
+// calls are machine-answered — an ungated version would fire on the majority.
+describe("evaluateConversationMetrics — code-derived signal judges", () => {
+  const stalled = {
+    turns: [],
+    tool_calls: [],
+    summary: {
+      total_turns: 3,
+      p95_user_perceived_ms: 9000,
+      interruptions: 0,
+      voice: {
+        dead_air: {
+          threshold_ms: 3000,
+          count: 1,
+          total_ms: 12000,
+          max_ms: 12000,
+          events: [{ turn_number: 2, kind: "response" as const, gap_ms: 12000 }],
+        },
+      },
+    },
+  } as any;
+
+  test("a human-answered call scores dead air", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx(), llm, stalled);
+    expect(cm.dead_air.available).toBe(true);
+    expect(cm.dead_air.detected).toBe(true);
+  });
+
+  test("voicemail suppresses dead air as UNAVAILABLE, not as a pass", async () => {
+    const llm = new MockLLM([responder({ voicemail: true })]);
+    const cm = await evaluateConversationMetrics(ctx(), llm, stalled);
+    expect(cm.voicemail_detected.detected).toBe(true);
+    expect(cm.dead_air.available).toBe(false);
+    expect(cm.dead_air.detected).toBe(false);
+  });
+
+  test("an unanswered call suppresses the UX axes too", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ full_transcript: "Agent: Hello? Anyone there?" }),
+      llm,
+      stalled,
+    );
+    expect(cm.answered).toBe(false);
+    expect(cm.dead_air.available).toBe(false);
+  });
+
+  test("no timing signals at all => unavailable, never a clean pass", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx(), llm, null);
+    expect(cm.dead_air.available).toBe(false);
+    expect(cm.dead_air.detected).toBe(false);
+  });
+
+});
+
+// A provider failure on the voicemail/bot/screening classifier returns
+// {detected:false, available:false} (runDetection fails open). Reading only
+// `.detected` would then read a real voicemail as human-answered and accuse the
+// agent of making a recording wait. "Can't confirm a human" must gate like
+// "not a human".
+describe("evaluateConversationMetrics — UX gate treats unavailable as non-human", () => {
+  const stalled = {
+    turns: [],
+    tool_calls: [],
+    summary: {
+      total_turns: 3,
+      p95_user_perceived_ms: 9000,
+      voice: {
+        dead_air: {
+          threshold_ms: 3000, count: 1, total_ms: 12000, max_ms: 12000,
+          events: [{ turn_number: 2, kind: "response" as const, gap_ms: 12000 }],
+        },
+      },
+    },
+  } as any;
+
+  test("regression: an unavailable voicemail classifier withholds the UX gate", async () => {
+    // Voicemail judge errors -> available:false, detected:false. Bot/screening
+    // answer cleanly. Previously humanAnswered went true and the UX judges scored
+    // a call we could not confirm had a human on it.
+    const llm = new MockLLM([
+      (args: { system?: string }) => {
+        const s = args.system ?? "";
+        if (s.includes("reached voicemail")) return "not json at all";
+        if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
+        if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+        return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+      },
+    ]);
+    const cm = await evaluateConversationMetrics(ctx(), llm, stalled);
+    expect(cm.voicemail_detected.available).toBe(false);
+    expect(cm.dead_air.available).toBe(false);
+  });
+});
+
+// `available:false` is overloaded: on a text channel voicemail/bot/screening are
+// skippedDetection by CHANNEL GATING, not because a judge failed. Failing closed
+// on that reading silently made every chat/SMS session "not human".
+describe("evaluateConversationMetrics — text-channel signal judges", () => {
+  const stalled = {
+    turns: [], tool_calls: [],
+    summary: {
+      total_turns: 3, p95_user_perceived_ms: 9000,
+      voice: { dead_air: { threshold_ms: 3000, count: 1, total_ms: 12000, max_ms: 12000,
+        events: [{ turn_number: 2, kind: "response" as const, gap_ms: 12000 }] } },
+    },
+  } as any;
+
+  test("dead air is voice-only, and says so rather than claiming no human answered", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ transport: "chat" }), llm, stalled);
+    expect(cm.dead_air.available).toBe(false);
+    expect(cm.dead_air.technical_reason).toContain("voice-channel measure");
+    expect(cm.dead_air.technical_reason).not.toContain("no human");
+  });
+
+  test("on VOICE, an unavailable machine axis still fails closed", async () => {
+    // The finding-3 behavior must survive the channel carve-out.
+    const llm = new MockLLM([
+      (args: { system?: string }) => {
+        const s = args.system ?? "";
+        if (s.includes("reached voicemail")) return "not json at all";
+        if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
+        if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+        return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+      },
+    ]);
+    const cm = await evaluateConversationMetrics(ctx(), llm, stalled);
+    expect(cm.dead_air.available).toBe(false);
+  });
+});

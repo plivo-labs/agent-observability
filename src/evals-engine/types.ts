@@ -255,6 +255,11 @@ export interface SimConversationMetrics {
    *  or errored) so consumers don't read the zero counts as a confident "clean
    *  call". `error_count`/`recovered_count` are only meaningful when available. */
   stt: { error_count: number; recovered_count: number; available: boolean };
+  /** Long silences the caller sat through. Decided in CODE from turn timestamps,
+   *  not by an LLM — see judges/session-signal-judges.ts. `available:false` when
+   *  the session carried no timestamps, or when no human answered (the axis is
+   *  meaningless against a recording). */
+  dead_air: CmDetection;
 }
 
 /** What `evaluateSimulation` returns: the node + goal axes only.
