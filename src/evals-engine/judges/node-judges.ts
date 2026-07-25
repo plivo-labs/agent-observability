@@ -14,7 +14,7 @@ import {
   systemForLoop,
   systemForInstructionAdherence,
 } from "./instructions.js";
-import { nodePayload } from "./node-judge-payload.js";
+import { nodePayload, adherenceNodePayload } from "./node-judge-payload.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { HALLUCINATION_JSON, NODE_LOOP_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
 
@@ -94,7 +94,10 @@ export async function runInstructionAdherenceJudge(
   // Filling it with a copy of the instructions would tell the model objective==instructions — noise.
   return runLlmJudge({
     system: systemForInstructionAdherence(node.node_prompt, "(none)"),
-    input: nodePayload(node, ctx),
+    // adherenceNodePayload drops available_intents — intent descriptions are the
+    // intent judge's job, not procedure/policy (SER-6035 #2). Adherence-only:
+    // the other node judges keep the shared payload.
+    input: adherenceNodePayload(node, ctx),
     schema: InstructionAdherenceRawZ,
     jsonSchema: INSTRUCTION_ADHERENCE_JSON,
     maxTokens: 5000,

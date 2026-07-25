@@ -24,3 +24,21 @@ export function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record
     ...(hasEntries(ctx.pronunciation_guides) ? { pronunciation_guides: ctx.pronunciation_guides } : {}),
   };
 }
+
+/**
+ * Payload for the INSTRUCTION-ADHERENCE judge only: the shared node payload
+ * MINUS available_intents (SER-6035 #2).
+ *
+ * Intent DESCRIPTIONS are routing conditions owned by the intent judge; the
+ * adherence judge was reading them as mandatory procedure/policy and
+ * false-failing correct behaviour (the "fire silently" Voicemail Detected
+ * description the model never had). Dropped for ADHERENCE ONLY — the other node
+ * judges keep the shared payload: the hallucination judge legitimately uses the
+ * handoff-intent list to ground an offered-but-unfired transfer/callback path,
+ * so removing it there could newly flag a real "I can connect you…" line as a
+ * hallucination. The intent judge builds its own payload and is unaffected.
+ */
+export function adherenceNodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
+  const { available_intents: _omit, ...rest } = nodePayload(node, ctx);
+  return rest;
+}

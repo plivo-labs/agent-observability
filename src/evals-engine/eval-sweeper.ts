@@ -16,7 +16,7 @@ import { classifyErrorDurability } from "../error-durability.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
-import { sentimentPassed } from "./judges/conversation-judges.js";
+import { buildExternalEvalRows } from "./fan-out-rows.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
 //
@@ -84,72 +84,7 @@ export async function fanOutExternalEvals(
   observedAt: Date = new Date(),
 ): Promise<boolean> {
   const sessionId = claim.sessionId;
-  const rows: Array<{ judgeName: string; tag: string | null; passed: boolean; reasoning: string; raw: object }> = [];
-
-  for (const ne of verdicts.node_evaluations) {
-    const tag = ne.ref || null;
-    const ia = ne.instructions_adherence;
-    if (ia) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia });
-    const ii = ne.intent_identification;
-    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii });
-    const ve = ne.variable_extraction;
-    if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve });
-    const ha = ne.hallucination;
-    if (ha) rows.push({ judgeName: "hallucination", tag, passed: !ha.hallucinated, reasoning: ha.reason, raw: ha });
-    const lo = ne.node_loop;
-    if (lo) rows.push({ judgeName: "node_loop", tag, passed: !lo.loop_detected, reasoning: lo.reason, raw: lo });
-  }
-  // Conversation-axis judges (whole-transcript, no node tag). Detections read
-  // as fail when they fire; sentiment fails when clearly negative or confused
-  // (matching the sentiment judge's own pass rule).
-  // Judge-unavailable fallbacks (the judges fail open to detected:false with
-  // technical_reason "…unavailable") are SKIPPED, not written as passes — a
-  // provider outage must not silently bias fail rates to zero.
-  const cm = verdicts.conversation_metrics;
-  if (cm) {
-    const detections: Array<[string, { detected: boolean; reason: string; available: boolean } | undefined]> = [
-      ["voicemail_detection", cm.voicemail_detected],
-      ["bot_detection", cm.bot_detected],
-      ["call_screening", cm.call_screening],
-      ["low_engagement", cm.low_engagement],
-      ["wrong_number", cm.wrong_number],
-      ["do_not_disturb", cm.do_not_disturb],
-      // Code-derived signal judge: rides the same array so it reuses the
-      // `available === false` skip below (an undecidable axis fans out nothing).
-      ["user_never_spoke", cm.user_never_spoke],
-    ];
-    for (const [judgeName, det] of detections) {
-      if (!det || typeof det.detected !== "boolean") continue;
-      // Skip a judge that couldn't run (provider outage) — never fan an
-      // unavailable detection out as a `pass`. `available` is always set on
-      // this path (real judges and the zero placeholder both set it).
-      if (det.available === false) continue;
-      rows.push({ judgeName, tag: null, passed: !det.detected, reasoning: det.reason, raw: det });
-    }
-    const sentiment = cm.user_sentiment;
-    const sentimentValue = sentiment?.sentiment ?? "";
-    if (sentimentValue && sentimentValue !== "unknown" && sentiment?.available !== false) {
-      rows.push({
-        judgeName: "user_sentiment",
-        tag: null,
-        // The verdict carries the derived pass/fail; only fall back to the
-        // rule (via sentimentPassed) for payloads that predate the field.
-        passed: sentiment?.passed ?? sentimentPassed(sentimentValue),
-        reasoning: sentiment?.reason ? `${sentimentValue}: ${sentiment.reason}` : sentimentValue,
-        raw: sentiment,
-      });
-    }
-  }
-
-  for (const goal of verdicts.goal_evaluation?.goals ?? []) {
-    rows.push({
-      judgeName: goal.goal_name ? `goal:${goal.goal_name}` : "goal",
-      tag: null,
-      passed: goal.achieved,
-      reasoning: goal.reason,
-      raw: goal,
-    });
-  }
+  const rows = buildExternalEvalRows(verdicts);
 
   // Idempotent on IDENTITY, not payload. A retry re-judge produces fresh
   // reasoning text (new `raw`), so a payload-keyed dedup would let the retry's
