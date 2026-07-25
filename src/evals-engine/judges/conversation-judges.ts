@@ -266,6 +266,33 @@ const suppressed = (raw: DetectionResult) =>
     ? { detected: false, detected_value: 0, reason: "", technical_reason: "superseded by a higher-priority conversation outcome", available: true }
     : det(raw);
 
+/**
+ * USER NEVER SPOKE — the caller produced no turn at all.
+ *
+ * Transcript-only, decided in CODE: a `User:` line with content means the user
+ * spoke. Channel-agnostic — unlike voicemail/bot this is not a telephony
+ * concept, so it is NOT gated on the transport. An empty transcript is
+ * undecidable (no data to read), which is unavailable — NOT a clean "the user
+ * spoke". That honours the availability contract: an unavailable axis fans out
+ * as nothing, never as a pass.
+ *
+ * Distinct from `silent_call` (a boolean gated on the agent having asked a
+ * question): this is the plain "zero user turns" signal, emitted as its own axis.
+ */
+export function evaluateUserNeverSpoke(ctx: ConversationInput): DetectionResult {
+  const transcript = ctx.full_transcript ?? "";
+  if (!transcript.trim()) {
+    return skippedDetection("empty transcript — user_never_spoke undecidable");
+  }
+  if (isAnswered(ctx)) {
+    return { detected: false, reason: "", technical_reason: "at least one user turn present", available: true };
+  }
+  return derivedDetection(
+    "The user never spoke on this call — no user turn was recorded.",
+    "derived in code: zero user turns in the judged transcript (no `User:` line with content)",
+  );
+}
+
 /** All-zero conversation metrics with every axis marked unavailable — the
  *  placeholder for an empty transcript (ingest) or a skipped conversation eval
  *  (sim). `available:false` is how consumers tell "the judge did not run" from
@@ -283,6 +310,7 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     is_livekit: false,
     is_agent_runner: false,
     stt: skippedStt(),
+    user_never_spoke: d(),
   };
 }
 
@@ -432,8 +460,11 @@ export async function evaluateConversationMetrics(
     ctx,
   );
 
+  const userNeverSpoke = evaluateUserNeverSpoke(ctx);
+
   return {
     ...outcomes,
+    user_never_spoke: det(userNeverSpoke),
     user_sentiment: {
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,
