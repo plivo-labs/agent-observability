@@ -93,6 +93,9 @@ export async function fanOutExternalEvals(
       ["low_engagement", cm.low_engagement],
       ["wrong_number", cm.wrong_number],
       ["do_not_disturb", cm.do_not_disturb],
+      // Code-derived signal judge: rides the same array so it reuses the
+      // `available === false` skip below (an undecidable axis fans out nothing).
+      ["user_never_spoke", cm.user_never_spoke],
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
