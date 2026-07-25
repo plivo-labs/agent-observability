@@ -84,6 +84,21 @@ describe("user_never_spoke — the caller produced no turn", () => {
     expect(cm.user_never_spoke.detected).toBe(true);
   });
 
+  test("does NOT fire on a voicemail call — suppressed by the machine outcome", async () => {
+    // Zero user turns AND the agent did not ask a question (so resolveOutcomes
+    // keeps voicemail rather than reclassifying to silent-call), so voicemail
+    // fires. user_never_spoke must defer to it, not co-fire.
+    const llm = new MockLLM([responder({ voicemail: true })]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ full_transcript: "Agent: Hi, this is Dan, please call me back." }),
+      llm,
+    );
+    expect(cm.voicemail_detected.detected).toBe(true);
+    // Suppressed → available:false → the sweeper fans out nothing for it.
+    expect(cm.user_never_spoke.available).toBe(false);
+    expect(cm.user_never_spoke.detected).toBe(false);
+  });
+
   test("an empty transcript is unavailable, not a clean pass", () => {
     const result = evaluateUserNeverSpoke(ctx({ full_transcript: "   " }));
     expect(result.available).toBe(false);
