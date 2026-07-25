@@ -255,6 +255,11 @@ export interface SimConversationMetrics {
    *  or errored) so consumers don't read the zero counts as a confident "clean
    *  call". `error_count`/`recovered_count` are only meaningful when available. */
   stt: { error_count: number; recovered_count: number; available: boolean };
+  /** The caller produced no turn at all (zero `User:` lines with content).
+   *  Decided in CODE from the transcript, channel-agnostic — not a telephony
+   *  measure. `available:false` when there was no transcript to judge (an empty
+   *  transcript is undecidable, never a clean "user spoke"). */
+  user_never_spoke: CmDetection;
 }
 
 /** What `evaluateSimulation` returns: the node + goal axes only.

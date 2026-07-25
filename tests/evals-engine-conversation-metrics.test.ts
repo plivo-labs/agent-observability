@@ -5,7 +5,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { evaluateConversationMetrics, resolveOutcomes } = await import("../src/evals-engine/judges/conversation-judges.js");
+const { evaluateConversationMetrics, resolveOutcomes, evaluateUserNeverSpoke } = await import("../src/evals-engine/judges/conversation-judges.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
 const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
@@ -52,6 +52,43 @@ const raws = (over: Partial<DetectionRaws> = {}): DetectionRaws => ({
   wrongNumber: detection(),
   doNotDisturb: detection(),
   ...over,
+});
+
+describe("user_never_spoke — the caller produced no turn", () => {
+  test("fires when the transcript has agent turns but no user turn", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ full_transcript: "Agent: Hello, is anyone there?\nAgent: I'll try once more." }),
+      llm,
+    );
+    expect(cm.user_never_spoke.available).toBe(true);
+    expect(cm.user_never_spoke.detected).toBe(true);
+  });
+
+  test("does not fire when the user spoke at least once", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ full_transcript: "Agent: Hi there.\nUser: yes hello" }),
+      llm,
+    );
+    expect(cm.user_never_spoke.available).toBe(true);
+    expect(cm.user_never_spoke.detected).toBe(false);
+  });
+
+  test("is channel-agnostic — fires on a text channel with no user reply", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ transport: "chat", full_transcript: "Agent: Hi, following up on your order." }),
+      llm,
+    );
+    expect(cm.user_never_spoke.detected).toBe(true);
+  });
+
+  test("an empty transcript is unavailable, not a clean pass", () => {
+    const result = evaluateUserNeverSpoke(ctx({ full_transcript: "   " }));
+    expect(result.available).toBe(false);
+    expect(result.detected).toBe(false);
+  });
 });
 
 describe("evaluateConversationMetrics — anti-over-fire logic", () => {
