@@ -468,7 +468,26 @@ export async function evaluateConversationMetrics(
     ctx,
   );
 
-  const userNeverSpoke = evaluateUserNeverSpoke(ctx);
+  // user_never_spoke must not double-flag a machine-answered call: voicemail /
+  // bot / call-screening already describe "no human spoke", so defer to them and
+  // keep this a clean "genuine human no-answer" signal. Mirrors dead_air's gate:
+  // "can't confirm a human" (a machine classifier that failed open on a voice
+  // call, available:false) is treated as "not a human", so a voicemail whose own
+  // classifier call happened to fail can't leak through as user_never_spoke.
+  // On text channels the machine axes are skippedDetection (available:false) but
+  // `voice` is false, so this correctly does NOT suppress — a chat where the user
+  // never replied still fires.
+  const confirmsMachine = (d: { detected: boolean; available: boolean }) =>
+    d.detected || (voice && d.available === false);
+  const machineAnswered =
+    confirmsMachine(outcomes.voicemail_detected) ||
+    confirmsMachine(outcomes.bot_detected) ||
+    confirmsMachine(outcomes.call_screening);
+  const userNeverSpoke = machineAnswered
+    ? skippedDetection(
+        "machine answered (voicemail / bot / call-screening) — user_never_spoke not applicable",
+      )
+    : evaluateUserNeverSpoke(ctx);
 
   return {
     ...outcomes,
