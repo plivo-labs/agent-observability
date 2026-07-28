@@ -860,3 +860,39 @@ describe("strict json_schema passed by every LLM judge (cx-sqs parity)", () => {
     check(goalLlm, "eval_goal");
   });
 });
+
+describe("adherence payload — SER-6035 #2: drop intent descriptions for adherence ONLY", () => {
+  test("adherenceNodePayload omits available_intents but keeps chosen_intent + node_prompt", async () => {
+    const { adherenceNodePayload } = await import("../src/evals-engine/judges/node-judge-payload.js");
+    const payload = adherenceNodePayload(node(), ctx());
+    expect("available_intents" in payload).toBe(false);
+    // which intent fired is still useful context and is kept
+    expect(payload.chosen_intent).toBe("provide_order");
+    expect(payload.node_prompt).toBeDefined();
+  });
+
+  test("the SHARED nodePayload STILL carries available_intents — hallucination/loop/variable are untouched", async () => {
+    const { nodePayload } = await import("../src/evals-engine/judges/node-judge-payload.js");
+    const payload = nodePayload(node(), ctx());
+    // No collateral: the other node judges keep the handoff-intent context they
+    // legitimately use (e.g. hallucination grounding an offered transfer path).
+    expect("available_intents" in payload).toBe(true);
+    expect(payload.available_intents).toEqual([{ id: "e1", intent_name: "provide_order" }]);
+  });
+
+  test("wiring: adherence judge SENDS no available_intents; hallucination judge STILL sends it", async () => {
+    const adh = JSON.stringify({
+      objective_progress: { achieved: true, score: 1, reason_code: "goal_achieved", reason: "r", technical_reason: "t" },
+      procedure_compliance: { score: 1, reason_code: "procedure_followed", missed_steps: [], reason: "r", technical_reason: "t" },
+      interaction_quality: { score: 1, reason_code: "no_quality_issues", issues: [], reason: "r", technical_reason: "t" },
+      policy_boundary_compliance: { passed: true, score: 1, reason_code: "boundary_respected", reason: "r", technical_reason: "t" },
+    });
+    const adhLlm = new MockLLM([adh]);
+    await runInstructionAdherenceJudge(node(), ctx(), adhLlm);
+    expect("available_intents" in JSON.parse(adhLlm.calls[0]!.user)).toBe(false);
+
+    const halLlm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "g", technical_reason: "t" })]);
+    await runHallucinationJudge(node(), ctx(), halLlm);
+    expect("available_intents" in JSON.parse(halLlm.calls[0]!.user)).toBe(true);
+  });
+});
