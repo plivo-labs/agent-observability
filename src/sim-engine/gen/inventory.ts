@@ -4,7 +4,7 @@ import {
   EXECUTABLE_NODE_TYPES,
   OUT_OF_SCOPE_ROUTE_TERMS,
 } from "./combos.js";
-import { isRecord } from "../json.js";
+import { isRecord, stableStringify } from "../json.js";
 
 // AO Simulation Engine — mechanical flow inventory (Phase 1.2).
 //
@@ -79,20 +79,6 @@ export interface MechanicalInventory {
 type Dict = Record<string, any>;
 const isObj = (v: unknown): v is Dict => isRecord(v);
 
-/** Stable JSON.stringify (recursively sorted keys) — mirrors Python json.dumps(sort_keys=True). */
-function stableStringify(value: unknown): string {
-  return JSON.stringify(value, (_k, v) =>
-    isObj(v)
-      ? Object.keys(v)
-          .sort()
-          .reduce((acc: Dict, k) => {
-            acc[k] = v[k];
-            return acc;
-          }, {})
-      : v,
-  );
-}
-
 export function nodeConfig(node: Dict): Dict {
   const data = isObj(node.data) ? node.data : {};
   return isObj(data.config) ? data.config : {};
@@ -103,6 +89,11 @@ export function nodeName(node: Dict): string {
   const meta = isObj(data.meta) ? data.meta : {};
   const config = nodeConfig(node);
   return config.name || meta.name || node.id || "Unknown node";
+}
+
+/** The flow's agent settings, wherever they live (canonical camelCase or raw snake_case). */
+export function agentSettingsOf(flow: Dict): Dict {
+  return (isObj(flow.agentSettings) && flow.agentSettings) || (isObj(flow.agent_settings) && flow.agent_settings) || {};
 }
 
 function edgesBySource(flow: Dict): Record<string, Dict[]> {
@@ -204,7 +195,7 @@ export function flowHasOutboundCall(flow: Dict): boolean {
 }
 
 export function extractAvailableLanguages(flow: Dict): string[] {
-  const agentSettings = (isObj(flow.agentSettings) && flow.agentSettings) || (isObj(flow.agent_settings) && flow.agent_settings) || {};
+  const agentSettings = agentSettingsOf(flow);
   const vac = isObj(agentSettings.voice_ai_config) ? agentSettings.voice_ai_config : {};
   const lang = vac.language || "";
   return lang ? [lang] : [];

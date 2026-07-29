@@ -101,6 +101,8 @@ export const simEngineConfig = {
   genIncremental: config.SIM_GEN_INCREMENTAL,
   /** Planner-cache TTL ms (SIM_GEN_PLANNER_CACHE_TTL_MS; 0 disables). */
   plannerCacheTtlMs: config.SIM_GEN_PLANNER_CACHE_TTL_MS,
+  /** Smoke-mode planner payload diet kill-switch (SIM_GEN_SMOKE_FLOW_SUMMARY; default true). */
+  genSmokeFlowSummary: config.SIM_GEN_SMOKE_FLOW_SUMMARY,
   /** Smoke-mode unit cap when the request carries no `smoke_cap` (aiassist cap_default=20). */
   smokeCapDefault: config.SMOKE_CAP_DEFAULT,
   /** Absolute smoke-unit ceiling per request (aiassist cap_hard=50). */

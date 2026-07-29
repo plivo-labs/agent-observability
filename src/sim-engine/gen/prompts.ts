@@ -10,15 +10,45 @@
 /**
  * PLANNER (LLM 1) system prompt. Mirrors the orchestrator service `_planner_prompt(simulation_mode,
  * smoke_cap)`: base instructions + a smoke-mode suffix capped at `smokeCap`. The user
- * payload (flow_json, mechanical_inventory, conversation_pattern_library,
+ * payload (flow_json OR flow_summary, mechanical_inventory, conversation_pattern_library,
  * existing_scenario_summaries, user_instructions, simulation_mode) is assembled by the
- * caller (planner.ts) — this is only the system instruction.
+ * caller (planner.ts) — this is only the system instruction. `payloadVariant` swaps the
+ * given-inputs description to match the payload shape (see flow-summary.ts); "full" is
+ * byte-identical to the pre-summary prompt.
  */
-export function plannerSystemPrompt(simulationMode: "smoke" | "stress", smokeCap = 0): string {
+export function plannerSystemPrompt(
+  simulationMode: "smoke" | "stress",
+  smokeCap = 0,
+  payloadVariant: "full" | "summary" = "full",
+): string {
+  // Only the given-inputs description differs between the two payload variants; every
+  // instruction below it is payload-agnostic. The full-variant string stays byte-identical
+  // to the pre-summary prompt (stress always uses it; smoke uses it when the summary
+  // kill-switch is off or the degenerate-flow guard fired).
+  const givenInputs =
+    payloadVariant === "summary"
+      ? [
+          "You are given a flow_summary and a mechanical_inventory (nodes, routes,",
+          "variables, actions, languages, start_node_param_keys, is_outbound_call).",
+          "The mechanical_inventory is the authoritative catalog: every agent node's full",
+          "instructions, the intent routes, the variables, and the actions. The",
+          "flow_summary adds what the inventory cannot express: agent_profile (the global",
+          "agent persona/system_prompt — the agent role — plus stt_guidance and",
+          "knowledge-base presence), node_digests (non-agent nodes), start_node params,",
+          "action_params, and edge_topology.",
+          "edge_topology lists EVERY edge as {source, handle, target, kind}: handle names",
+          'the branch outcome (e.g. "success", "no_match", "eligible") for flow edges, or',
+          "the matched intent for intent edges. Use edge_topology to find nested branches",
+          "and multi-hop chains that need separate coverage — not all of them appear in",
+          "the route inventory.",
+        ]
+      : [
+          "You are given the agent's flow_json and a mechanical_inventory (nodes, routes,",
+          "variables, actions, languages, start_node_param_keys, is_outbound_call).",
+        ];
   const base = [
     "You are a test-coverage planner for a voice/chat agent flow.",
-    "You are given the agent's flow_json and a mechanical_inventory (nodes, routes,",
-    "variables, actions, languages, start_node_param_keys, is_outbound_call).",
+    ...givenInputs,
     "",
     "Identify the distinct CAPABILITIES the agent supports — the jobs a caller can get",
     "done (happy paths), the soft boundaries (deflections, challenges), and the hard",

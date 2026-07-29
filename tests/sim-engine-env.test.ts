@@ -49,4 +49,11 @@ describe("envSchema — gen-latency vars", () => {
     expect(envSchema.parse({ ...base, SIM_GEN_PLANNER_CACHE_TTL_MS: "60000" }).SIM_GEN_PLANNER_CACHE_TTL_MS).toBe(60_000);
     expect(envSchema.safeParse({ ...base, SIM_GEN_PLANNER_CACHE_TTL_MS: "-1" }).success).toBe(false);
   });
+
+  test("SIM_GEN_SMOKE_FLOW_SUMMARY: default true; only \"false\"/\"0\" disable (kill-switch)", () => {
+    expect(envSchema.parse(base).SIM_GEN_SMOKE_FLOW_SUMMARY).toBe(true);
+    expect(envSchema.parse({ ...base, SIM_GEN_SMOKE_FLOW_SUMMARY: "false" }).SIM_GEN_SMOKE_FLOW_SUMMARY).toBe(false);
+    expect(envSchema.parse({ ...base, SIM_GEN_SMOKE_FLOW_SUMMARY: "0" }).SIM_GEN_SMOKE_FLOW_SUMMARY).toBe(false);
+    expect(envSchema.parse({ ...base, SIM_GEN_SMOKE_FLOW_SUMMARY: "true" }).SIM_GEN_SMOKE_FLOW_SUMMARY).toBe(true);
+  });
 });

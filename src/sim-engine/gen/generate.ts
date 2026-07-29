@@ -4,6 +4,7 @@ import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
 import { AsyncQueue } from "./async-queue.js";
 import { plannerCacheKey, plannerCacheGet, plannerCacheSet, plannerCacheDelete } from "./planner-cache.js";
+import { SUMMARY_VERSION, type PlannerPayloadVariant } from "./flow-summary.js";
 import { writeScenarioChunk } from "./writer.js";
 import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, WRITER_FALLBACK_CONCURRENCY, SMOKE_CAP_FALLBACK, MAX_EXISTING_SCENARIO_SUMMARIES } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -72,6 +73,18 @@ export interface GenMetadata {
    *  (output identical — the final parse is authoritative). Direct triage signal
    *  for a ttfs_ms regression; always false when the incremental kill-switch is off. */
   incremental_disabled: boolean;
+  /** Which planner payload shape ran: "full" (raw flow_json), "summary" (smoke
+   *  flow-summary diet — see flow-summary.ts), or "cache_hit" (no planner call this
+   *  generation). Rides the completed event, so relaying callers can log it. */
+  planner_payload_variant: PlannerPayloadVariant | "cache_hit";
+  /** Serialized planner user-payload size in chars (null on a cache hit). */
+  planner_payload_bytes: number | null;
+  /** True when the LLM plan yielded no usable capabilities and the deterministic
+   *  route-derived fallback planner supplied them instead — the plan-degradation
+   *  signal to watch next to planner_payload_variant. False on a cache hit (only
+   *  allocation-proven plans are cached, and a fallback in smoke synthesizes
+   *  happy-path-only coverage that would look deceptively healthy otherwise). */
+  planner_fallback_used: boolean;
 }
 
 export interface GenerateInput {
@@ -95,6 +108,11 @@ export interface GenerateInput {
    *  callers and tests). The route wires SIM_GEN_PLANNER_CACHE_TTL_MS. A hit reuses
    *  the plan of a byte-identical prior request (see planner-cache.ts). */
   plannerCacheTtlMs?: number;
+  /** Smoke-only: send the compact flow_summary instead of the raw flow_json to the
+   *  planner LLM (see flow-summary.ts). The route wires SIM_GEN_SMOKE_FLOW_SUMMARY
+   *  (default true); absent = false so direct callers/tests keep the historical
+   *  payload unless they opt in. Ignored for stress. */
+  smokeFlowSummary?: boolean;
   /** Caller abort (the SSE client disconnected) — checked between phases and threaded into
    *  every LLM call so an abandoned request stops burning tokens and frees its gen slot. */
   signal?: AbortSignal;
@@ -245,11 +263,19 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
           // sends at MAX_EXISTING_SCENARIO_SUMMARIES) — hashing the full list would
           // churn the key on data the plan can't depend on (spurious misses >cap).
           existingSummaries: existing.slice(0, MAX_EXISTING_SCENARIO_SUMMARIES),
+          // Mode-normalized: stress ignores the flag, so a flag flip must not
+          // spuriously invalidate stress cache entries.
+          smokeFlowSummary: mode === "smoke" && (input.smokeFlowSummary ?? false),
+          summaryVersion: SUMMARY_VERSION,
         })
       : null;
   let planner: PlannerWithInventory | null = null;
   let plannerUsage: LlmUsage | null = null;
   let plannerCacheHit = false;
+  // Facts about the REAL planner call, if one ran — null on a pure cache hit (no
+  // payload was built, no tokens spent; the ledger prints "cache_hit"/"-" then).
+  // One record so the variant/bytes/fallback trio can never drift apart.
+  let plannerCall: { variant: PlannerPayloadVariant; bytes: number; fallbackUsed: boolean } | null = null;
   if (cacheKey) {
     const cached = plannerCacheGet(cacheKey, cacheTtlMs);
     if (cached) {
@@ -271,11 +297,13 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         userInstructions: instructions,
         simulationMode: mode,
         smokeCap,
+        smokeFlowSummary: input.smokeFlowSummary,
         provider: input.plannerProvider,
         signal: input.signal,
       });
       planner = out.planner;
       plannerUsage = out.usage;
+      plannerCall = { variant: out.payloadVariant, bytes: out.payloadBytes, fallbackUsed: out.fallbackUsed };
       yield { type: "planning_done", attempt, capability_count: planner.capabilities.length };
       break;
     } catch (e) {
@@ -325,6 +353,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         userInstructions: instructions,
         simulationMode: mode,
         smokeCap,
+        smokeFlowSummary: input.smokeFlowSummary,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -334,6 +363,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       // cost on a generation that paid it in full — corrupting the timing evidence).
       plannerUsage = out.usage;
       plannerCacheHit = false;
+      plannerCall = { variant: out.payloadVariant, bytes: out.payloadBytes, fallbackUsed: out.fallbackUsed };
     }
   }
   if (!slots) throw new Error("Allocator produced no slots");
@@ -450,8 +480,16 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   }
 
   const writerMs = Date.now() - writerStart;
+  // Payload-diet evidence (append-only fields): which planner payload shape ran, its
+  // serialized size, the planner token split, and whether the plan degraded to the
+  // deterministic fallback — both halves of the before/after (cost AND quality) are
+  // provable from this one line in OpenSearch. "cache_hit" means no planner call ran
+  // this generation (bytes/tokens print "-").
+  const ledgerVariant: GenMetadata["planner_payload_variant"] = plannerCall?.variant ?? "cache_hit";
   console.log(
-    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length}`,
+    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length}` +
+      ` payload_variant=${ledgerVariant} planner_payload_bytes=${plannerCall?.bytes ?? "-"} planner_prompt_tokens=${plannerUsage?.promptTokens ?? "-"} planner_completion_tokens=${plannerUsage?.completionTokens ?? "-"}` +
+      ` planner_fallback_used=${plannerCall?.fallbackUsed ?? false}`,
   );
   yield {
     type: "metadata",
@@ -475,6 +513,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       ttfs_ms: ttfsMs,
       planner_cache_hit: plannerCacheHit,
       incremental_disabled: incrementalDisabled,
+      planner_payload_variant: ledgerVariant,
+      planner_payload_bytes: plannerCall?.bytes ?? null,
+      planner_fallback_used: plannerCall?.fallbackUsed ?? false,
     },
   };
 }
