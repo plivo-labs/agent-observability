@@ -8,6 +8,9 @@ node_modules
 recordings/
 data/
 
+# exported real flows for the planner-payload A/B harness (tenant content — never commit)
+scripts/flows/
+
 # frontend build
 frontend/dist/
 frontend/node_modules/

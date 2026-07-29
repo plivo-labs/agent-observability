@@ -7,6 +7,7 @@ mock.module("../src/config.js", () => ({
 }));
 
 const { generateScenarios } = await import("../src/sim-engine/gen/generate.js");
+const { SUMMARY_VERSION } = await import("../src/sim-engine/gen/flow-summary.js");
 const { MockLLM } = await import("../src/llm/index.js");
 const { normalizeFlow } = await import("../src/simulation/flow/flow-normalize.js");
 const realShape = (await import("./fixtures/flow-real-shape.json")).default;
@@ -517,6 +518,8 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     const key = plannerCacheKey({
       flowJson: canonical, phloUuid: "a", model: "m", simulationMode: "smoke",
       smokeCap: 20, instructions: "", existingSummaries: [],
+      // Mirror generate.ts: smokeFlowSummary is the REQUESTED flag (absent input → false).
+      smokeFlowSummary: false, summaryVersion: SUMMARY_VERSION,
     });
     plannerCacheSet(key, { ...JSON.parse(PLANNER_JSON), capabilities: [] });
     const plannerLlm = new MockLLM([SMOKE_PLANNER_JSON]);

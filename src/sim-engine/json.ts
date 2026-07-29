@@ -17,3 +17,18 @@ export function deepCopyMap(src: Record<string, unknown> | null | undefined): Re
   if (!src) return {};
   return structuredClone(src) as Record<string, unknown>;
 }
+
+/** Stable JSON.stringify (recursively sorted keys) — mirrors Python json.dumps(sort_keys=True),
+ *  so byte-identical inputs always serialize byte-identically (hashes, dedup keys, excerpts). */
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_k, v) =>
+    isRecord(v)
+      ? Object.keys(v)
+          .sort()
+          .reduce((acc: Record<string, unknown>, k) => {
+            acc[k] = v[k];
+            return acc;
+          }, {})
+      : v,
+  );
+}

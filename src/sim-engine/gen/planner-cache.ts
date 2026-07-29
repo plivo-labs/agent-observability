@@ -36,6 +36,17 @@ export interface PlannerCacheKeyParts {
   smokeCap: number;
   instructions: string;
   existingSummaries: ExistingScenarioSummary[];
+  /** The smoke-EFFECTIVE flow-summary flag: the requested SIM_GEN_SMOKE_FLOW_SUMMARY
+   *  value for smoke requests, always false for stress (which ignores the flag — a flag
+   *  flip must not invalidate stress entries). The effective payload variant is
+   *  deterministic in (flowJson, mode, this flag) — flowJson and mode are already
+   *  hashed, so a flag flip can never serve a plan built under the other payload shape. */
+  smokeFlowSummary: boolean;
+  /** SUMMARY_VERSION at build time. Future-proofing for a non-process-local cache:
+   *  this in-memory map can never hold entries from two code versions (a shape change
+   *  ships as a new process with an empty map), but a shared/persistent cache could,
+   *  and the field makes that upgrade safe by construction. */
+  summaryVersion: number;
 }
 
 /** sha256 over the exact planner inputs. JSON.stringify key-order differences can

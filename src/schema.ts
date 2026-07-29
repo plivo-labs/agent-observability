@@ -257,6 +257,16 @@ export const envSchema = z.object({
   // hit skips ~50s of planning per rerun (and keeps the same smoke units across the
   // loop). A hit only ever reuses a byte-identical request's plan. 0 disables.
   SIM_GEN_PLANNER_CACHE_TTL_MS: z.coerce.number().int().min(0).default(900_000),
+  // Smoke-mode planner payload diet: send the compact flow_summary (agent profile +
+  // edge topology + non-agent node digests — see gen/flow-summary.ts) instead of the
+  // raw flow_json to the planner LLM. The mechanical inventory (full agent-node
+  // instructions) is unchanged either way; stress mode ignores this entirely. "false"
+  // is the runtime kill-switch back to the historical full payload (per-request
+  // degenerate-flow guard also falls back automatically — see resolvePlannerPayload).
+  SIM_GEN_SMOKE_FLOW_SUMMARY: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
   SMOKE_CAP_DEFAULT: z.coerce.number().int().positive().max(100).default(SMOKE_CAP_FALLBACK),
   SMOKE_CAP_HARD: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
