@@ -64,7 +64,25 @@ interface ResponsesResult {
   incomplete_details?: { reason?: string };
   output?: { content?: { text?: string }[] }[];
   output_text?: string;
-  usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    output_tokens_details?: { reasoning_tokens?: number };
+  };
+}
+
+/** Map a Responses API usage block to LlmUsage, surfacing reasoning tokens when reported —
+ *  the invisible spend that bills against max_output_tokens and explains truncations the
+ *  visible output alone can't (this went uninstrumented through two prod incidents). */
+function responsesUsage(u: ResponsesResult["usage"]): LlmUsage {
+  const reasoning = u?.output_tokens_details?.reasoning_tokens;
+  return {
+    promptTokens: u?.input_tokens ?? 0,
+    completionTokens: u?.output_tokens ?? 0,
+    totalTokens: u?.total_tokens ?? 0,
+    ...(typeof reasoning === "number" ? { reasoningTokens: reasoning } : {}),
+  };
 }
 
 /** Join the text chunks out of a Responses API result (output[].content[].text), with the
@@ -149,11 +167,7 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
   }
   return {
     text: extractResponsesText(json),
-    usage: {
-      promptTokens: json.usage?.input_tokens ?? 0,
-      completionTokens: json.usage?.output_tokens ?? 0,
-      totalTokens: json.usage?.total_tokens ?? 0,
-    },
+    usage: responsesUsage(json.usage),
   };
 }
 
@@ -209,11 +223,7 @@ async function completeViaResponsesStream(args: ProviderCompleteArgs): Promise<R
       }
       // Prefer the accumulated deltas; fall back to the terminal payload's text.
       if (!text) text = extractResponsesText(payload);
-      usage = {
-        promptTokens: payload.usage?.input_tokens ?? 0,
-        completionTokens: payload.usage?.output_tokens ?? 0,
-        totalTokens: payload.usage?.total_tokens ?? 0,
-      };
+      usage = responsesUsage(payload.usage);
     }
     return false;
   };
