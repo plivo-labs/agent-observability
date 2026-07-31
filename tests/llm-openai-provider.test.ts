@@ -95,6 +95,36 @@ describe("openaiProvider — Responses API mode", () => {
     expect("reasoning" in body).toBe(false);
   });
 
+  test("surfaces output_tokens_details.reasoning_tokens as usage.reasoningTokens", async () => {
+    // The invisible spend that bills against max_output_tokens — uninstrumented,
+    // it left two prod truncation incidents (2026-07-14, 2026-07-23) undiagnosable
+    // from AO's own telemetry.
+    stubFetch(
+      new Response(
+        JSON.stringify({
+          status: "completed",
+          output_text: "{}",
+          usage: { input_tokens: 10, output_tokens: 900, total_tokens: 910, output_tokens_details: { reasoning_tokens: 850 } },
+        }),
+        { status: 200 },
+      ),
+    );
+    const res = await openaiProvider.complete(baseArgs);
+    expect(res.usage.reasoningTokens).toBe(850);
+    expect(res.usage.completionTokens).toBe(900);
+  });
+
+  test("leaves usage.reasoningTokens absent when the gateway omits output_tokens_details", async () => {
+    stubFetch(
+      new Response(
+        JSON.stringify({ status: "completed", output_text: "{}", usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } }),
+        { status: 200 },
+      ),
+    );
+    const res = await openaiProvider.complete(baseArgs);
+    expect(res.usage.reasoningTokens).toBeUndefined();
+  });
+
   test("planner (no jsonSchema) omits text.format", async () => {
     stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
     await openaiProvider.complete(baseArgs);

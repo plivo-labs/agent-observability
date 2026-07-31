@@ -67,6 +67,23 @@ describe("LLM node judges (MockLLM)", () => {
     expect(llm.calls[0]!.maxTokens).toBe(1500); // parity cap unchanged — effort is what makes it sufficient
   });
 
+  test('JUDGE_REASONING_EFFORT="inherit" omits the parameter (pre-#114 wire shape)', async () => {
+    // "inherit" exists because an explicit effort value can be REJECTED by a
+    // deployment ("none" is not universally valid across gpt-5.x), and a rejected
+    // enum 400s every judge call. Omitting the key restores the deployment-default
+    // behavior. The judge runner reads config at call time, so mutate-and-restore.
+    const { config } = await import("../src/config.js");
+    const prior = (config as Record<string, unknown>).JUDGE_REASONING_EFFORT;
+    (config as Record<string, unknown>).JUDGE_REASONING_EFFORT = "inherit";
+    try {
+      const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
+      await runHallucinationJudge(node(), ctx(), llm);
+      expect(llm.calls[0]!.reasoningEffort).toBeUndefined();
+    } finally {
+      (config as Record<string, unknown>).JUDGE_REASONING_EFFORT = prior;
+    }
+  });
+
   test("loop: parses raw output", async () => {
     const llm = new MockLLM([JSON.stringify({ loop_detected: false, score: 1, reason: "no loop" })]);
     const { data } = await runLoopJudge(node(), ctx(), llm);
