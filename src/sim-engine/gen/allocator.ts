@@ -24,6 +24,15 @@ import { slug } from "./text.js"; // pure leaf — keeps the allocator config-fr
 // every sort is total-order so output is reproducible given identical inputs. Pure:
 // imports only the combo constants — no LLM, no config, no DB. Do not "tidy" the
 // formulas/ordering: parity with the orchestrator service depends on them exactly.
+//
+// ONE deliberate divergence from the reference (2026-07-14): the reference filled
+// requestedCount unconditionally, reusing coverage_keys when unique candidates ran
+// out — every such slot was written by the LLM and then dropped by the downstream
+// coverage_key dedup (pure token + latency waste; the writer also burns its retry
+// ladder on slots the model declines to distinguish). This port instead relaxes
+// quotas first, and when every distinct coverage_key is taken returns SHORT with
+// audit.capacity_limited=true — planned_count < requested is an honest answer for
+// flows whose coverage space is smaller than the ask.
 
 type Dict = Record<string, any>;
 const SEP = ""; // unit separator for pair/triple keys
@@ -412,10 +421,85 @@ export interface AllocationResult {
 }
 
 /** The deterministic greedy allocation. Reproducible given identical inputs. */
+export interface AllocateOptions {
+  /** Coverage keys that must NOT be planned (exact-count top-up: every key already
+   *  planned in the first wave). Seeded into the uniqueness filter. */
+  excludeKeys?: ReadonlySet<string>;
+  /** Offset for slot_id numbering so a top-up wave's ids continue after the first
+   *  wave's (S001..Sxxx) instead of colliding with them. */
+  slotIdOffset?: number;
+  /** Waive the missing-core-capability audit rule — a top-up allocation is additive
+   *  on a first wave that already guaranteed core coverage. */
+  coreCoverageExempt?: boolean;
+}
+
+/** Owns the candidate pool and the exact-count expansion ladder, so the selection
+ *  loop stays a pure greedy pick.
+ *
+ *  Feasibility runs in three stages: (1) unique + within quota buckets; (2) unique
+ *  only — DELIBERATE divergence from the reference engine (it dropped the
+ *  uniqueness constraint instead): a slot whose coverage_key is already selected
+ *  can only ever be written and then dropped by generate.ts's dedup — guaranteed
+ *  writer-token waste (2026-07-14 prod: 12 of 40 planned slots on a 1-capability
+ *  flow were exactly this). Uniqueness is the hard constraint; quotas are
+ *  preferences. (3) re-enumerate at the next expansion budget: buildCandidates
+ *  enumerates RELATIVE to its n (per-axis combo breadth scales with it), so a pool
+ *  that exhausts at n=40 is NOT the flow's real capacity — the same 1-capability
+ *  flow that yields 29 unique keys at n=40 yields 100+ at n=100 (2026-07-14
+ *  probe). The selection prefix stays byte-identical (expansion only fires where
+ *  the pre-expansion code stopped), and cost is bounded: expansion triggers only
+ *  on LOW-capability flows, where enumeration is cheap (1-cap n=40 incl. one
+ *  expansion: ~49ms measured); the expensive enumerations (~1-2s at n=100 on
+ *  many-cap flows) are the BASE build that predates the ladder, and such flows
+ *  never exhaust their pool.
+ *
+ *  An empty return means even the fully-expanded enumeration is out of distinct
+ *  coverage_keys — this PLAN's capacity. The caller returns short HONESTLY
+ *  (audit.capacity_limited) and generate.ts decides: replan while planner-retry
+ *  attempts remain, accept the short result only on the final attempt. */
+class CandidateSupply {
+  quotaRelaxed = false;
+  poolExpanded = false;
+  private pool: Candidate[];
+  /** Ascending, deduped, strictly greater than the base enumeration
+   *  (requestedCount) — every entry is a genuine expansion. */
+  private readonly budgets: number[];
+
+  constructor(
+    initialPool: Candidate[],
+    requestedCount: number,
+    private readonly rebuildAt: (budget: number) => Candidate[],
+  ) {
+    this.pool = initialPool;
+    this.budgets = [...new Set([2, 5].map((m) => Math.min(500, Math.max(100, requestedCount * m))))].filter(
+      (b) => b > requestedCount,
+    );
+  }
+
+  feasible(capRem: Record<string, number>, typeRem: Record<string, number>, selectedKeys: ReadonlySet<string>): Candidate[] {
+    const unique = (): Candidate[] => this.pool.filter((c) => !selectedKeys.has(c.coverage_key));
+    let f = this.pool.filter(
+      (c) => (capRem[c.capability_id] ?? 0) > 0 && (typeRem[c.scenario_type] ?? 0) > 0 && !selectedKeys.has(c.coverage_key),
+    );
+    if (f.length === 0) {
+      f = unique(); // stage 2: quotas relax, uniqueness holds
+      if (f.length > 0) this.quotaRelaxed = true;
+    }
+    while (f.length === 0 && this.budgets.length > 0) {
+      this.pool = this.rebuildAt(this.budgets.shift()!); // stage 3: expand the enumeration
+      this.poolExpanded = true;
+      f = unique();
+      if (f.length > 0) this.quotaRelaxed = true;
+    }
+    return f;
+  }
+}
+
 export function allocateScenarioSlots(
   planner: PlannerWithInventory,
   requestedCount: number,
   existingScenarios: ExistingScenarioSummary[] = [],
+  opts: AllocateOptions = {},
 ): AllocationResult {
   const existing = existingCoverage(existingScenarios);
   const inv: Dict = planner.mechanical_inventory ?? {};
@@ -435,20 +519,16 @@ export function allocateScenarioSlots(
   const capRem: Record<string, number> = { ...capabilityQuotas };
   const typeRem: Record<string, number> = { ...typeQuotas };
   const selected: Slot[] = [];
-  const selectedKeys = new Set<string>();
+  const selectedKeys = new Set<string>(opts.excludeKeys ?? []);
   const coveredPairs = new Set<string>();
   const coveredTriples = new Set<string>();
+  const supply = new CandidateSupply(candidates, requestedCount, (budget) =>
+    buildCandidates(capabilities, allocateCapabilityQuotas(capabilities, budget, existing), scenarioTypeQuotas(budget), existing, inv, budget),
+  );
 
   while (selected.length < requestedCount) {
-    let feasible = candidates.filter(
-      (c) => (capRem[c.capability_id] ?? 0) > 0 && (typeRem[c.scenario_type] ?? 0) > 0 && !selectedKeys.has(c.coverage_key),
-    );
-    if (feasible.length === 0) {
-      feasible = candidates.filter((c) => (capRem[c.capability_id] ?? 0) > 0 && (typeRem[c.scenario_type] ?? 0) > 0);
-    }
-    if (feasible.length === 0) {
-      throw new Error(`Allocator could not satisfy exact count: selected=${selected.length}, requested=${requestedCount}`);
-    }
+    const feasible = supply.feasible(capRem, typeRem, selectedKeys);
+    if (feasible.length === 0) break; // honest short — see CandidateSupply
 
     const scored = feasible.map((c) => ({
       c,
@@ -475,13 +555,18 @@ export function allocateScenarioSlots(
 
     const chosen: Slot = {
       ...scored[0].c,
-      slot_id: `S${String(selected.length + 1).padStart(3, "0")}`,
+      slot_id: `S${String((opts.slotIdOffset ?? 0) + selected.length + 1).padStart(3, "0")}`,
       simulation_mode: "stress",
     };
     selected.push(chosen);
     selectedKeys.add(chosen.coverage_key);
-    capRem[chosen.capability_id] -= 1;
-    typeRem[chosen.scenario_type] -= 1;
+    // Quota-relaxed (and expanded-pool) picks can come from a capability/type with
+    // no quota entry — `undefined - 1` is NaN, which would poison scoreCandidate
+    // (NaN survives its `?? 0`) and break the deterministic tiebreak chain for
+    // every later sibling of that capability. Coerce absent to 0; negatives are
+    // fine (stage-2 selection ignores quotas by design).
+    capRem[chosen.capability_id] = (capRem[chosen.capability_id] ?? 0) - 1;
+    typeRem[chosen.scenario_type] = (typeRem[chosen.scenario_type] ?? 0) - 1;
     for (const p of pairValues(chosen)) coveredPairs.add(p);
     for (const t of tripleValues(chosen)) coveredTriples.add(t);
   }
@@ -501,7 +586,17 @@ export function allocateScenarioSlots(
       return row;
     });
 
-  const audit = auditAllocation(selected, requestedCount, typeQuotas, capabilities);
+  const capacityLimited = selected.length < requestedCount;
+  // pool_expanded is observability, not a validity input — the audit takes exactly
+  // its validity inputs and the selection loop stamps its own telemetry.
+  const audit: AuditResult = {
+    ...auditAllocation(selected, requestedCount, typeQuotas, capabilities, {
+      capacityLimited,
+      quotaRelaxed: supply.quotaRelaxed,
+      coreCoverageExempt: opts.coreCoverageExempt,
+    }),
+    pool_expanded: supply.poolExpanded,
+  };
   if (!audit.valid) throw new Error(`Allocator audit failed: ${JSON.stringify(audit)}`);
 
   return {
@@ -520,6 +615,15 @@ export interface AuditResult {
   valid: boolean;
   requested_scenarios: number;
   actual_slots: number;
+  /** Allocation stopped short of requested: every distinct coverage_key was taken
+   *  (the flow's coverage capacity). planned_count < requested is expected then. */
+  capacity_limited: boolean;
+  /** Type/capability quotas were relaxed to keep coverage_keys unique (uniqueness
+   *  is the hard constraint; the exact quota split is a preference). */
+  quota_relaxed: boolean;
+  /** The candidate pool was re-enumerated at a larger budget to reach the requested
+   *  count (exact-count expansion). Observability only — not a validity input. */
+  pool_expanded: boolean;
   scenario_type_counts: Record<string, number>;
   expected_scenario_type_counts: ScenarioTypeQuotas;
   invalid_combo_ids: Array<{ slot_id: string; field: string; value: unknown }>;
@@ -534,7 +638,10 @@ export function auditAllocation(
   requestedCount: number,
   typeQuotas: ScenarioTypeQuotas,
   capabilities: Capability[],
-): AuditResult {
+  flags: { capacityLimited?: boolean; quotaRelaxed?: boolean; coreCoverageExempt?: boolean } = {},
+): Omit<AuditResult, "pool_expanded"> {
+  const capacityLimited = flags.capacityLimited ?? false;
+  const quotaRelaxed = flags.quotaRelaxed ?? false;
   const invalidComboIds: AuditResult["invalid_combo_ids"] = [];
   const invalidRuntimePairs: AuditResult["invalid_pattern_runtime_pairs"] = [];
   const invalidScenarioTypeMockPairs: string[] = [];
@@ -569,24 +676,33 @@ export function auditAllocation(
   // Slug fallback matches the quota/candidate key derivation — slots carry the derived key,
   // so the audit must compare against the same one.
   const coreCaps = capabilities.filter((c) => c.priority === "core").map((c) => c.capability_id || slug(c.name || "capability"));
-  const missingCore = requestedCount >= coreCaps.length ? coreCaps.filter((id) => !coveredCaps.has(id)) : [];
+  // A top-up allocation is additive on a first wave that already covered core caps.
+  const missingCore =
+    !flags.coreCoverageExempt && requestedCount >= coreCaps.length ? coreCaps.filter((id) => !coveredCaps.has(id)) : [];
 
   const quotasMatch = (Object.keys(typeQuotas) as Array<keyof ScenarioTypeQuotas>).every(
     (t) => (scenarioTypeCounts[t] ?? 0) === typeQuotas[t],
   );
 
+  // capacity_limited waives the exact-count requirement (the flow cannot support
+  // more distinct scenarios); quota_relaxed (or a short allocation) waives the
+  // exact quota split. Uniqueness (duplicate_coverage_keys empty) is enforced
+  // ALWAYS now — the selection loop never reuses a key anymore.
   const valid =
-    slots.length === requestedCount &&
+    (slots.length === requestedCount || capacityLimited) &&
     invalidComboIds.length === 0 &&
     invalidRuntimePairs.length === 0 &&
     invalidScenarioTypeMockPairs.length === 0 &&
+    duplicateKeys.length === 0 &&
     missingCore.length === 0 &&
-    quotasMatch;
+    (quotasMatch || quotaRelaxed || capacityLimited);
 
   return {
     valid,
     requested_scenarios: requestedCount,
     actual_slots: slots.length,
+    capacity_limited: capacityLimited,
+    quota_relaxed: quotaRelaxed,
     scenario_type_counts: scenarioTypeCounts,
     expected_scenario_type_counts: typeQuotas,
     invalid_combo_ids: invalidComboIds,

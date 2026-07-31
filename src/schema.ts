@@ -257,6 +257,14 @@ export const envSchema = z.object({
   // hit skips ~50s of planning per rerun (and keeps the same smoke units across the
   // loop). A hit only ever reuses a byte-identical request's plan. 0 disables.
   SIM_GEN_PLANNER_CACHE_TTL_MS: z.coerce.number().int().min(0).default(900_000),
+  // ONE bounded top-up wave when the first writer wave saves fewer scenarios than
+  // requested (stress mode): the shortfall is re-allocated as fresh coverage slots
+  // and written once more. "false"/"0" disables (first-wave results ship as-is).
+  SIM_GEN_TOPUP: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
+
   SMOKE_CAP_DEFAULT: z.coerce.number().int().positive().max(100).default(SMOKE_CAP_FALLBACK),
   SMOKE_CAP_HARD: z.coerce.number().int().positive().max(100).default(50),
   // Concurrent scenario-generation requests allowed per process. Each request
