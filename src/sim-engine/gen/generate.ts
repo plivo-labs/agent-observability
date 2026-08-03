@@ -1,4 +1,4 @@
-import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import type { LlmProvider, LlmUsage, WireReasoningEffort } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
@@ -92,6 +92,12 @@ export interface GenerateInput {
   phloUuid: string;
   maxScenarios: number;
   model: string;
+  /** Per-role reasoning effort for the two generation LLM calls; `undefined` omits the parameter
+   *  (the "inherit" default, i.e. the deployment's own default). Passed in rather than read from
+   *  env because this pipeline is config-free by design — the route wires
+   *  SIM_EVAL_PLANNER_REASONING_EFFORT / SIM_EVAL_WRITER_REASONING_EFFORT, exactly like `model`. */
+  plannerReasoningEffort?: WireReasoningEffort;
+  writerReasoningEffort?: WireReasoningEffort;
   simulationMode?: SimulationMode;
   testCaseGenerationInstructions?: string;
   existingSummaries?: ExistingScenarioSummary[];
@@ -162,6 +168,8 @@ async function runChunkWithRetry(
     flowJson: Dict;
     planner: PlannerWithInventory;
     model: string;
+    /** Writer reasoning effort; `undefined` omits the parameter (the "inherit" default). */
+    reasoningEffort?: WireReasoningEffort;
     generationId: string;
     phloUuid: string;
     chunkIndex: number;
@@ -314,7 +322,7 @@ async function* allocateWithReplan(args: {
   planner: PlannerWithInventory;
   plannerUsage: LlmUsage | null;
   plannerCacheHit: boolean;
-  plan: { flowJson: Dict; phloUuid: string; model: string; provider?: LlmProvider; signal?: AbortSignal };
+  plan: { flowJson: Dict; phloUuid: string; model: string; reasoningEffort?: WireReasoningEffort; provider?: LlmProvider; signal?: AbortSignal };
 }): AsyncGenerator<GenEvent, AllocationOutcome> {
   let { planner, plannerUsage, plannerCacheHit, instructions } = args;
   let slots: Slot[] | null = null;
@@ -362,6 +370,7 @@ async function* allocateWithReplan(args: {
       flowJson: args.plan.flowJson,
       phloUuid: args.plan.phloUuid,
       model: args.plan.model,
+      reasoningEffort: args.plan.reasoningEffort,
       existingSummaries: args.existing,
       userInstructions: instructions,
       simulationMode: args.mode,
@@ -382,6 +391,8 @@ interface WriterContext {
   flowJson: Dict;
   planner: PlannerWithInventory;
   model: string;
+  /** Writer reasoning effort; `undefined` omits the parameter (the "inherit" default). */
+  reasoningEffort?: WireReasoningEffort;
   generationId: string;
   phloUuid: string;
   provider?: LlmProvider;
@@ -463,7 +474,7 @@ class WriterLedger {
       const abs = chunkBase + i;
       const c = waveChunks[i];
       runChunkWithRetry(
-        { flowJson: this.ctx.flowJson, planner: this.ctx.planner, model: this.ctx.model, generationId: this.ctx.generationId, phloUuid: this.ctx.phloUuid, chunkIndex: abs, provider: this.ctx.provider, signal: this.ctx.signal, fallbackPolicy: this.ctx.fallbackPolicy },
+        { flowJson: this.ctx.flowJson, planner: this.ctx.planner, model: this.ctx.model, reasoningEffort: this.ctx.reasoningEffort, generationId: this.ctx.generationId, phloUuid: this.ctx.phloUuid, chunkIndex: abs, provider: this.ctx.provider, signal: this.ctx.signal, fallbackPolicy: this.ctx.fallbackPolicy },
         c,
         this.ctx.incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: abs, scenario }) : undefined,
       ).then(
@@ -526,6 +537,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
           flowJson: input.flowJson,
           phloUuid: input.phloUuid,
           model: input.model,
+          reasoningEffort: input.plannerReasoningEffort,
           simulationMode: mode,
           smokeCap,
           instructions: input.testCaseGenerationInstructions ?? "",
@@ -555,6 +567,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         flowJson: input.flowJson,
         phloUuid: input.phloUuid,
         model: input.model,
+        reasoningEffort: input.plannerReasoningEffort,
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
@@ -585,12 +598,13 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     planner,
     plannerUsage,
     plannerCacheHit,
-    plan: { flowJson: input.flowJson, phloUuid: input.phloUuid, model: input.model, provider: input.plannerProvider, signal: input.signal },
+    plan: { flowJson: input.flowJson, phloUuid: input.phloUuid, model: input.model, reasoningEffort: input.plannerReasoningEffort, provider: input.plannerProvider, signal: input.signal },
   });
   const { slots, capacityLimited } = alloc;
   planner = alloc.planner;
   plannerUsage = alloc.plannerUsage;
   plannerCacheHit = alloc.plannerCacheHit;
+
   // Cache only allocation-proven plans (keyed by the ORIGINAL request inputs, so a
   // replanned successor replaces its poisoned predecessor under the same key). A
   // capacity-limited plan is NOT proven — caching it would serve the thin plan to
@@ -605,6 +619,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     flowJson: input.flowJson,
     planner,
     model: input.model,
+    reasoningEffort: input.writerReasoningEffort,
     generationId,
     phloUuid: input.phloUuid,
     provider: input.writerProvider,

@@ -539,9 +539,14 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     // synthesizes fallback units from capabilities). Forces the replan path off a
     // cache hit. (Field order must mirror generate.ts's plannerCacheKey call — the
     // key is a stringify of these parts.)
+    // reasoningEffort is undefined here because the generateScenarios call below passes no
+    // plannerReasoningEffort (the "inherit" default). Stated explicitly rather than omitted:
+    // PlannerCacheKeyParts requires the field so a caller can't silently share one cache
+    // entry across two effort settings, and JSON.stringify drops an undefined value anyway,
+    // so the key this produces is byte-identical to the pre-effort key.
     const key = plannerCacheKey({
-      flowJson: canonical, phloUuid: "a", model: "m", simulationMode: "smoke",
-      smokeCap: 20, instructions: "", existingSummaries: [],
+      flowJson: canonical, phloUuid: "a", model: "m", reasoningEffort: undefined,
+      simulationMode: "smoke", smokeCap: 20, instructions: "", existingSummaries: [],
     });
     plannerCacheSet(key, { ...JSON.parse(PLANNER_JSON), capabilities: [] });
     const plannerLlm = new MockLLM([SMOKE_PLANNER_JSON]);
@@ -769,4 +774,79 @@ describe("exact-count top-up", () => {
     expect(meta.saved_count + meta.failed_count + meta.deduped_count).toBe(meta.planned_count);
   });
 
+});
+describe("generateScenarios — per-role reasoning effort", () => {
+  // The two generation roles get INDEPENDENT dials: the planner does the hard
+  // flow-comprehension work, the writer executes an already-fixed plan. Wiring them to
+  // one value (or crossing them) would make the A/B that motivated these knobs
+  // unattributable, so assert each reaches its own call.
+  const run = (effort: { plannerReasoningEffort?: "none" | "low" | "medium" | "high"; writerReasoningEffort?: "none" | "low" | "medium" | "high" }) => {
+    const plannerLlm = new MockLLM([PLANNER_JSON]);
+    const writerLlm = new MockLLM([writerResponder]);
+    return collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerProvider: plannerLlm, writerProvider: writerLlm, ...effort,
+      }),
+    ).then(() => ({ plannerLlm, writerLlm }));
+  };
+
+  test("each role's effort reaches only its own LLM call", async () => {
+    const { plannerLlm, writerLlm } = await run({ plannerReasoningEffort: "high", writerReasoningEffort: "none" });
+    expect(plannerLlm.calls[0]!.reasoningEffort).toBe("high");
+    expect(writerLlm.calls[0]!.reasoningEffort).toBe("none");
+  });
+
+  test("unset (the \"inherit\" default) omits the parameter on both calls", async () => {
+    // This is the merge-is-a-no-op guarantee: with nothing configured the wire shape
+    // must be byte-identical to before the knobs existed.
+    const { plannerLlm, writerLlm } = await run({});
+    expect(plannerLlm.calls[0]!.reasoningEffort).toBeUndefined();
+    expect(writerLlm.calls[0]!.reasoningEffort).toBeUndefined();
+  });
+
+  test("planner effort is part of the cache key, so two arms can't share a plan", async () => {
+    // Without this the A/B is worthless: flipping the dial and regenerating the same
+    // flow inside the TTL would replay the previous arm's cached plan and report a
+    // difference of zero. Same flow + same model + different effort must MISS.
+    const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
+    plannerCacheClear();
+
+    const first = new MockLLM([PLANNER_JSON]);
+    await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerReasoningEffort: "low", plannerCacheTtlMs: 60_000,
+        plannerProvider: first, writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect(first.calls.length).toBe(1);
+
+    // Same everything except effort → must call the planner again, not reuse the plan.
+    const second = new MockLLM([PLANNER_JSON]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerReasoningEffort: "high", plannerCacheTtlMs: 60_000,
+        plannerProvider: second, writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect(second.calls.length).toBe(1);
+    const meta = events.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(meta.metadata.planner_cache_hit).toBe(false);
+
+    // Control: repeating an arm verbatim DOES hit, proving the miss above came from the
+    // effort change and not from a key that never matches.
+    const third = new MockLLM([PLANNER_JSON]);
+    const again = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        plannerReasoningEffort: "high", plannerCacheTtlMs: 60_000,
+        plannerProvider: third, writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    expect(third.calls.length).toBe(0);
+    const againMeta = again.find((e) => e.type === "metadata") as Extract<GenEvent, { type: "metadata" }>;
+    expect(againMeta.metadata.planner_cache_hit).toBe(true);
+  });
 });
