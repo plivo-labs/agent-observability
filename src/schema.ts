@@ -139,7 +139,11 @@ export const envSchema = z.object({
   // identically, and the session's evals are lost (prod ap-south-1, 2026-07-14).
   // AO never sent this parameter, so every verdict to date inherited whatever the
   // model's default effort was. Raise it only together with the output caps.
-  JUDGE_REASONING_EFFORT: z.enum(["none", "low", "medium", "high"]).default("none"),
+  // "inherit" omits the parameter entirely (the pre-#114 wire shape) — the only
+  // way to express "let the deployment's own default decide", needed because an
+  // explicit value can be REJECTED by a deployment ("none" is not universally
+  // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
+  JUDGE_REASONING_EFFORT: z.enum(["inherit", "none", "low", "medium", "high"]).default("none"),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),

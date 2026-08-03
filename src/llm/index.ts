@@ -54,7 +54,27 @@ function addUsage(into: LlmUsage, from: LlmUsage): void {
   into.promptTokens += from.promptTokens;
   into.completionTokens += from.completionTokens;
   into.totalTokens += from.totalTokens;
+  if (typeof from.reasoningTokens === "number") {
+    into.reasoningTokens = (into.reasoningTokens ?? 0) + from.reasoningTokens;
+  }
 }
+
+/** True when the provider reported output truncated by the token cap
+ *  (Responses API `status="incomplete" reason="max_output_tokens"`, thrown by
+ *  both the blocking and streaming paths with this exact marker). */
+function isTruncationError(e: unknown): boolean {
+  return e instanceof Error && e.message.includes('reason="max_output_tokens"');
+}
+
+// Truncation-retry escalation bounds. A capped call that truncates is
+// DETERMINISTIC — resending identical parameters fails identically, which is
+// how whole sessions' evals were lost in prod (2026-07-14 ap-south, 2026-07-23
+// both regions: invisible reasoning tokens exhausted caps sized for visible
+// output). Each truncated attempt doubles the cap, bounded to 4x the caller's
+// budget so a runaway model can't multiply spend without limit. Effort
+// (when set above "low") drops to "low" — never adaptively to "none", which
+// some deployments reject as an invalid enum value.
+const TRUNCATION_CAP_MULTIPLIER_LIMIT = 4;
 
 /** Wrap a live-text sink so a throw disables it (with one log) instead of
  *  rejecting the provider call — sinks are observational by contract. */
@@ -106,6 +126,10 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
 
   const usage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let lastError: unknown;
+  // Per-attempt request shape, escalated on truncation (see isTruncationError):
+  // a truncated call MUST NOT be retried verbatim — it fails identically.
+  let attemptMaxTokens = maxTokens;
+  let attemptEffort = opts.reasoningEffort;
 
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     // Caller abort (client disconnected): stop immediately — no retry, no backoff.
@@ -122,10 +146,10 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         system,
         user,
         model,
-        maxTokens,
+        maxTokens: attemptMaxTokens,
         temperature: opts.temperature,
         topP: opts.topP,
-        reasoningEffort: opts.reasoningEffort,
+        reasoningEffort: attemptEffort,
         jsonSchema: opts.jsonSchema,
         stream: opts.stream,
         apiMode: opts.apiMode,
@@ -147,9 +171,35 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${model}): ` +
           (e instanceof Error ? e.message : String(e)),
       );
+      // Truncation is deterministic for a fixed request — escalate before the
+      // next attempt instead of resending byte-identical parameters: double the
+      // cap (bounded) and drop reasoning effort above "low" down to "low".
+      // Transient failures (429/timeout/5xx) keep the original shape.
+      if (isTruncationError(e) && attemptMaxTokens > 0) {
+        const nextMaxTokens = Math.min(attemptMaxTokens * 2, maxTokens * TRUNCATION_CAP_MULTIPLIER_LIMIT);
+        const nextEffort = attemptEffort === "medium" || attemptEffort === "high" ? "low" : attemptEffort;
+        if (nextMaxTokens !== attemptMaxTokens || nextEffort !== attemptEffort) {
+          console.warn(
+            `[llm] truncated at max_output_tokens (model=${model}) — escalating retry: ` +
+              `maxTokens ${attemptMaxTokens}→${nextMaxTokens}` +
+              (nextEffort !== attemptEffort ? `, reasoningEffort ${attemptEffort}→${nextEffort}` : ""),
+          );
+          attemptMaxTokens = nextMaxTokens;
+          attemptEffort = nextEffort;
+        }
+      }
       continue;
     }
     addUsage(usage, raw.usage);
+    // Reasoning-pressure breadcrumb: invisible reasoning spend at ≥50% of the cap
+    // means the next model/deployment shift can tip this call into truncation —
+    // surface it while the call still succeeds, not after evals start dying.
+    if (attemptMaxTokens > 0 && (raw.usage.reasoningTokens ?? 0) >= attemptMaxTokens / 2) {
+      console.warn(
+        `[llm] reasoning tokens at ${raw.usage.reasoningTokens}/${attemptMaxTokens} cap (model=${model}) — ` +
+          `truncation pressure; check reasoningEffort vs the cap`,
+      );
+    }
 
     const parsed = tryParseJson(raw.text);
     if (!parsed.ok) {

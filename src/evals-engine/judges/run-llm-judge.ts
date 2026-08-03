@@ -92,7 +92,12 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // lockstep — raising effort without raising the caps reintroduces the outage.
       // Runtime fallback: tests and embedders may replace the config module with a
       // partial object, and an undefined here would silently drop the parameter.
-      reasoningEffort: config.JUDGE_REASONING_EFFORT ?? "none",
+      // "inherit" deliberately DOES drop it — the operator's way to restore the
+      // pre-#114 wire shape when a deployment rejects explicit effort values.
+      reasoningEffort:
+        (config.JUDGE_REASONING_EFFORT ?? "none") === "inherit"
+          ? undefined
+          : (config.JUDGE_REASONING_EFFORT ?? "none") as "none" | "low" | "medium" | "high",
       // No per-judge timeout override: judges inherit LLM_TIMEOUT_MS, which prod
       // already raises to 300s — ABOVE the reference engine's 180s. An earlier
       // revision of this change set a 180s judge-specific default and would have

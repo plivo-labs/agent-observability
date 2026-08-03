@@ -11,6 +11,11 @@ export interface LlmUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Invisible reasoning tokens (Responses API `output_tokens_details.reasoning_tokens`).
+   *  They bill against the same `max_output_tokens` budget as visible output, so this is
+   *  the number that explains a truncation the visible output alone can't. Absent when
+   *  the provider doesn't report it (Chat path, Anthropic, mock). */
+  reasoningTokens?: number;
 }
 
 /** One raw provider call: system + user prompt in, JSON-ish text + usage out. */
