@@ -1,4 +1,5 @@
 import { config, dbConfigured } from "../config.js";
+import { resolveReasoningEffort } from "../llm/effort.js";
 
 // AO Simulation Engine — config view + capability gates.
 //
@@ -75,8 +76,21 @@ export const simEngineConfig = {
   redisCluster: config.REDIS_CLUSTER,
   /** Region for the SQS client; AWS creds come from the SDK's default chain. */
   awsRegion: config.AWS_REGION,
-  /** Scenario-generation model (default gpt-5.5-1; see plan.md Phase 1). */
+  /** Scenario-generation model (default gpt-5.5 — the deployment name the dedicated AO Azure
+   *  resources host; see SIM_EVAL_SCENARIO_GENERATION_MODEL in schema.ts). */
   scenarioGenerationModel: config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
+  /**
+   * Reasoning effort for the two generation calls, already translated to the wire value —
+   * `undefined` means "omit the parameter" (the "inherit" default). Resolved here rather than at
+   * the call sites so the "inherit" sentinel can never reach a provider, and so both generation
+   * roles read their effort from the same place their model comes from.
+   *
+   * See schema.ts for the calibration history: the planner dial measured as a null result on the
+   * reference engine (latency was output-throughput-bound, not reasoning-bound); the writer dial
+   * is the untested one.
+   */
+  plannerReasoningEffort: resolveReasoningEffort(config.SIM_EVAL_PLANNER_REASONING_EFFORT),
+  writerReasoningEffort: resolveReasoningEffort(config.SIM_EVAL_WRITER_REASONING_EFFORT),
   /** Redis key prefix (default SIM_EVAL = the orchestrator service in the managed deployment; override for OSS). */
   simRedisPrefix: config.SIM_REDIS_PREFIX,
   /** agent runtime base URL; the engine POSTs /v1/simulation/session/turn here. */
@@ -92,6 +106,14 @@ export const simEngineConfig = {
    * model would be wrong here.
    */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
+  /**
+   * Reasoning effort for the UserSimulator, translated to the wire value (`undefined` = omit).
+   * This one is billed and timed per simulated TURN, so unlike the generation dials its cost
+   * multiplies across a conversation. Reaches the provider via the Chat Completions path, which
+   * only started forwarding the parameter in this change — before that a reasoning model here
+   * silently ran at its deployment default on every turn.
+   */
+  userSimulatorReasoningEffort: resolveReasoningEffort(config.SIM_USER_REASONING_EFFORT),
   /** Number of independent SQS worker loops = max scenarios run concurrently per worker process
    *  (fan-out bound). See SIM_WORKER_CONCURRENCY + src/sim-engine/queue/consumer.ts. */
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,

@@ -25,7 +25,7 @@ function getClient(): OpenAI {
 
 /** Chat Completions wire format: POST {base}/chat/completions with `messages` + `response_format`. */
 async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletion> {
-  const { system, user, model, maxTokens, temperature, topP, jsonSchema, signal } = args;
+  const { system, user, model, maxTokens, temperature, topP, jsonSchema, reasoningEffort, signal } = args;
   // Strict json_schema when a schema is supplied (guarantees required fields);
   // otherwise the looser json_object (valid-JSON-only) mode.
   const response_format = jsonSchema
@@ -35,10 +35,22 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
     {
       model,
       // maxTokens === 0 means "no cap" → omit so the model uses its default budget.
+      // DELIBERATELY `max_tokens`, not `max_completion_tokens`: this stays the reference
+      // (cx-sqs) body shape. gpt-5.x deployments reject `max_tokens` on this endpoint, and the
+      // only caller that pins apiMode:"chat" (the user simulator) passes maxTokens:null, so the
+      // key is omitted and the conflict never fires. Do not start sending a cap on this path
+      // without switching the key — see the SIM_USER_REASONING_EFFORT note in schema.ts.
       ...(maxTokens ? { max_tokens: maxTokens } : {}),
       response_format,
       ...(temperature !== undefined ? { temperature } : {}),
       ...(topP !== undefined ? { top_p: topP } : {}),
+      // Reasoning effort on Chat Completions is a FLAT `reasoning_effort`, not the Responses
+      // API's nested `reasoning: {effort}` (see buildResponsesRequest). Before this existed the
+      // Chat path dropped the parameter silently, so the user simulator — the one caller that
+      // forces this path — always ran at its deployment's default effort no matter what was
+      // configured. Omitted entirely when unset, so a deployment that rejects the parameter is
+      // unaffected unless an operator opts in.
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages: [
         { role: "system", content: system },
         // Match the reference (cx-sqs) body: append the user turn only when non-empty
@@ -49,12 +61,20 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
     { signal },
   );
 
+  // Chat Completions reports invisible reasoning spend under
+  // completion_tokens_details.reasoning_tokens (the Responses API calls the same number
+  // output_tokens_details.reasoning_tokens — see responsesUsage). Surfacing it here means the
+  // reasoning-pressure breadcrumb in completeJSON is no longer blind on this path, which matters
+  // now that a reasoning model can be configured with an explicit effort above.
+  const chatReasoning = res.usage?.completion_tokens_details?.reasoning_tokens;
+
   return {
     text: res.choices[0]?.message?.content ?? "",
     usage: {
       promptTokens: res.usage?.prompt_tokens ?? 0,
       completionTokens: res.usage?.completion_tokens ?? 0,
       totalTokens: res.usage?.total_tokens ?? 0,
+      ...(typeof chatReasoning === "number" ? { reasoningTokens: chatReasoning } : {}),
     },
   };
 }

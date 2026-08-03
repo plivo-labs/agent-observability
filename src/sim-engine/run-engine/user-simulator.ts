@@ -17,7 +17,7 @@
 // mirroring the Go `GenerateUserMessage` retry-on-empty.
 
 import { z } from "zod";
-import { completeJSON, type LlmProvider } from "../../llm/index.js";
+import { completeJSON, type LlmProvider, type WireReasoningEffort } from "../../llm/index.js";
 import type { Scenario, ScenarioPersona } from "../schema.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -569,6 +569,10 @@ export interface GenerateUserMessageInput {
   provider?: LlmProvider;
   /** Explicit model override; defaults to the configured SIMULATOR_MODEL. */
   model?: string;
+  /** Reasoning effort for this call; `undefined` omits the parameter (the "inherit" default).
+   *  Threaded from SIM_USER_REASONING_EFFORT by the orchestrator. Reaches the provider on the
+   *  Chat Completions path as a flat `reasoning_effort` — see the apiMode note below. */
+  reasoningEffort?: WireReasoningEffort;
 }
 
 /**
@@ -603,6 +607,13 @@ export async function generateUserMessage(input: GenerateUserMessageInput): Prom
       model: input.model,
       jsonSchema: USER_MESSAGE_JSON_SCHEMA,
       apiMode: "chat",
+      // Operator-tunable per-turn reasoning effort; `undefined` (the "inherit" default) omits the
+      // parameter, which is the pre-existing wire shape. Note this is the one call that pins
+      // apiMode:"chat" — the Chat Completions path forwards effort as a flat `reasoning_effort`
+      // (it silently dropped the parameter entirely before this change), so a reasoning model
+      // configured here now actually honors the setting instead of running at the deployment
+      // default on every turn.
+      reasoningEffort: input.reasoningEffort,
       maxTokens: null,
       timeoutMs: 180_000,
       // cx-sqs makes ONE LLM call (no parse/network retry); the only retry is the empty-message one below.

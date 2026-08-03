@@ -1,5 +1,5 @@
 import type { ZodType } from "zod";
-import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { completeJSON, resolveReasoningEffort, type LlmProvider, type LlmUsage } from "../../llm/index.js";
 import { config } from "../../config.js";
 
 // AO Eval Engine — the single LLM entry every judge uses. Replaces LiveKit's private `_LLMJudge`:
@@ -94,10 +94,7 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // partial object, and an undefined here would silently drop the parameter.
       // "inherit" deliberately DOES drop it — the operator's way to restore the
       // pre-#114 wire shape when a deployment rejects explicit effort values.
-      reasoningEffort:
-        (config.JUDGE_REASONING_EFFORT ?? "none") === "inherit"
-          ? undefined
-          : (config.JUDGE_REASONING_EFFORT ?? "none") as "none" | "low" | "medium" | "high",
+      reasoningEffort: resolveReasoningEffort(config.JUDGE_REASONING_EFFORT, "none"),
       // No per-judge timeout override: judges inherit LLM_TIMEOUT_MS, which prod
       // already raises to 300s — ABOVE the reference engine's 180s. An earlier
       // revision of this change set a 180s judge-specific default and would have

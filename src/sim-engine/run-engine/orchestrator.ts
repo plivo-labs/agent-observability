@@ -16,7 +16,7 @@
 
 import type { z } from "zod";
 import type { RedisClient } from "../queue/redis.js";
-import type { LlmProvider } from "../../llm/index.js";
+import type { LlmProvider, WireReasoningEffort } from "../../llm/index.js";
 import { Scenario as ScenarioSchema, type WorldStateEntry as SchemaWorldStateEntry } from "../schema.js";
 import { FlowOrchestrator, parseFlowGraph } from "./flow-executor.js";
 import type {
@@ -69,6 +69,9 @@ export interface ScenarioRunnerDeps {
   llmProvider?: LlmProvider;
   /** UserSimulator model override (defaults to USER_SIMULATOR_MODEL via config). */
   llmModel?: string;
+  /** UserSimulator reasoning-effort override (defaults to SIM_USER_REASONING_EFFORT via config).
+   *  `undefined` omits the parameter — the "inherit" default. */
+  llmReasoningEffort?: WireReasoningEffort;
 }
 
 /** Durable-persistence context (aodb-write.md): both ids are opaque caller-supplied strings.
@@ -123,6 +126,7 @@ class ScenarioRunner implements AINodeExecutor {
   private readonly rng: Rng;
   private readonly llmProvider?: LlmProvider;
   private readonly llmModel?: string;
+  private readonly llmReasoningEffort?: WireReasoningEffort;
 
   private readonly handoffGraph: HandoffGraph;
   private readonly worldStateMap: Map<string, WorldStateEntry>;
@@ -160,6 +164,7 @@ class ScenarioRunner implements AINodeExecutor {
     this.rng = deps.rng ?? Math.random;
     this.llmProvider = deps.llmProvider;
     this.llmModel = deps.llmModel ?? simEngineConfig.userSimulatorModel;
+    this.llmReasoningEffort = deps.llmReasoningEffort ?? simEngineConfig.userSimulatorReasoningEffort;
     this.handoffGraph = handoffGraph;
     this.worldStateMap = toWorldStateMap(job.scenario.world_state as Record<string, SchemaWorldStateEntry>);
   }
@@ -242,6 +247,7 @@ class ScenarioRunner implements AINodeExecutor {
         nonAnswerType,
         provider: this.llmProvider,
         model: this.llmModel,
+        reasoningEffort: this.llmReasoningEffort,
       });
       userSimMs = Date.now() - userSimStart;
       this.userSimDurations.push(userSimMs);

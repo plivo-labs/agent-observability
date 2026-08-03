@@ -179,6 +179,8 @@ export function registerSimulationRoutes(app: Hono): void {
           phloUuid: body.phlo_uuid,
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
+          plannerReasoningEffort: simEngineConfig.plannerReasoningEffort,
+          writerReasoningEffort: simEngineConfig.writerReasoningEffort,
           simulationMode: body.simulation_mode,
           // Effective smoke-unit cap: an explicit request passes through verbatim (the
           // 400 guard above already enforces <= SMOKE_CAP_HARD); the env DEFAULT stays
