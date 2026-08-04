@@ -27,7 +27,7 @@ import type {
   VariableStore,
   WorldStateEntry,
 } from "./flow-types.js";
-import { buildAgentConfig } from "./agent-config.js";
+import { buildAgentConfig, buildScreeningAgentConfig } from "./agent-config.js";
 import { buildHandoffGraph, computeHandoffPlan, type HandoffGraph } from "./handoff-planner.js";
 import { generateUserMessage, type ConversationTurn } from "./user-simulator.js";
 import {
@@ -46,6 +46,7 @@ import {
   isTransitionTurn,
   normalizedTurnType,
   type LiveKitSimRequest,
+  LIVEKIT_TURN_TYPE_SPEECH,
 } from "./livekit-client.js";
 import { emitScenarioStarted, emitScenarioDbReady, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
@@ -134,6 +135,8 @@ class ScenarioRunner implements AINodeExecutor {
   // Mutable per-scenario state, threaded across turns (mirrors the Go ScenarioRunner fields).
   private conversationHistory: ConversationTurn[] = [];
   private sessionTtlSet = false;
+  /** SER-6070: node ids with an open livekit flow-session (screening runs conversationally). */
+  private readonly openScreeningSessions = new Set<string>();
   private currentNodeId = "";
   private currentNodeRunUuid = "";
   private contextItems: unknown[] = [];
@@ -170,6 +173,65 @@ class ScenarioRunner implements AINodeExecutor {
   }
 
   /** Action mocks for a node, by node id then config name (port of resolveActionMocks). */
+  /** SER-6070: open the server-held screening session and surface its opener as a
+   *  standalone transcript turn (user never spoke yet — outbound shape). */
+  private async openScreeningSession(
+    node: FlowNode,
+    variableStore: VariableStore,
+    sessionId: string,
+    turnIndex: number,
+  ): Promise<string> {
+    const agentConfig = buildScreeningAgentConfig(
+      { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
+      variableStore,
+      this.flowConfig,
+    );
+    if (node.id !== this.currentNodeId) {
+      this.currentNodeRunUuid = crypto.randomUUID();
+      this.currentNodeId = node.id;
+    }
+    const startResp = await this.livekit.startFlowSession({
+      phlo_run_uuid: this.flowRunUuid,
+      simulation_session_id: sessionId,
+      node_uuid: node.id,
+      node_run_uuid: this.currentNodeRunUuid,
+      auth_id: this.job.authId,
+      is_interruption: false,
+      agent_config: agentConfig,
+      action_mocks: {},
+      context_items: [],
+      variables_by_node: this.variablesByNode,
+    });
+    this.openScreeningSessions.add(node.id);
+    const opener = startResp.message ?? "";
+    if (opener !== "") {
+      await writeAssistantTurn(this.redis, this.flowRunUuid, node.id, "", {}, opener);
+      const openerPayload = {
+        scenario_id: this.job.scenarioId,
+        turn: turnIndex,
+        node_uuid: node.id,
+        user: "",
+        agent: opener,
+        turn_type: LIVEKIT_TURN_TYPE_SPEECH,
+        is_spoken: true,
+        intent: "",
+        variables: {},
+        variables_by_node: deepCopy(this.variablesByNode),
+        tool_calls: [],
+        response_items: [],
+        is_interruption: false,
+        is_non_answer: false,
+        non_answer_type: "",
+        partial_assistant_msg: "",
+      };
+      this.transcriptTurns.push(openerPayload);
+      await emitTurnCompleted(this.redis, this.job.simRunUuid, openerPayload);
+      this.conversationHistory.push({ role: "assistant", content: opener });
+      this.evalTurns.push({ node_uuid: node.id, user: "", agent: opener, intent: "" });
+    }
+    return opener;
+  }
+
   private resolveActionMocks(node: FlowNode): Record<string, unknown> | undefined {
     const byId = this.worldStateMap.get(node.id);
     if (byId?.actionMocks) return byId.actionMocks;
@@ -256,6 +318,37 @@ class ScenarioRunner implements AINodeExecutor {
     this.lastTurnWasNonAnswer = isNonAnswer;
     this.lastTurnWasInterruption = isInterruption;
 
+    // SER-6070: screening nodes run as a server-held livekit flow-session. On the first visit,
+    // open the session BEFORE generating the caller's message: the unit speaks first (outbound
+    // shape), so the opener must be in history for the simulator to answer. The opener is
+    // recorded as its own transcript turn; the visit then proceeds as a normal exchange.
+    const isScreening = node.type === "contact_screening" || node.type === "outbound_screening";
+    const screeningSessionId = `${this.flowRunUuid}:sc:${node.id}`;
+    if (isScreening && !this.openScreeningSessions.has(node.id)) {
+      const opener = await this.openScreeningSession(node, variableStore, screeningSessionId, turnIndex);
+      // Regenerate the caller message against the opener (the earlier block saw empty history
+      // and fabricated "Hello!" — the caller must answer the screening question instead).
+      const userSimStart = Date.now();
+      userMsg = await generateUserMessage({
+        scenario: this.job.scenario,
+        history: this.conversationHistory,
+        agentFlowDescription: this.job.agentFlowDescription,
+        isOutboundCall: this.isOutboundCall,
+        partialAssistantMsg: "",
+        nonAnswerType: "",
+        provider: this.llmProvider,
+        model: this.llmModel,
+        reasoningEffort: this.llmReasoningEffort,
+      });
+      userSimMs = Date.now() - userSimStart;
+      this.userSimDurations.push(userSimMs);
+      isInterruption = false;
+      isNonAnswer = false;
+      nonAnswerType = "";
+      partialAssistantMsg = "";
+      void opener;
+    }
+
     // 2. Pre-write the user turn (skipped on a node switch — livekit's transfer path ignores it;
     //    the assistant reply is written as a standalone turn after the response).
     let convIndex = -1;
@@ -276,23 +369,31 @@ class ScenarioRunner implements AINodeExecutor {
 
     // 4. agent_config + the handoff plan livekit uses to route tool-based handoffs.
     // FlowNode → AgentConfigNode: buildAgentConfig only reads `config`; coerce its nullable field.
-    const agentConfig = buildAgentConfig(
-      { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
-      variableStore,
-      this.flowConfig,
-    );
-    const handoffNode = this.handoffGraph.nodes.get(node.id) ?? null;
-    agentConfig["output_state_config"] = computeHandoffPlan(
-      handoffNode,
-      this.handoffGraph,
-      this.job.scenario.world_state as Record<string, SchemaWorldStateEntry>,
-      variableStore,
-    );
+    const agentConfig = isScreening
+      ? buildScreeningAgentConfig(
+          { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
+          variableStore,
+          this.flowConfig,
+        )
+      : buildAgentConfig(
+          { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
+          variableStore,
+          this.flowConfig,
+        );
+    if (!isScreening) {
+      const handoffNode = this.handoffGraph.nodes.get(node.id) ?? null;
+      agentConfig["output_state_config"] = computeHandoffPlan(
+        handoffNode,
+        this.handoffGraph,
+        this.job.scenario.world_state as Record<string, SchemaWorldStateEntry>,
+        variableStore,
+      );
+    }
 
     // 5. Call /turn with the full stateless context.
     const req: LiveKitSimRequest = {
       phlo_run_uuid: this.flowRunUuid,
-      simulation_session_id: this.flowRunUuid,
+      simulation_session_id: isScreening ? screeningSessionId : this.flowRunUuid,
       node_uuid: node.id,
       node_run_uuid: nodeRunUuid,
       auth_id: this.job.authId,
@@ -307,7 +408,11 @@ class ScenarioRunner implements AINodeExecutor {
       req.partial_assistant_message = partialAssistantMsg;
     }
     const livekitStart = Date.now();
-    const resp = await this.livekit.executeTurn(req);
+    const resp = isScreening ? await this.livekit.turnFlowSession(req) : await this.livekit.executeTurn(req);
+    if (isScreening && resp.ended) {
+      this.openScreeningSessions.delete(node.id);
+      this.livekit.forgetSession(screeningSessionId);
+    }
     const livekitMs = Date.now() - livekitStart;
     this.livekitDurations.push(livekitMs);
 
