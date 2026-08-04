@@ -205,6 +205,11 @@ export class FlowOrchestrator {
         case "ai_action":
         case "http_request":
         case "branch_v2":
+        // contact_screening (SER-6070) is mocked like the other multi-outcome
+        // nodes: the scenario's world_state supplies the disposition as
+        // `outcome` and the screening node_vars (screening_disposition etc.)
+        // as `data`, so downstream {{Node.screening_*}} templates resolve.
+        case "contact_screening":
           execResult = this.executeMockedNode(node);
           this.variableStore.set(node.configName, node.id, execResult.variables);
           break;
@@ -286,6 +291,9 @@ export function defaultMockedOutcome(node: { type: string; config?: Record<strin
       return "success";
     case "call_forward":
       return "completed";
+    case "contact_screening":
+      // Happy-path disposition; parallels initiate_call's hardcoded "answered".
+      return "reached";
     case "ai_action": {
       const intents = node.config?.["intents"];
       if (Array.isArray(intents) && intents.length > 0) {

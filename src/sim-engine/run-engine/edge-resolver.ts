@@ -93,6 +93,16 @@ export class EdgeResolver {
           sourceHandle = "no_match";
         }
         break;
+      case "contact_screening":
+        // Screening dispositions double as literal edge sourceHandles
+        // (reached / callback / wrong_contact / unavailable / declined /
+        // do_not_call, plus "Voicemail Detected") — matching phlo-core's
+        // output states. No intent-UUID indirection.
+        sourceHandle = result.outcome;
+        if (sourceHandle === "") {
+          sourceHandle = "reached";
+        }
+        break;
       case "prompt": {
         const edge = resolvePromptEdge(this.graph, currentNodeId);
         if (edge) {
