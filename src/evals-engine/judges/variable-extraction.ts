@@ -1,4 +1,5 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import { sumUsage } from "../../llm/usage.js";
 import { z } from "zod";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { systemForVariableExtraction } from "./instructions.js";
@@ -184,14 +185,6 @@ function variablePayload(
       (batch.cutoffConfirmed
         ? "FINAL RECORDING BATCH CUTOFF CONFIRMED from structured turn order: do not mark a pending final-batch variable missing unless its own rule required earlier recording."
         : "If an interrupted ending/transfer is followed by the caller and no later agent/tool turn, the configured final recording batch had no opportunity to run."),
-  };
-}
-
-function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
-  return {
-    promptTokens: a.promptTokens + b.promptTokens,
-    completionTokens: a.completionTokens + b.completionTokens,
-    totalTokens: a.totalTokens + b.totalTokens,
   };
 }
 
@@ -397,7 +390,10 @@ export async function runVariableExtractionJudge(
     { result: focusedReview, candidates: focusedCandidates, note: "Cleared by focused defect review" },
   ]) {
     if (!review.result) continue;
-    result.usage = addUsage(result.usage, review.result.usage);
+    // sumUsage (llm/usage.ts) is the one place usage arithmetic lives. The local
+    // merge this replaces silently dropped reasoningTokens, so a guarded review's
+    // invisible spend vanished from the judge's own total.
+    result.usage = sumUsage([result.usage, review.result.usage]).usage;
     const candidateKeys = new Set(
       review.candidates.map((candidate) => `${candidate.issue_type}:${candidate.variable_name}`),
     );

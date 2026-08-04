@@ -161,6 +161,42 @@ export function priceFor(
   return prices[key] ?? null;
 }
 
+/**
+ * Cost in USD for one LLM call's tokens. THE cost formula — every caller that
+ * turns tokens into dollars goes through here.
+ *
+ * It exists because there were briefly two: the per-session walk in metrics.ts and
+ * the per-call accounting line in llm/index.ts each did their own arithmetic, and
+ * only one of them handled cached prompt tokens. Two live code paths reporting
+ * different dollar figures for the same tokens is worse than either being slightly
+ * wrong, because neither number is checkable against the other.
+ *
+ * Returns `null` when we hold no rate for the model. Callers must surface that as
+ * "unknown" and never coerce it to 0 — a fabricated zero understates a bill and
+ * reads as "this was free".
+ *
+ * `cachedPromptTokens` is a SUBSET of `promptTokens` (providers report it that
+ * way), so the fresh portion is the remainder and is billed at the full input rate.
+ * When a model has no `cache_read` rate the cached portion falls back to the input
+ * rate — conservative: it reflects no cache saving rather than inventing one.
+ */
+export function costForTokens(
+  provider: string | null | undefined,
+  model: string | null | undefined,
+  tokens: { promptTokens: number; cachedPromptTokens?: number; completionTokens: number },
+): number | null {
+  const price = priceFor(provider, model);
+  if (!price) return null;
+  const cached = Math.max(0, tokens.cachedPromptTokens ?? 0);
+  const fresh = Math.max(0, tokens.promptTokens - cached);
+  const cost =
+    (fresh / 1_000_000) * price.input +
+    (cached / 1_000_000) * (price.cache_read ?? price.input) +
+    (tokens.completionTokens / 1_000_000) * price.output;
+  // 6 dp — sub-cent precision without floating-point noise.
+  return Number(cost.toFixed(6));
+}
+
 /** Lower-case + strip the noisy parts of provider strings so
  * "OpenAI" / "openai.com" / "api.openai.com" / "@openai" all match. */
 export function normalizeProvider(provider: string): string {

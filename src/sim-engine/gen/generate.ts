@@ -1,4 +1,5 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import { sumUsage } from "../../llm/usage.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
@@ -105,34 +106,6 @@ export interface GenerateInput {
 
 const PLANNER_RETRIES = 2;
 const ALLOCATION_RETRIES = 2;
-
-/**
- * Flatten a set of per-call usages into the counters the accounting log lines print.
- *
- * `reasoning` is reported ALONGSIDE `completion`, never added to it: the provider
- * counts invisible reasoning inside output_tokens already, so `total` would be
- * inflated for every reasoning model if it were summed in. `calls` is the number of
- * real LLM round-trips the tokens came from — a chunk that retried twice reports
- * calls=2, which is how retry waste shows up as spend rather than hiding inside an
- * average.
- */
-function sumUsage(usages: LlmUsage[]): {
-  prompt: number;
-  completion: number;
-  reasoning: number;
-  total: number;
-  calls: number;
-} {
-  const out = { prompt: 0, completion: 0, reasoning: 0, total: 0, calls: 0 };
-  for (const u of usages) {
-    out.prompt += u.promptTokens;
-    out.completion += u.completionTokens;
-    out.reasoning += u.reasoningTokens ?? 0;
-    out.calls += 1;
-  }
-  out.total = out.prompt + out.completion;
-  return out;
-}
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -495,14 +468,14 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     // ATTRIBUTABLE, because a chunk is one LLM call (or its retries). Cost per
     // scenario is chunk tokens ÷ chunk saved — an amortisation, which is why it is
     // left to the reader rather than printed as if it were measured per scenario.
-    const chunkUsage = sumUsage(ev.usages);
+    const { usage: chunkUsage, calls: chunkCalls } = sumUsage(ev.usages);
     const chunkSaved = perChunkSaved.get(ev.chunkIndex) ?? 0;
     console.log(
       `[sim-gen] chunk generation=${generationId} chunk=${ev.chunkIndex}/${chunks.length} ` +
         `slots=${chunks[ev.chunkIndex]?.length ?? 0} saved=${chunkSaved} failed=${ev.failedSlotIds.length} ` +
-        `duration_ms=${Date.now() - (chunkStartedAt.get(ev.chunkIndex) ?? writerStart)} llm_calls=${chunkUsage.calls} ` +
-        `prompt_tokens=${chunkUsage.prompt} completion_tokens=${chunkUsage.completion} ` +
-        `reasoning_tokens=${chunkUsage.reasoning} total_tokens=${chunkUsage.total}`,
+        `duration_ms=${Date.now() - (chunkStartedAt.get(ev.chunkIndex) ?? writerStart)} llm_calls=${chunkCalls} ` +
+        `prompt_tokens=${chunkUsage.promptTokens} completion_tokens=${chunkUsage.completionTokens} ` +
+        `reasoning_tokens=${chunkUsage.reasoningTokens ?? 0} total_tokens=${chunkUsage.totalTokens}`,
     );
     yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
   }
@@ -526,15 +499,23 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // enumeration with no LLM call (see allocateScenarioSlots), so its token cost is
   // structurally zero and `allocation_ms` is its whole story. Emitting a hardcoded
   // `allocation_tokens=0` would imply it was measured and could one day be non-zero.
-  const plannerTokens = sumUsage(plannerUsage ? [plannerUsage] : []);
-  const writerTokens = sumUsage(writerUsages);
+  const { usage: plannerU, calls: plannerCalls } = sumUsage(plannerUsage ? [plannerUsage] : []);
+  const { usage: writerU, calls: writerCalls } = sumUsage(writerUsages);
+  // No cost_usd here, deliberately. Costing needs a PROVIDER name, and this whole
+  // module tree (generate/planner/writer/allocator) takes everything through
+  // GenerateInput and imports no config — which is what lets the gen tests run
+  // without parsing real env. Importing config, or plumbing a provider name through
+  // GenerateInput, to print one log field would trade that invariant for nothing:
+  // the per-call `[llm] usage` lines already carry both cost_usd AND
+  // correlation_id=<generation-id>, so generation cost is a group-by away:
+  //   phrase "[llm] usage" AND correlation_id=<id>  ->  sum(cost_usd)
   console.log(
     `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length} ` +
-      `planner_prompt_tokens=${plannerTokens.prompt} planner_completion_tokens=${plannerTokens.completion} ` +
-      `planner_reasoning_tokens=${plannerTokens.reasoning} planner_llm_calls=${plannerTokens.calls} ` +
-      `writer_prompt_tokens=${writerTokens.prompt} writer_completion_tokens=${writerTokens.completion} ` +
-      `writer_reasoning_tokens=${writerTokens.reasoning} writer_llm_calls=${writerTokens.calls} ` +
-      `total_tokens=${plannerTokens.total + writerTokens.total} llm_calls=${plannerTokens.calls + writerTokens.calls}`,
+      `planner_prompt_tokens=${plannerU.promptTokens} planner_completion_tokens=${plannerU.completionTokens} ` +
+      `planner_reasoning_tokens=${plannerU.reasoningTokens ?? 0} planner_llm_calls=${plannerCalls} ` +
+      `writer_prompt_tokens=${writerU.promptTokens} writer_completion_tokens=${writerU.completionTokens} ` +
+      `writer_reasoning_tokens=${writerU.reasoningTokens ?? 0} writer_llm_calls=${writerCalls} ` +
+      `total_tokens=${plannerU.totalTokens + writerU.totalTokens} llm_calls=${plannerCalls + writerCalls}`,
   );
   yield {
     type: "metadata",
