@@ -1,6 +1,28 @@
 import { z } from "zod";
 import { SMOKE_CAP_FALLBACK } from "./sim-engine/gen/combos.js"; // pure data leaf — safe at env-parse time
 
+/**
+ * A reasoning-effort env knob, parsed straight into the value the provider accepts.
+ *
+ * Operators may write `inherit`, which is NOT a provider value — it means "send no
+ * `reasoning_effort` at all and let the deployment's own default apply". That escape hatch
+ * exists because an explicit effort can be REJECTED by a deployment ("none" is not universally
+ * valid across gpt-5.x), and a rejected enum 400s every call on that path.
+ *
+ * The sentinel is collapsed HERE, at the boundary, so `config.*_REASONING_EFFORT` is already
+ * `"none" | "low" | "medium" | "high" | undefined` — the exact shape the wire takes. A role
+ * that reads the config value therefore CANNOT ship `"inherit"` to a provider; it is
+ * unrepresentable past this point rather than something each call site has to remember to
+ * translate. An invalid value still fails at boot, not per-request.
+ *
+ * @param fallback the effort when the var is unset. "inherit" => omit the parameter.
+ */
+const reasoningEffort = (fallback: "inherit" | "none" | "low" | "medium" | "high") =>
+  z
+    .enum(["inherit", "none", "low", "medium", "high"])
+    .default(fallback)
+    .transform((v) => (v === "inherit" ? undefined : v));
+
 export const envSchema = z.object({
   PORT: z.coerce.number().default(9090),
 
@@ -143,7 +165,7 @@ export const envSchema = z.object({
   // way to express "let the deployment's own default decide", needed because an
   // explicit value can be REJECTED by a deployment ("none" is not universally
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
-  JUDGE_REASONING_EFFORT: z.enum(["inherit", "none", "low", "medium", "high"]).default("none"),
+  JUDGE_REASONING_EFFORT: reasoningEffort("none"),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -195,12 +217,8 @@ export const envSchema = z.object({
   //
   // Unlike the judge caps, raising effort here cannot truncate: the planner cap is generous
   // (PLANNER_MAX_OUTPUT_TOKENS) and the writer runs uncapped (maxTokens:null, streaming).
-  SIM_EVAL_PLANNER_REASONING_EFFORT: z
-    .enum(["inherit", "none", "low", "medium", "high"])
-    .default("inherit"),
-  SIM_EVAL_WRITER_REASONING_EFFORT: z
-    .enum(["inherit", "none", "low", "medium", "high"])
-    .default("inherit"),
+  SIM_EVAL_PLANNER_REASONING_EFFORT: reasoningEffort("inherit"),
+  SIM_EVAL_WRITER_REASONING_EFFORT: reasoningEffort("inherit"),
 
   // Sim persistence mode. Selects whether AO writes its ao_sim_* tables:
   //   • true  (default) — PERSISTENT: generated scenarios land in ao_sim_scenario, run results
@@ -265,9 +283,7 @@ export const envSchema = z.object({
   // Historically this knob could not exist: the Chat Completions path never forwarded the
   // parameter at all, so a reasoning model configured here silently ran at the deployment's
   // default effort on every turn. That gap is closed in this change (see providers/openai.ts).
-  SIM_USER_REASONING_EFFORT: z
-    .enum(["inherit", "none", "low", "medium", "high"])
-    .default("inherit"),
+  SIM_USER_REASONING_EFFORT: reasoningEffort("inherit"),
   // SQS consumer fan-out: the number of independent worker loops the consumer runs, i.e. the max
   // scenarios processed concurrently per worker process. Each worker polls SQS independently and
   // processes one message at a time (see src/sim-engine/queue/consumer.ts), so N scenarios stay in

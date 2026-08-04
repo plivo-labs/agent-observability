@@ -23,6 +23,20 @@ function getClient(): OpenAI {
   return client;
 }
 
+/** Map a Chat Completions usage block to LlmUsage. Mirrors responsesUsage; the two APIs report
+ *  the same numbers under different names (completion_tokens_details vs output_tokens_details,
+ *  prompt/completion vs input/output). Surfacing reasoning tokens here keeps the
+ *  reasoning-pressure breadcrumb in completeJSON from being blind on this transport. */
+function chatUsage(u: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } } | undefined): LlmUsage {
+  const reasoning = u?.completion_tokens_details?.reasoning_tokens;
+  return {
+    promptTokens: u?.prompt_tokens ?? 0,
+    completionTokens: u?.completion_tokens ?? 0,
+    totalTokens: u?.total_tokens ?? 0,
+    ...(typeof reasoning === "number" ? { reasoningTokens: reasoning } : {}),
+  };
+}
+
 /** Chat Completions wire format: POST {base}/chat/completions with `messages` + `response_format`. */
 async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletion> {
   const { system, user, model, maxTokens, temperature, topP, jsonSchema, reasoningEffort, signal } = args;
@@ -61,22 +75,7 @@ async function completeViaChat(args: ProviderCompleteArgs): Promise<RawCompletio
     { signal },
   );
 
-  // Chat Completions reports invisible reasoning spend under
-  // completion_tokens_details.reasoning_tokens (the Responses API calls the same number
-  // output_tokens_details.reasoning_tokens — see responsesUsage). Surfacing it here means the
-  // reasoning-pressure breadcrumb in completeJSON is no longer blind on this path, which matters
-  // now that a reasoning model can be configured with an explicit effort above.
-  const chatReasoning = res.usage?.completion_tokens_details?.reasoning_tokens;
-
-  return {
-    text: res.choices[0]?.message?.content ?? "",
-    usage: {
-      promptTokens: res.usage?.prompt_tokens ?? 0,
-      completionTokens: res.usage?.completion_tokens ?? 0,
-      totalTokens: res.usage?.total_tokens ?? 0,
-      ...(typeof chatReasoning === "number" ? { reasoningTokens: chatReasoning } : {}),
-    },
-  };
+  return { text: res.choices[0]?.message?.content ?? "", usage: chatUsage(res.usage) };
 }
 
 interface ResponsesResult {

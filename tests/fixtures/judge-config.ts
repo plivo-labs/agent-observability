@@ -5,7 +5,10 @@
  */
 export const TEST_JUDGE_CONFIG = {
   LLM_PROVIDER: "anthropic",
-  JUDGE_MODEL: undefined,
+  // Pinned so resolveModel() doesn't hit its unset-model fallback (and the accompanying
+  // warning) on every judge test. A test that specifically exercises the unset path should
+  // override this to undefined locally rather than the production code special-casing mocks.
+  JUDGE_MODEL: "test-judge-model",
   SIMULATOR_MODEL: undefined,
   GENERATOR_MODEL: undefined,
   LLM_TIMEOUT_MS: 30_000,

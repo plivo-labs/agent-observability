@@ -67,14 +67,16 @@ describe("LLM node judges (MockLLM)", () => {
     expect(llm.calls[0]!.maxTokens).toBe(1500); // parity cap unchanged — effort is what makes it sufficient
   });
 
-  test('JUDGE_REASONING_EFFORT="inherit" omits the parameter (pre-#114 wire shape)', async () => {
-    // "inherit" exists because an explicit effort value can be REJECTED by a
-    // deployment ("none" is not universally valid across gpt-5.x), and a rejected
-    // enum 400s every judge call. Omitting the key restores the deployment-default
-    // behavior. The judge runner reads config at call time, so mutate-and-restore.
+  test("an unset JUDGE_REASONING_EFFORT omits the parameter (pre-#114 wire shape)", async () => {
+    // The operator writes "inherit" when a deployment REJECTS an explicit effort value
+    // ("none" is not universally valid across gpt-5.x) and a rejected enum 400s every judge
+    // call. The schema collapses that sentinel to undefined at parse time, so what this path
+    // actually sees is undefined — that is what is asserted here. (Setting the literal
+    // "inherit" on the parsed config would be testing a state the schema cannot produce.)
+    // The judge runner reads config at call time, so mutate-and-restore.
     const { config } = await import("../src/config.js");
     const prior = (config as Record<string, unknown>).JUDGE_REASONING_EFFORT;
-    (config as Record<string, unknown>).JUDGE_REASONING_EFFORT = "inherit";
+    (config as Record<string, unknown>).JUDGE_REASONING_EFFORT = undefined;
     try {
       const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
       await runHallucinationJudge(node(), ctx(), llm);
