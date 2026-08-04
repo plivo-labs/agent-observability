@@ -271,6 +271,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         userInstructions: instructions,
         simulationMode: mode,
         smokeCap,
+        generationId,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -325,6 +326,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         userInstructions: instructions,
         simulationMode: mode,
         smokeCap,
+        generationId,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -450,8 +452,24 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   }
 
   const writerMs = Date.now() - writerStart;
+  // Whole-generation token roll-up on the same line as the timings, so one grep
+  // answers "what did these N scenarios cost, and how long did they take" without
+  // joining against the per-call `[llm] usage` lines. Those stay the source of
+  // truth for the planner/writer split — this is the headline.
+  const genUsage = [plannerUsage, ...writerUsages].reduce(
+    (acc, u) => {
+      if (!u) return acc; // planner cache hit → no planner call → no tokens
+      acc.prompt += u.promptTokens;
+      acc.completion += u.completionTokens;
+      acc.reasoning += u.reasoningTokens ?? 0;
+      return acc;
+    },
+    { prompt: 0, completion: 0, reasoning: 0 },
+  );
   console.log(
-    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length}`,
+    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length} ` +
+      `prompt_tokens=${genUsage.prompt} completion_tokens=${genUsage.completion} reasoning_tokens=${genUsage.reasoning} ` +
+      `total_tokens=${genUsage.prompt + genUsage.completion} llm_calls=${(plannerUsage ? 1 : 0) + writerUsages.length}`,
   );
   yield {
     type: "metadata",

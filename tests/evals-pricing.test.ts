@@ -43,6 +43,24 @@ describe("normalizeModel", () => {
   test("passes through unmodified for plain model ids", () => {
     expect(normalizeModel("gpt-4o-mini")).toBe("gpt-4o-mini");
   });
+
+  test("strips deployment environment suffixes", () => {
+    // Every configured model value in this service is an Azure DEPLOYMENT name, not
+    // an OpenAI model id. Without this a non-prod deployment matches no price row
+    // and reports its cost as unknown.
+    expect(normalizeModel("gpt-5.5-dev")).toBe("gpt-5.5");
+    expect(normalizeModel("gpt-5.6-luna-dev")).toBe("gpt-5.6-luna");
+    expect(normalizeModel("gpt-5.5-stage")).toBe("gpt-5.5");
+    expect(normalizeModel("gpt-5.5-prod")).toBe("gpt-5.5");
+  });
+
+  test("does NOT strip suffixes that are part of a real model id", () => {
+    // The suffix set is deliberately closed. A blanket `-\w+$` strip would turn
+    // "gpt-4.1-mini" into "gpt-4.1" — a different, ~5x more expensive model — and
+    // report a confidently wrong cost instead of admitting it has no rate.
+    expect(normalizeModel("gpt-4.1-mini")).toBe("gpt-4.1-mini");
+    expect(normalizeModel("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
 });
 
 describe("priceFor", () => {
@@ -139,6 +157,34 @@ describe("reloadPrices (models.dev fetch)", () => {
     });
     expect(priceFor("openai", "gpt-4o-mini")?.cache_read).toBe(0.075);
     expect(priceFor("anthropic", "claude-sonnet-4-7")?.input).toBe(3);
+  });
+
+  test("internal deployment prices SURVIVE a successful refresh", async () => {
+    // Regression guard. The fetch replaces the map wholesale, and models.dev is a
+    // public catalogue that will never list AO's internal deployments — so before
+    // the INTERNAL_PRICES overlay, the first successful refresh silently deleted
+    // the rows for the only two models AO actually runs on, and every generation
+    // and judge cost went null with no error anywhere.
+    expect(priceFor("openai", "gpt-5.5")?.input).toBe(5);
+    expect(priceFor("openai", "gpt-5.6-luna")?.output).toBe(1.2);
+
+    globalThis.fetch = mock(async () =>
+      new Response(
+        JSON.stringify({
+          openai: { models: { "gpt-4o-mini": { cost: { input: 0.15, output: 0.6 } } } },
+        }),
+        { status: 200 },
+      ),
+    ) as unknown as typeof globalThis.fetch;
+
+    await reloadPrices();
+
+    // The catalogue landed...
+    expect(priceFor("openai", "gpt-4o-mini")?.input).toBe(0.15);
+    // ...and the internal rows are still there, including via a deployment alias.
+    expect(priceFor("openai", "gpt-5.5")?.input).toBe(5);
+    expect(priceFor("openai", "gpt-5.6-luna")?.output).toBe(1.2);
+    expect(priceFor("openai", "gpt-5.6-luna-dev")?.output).toBe(1.2);
   });
 
   test("ignores models that have malformed cost objects", async () => {

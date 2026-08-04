@@ -569,6 +569,17 @@ export interface GenerateUserMessageInput {
   provider?: LlmProvider;
   /** Explicit model override; defaults to the configured SIMULATOR_MODEL. */
   model?: string;
+  /**
+   * Scenario id, forwarded to the `[llm] usage` accounting line so a conversation's
+   * per-turn token spend can be summed by scenario in log search. Observational
+   * only — never sent to the provider, and never used for control flow.
+   *
+   * This is what lets the simulator stay `Promise<string>`: the alternative was
+   * widening the return type to carry usage back up through the empty-message
+   * retry and every caller, purely so the orchestrator could re-aggregate what
+   * the accounting layer already knows.
+   */
+  correlationId?: string;
 }
 
 /**
@@ -600,6 +611,8 @@ export async function generateUserMessage(input: GenerateUserMessageInput): Prom
       prompt: "",
       noJsonHint: true,
       role: "simulator",
+      label: "user_sim",
+      correlationId: input.correlationId,
       model: input.model,
       jsonSchema: USER_MESSAGE_JSON_SCHEMA,
       apiMode: "chat",

@@ -79,6 +79,11 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
     const res = await completeJSON({
       schema: args.schema,
       role: "judge",
+      // The strict-output schema name is already unique per judge
+      // (eval_hallucination / eval_loop / eval_intent / …), so it doubles as the
+      // accounting label — no new field threaded through eight judge call sites.
+      // Falls back to the role for a judge that runs without a strict schema.
+      label: args.jsonSchema?.name ?? "judge",
       system: args.system + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE,
       prompt: typeof args.input === "string" ? args.input : JSON.stringify(args.input),
       maxTokens: args.maxTokens,

@@ -49,6 +49,9 @@ export interface PlanCapabilitiesArgs {
   flowJson: Dict;
   phloUuid: string;
   model: string;
+  /** Generation id, forwarded to the `[llm] usage` line so planner token spend can
+   *  be attributed to the generation that caused it. Observational only. */
+  generationId?: string;
   existingSummaries?: ExistingScenarioSummary[];
   userInstructions?: string;
   simulationMode?: SimulationMode;
@@ -78,6 +81,11 @@ export async function planCapabilities(
   const res = await completeJSON({
     schema: PlannerOutputZ,
     role: "generator",
+    // Split from the writer in usage accounting: both are role "generator" but they
+    // have very different token profiles (one big reasoning call vs N large streamed
+    // ones), so a per-role total can't attribute a cost regression to either.
+    label: "planner",
+    correlationId: args.generationId,
     model: args.model,
     system: plannerSystemPrompt(mode, args.smokeCap ?? 0),
     prompt: JSON.stringify(payload),
