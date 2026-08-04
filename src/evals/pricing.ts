@@ -61,15 +61,10 @@ const SEED_PRICES: Record<string, ModelPrice> = {
   "openai:gpt-4.1-mini":   { input: 0.4,  output: 1.6 },
   "openai:o3-mini":        { input: 1.1,  output: 4.4 },
   "openai:o4-mini":        { input: 1.1,  output: 4.4 },
-  // The gpt-5.x models AO's own sim/eval roles actually run on. Without these rows
-  // priceFor() returns null and every generation/judge cost renders empty — which
-  // made a model-swap comparison unable to show its own cost delta.
-  // NOTE: these keys are OpenAI MODEL ids. On an Azure/gateway deployment the
-  // configured value is a DEPLOYMENT name (e.g. "gpt-5.5", "gpt-5.5-dev"), which only
-  // matches when the deployment is named after the model — normalizeModel() strips
-  // dated/-latest suffixes but cannot map an arbitrary deployment alias.
-  "openai:gpt-5.5":        { input: 5,    output: 30,  cache_read: 0.5 },
-  "openai:gpt-5.6-luna":   { input: 0.2,  output: 1.2, cache_read: 0.02 },
+  // The gpt-5.x models AO's own sim/eval roles run on are NOT here — they live in
+  // INTERNAL_PRICES above, because a row in this seed does not survive the first
+  // successful models.dev refresh. The deployment-alias problem that used to be
+  // noted here ("gpt-5.5-dev" matching no row) is handled by normalizeModel().
   "anthropic:claude-sonnet-4":   { input: 3,  output: 15, cache_read: 0.3 },
   "anthropic:claude-sonnet-4-5": { input: 3,  output: 15, cache_read: 0.3 },
   "anthropic:claude-sonnet-4-6": { input: 3,  output: 15, cache_read: 0.3 },
