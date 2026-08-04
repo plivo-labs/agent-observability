@@ -1,5 +1,6 @@
 import { config } from "../config.js";
-import { priceFor } from "../evals/pricing.js";
+import { costForTokens } from "../evals/pricing.js";
+import { addUsage, emptyUsage } from "./usage.js";
 import type {
   CompleteJSONOptions,
   LlmProvider,
@@ -83,15 +84,6 @@ function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false;
   }
 }
 
-function addUsage(into: LlmUsage, from: LlmUsage): void {
-  into.promptTokens += from.promptTokens;
-  into.completionTokens += from.completionTokens;
-  into.totalTokens += from.totalTokens;
-  if (typeof from.reasoningTokens === "number") {
-    into.reasoningTokens = (into.reasoningTokens ?? 0) + from.reasoningTokens;
-  }
-}
-
 /** True when the provider reported output truncated by the token cap
  *  (Responses API `status="incomplete" reason="max_output_tokens"`, thrown by
  *  both the blocking and streaming paths with this exact marker). */
@@ -158,16 +150,23 @@ function logUsage(a: {
   startedAt: number;
   outcome: "ok" | "error" | "aborted";
 }): void {
-  const price = priceFor(a.provider, a.model);
-  // reasoningTokens is a SUBSET of completionTokens (the provider bills invisible
-  // reasoning at the output rate and already counts it in output_tokens), so it
-  // must NOT be added again here — it is reported separately for truncation
-  // diagnosis only. Cached prompt tokens are not yet captured by LlmUsage, so the
-  // cache_read rate is unused and input cost is a slight over-estimate when
-  // prompt caching is active.
-  const cost = price
-    ? (a.usage.promptTokens * price.input + a.usage.completionTokens * price.output) / 1_000_000
-    : null;
+  // Shared with the per-session walk in evals/metrics.ts — one formula, so the two
+  // cannot report different dollars for the same tokens.
+  //
+  // reasoningTokens is deliberately NOT passed: it is a SUBSET of completionTokens
+  // (the provider counts invisible reasoning inside output_tokens and bills it at
+  // the output rate), so it is already paid for. It is logged separately purely as
+  // a truncation-pressure signal.
+  //
+  // cachedPromptTokens is likewise not passed — not because caching is ignored, but
+  // because LlmUsage does not carry it yet (see providers/openai.ts:
+  // `prompt_tokens_details.cached_tokens` is available and unread). Until it does,
+  // this over-estimates input cost when prompt caching is active. The formula
+  // itself handles caching correctly the moment the field arrives.
+  const cost = costForTokens(a.provider, a.model, {
+    promptTokens: a.usage.promptTokens,
+    completionTokens: a.usage.completionTokens,
+  });
   console.log(
     `[llm] usage label=${a.label ?? a.role ?? "unknown"} role=${a.role ?? "-"} ` +
       `model=${a.model} provider=${a.provider} ` +
@@ -207,7 +206,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       : JSON_ONLY_HINT;
   let user = opts.prompt;
 
-  const usage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const usage: LlmUsage = emptyUsage();
   // Wall clock for the whole call INCLUDING retries and their backoff — the number
   // that matches what the caller actually waited, not just the last attempt.
   const startedAt = Date.now();

@@ -20,11 +20,13 @@
 // plugins. Provider/model identifiers fall back from top-level →
 // nested `llm_metadata`.
 //
-// Cost: per-sample lookup via priceFor() with cache_read split.
-// Returns null when any sample with tokens couldn't be priced
+// Cost: per-sample via costForTokens() (pricing.ts), which owns the
+// cache_read split and is shared with the per-call accounting line in
+// llm/index.ts so the two cannot report different dollars for the same
+// tokens. Returns null when any sample with tokens couldn't be priced
 // (conservative — don't show a partial sum as if it were complete).
 
-import { priceFor } from "./pricing.js";
+import { costForTokens } from "./pricing.js";
 import { isAgentTurn } from "../turn-rules.js";
 
 // LiveKit emits per-turn timing in seconds. We store milliseconds.
@@ -285,18 +287,20 @@ function summarizeUsage(samples: UsageSample[]) {
     completion_tokens += s.completion_tokens;
     total_tokens += s.total_tokens;
 
-    const price = priceFor(s.provider, s.model);
-    if (!price) {
+    // Arithmetic lives in costForTokens (pricing.ts) so this walk and the per-call
+    // accounting line in llm/index.ts cannot drift into two different dollar figures
+    // for the same tokens. The null-poisoning below is this caller's own policy.
+    const sampleCost = costForTokens(s.provider, s.model, {
+      promptTokens: s.prompt_tokens,
+      cachedPromptTokens: s.cached_prompt_tokens,
+      completionTokens: s.completion_tokens,
+    });
+    if (sampleCost == null) {
       if (s.prompt_tokens > 0 || s.completion_tokens > 0) {
         cost = null;
       }
     } else if (cost != null) {
-      const cached = s.cached_prompt_tokens;
-      const fresh = Math.max(0, s.prompt_tokens - cached);
-      const cachedRate = price.cache_read ?? price.input;
-      cost += (fresh / 1_000_000) * price.input;
-      cost += (cached / 1_000_000) * cachedRate;
-      cost += (s.completion_tokens / 1_000_000) * price.output;
+      cost += sampleCost;
     }
   }
 
