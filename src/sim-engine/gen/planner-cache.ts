@@ -17,6 +17,7 @@
 // Process-local by design: AO runs 1-2 API tasks and a miss is only a slow path.
 import { createHash } from "node:crypto"; // deterministic builtin — the config-free contract holds
 import type { PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
+import type { WireReasoningEffort } from "../../llm/types.js";
 
 const MAX_ENTRIES = 50;
 
@@ -32,6 +33,15 @@ export interface PlannerCacheKeyParts {
   flowJson: unknown;
   phloUuid: string;
   model: string;
+  /**
+   * Planner reasoning effort — part of the key because it changes the plan the LLM
+   * produces, so a cached entry from one effort setting must not be served to
+   * another. This matters most while A/B-ing the dial: without it, flipping
+   * SIM_EVAL_PLANNER_REASONING_EFFORT and re-generating the same flow inside the
+   * cache TTL would silently return the PREVIOUS arm's plan and the comparison
+   * would measure nothing. `undefined` (effort omitted) is its own key value.
+   */
+  reasoningEffort: WireReasoningEffort | undefined;
   simulationMode: SimulationMode;
   smokeCap: number;
   instructions: string;

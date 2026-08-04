@@ -159,6 +159,118 @@ describe("openaiProvider — Responses API mode", () => {
   });
 });
 
+describe("openaiProvider — Chat Completions mode", () => {
+  // The user simulator PINS apiMode:"chat", so this path is not a fallback — it is the
+  // only transport one production role ever uses. It had no coverage here because it
+  // goes through the OpenAI SDK rather than a hand-built fetch; the SDK still issues
+  // its request through globalThis.fetch, so the same stub works.
+  const chatArgs = { ...baseArgs, apiMode: "chat" as const };
+
+  function chatResponse(usage?: Record<string, unknown>): Response {
+    return new Response(
+      JSON.stringify({
+        id: "chatcmpl-test",
+        object: "chat.completion",
+        created: 0,
+        model: "gpt-5.5-1",
+        choices: [{ index: 0, message: { role: "assistant", content: '{"ok":true}' }, finish_reason: "stop" }],
+        usage: usage ?? { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  // Two SDK quirks force this shape instead of the shared stubFetch:
+  //  1. the SDK reads the response body more than once, so a reused Response instance
+  //     fails with ERR_BODY_ALREADY_USED — each call needs a fresh one;
+  //  2. the SDK captures globalThis.fetch when the client is CONSTRUCTED (memoized in
+  //     getClient()), so reassigning globalThis.fetch per test silently keeps the first
+  //     stub. Reassigning would let body assertions still pass while every usage
+  //     assertion read the first test's response.
+  // So: install the stub once, and vary the payload through a mutable the closure reads
+  // at request time.
+  let nextChatUsage: Record<string, unknown> | undefined;
+
+  function stubChatFetch(usage?: Record<string, unknown>): void {
+    nextChatUsage = usage;
+    globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+      lastReq = { url: String(url), init: init ?? {} };
+      return chatResponse(nextChatUsage);
+    }) as unknown as typeof fetch;
+  }
+
+  test("POSTs to {base}/chat/completions with messages + response_format", async () => {
+    stubChatFetch();
+    const res = await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA });
+
+    expect(lastReq?.url).toBe("https://gw.example/openai/v1/chat/completions");
+    const body = JSON.parse(String(lastReq?.init.body));
+    expect(body.messages[0].role).toBe("system");
+    expect(body.response_format.type).toBe("json_schema");
+    expect(res.text).toBe('{"ok":true}');
+  });
+
+  test("sends reasoning_effort FLAT (not the Responses API's nested reasoning.effort)", async () => {
+    // The two OpenAI transports disagree on the wire shape for the same concept.
+    // Sending the nested form here would be silently ignored by the gateway, which is
+    // indistinguishable from the pre-fix behavior of dropping it entirely.
+    stubChatFetch();
+    await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA, reasoningEffort: "low" });
+
+    const body = JSON.parse(String(lastReq?.init.body));
+    expect(body.reasoning_effort).toBe("low");
+    expect(body.reasoning).toBeUndefined();
+  });
+
+  test('forwards the truthy-but-falsy-looking "none" rather than treating it as unset', async () => {
+    stubChatFetch();
+    await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA, reasoningEffort: "none" });
+    expect(JSON.parse(String(lastReq?.init.body)).reasoning_effort).toBe("none");
+  });
+
+  test("omits reasoning_effort entirely when unset, so a rejecting deployment is unaffected", async () => {
+    stubChatFetch();
+    await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA });
+
+    const body = JSON.parse(String(lastReq?.init.body));
+    expect("reasoning_effort" in body).toBe(false);
+  });
+
+  test("omits max_tokens when maxTokens is 0 — the uncapped simulator call", async () => {
+    // Load-bearing: this path sends `max_tokens`, which gpt-5.x deployments REJECT on
+    // chat/completions. It is safe only because the one caller that pins this mode
+    // passes maxTokens:null → 0 → omitted. If this ever starts emitting the key, a
+    // reasoning simulator model 400s on every turn.
+    stubChatFetch();
+    await openaiProvider.complete({ ...chatArgs, maxTokens: 0, jsonSchema: SCHEMA });
+
+    const body = JSON.parse(String(lastReq?.init.body));
+    expect("max_tokens" in body).toBe(false);
+    expect("max_completion_tokens" in body).toBe(false);
+  });
+
+  test("surfaces completion_tokens_details.reasoning_tokens as usage.reasoningTokens", async () => {
+    // Chat reports reasoning spend under a DIFFERENT key than Responses
+    // (completion_tokens_details vs output_tokens_details). Without this mapping the
+    // reasoning-pressure breadcrumb in completeJSON stays blind on this transport.
+    stubChatFetch({
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+      completion_tokens_details: { reasoning_tokens: 3 },
+    });
+    const res = await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA });
+    expect(res.usage.reasoningTokens).toBe(3);
+  });
+
+  test("leaves usage.reasoningTokens absent when the gateway omits the details block", async () => {
+    stubChatFetch();
+    const res = await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA });
+    expect(res.usage.reasoningTokens).toBeUndefined();
+    expect(res.usage.totalTokens).toBe(15);
+  });
+});
+
 describe("envSchema — new OpenAI transport knobs", () => {
   const valid = { DATABASE_URL: "postgres://localhost:5432/test" };
   test("default to chat + bearer (vanilla OpenAI, OSS-safe)", () => {

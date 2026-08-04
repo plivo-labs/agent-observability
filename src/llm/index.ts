@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 import { LlmError } from "./types.js";
 
-export type { LlmProvider, LlmResult, LlmUsage, LlmRole, CompleteJSONOptions } from "./types.js";
+export type { LlmProvider, LlmResult, LlmUsage, LlmRole, CompleteJSONOptions, WireReasoningEffort } from "./types.js";
 export { LlmError } from "./types.js";
 export { MockLLM } from "./mock.js";
 
@@ -16,11 +16,24 @@ const DEFAULT_MAX_TOKENS = 4096;
 
 // Provider default models when no per-role / explicit model is configured.
 // claude-opus-4-8 is the current most-capable Anthropic model; gpt-4.1-mini
-// matches the Python SDK judges' fallback. Override per role via env.
+// matches the Python SDK judges' fallback (plugins/agent-observability-sdk).
+//
+// These are a LAST RESORT, and on a gateway deployment they are the wrong answer:
+// only the judge role can reach them (generation and the simulator always pass an
+// explicit model), and an Azure/Vibe deployment does not host a deployment named
+// "gpt-4.1-mini", so an unset JUDGE_MODEL turns every judge call into a
+// DeploymentNotFound. The value is kept — it is a working default for a vanilla
+// OpenAI or Anthropic key, which is the OSS path — but resolveModel() now warns
+// once and names the env var to set, because the resulting provider 404 does not
+// mention JUDGE_MODEL anywhere.
 const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
   anthropic: "claude-opus-4-8",
   openai: "gpt-4.1-mini",
 };
+
+/** One-shot guard so the unset-model warning doesn't repeat per judge call
+ *  (a single session fans out ~13 of them). */
+let warnedMissingRoleModel = false;
 
 // Lazily import the provider SDK only for the configured provider, so unit
 // tests (which inject MockLLM) never load @anthropic-ai/sdk or openai.
@@ -33,11 +46,30 @@ async function resolveProvider(): Promise<LlmProvider> {
 
 function resolveModel(role: LlmRole | undefined, explicit: string | undefined, providerName: string): string {
   if (explicit) return explicit;
+  const envVar =
+    role === "simulator" ? "SIMULATOR_MODEL"
+    : role === "generator" ? "GENERATOR_MODEL"
+    : "JUDGE_MODEL";
   const roleModel =
     role === "simulator" ? config.SIMULATOR_MODEL
     : role === "generator" ? config.GENERATOR_MODEL
     : config.JUDGE_MODEL;
-  return roleModel || PROVIDER_DEFAULT_MODEL[providerName] || "claude-opus-4-8";
+  if (roleModel) return roleModel;
+  const fallback = PROVIDER_DEFAULT_MODEL[providerName] || "claude-opus-4-8";
+  // Fail LOUD-ish rather than silently: the provider error this produces on a
+  // gateway deployment is "DeploymentNotFound: gpt-4.1-mini", which names a model
+  // the operator never configured and gives no hint that the fix is an env var.
+  if (!warnedMissingRoleModel) {
+    warnedMissingRoleModel = true;
+    console.warn(
+      `[llm] ${envVar} is not set — falling back to the ${providerName} provider default ` +
+        `"${fallback}". That is correct for a vanilla ${providerName} key, but a gateway / ` +
+        `Azure deployment almost certainly does not host it, in which case every ${role ?? "judge"} ` +
+        `call will fail with a model-not-found error. Set ${envVar} to a deployment name your ` +
+        `endpoint serves.`,
+    );
+  }
+  return fallback;
 }
 
 /** Strip markdown code fences and parse. Models sometimes wrap JSON in ```. */

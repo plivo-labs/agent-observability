@@ -1,6 +1,28 @@
 import { z } from "zod";
 import { SMOKE_CAP_FALLBACK } from "./sim-engine/gen/combos.js"; // pure data leaf — safe at env-parse time
 
+/**
+ * A reasoning-effort env knob, parsed straight into the value the provider accepts.
+ *
+ * Operators may write `inherit`, which is NOT a provider value — it means "send no
+ * `reasoning_effort` at all and let the deployment's own default apply". That escape hatch
+ * exists because an explicit effort can be REJECTED by a deployment ("none" is not universally
+ * valid across gpt-5.x), and a rejected enum 400s every call on that path.
+ *
+ * The sentinel is collapsed HERE, at the boundary, so `config.*_REASONING_EFFORT` is already
+ * `"none" | "low" | "medium" | "high" | undefined` — the exact shape the wire takes. A role
+ * that reads the config value therefore CANNOT ship `"inherit"` to a provider; it is
+ * unrepresentable past this point rather than something each call site has to remember to
+ * translate. An invalid value still fails at boot, not per-request.
+ *
+ * @param fallback the effort when the var is unset. "inherit" => omit the parameter.
+ */
+const reasoningEffort = (fallback: "inherit" | "none" | "low" | "medium" | "high") =>
+  z
+    .enum(["inherit", "none", "low", "medium", "high"])
+    .default(fallback)
+    .transform((v) => (v === "inherit" ? undefined : v));
+
 export const envSchema = z.object({
   PORT: z.coerce.number().default(9090),
 
@@ -142,7 +164,7 @@ export const envSchema = z.object({
   // way to express "let the deployment's own default decide", needed because an
   // explicit value can be REJECTED by a deployment ("none" is not universally
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
-  JUDGE_REASONING_EFFORT: z.enum(["inherit", "none", "low", "medium", "high"]).default("none"),
+  JUDGE_REASONING_EFFORT: reasoningEffort("none"),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -168,9 +190,34 @@ export const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true" || v === "1"),
   AWS_REGION: z.string().optional(),
-  // Scenario-generation model. Default gpt-5.5-1 matches the orchestrator service (the managed deployment). For a
-  // non-Azure deploy, override + point OPENAI_BASE_URL at the endpoint.
-  SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5-1"),
+  // Scenario-generation model. Default gpt-5.5 matches the deployment name the managed
+  // deployment's dedicated AO Azure resources actually host. It was previously "gpt-5.5-1",
+  // a deployment on the LEGACY SHARED Vibe resource that the dedicated AO resources do NOT
+  // host — so the default could only ever resolve to an Azure DeploymentNotFound there. The
+  // managed config always sets this key explicitly, which is why the wrong default stayed
+  // invisible; it only surfaced if the key went missing. For a non-Azure deploy, override +
+  // point OPENAI_BASE_URL at the endpoint.
+  SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5"),
+
+  // Reasoning effort for the two generation LLM calls, sent as `reasoning: {effort}` on the
+  // Responses API (generation runs with OPENAI_API_MODE=responses on the managed deployment).
+  // Independent knobs because the roles do different work: the planner does the genuinely hard
+  // flow-comprehension thinking, while the writer executes an already-fixed plan (closer to
+  // transcription than problem-solving). Both default to "inherit" — the parameter is not sent
+  // and the deployment's own default applies, i.e. byte-identical to the pre-existing wire
+  // shape — so merging this changes nothing until an operator opts in via config.
+  //
+  // Calibration note before you reach for these: an equivalent planner dial was already A/B'd
+  // on the reference engine (aiassist PR #102) and came back a NULL RESULT — identical latency
+  // and identical output-token counts across default/low/none, because planner latency there was
+  // bound by output-token THROUGHPUT (~90 tok/s), not by reasoning spend. The writer dial was
+  // never measured. Expect the planner knob to be inert and treat the writer knob as the
+  // untested one. Neither is a substitute for choosing a faster-output model.
+  //
+  // Unlike the judge caps, raising effort here cannot truncate: the planner cap is generous
+  // (PLANNER_MAX_OUTPUT_TOKENS) and the writer runs uncapped (maxTokens:null, streaming).
+  SIM_EVAL_PLANNER_REASONING_EFFORT: reasoningEffort("inherit"),
+  SIM_EVAL_WRITER_REASONING_EFFORT: reasoningEffort("inherit"),
 
   // Sim persistence mode. Selects whether AO writes its ao_sim_* tables:
   //   • true  (default) — PERSISTENT: generated scenarios land in ao_sim_scenario, run results
@@ -226,6 +273,16 @@ export const envSchema = z.object({
   // same as unset, so it falls back cleanly via `??` instead of slipping through as "" (which
   // would otherwise be sent as an empty model id). Mirrors DATABASE_URL above.
   USER_SIMULATOR_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
+  // Reasoning effort for the UserSimulator call. Separate from the generation knobs because the
+  // simulator is the one role forced onto Chat Completions (user-simulator.ts pins apiMode:"chat"
+  // for cx-sqs parity), so it is billed and timed per simulated TURN — the effort choice there
+  // multiplies across a whole conversation rather than applying once per generate request.
+  // Defaults to "inherit" (parameter omitted = today's wire shape).
+  //
+  // Historically this knob could not exist: the Chat Completions path never forwarded the
+  // parameter at all, so a reasoning model configured here silently ran at the deployment's
+  // default effort on every turn. That gap is closed in this change (see providers/openai.ts).
+  SIM_USER_REASONING_EFFORT: reasoningEffort("inherit"),
   // SQS consumer fan-out: the number of independent worker loops the consumer runs, i.e. the max
   // scenarios processed concurrently per worker process. Each worker polls SQS independently and
   // processes one message at a time (see src/sim-engine/queue/consumer.ts), so N scenarios stay in
