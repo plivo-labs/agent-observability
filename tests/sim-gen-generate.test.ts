@@ -850,3 +850,148 @@ describe("generateScenarios — per-role reasoning effort", () => {
     expect(againMeta.metadata.planner_cache_hit).toBe(true);
   });
 });
+
+describe("generateScenarios — timing + token accounting lines", () => {
+  /** Capture the `[sim-gen]` accounting lines a generation prints. */
+  function captureGenLines(): { lines: string[]; restore: () => void } {
+    const original = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[sim-gen] ")) lines.push(line);
+    };
+    return { lines, restore: () => { console.log = original; } };
+  }
+
+  function fields(line: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [, k, v] of line.matchAll(/(\w+)=(\S+)/g)) out[k] = v;
+    return out;
+  }
+
+  /**
+   * A provider that answers like MockLLM but ALSO reports reasoning tokens.
+   * MockLLM reports none, which makes a reasoning double-count bug undetectable —
+   * `+= reasoningTokens ?? 0` silently adds zero — so the invariant that reasoning
+   * is never summed into the total needs a provider that actually reports it.
+   */
+  const REASONING_USAGE = { promptTokens: 100, completionTokens: 40, totalTokens: 140, reasoningTokens: 25 };
+  function reportingProvider(respond: (args: ProviderCompleteArgs) => string) {
+    return {
+      name: "reporting",
+      complete: async (args: ProviderCompleteArgs) => ({ text: respond(args), usage: { ...REASONING_USAGE } }),
+    };
+  }
+
+  async function generate(
+    maxScenarios: number,
+    providers?: { planner: any; writer: any },
+  ): Promise<string[]> {
+    const cap = captureGenLines();
+    try {
+      await collect(
+        generateScenarios({
+          flowJson: canonical,
+          phloUuid: "agent-1",
+          maxScenarios,
+          model: "gpt-5.5-1",
+          plannerProvider: providers?.planner ?? new MockLLM([PLANNER_JSON]),
+          writerProvider: providers?.writer ?? new MockLLM([writerResponder]),
+        }),
+      );
+    } finally {
+      cap.restore();
+    }
+    return cap.lines;
+  }
+
+  test("emits one timestamped line per saved scenario, in emission order", async () => {
+    const lines = await generate(12);
+    const scenarioLines = lines.filter((l) => l.startsWith("[sim-gen] scenario "));
+    const timing = fields(lines.find((l) => l.startsWith("[sim-gen] timing "))!);
+    const saved = Number(timing.saved!.split("/")[0]);
+
+    // One line per SAVED scenario — this is the per-scenario arrival curve for a
+    // 12/30/50-scenario batch, and it must not drift from the ledger.
+    expect(scenarioLines).toHaveLength(saved);
+
+    const parsed = scenarioLines.map(fields);
+    expect(parsed.map((f) => Number(f.index))).toEqual(parsed.map((_, i) => i));
+    for (const f of parsed) {
+      expect(f.slot_id).not.toBe("-");
+      expect(Number(f.chunk)).toBeGreaterThanOrEqual(0);
+    }
+    // at_ms is measured from one clock and never goes backwards.
+    const at = parsed.map((f) => Number(f.at_ms));
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  test("delta_ms is the gap since the PREVIOUS scenario, so the deltas telescope", async () => {
+    const lines = await generate(12);
+    const parsed = lines.filter((l) => l.startsWith("[sim-gen] scenario ")).map(fields);
+    expect(parsed.length).toBeGreaterThan(1);
+
+    // The defining invariant of a correct delta chain: deltas are consecutive gaps
+    // anchored at generation start, so they must telescope to the last arrival.
+    //   delta[0] = at[0] - genStart, delta[i] = at[i] - at[i-1]  ⇒  Σ delta = at[last]
+    // A stale anchor (forgetting to advance it) makes every delta an ABSOLUTE offset
+    // instead, and the sum blows past at[last] — which checking only delta[0] misses,
+    // because delta[0] is identical under both the correct and the broken version.
+    const deltaSum = parsed.reduce((n, f) => n + Number(f.delta_ms), 0);
+    expect(deltaSum).toBe(Number(parsed.at(-1)!.at_ms));
+  });
+
+  test("emits one per-chunk line whose saved counts reconcile with the total", async () => {
+    const lines = await generate(12);
+    const chunkLines = lines.filter((l) => l.startsWith("[sim-gen] chunk ")).map(fields);
+    const timing = fields(lines.find((l) => l.startsWith("[sim-gen] timing "))!);
+
+    expect(chunkLines.length).toBeGreaterThan(0);
+    // Chunk is the finest granularity at which tokens are attributable, so its
+    // bookkeeping has to add up to the generation ledger exactly.
+    const chunkSaved = chunkLines.reduce((n, f) => n + Number(f.saved), 0);
+    expect(chunkSaved).toBe(Number(timing.saved!.split("/")[0]));
+    const chunkCalls = chunkLines.reduce((n, f) => n + Number(f.llm_calls), 0);
+    expect(chunkCalls).toBe(Number(timing.writer_llm_calls));
+    const chunkTokens = chunkLines.reduce((n, f) => n + Number(f.total_tokens), 0);
+    expect(chunkTokens).toBe(
+      Number(timing.writer_prompt_tokens) + Number(timing.writer_completion_tokens),
+    );
+  });
+
+  test("splits tokens by stage and never folds reasoning into the total", async () => {
+    const lines = await generate(12, {
+      planner: reportingProvider(() => PLANNER_JSON),
+      writer: reportingProvider(writerResponder),
+    });
+    const f = fields(lines.find((l) => l.startsWith("[sim-gen] timing "))!);
+
+    // The planner is one call; the writer is one call per chunk. Keeping them apart
+    // is the point — they have very different token profiles.
+    expect(Number(f.planner_llm_calls)).toBe(1);
+    expect(Number(f.writer_llm_calls)).toBeGreaterThanOrEqual(1);
+    expect(Number(f.llm_calls)).toBe(Number(f.planner_llm_calls) + Number(f.writer_llm_calls));
+
+    // Reasoning IS reported per stage...
+    expect(Number(f.planner_reasoning_tokens)).toBe(REASONING_USAGE.reasoningTokens);
+    expect(Number(f.writer_reasoning_tokens)).toBe(
+      REASONING_USAGE.reasoningTokens * Number(f.writer_llm_calls),
+    );
+    // ...and is NEVER added to the total. It is a subset of completion tokens, which
+    // the provider already counts inside output_tokens; summing it would inflate the
+    // reported spend of every reasoning model.
+    const calls = Number(f.llm_calls);
+    expect(Number(f.total_tokens)).toBe(
+      calls * (REASONING_USAGE.promptTokens + REASONING_USAGE.completionTokens),
+    );
+    expect(Number(f.total_tokens)).toBe(
+      Number(f.planner_prompt_tokens) + Number(f.planner_completion_tokens) +
+        Number(f.writer_prompt_tokens) + Number(f.writer_completion_tokens),
+    );
+
+    // The allocator is deliberately absent: it makes no LLM call, so it has no token
+    // line to emit. Its cost is allocation_ms and nothing else.
+    expect(f.allocation_ms).toBeDefined();
+    expect(f.allocation_tokens).toBeUndefined();
+  });
+});
