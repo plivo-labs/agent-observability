@@ -499,6 +499,16 @@ describe("contact_screening", () => {
     expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
   });
 
+  test("the voicemail disposition VALUE aliases to the Voicemail Detected edge key", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "voicemail" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("VM");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
+  });
+
   test("no world_state entry defaults to the reached disposition", async () => {
     const result = await new FlowOrchestrator(
       screeningGraph(),
