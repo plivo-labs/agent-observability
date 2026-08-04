@@ -530,3 +530,61 @@ describe("contact_screening", () => {
     expect(result.error_detail).toBe("do_not_call");
   });
 });
+
+// The builder-canvas composite: dial + screening in ONE node, carrying the
+// disposition handles AND the carrier handles. The sim receives the canvas
+// shape (console sends flowInstance.getNodes() verbatim), so the composite
+// must execute exactly like the standalone screening node.
+describe("outbound_screening composite", () => {
+  function compositeGraph(): FlowGraph {
+    return parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("OS", "Call and Screen", "outbound_screening", null),
+        aiNode("A", "Reminder Conversation", [{ id: "done-uuid", intent_name: "Done" }]),
+        terminalNode("E", "End", "end_conversation", "Bye"),
+        terminalNode("VM", "Voicemail Close", "end_conversation", "VM bye"),
+        terminalNode("NA", "No Answer Close", "end_conversation", "NA bye"),
+      ],
+      edges: [
+        edge("S", "OS", "http"),
+        edge("OS", "A", "reached"),
+        edge("OS", "VM", "Voicemail Detected"),
+        edge("OS", "NA", "no_answer"),
+        edge("A", "E", "done-uuid"),
+      ],
+    });
+  }
+
+  test("defaults to reached and runs the conversation", async () => {
+    const result = await new FlowOrchestrator(
+      compositeGraph(),
+      null,
+      10,
+      staticAIExecutor(aiResult("Done")),
+    ).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(1);
+    expect(result.nodes_visited).toEqual(["S", "OS", "A", "E"]);
+  });
+
+  test("carrier handle no_answer routes from the composite", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "no_answer" }]]);
+
+    const result = await new FlowOrchestrator(compositeGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.last_node_id).toBe("NA");
+  });
+
+  test("voicemail value aliases to the edge key on the composite too", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "voicemail" }]]);
+
+    const result = await new FlowOrchestrator(compositeGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("VM");
+  });
+});

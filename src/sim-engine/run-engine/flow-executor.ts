@@ -205,11 +205,16 @@ export class FlowOrchestrator {
         case "ai_action":
         case "http_request":
         case "branch_v2":
-        // contact_screening (SER-6070) is mocked like the other multi-outcome
-        // nodes: the scenario's world_state supplies the disposition as
-        // `outcome` and the screening node_vars (screening_disposition etc.)
-        // as `data`, so downstream {{Node.screening_*}} templates resolve.
+        // Screening (SER-6070) is mocked like the other multi-outcome nodes:
+        // the scenario's world_state supplies the disposition as `outcome`
+        // and the screening node_vars (screening_disposition etc.) as
+        // `data`, so downstream {{Node.screening_*}} templates resolve.
+        // outbound_screening is the builder-canvas composite (dial + screen
+        // in one node) — the sim receives the canvas shape, so both
+        // spellings must execute; the composite additionally carries the
+        // carrier handles (no_answer / busy_rejected / failed).
         case "contact_screening":
+        case "outbound_screening":
           execResult = this.executeMockedNode(node);
           this.variableStore.set(node.configName, node.id, execResult.variables);
           break;
@@ -292,6 +297,7 @@ export function defaultMockedOutcome(node: { type: string; config?: Record<strin
     case "call_forward":
       return "completed";
     case "contact_screening":
+    case "outbound_screening":
       // Happy-path disposition; parallels initiate_call's hardcoded "answered".
       return "reached";
     case "ai_action": {
