@@ -109,3 +109,70 @@ export function buildAgentConfig(
 
   return agentConfig;
 }
+
+// SER-6070: screening dispositions — ids double as edge sourceHandles and intent names,
+// mirroring the CLI bundle synthesis (plivo-cx-livekit src/simulation/cli/flow.py) and the
+// console's publish-time wire model (contact-screening.config.ts).
+export const SCREENING_DISPOSITION_INTENTS: ReadonlyArray<[string, string]> = [
+  ["reached", "The intended contact was reached and is willing to continue the conversation."],
+  ["callback", "The caller asked for this call to happen at another time."],
+  ["wrong_contact", "The person or number reached is not the intended contact and cannot hand over the call."],
+  ["unavailable", "The intended contact is not available and no callback time could be established."],
+  ["declined", "A person was reached but declined to continue the conversation now."],
+  ["do_not_call", "The person explicitly asked not to be contacted again."],
+  ["Voicemail Detected", "The call went to voicemail."],
+];
+
+/**
+ * Build the `agent_config` for a screening node's flow-session (SER-6070). The builder-canvas
+ * screening config (context / ask_permission, plus dial-half fields the unit never reads) is
+ * reshaped into the wire model livekit's ScreeningUnit consumes: `screening_task` is what makes
+ * the runtime build the unit. The node's `context` is rendered against the variable store first
+ * ({{Start.http.params.*}} carries the contact identity), then embedded in the instructions and
+ * `screening_task.extra_instructions`. `initial_wait_time` is forced to 0 — the text sim has no
+ * call-start audio to wait for. Flow-level hoists (global_prompt, voice_config, stt_guidance,
+ * all_node_vars) reuse buildAgentConfig on the synthesized config.
+ */
+export function buildScreeningAgentConfig(
+  node: AgentConfigNode,
+  variableStore: VariableStore,
+  flowConfig: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const cfg = node.config ?? {};
+  const rawContext = typeof cfg["context"] === "string" ? (cfg["context"] as string) : "";
+  const context = variableStore.render(rawContext);
+  const askPermission = cfg["ask_permission"] !== false;
+
+  const instructions =
+    "You are screening an outbound call. Confirm you have reached the " +
+    `intended contact. Call context: ${context} ` +
+    (askPermission
+      ? "If the intended contact is reached, ask whether they are willing to continue the conversation now. "
+      : "Only establish who answered; do not go beyond identification. ") +
+    "Route the conversation to the matching outcome.";
+
+  const screeningConfig: Record<string, unknown> = {
+    name: cfg["name"] ?? node.configName,
+    llm_model_config: isRecord(cfg["model_config"]) ? cfg["model_config"] : {},
+    instructions,
+    intents: SCREENING_DISPOSITION_INTENTS.map(([id, text]) => ({
+      id,
+      intent_name: id,
+      intent_instructions: text,
+    })),
+    extract_variables: [],
+    actions: [],
+    allow_greeting_interruption: true,
+    initial_wait_time: 0,
+    screening_task: {
+      extra_instructions: context,
+      ask_permission: askPermission,
+    },
+  };
+
+  return buildAgentConfig(
+    { id: node.id, type: node.type, configName: node.configName, config: screeningConfig },
+    variableStore,
+    flowConfig,
+  );
+}

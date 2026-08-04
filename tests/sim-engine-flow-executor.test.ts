@@ -509,16 +509,67 @@ describe("contact_screening", () => {
     expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
   });
 
-  test("no world_state entry defaults to the reached disposition", async () => {
+  test("no world_state entry and no executor falls back to the reached mock", async () => {
+    // SC routes straight to a terminal so the executor-less run never touches
+    // an ai_agent_v2 (which would be a contract violation and throw).
+    const graph = parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("IC", "Dial", "initiate_call", null),
+        mockNode("SC", "Screen Contact", "contact_screening", null),
+        terminalNode("E", "End", "end_conversation", "Bye"),
+      ],
+      edges: [edge("S", "IC", "http"), edge("IC", "SC", "answered"), edge("SC", "E", "reached")],
+    });
+
+    const result = await new FlowOrchestrator(graph, null, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "E"]);
+  });
+
+  test("unpinned screening runs conversationally through the AI executor (SER-6070)", async () => {
+    const executor = {
+      async executeAINode(node: FlowNode): Promise<NodeExecutionResult | null> {
+        return node.type === "contact_screening" ? aiResult("reached") : aiResult("Done");
+      },
+    };
+    const result = await new FlowOrchestrator(screeningGraph(), null, 10, executor).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    // Both the screening conversation and the downstream ai_agent_v2 count turns.
+    expect(result.turn_count).toBe(2);
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "A", "E"]);
+  });
+
+  test("pinned screening never calls the AI executor", async () => {
+    const throwing = {
+      async executeAINode(node: FlowNode): Promise<NodeExecutionResult | null> {
+        if (node.type !== "ai_agent_v2") throw new Error("executor called for pinned screening");
+        return aiResult("Done");
+      },
+    };
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "wrong_contact" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, throwing).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("E");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "E"]);
+  });
+
+  test("screening conversation turns count toward max_turns", async () => {
+    // Executor always returns empty outcome = stay on the screening node forever.
     const result = await new FlowOrchestrator(
       screeningGraph(),
       null,
-      10,
-      staticAIExecutor(aiResult("Done")),
+      3,
+      staticAIExecutor(aiResult("")),
     ).run();
 
-    expect(result.stop_reason).toBe("end_conversation");
-    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "A", "E"]);
+    expect(result.stop_reason).toBe("max_turns");
+    expect(result.turn_count).toBe(4);
   });
 
   test("unwired disposition stops with no_matching_edge", async () => {
@@ -556,16 +607,16 @@ describe("outbound_screening composite", () => {
     });
   }
 
-  test("defaults to reached and runs the conversation", async () => {
-    const result = await new FlowOrchestrator(
-      compositeGraph(),
-      null,
-      10,
-      staticAIExecutor(aiResult("Done")),
-    ).run();
+  test("unpinned composite runs conversationally; executor disposition routes it", async () => {
+    const executor = {
+      async executeAINode(node: FlowNode): Promise<NodeExecutionResult | null> {
+        return node.type === "outbound_screening" ? aiResult("reached") : aiResult("Done");
+      },
+    };
+    const result = await new FlowOrchestrator(compositeGraph(), null, 10, executor).run();
 
     expect(result.stop_reason).toBe("end_conversation");
-    expect(result.turn_count).toBe(1);
+    expect(result.turn_count).toBe(2);
     expect(result.nodes_visited).toEqual(["S", "OS", "A", "E"]);
   });
 
