@@ -438,6 +438,8 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
   const res = await completeJSON({
     schema: WriterOutputZ,
     role: "generator",
+    label: "writer",
+    correlationId: generationId,
     model,
     system: writerSystemPrompt(),
     prompt: JSON.stringify(payload),

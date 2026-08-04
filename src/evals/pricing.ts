@@ -7,6 +7,11 @@
 // trigger a 5-min back-off before the next attempt — so a transient
 // network blip doesn't hammer the upstream service.
 //
+// Because that refresh REPLACES the map, rows for internal/gateway
+// deployments (which the public catalogue does not list) live in
+// INTERNAL_PRICES and are re-overlaid after every load. Anything that
+// must survive a refresh belongs there, not in the seed.
+//
 // Lookup is synchronous: callers `await ensurePricesLoaded()` before
 // entering a tight loop of `priceFor(provider, model)` calls. This
 // keeps the per-event walk in metrics.ts non-async.
@@ -26,12 +31,30 @@ export interface ModelPrice {
   cache_read?: number;
 }
 
+// Internal / gateway deployments the PUBLIC catalogue will never carry.
+//
+// Deliberately kept OUT of the seed and re-applied after every models.dev load.
+// That fetch replaces the map wholesale, so a row living only in the seed would
+// disappear on the first successful refresh — silently zeroing cost for exactly
+// the models AO's own sim/eval roles run on, which is the one case this table
+// exists to serve.
+//
+// These are provider LIST prices. On an Azure/enterprise contract the real rate
+// differs, so a cost_usd derived from them is an ESTIMATE for comparing two
+// models against each other — not a bill. Verify against billing before quoting.
+//
+// Last refreshed against provider docs: 2026-08.
+const INTERNAL_PRICES: Record<string, ModelPrice> = {
+  "openai:gpt-5.5":        { input: 5,    output: 30,  cache_read: 0.5 },
+  "openai:gpt-5.6-luna":   { input: 0.2,  output: 1.2, cache_read: 0.02 },
+};
+
 // Static seed. Kept small — just enough so cost is non-null for the
 // most common providers when we have no network. Real prices come
 // from models.dev once the fetch lands.
 //
 // Last refreshed against provider docs: 2026-05.
-let prices: Record<string, ModelPrice> = {
+const SEED_PRICES: Record<string, ModelPrice> = {
   "openai:gpt-4o":         { input: 2.5,  output: 10,   cache_read: 1.25 },
   "openai:gpt-4o-mini":    { input: 0.15, output: 0.6,  cache_read: 0.075 },
   "openai:gpt-4.1":        { input: 2,    output: 8 },
@@ -57,6 +80,9 @@ let prices: Record<string, ModelPrice> = {
   "google:gemini-2.5-flash":     { input: 0.3,  output: 2.5 },
   "google:gemini-2.5-pro":       { input: 1.25, output: 10 },
 };
+
+// Internal rows win over the catalogue on every load — see INTERNAL_PRICES.
+let prices: Record<string, ModelPrice> = { ...SEED_PRICES, ...INTERNAL_PRICES };
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const REFRESH_MS = 6 * 60 * 60 * 1000;     // refetch every 6h
@@ -113,7 +139,9 @@ export function reloadPrices(): Promise<void> {
       if (Object.keys(next).length === 0) {
         throw new Error("no prices parsed");
       }
-      prices = next;
+      // Overlay LAST: the catalogue is public and does not list AO's internal
+      // deployments, so a bare `prices = next` would drop them (see INTERNAL_PRICES).
+      prices = { ...next, ...INTERNAL_PRICES };
       lastSuccess = Date.now();
       console.log(
         `[evals] loaded ${Object.keys(next).length} model prices from models.dev`,
@@ -154,15 +182,27 @@ export function normalizeProvider(provider: string): string {
     .replace(/[-_ ]/g, "");
 }
 
-/** Strip dated / "-latest" suffixes from model ids so "gpt-4o-2024-08-06"
- * matches "gpt-4o" and "claude-sonnet-4-5-20241022" matches
- * "claude-sonnet-4-5". Case-insensitive. */
+/** Environment suffixes on Azure/gateway DEPLOYMENT names ("gpt-5.5-dev",
+ *  "gpt-5.6-luna-stage"). Every configured model value in this service is a
+ *  deployment name, not an OpenAI model id, so without this strip a non-prod
+ *  deployment matches no price row and reports its cost as unknown.
+ *
+ *  Deliberately a fixed, closed set. A blanket `-\w+$` strip would mangle real
+ *  model ids ("gpt-4.1-mini" → "gpt-4.1", a different and more expensive model),
+ *  which is a worse failure than a missing price: it would report confidently
+ *  wrong numbers instead of admitting it doesn't know. */
+const DEPLOYMENT_ENV_SUFFIX = /-(dev|stage|staging|preprod|prod)$/;
+
+/** Strip dated / "-latest" / deployment-environment suffixes from model ids so
+ * "gpt-4o-2024-08-06" matches "gpt-4o", "claude-sonnet-4-5-20241022" matches
+ * "claude-sonnet-4-5", and "gpt-5.5-dev" matches "gpt-5.5". Case-insensitive. */
 export function normalizeModel(model: string): string {
   return model
     .toLowerCase()
     .replace(/-20\d{2}-\d{2}-\d{2}$/, "")
     .replace(/-\d{8}$/, "")
-    .replace(/-latest$/, "");
+    .replace(/-latest$/, "")
+    .replace(DEPLOYMENT_ENV_SUFFIX, "");
 }
 
 // ── Test helpers ───────────────────────────────────────────────────────────

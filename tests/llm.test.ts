@@ -18,6 +18,7 @@ mock.module("../src/config.js", () => ({
 }));
 
 const { completeJSON, MockLLM, LlmError } = await import("../src/llm/index.js");
+const { __setPricesForTesting, __getPricesForTesting } = await import("../src/evals/pricing.js");
 import type { LlmProvider } from "../src/llm/types.js";
 
 const Verdict = z.object({
@@ -191,5 +192,156 @@ describe("completeJSON — reasoning-token usage", () => {
     const llm = new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]);
     const res = await completeJSON({ schema: Verdict, prompt: "x", provider: llm });
     expect(res.usage.reasoningTokens).toBeUndefined();
+  });
+});
+
+describe("completeJSON — usage accounting", () => {
+  // completeJSON is the single chokepoint every LLM call in this service passes
+  // through, so these `[llm] usage` lines ARE the token accounting. A regression
+  // here is silent — nothing throws, the numbers just quietly stop existing —
+  // which is exactly how the Luna-vs-5.5 comparison ended up with no cost data.
+  function captureUsage(): { lines: string[]; restore: () => void } {
+    const original = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[llm] usage")) lines.push(line);
+    };
+    return { lines, restore: () => { console.log = original; } };
+  }
+
+  /** Parse the `k=v` line back into an object so assertions read as facts. */
+  function fields(line: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [, k, v] of line.matchAll(/(\w+)=(\S+)/g)) out[k] = v;
+    return out;
+  }
+
+  test("emits one line on success carrying label, correlation id and tokens", async () => {
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+        role: "generator",
+        label: "planner",
+        correlationId: "gen-abc",
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(1);
+    const f = fields(cap.lines[0]!);
+    expect(f.label).toBe("planner");
+    expect(f.role).toBe("generator");
+    expect(f.correlation_id).toBe("gen-abc");
+    expect(f.prompt_tokens).toBe("10");
+    expect(f.completion_tokens).toBe("5");
+    expect(f.attempts).toBe("1");
+    expect(f.outcome).toBe("ok");
+  });
+
+  test("falls back to the role when no label is given", async () => {
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+        role: "judge",
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(fields(cap.lines[0]!).label).toBe("judge");
+  });
+
+  test("accounts for a FAILED call — retries burned tokens and must still be billed", async () => {
+    // Counting only successes would rank the model that fails most as the cheapest.
+    const cap = captureUsage();
+    try {
+      await expect(
+        completeJSON({
+          schema: Verdict,
+          prompt: "x",
+          provider: new MockLLM(["bad", "still bad"]),
+          label: "writer",
+        }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(1);
+    const f = fields(cap.lines[0]!);
+    expect(f.outcome).toBe("error");
+    expect(f.attempts).toBe("2");
+    expect(f.prompt_tokens).toBe("20"); // both attempts, not just the last
+    expect(f.total_tokens).toBe("30");
+  });
+
+  test("stays silent when a call is aborted before spending anything", async () => {
+    // A request aborted before its first provider call must not push an all-zero
+    // row into the accounting stream.
+    const cap = captureUsage();
+    try {
+      await expect(
+        completeJSON({
+          schema: Verdict,
+          prompt: "x",
+          provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+          signal: AbortSignal.abort(),
+        }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(0);
+  });
+
+  test("reports cost_usd=unknown rather than a fabricated 0 for an unpriced model", async () => {
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+        model: "some-model-we-have-no-rate-for",
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(fields(cap.lines[0]!).cost_usd).toBe("unknown");
+  });
+
+  test("computes cost from prompt+completion, NOT double-counting reasoning tokens", async () => {
+    // reasoningTokens is a subset of completionTokens (the provider already counts
+    // invisible reasoning inside output_tokens and bills it at the output rate).
+    // Adding it again would silently inflate every reasoning model's reported cost.
+    const snapshot = __getPricesForTesting();
+    __setPricesForTesting({ "priced:test-model": { input: 100_000, output: 200_000 } });
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        model: "test-model",
+        provider: {
+          name: "priced",
+          complete: async () => ({
+            text: JSON.stringify({ verdict: "pass", reasoning: "ok" }),
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, reasoningTokens: 4 },
+          }),
+        },
+      });
+    } finally {
+      cap.restore();
+      __setPricesForTesting(snapshot);
+    }
+    const f = fields(cap.lines[0]!);
+    // (10 * 100_000 + 5 * 200_000) / 1e6 = 2.0 — reasoning's 4 tokens are already
+    // inside the 5 completion tokens and contribute nothing extra.
+    expect(f.cost_usd).toBe("2.000000");
+    expect(f.reasoning_tokens).toBe("4");
   });
 });
