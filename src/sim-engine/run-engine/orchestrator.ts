@@ -332,7 +332,6 @@ class ScenarioRunner implements AINodeExecutor {
         nonAnswerType: "",
         provider: this.llmProvider,
         model: this.llmModel,
-        reasoningEffort: this.llmReasoningEffort,
       });
       userSimMs = Date.now() - userSimStart;
       this.userSimDurations.push(userSimMs);
