@@ -433,3 +433,100 @@ describe("resolveIntentSourceHandle", () => {
     expect(resolveIntentSourceHandle(node, "unknown")).toEqual(["", false]);
   });
 });
+
+// --- contact_screening (SER-6070): mocked multi-outcome node. Dispositions are
+// LITERAL edge sourceHandles (reached/wrong_contact/... and "Voicemail
+// Detected"), matching phlo-core's output states — no intent-UUID indirection.
+describe("contact_screening", () => {
+  function screeningGraph(): FlowGraph {
+    return parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("IC", "Dial", "initiate_call", null),
+        mockNode("SC", "Screen Contact", "contact_screening", null),
+        aiNode("A", "Reminder Conversation", [{ id: "done-uuid", intent_name: "Done" }]),
+        terminalNode("E", "End", "end_conversation", "Bye"),
+        terminalNode("VM", "Voicemail Close", "end_conversation", "VM bye"),
+      ],
+      edges: [
+        edge("S", "IC", "http"),
+        edge("IC", "SC", "answered"),
+        edge("SC", "A", "reached"),
+        edge("SC", "VM", "Voicemail Detected"),
+        edge("SC", "E", "wrong_contact"),
+        edge("A", "E", "done-uuid"),
+      ],
+    });
+  }
+
+  test("world_state disposition routes on the literal handle and records node_vars", async () => {
+    const worldState = new Map<string, WorldStateEntry>([
+      [
+        "SC",
+        {
+          outcome: "reached",
+          data: {
+            screening_disposition: "reached",
+            screening_status: "completed",
+            screening_answered_by: "Morgan Patel",
+            screening_relationship: "self",
+            screening_callback_time: "",
+          },
+        },
+      ],
+    ]);
+
+    const result = await new FlowOrchestrator(
+      screeningGraph(),
+      worldState,
+      10,
+      staticAIExecutor(aiResult("Done")),
+    ).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(1);
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "A", "E"]);
+  });
+
+  test("Voicemail Detected routes to the voicemail terminal with zero AI turns", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "Voicemail Detected" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.last_node_id).toBe("VM");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
+  });
+
+  test("the voicemail disposition VALUE aliases to the Voicemail Detected edge key", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "voicemail" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("VM");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
+  });
+
+  test("no world_state entry defaults to the reached disposition", async () => {
+    const result = await new FlowOrchestrator(
+      screeningGraph(),
+      null,
+      10,
+      staticAIExecutor(aiResult("Done")),
+    ).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "A", "E"]);
+  });
+
+  test("unwired disposition stops with no_matching_edge", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "do_not_call" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("no_matching_edge");
+    expect(result.error_detail).toBe("do_not_call");
+  });
+});
