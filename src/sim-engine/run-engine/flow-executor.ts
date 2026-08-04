@@ -154,7 +154,23 @@ export class FlowOrchestrator {
           continue;
         }
 
-        case "ai_agent_v2": {
+        // One conversational AI turn (shared by ai_agent_v2 and unpinned
+        // screening): counts toward maxTurns; empty intent = "stay on this
+        // node" and re-enter; a thrown/nil executor result is the same
+        // contract violation the Go worker enforces.
+        case "ai_agent_v2":
+        case "contact_screening":
+        case "outbound_screening": {
+          // Screening (SER-6070): a scenario that PINS the disposition in
+          // world_state keeps today's deterministic mock (outcome = edge
+          // handle, node_vars via data); an unpinned screening node runs the
+          // real conversation through livekit's flow-session (the executor's
+          // AI turn contract is identical). No executor at all -> mock too.
+          if (node.type !== "ai_agent_v2" && (this.screeningPinned(node) || !this.aiExecutor)) {
+            execResult = this.executeMockedNode(node);
+            this.variableStore.set(node.configName, node.id, execResult.variables);
+            break;
+          }
           turnCount++;
           if (turnCount > this.maxTurns) {
             result.stop_reason = StopReasonMaxTurns;
@@ -205,16 +221,6 @@ export class FlowOrchestrator {
         case "ai_action":
         case "http_request":
         case "branch_v2":
-        // Screening (SER-6070) is mocked like the other multi-outcome nodes:
-        // the scenario's world_state supplies the disposition as `outcome`
-        // and the screening node_vars (screening_disposition etc.) as
-        // `data`, so downstream {{Node.screening_*}} templates resolve.
-        // outbound_screening is the builder-canvas composite (dial + screen
-        // in one node) — the sim receives the canvas shape, so both
-        // spellings must execute; the composite additionally carries the
-        // carrier handles (no_answer / busy_rejected / failed).
-        case "contact_screening":
-        case "outbound_screening":
           execResult = this.executeMockedNode(node);
           this.variableStore.set(node.configName, node.id, execResult.variables);
           break;
@@ -264,6 +270,14 @@ export class FlowOrchestrator {
   }
 
   /** Read mock outcome + variables from world_state for a mocked non-AI node. */
+  /** SER-6070: a scenario pins a screening disposition by giving the node a
+   *  world_state entry with a non-empty outcome — that forces the mock path
+   *  (deterministic branch coverage). Entries carrying only data don't pin. */
+  private screeningPinned(node: FlowNode): boolean {
+    const entry = this.worldState?.get(node.id) ?? this.worldState?.get(node.configName);
+    return !!entry && (entry.outcome ?? "") !== "";
+  }
+
   private executeMockedNode(node: FlowNode): NodeExecutionResult {
     // Lookup prefers node ID over config name (matches the Go ordering).
     let entry = this.worldState.get(node.id);
