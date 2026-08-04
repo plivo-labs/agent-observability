@@ -94,6 +94,7 @@ export class EdgeResolver {
         }
         break;
       case "contact_screening":
+      case "outbound_screening":
         // Screening dispositions double as literal edge sourceHandles
         // (reached / callback / wrong_contact / unavailable / declined /
         // do_not_call, plus "Voicemail Detected") — matching phlo-core's
