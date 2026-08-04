@@ -27,6 +27,28 @@ export async function runHallucinationJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: HallucinationRaw; usage: LlmUsage }> {
+  // A node ref the config doesn't know (a segment the sender never exported —
+  // e.g. a screening step — or a config snapshot gap) arrives with an empty
+  // prompt. With no configured instruction surface at all (node AND global),
+  // the judge is missing evidence source 3 entirely and reads the agent's own
+  // configured identity/campaign facts ("Maya from BrightSmile Dental") as
+  // fabricated — 10/13 dev screening calls false-fired this way (2026-08-04).
+  // Neutral pass, no LLM call — same pattern as the adherence judge's
+  // no-instructions skip. A non-empty global_prompt keeps the judge running:
+  // that is a real grounding surface, and contradictions with conversation or
+  // tool evidence are still detectable against it.
+  if (!node.node_prompt?.trim() && !ctx.global_prompt?.trim()) {
+    return {
+      data: {
+        hallucinated: false,
+        score: 1.0,
+        reason: "Node configuration was not captured for this segment — grounding cannot be assessed.",
+        technical_reason:
+          "skipped: node_prompt and global_prompt are both empty; the configured-instructions grounding surface is missing, so unsupported-claim verdicts would be unreliable",
+      },
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+  }
   return runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
 }
 

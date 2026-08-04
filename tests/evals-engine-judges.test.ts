@@ -56,6 +56,30 @@ describe("LLM node judges (MockLLM)", () => {
     expect(sent.node_transcript).toContain("order is 42");
   });
 
+  test("hallucination: unconfigured node (no node_prompt, no global_prompt) → neutral pass, no LLM call", async () => {
+    // A node ref the config doesn't know (e.g. a screening segment the sender
+    // never exported) reaches the judge with an empty prompt. With no config
+    // grounding surface at all, the judge reads the agent's own configured
+    // identity ("Maya from BrightSmile Dental") as fabricated — 10/13 dev
+    // screening calls false-fired this way on 2026-08-04.
+    const llm = new MockLLM([JSON.stringify({ hallucinated: true, score: 0, reason: "should not be called", technical_reason: "t" })]);
+    const { data, usage } = await runHallucinationJudge(node({ node_prompt: "" }), ctx({ global_prompt: "" }), llm);
+    expect(llm.calls.length).toBe(0);
+    expect(data.hallucinated).toBe(false);
+    expect(data.score).toBe(1);
+    expect(data.technical_reason).toContain("skipped");
+    expect(usage.totalTokens).toBe(0);
+  });
+
+  test("hallucination: empty node_prompt still judges when a global_prompt exists", async () => {
+    // A global prompt is a real grounding surface (evidence source 3) — the
+    // neutral skip is only for segments with NO configured instructions at all.
+    const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
+    const { data } = await runHallucinationJudge(node({ node_prompt: "" }), ctx(), llm);
+    expect(llm.calls.length).toBe(1);
+    expect(data.hallucinated).toBe(false);
+  });
+
   test("every judge call carries the configured reasoning effort", async () => {
     // The per-judge output caps (1500-5000) are copied from cx-sqs, which pins
     // effort "none". AO never sent the parameter, so judges inherited the model's
