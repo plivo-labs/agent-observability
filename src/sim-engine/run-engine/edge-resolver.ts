@@ -97,10 +97,15 @@ export class EdgeResolver {
         // Screening dispositions double as literal edge sourceHandles
         // (reached / callback / wrong_contact / unavailable / declined /
         // do_not_call, plus "Voicemail Detected") — matching phlo-core's
-        // output states. No intent-UUID indirection.
+        // output states. No intent-UUID indirection. The voicemail port is
+        // the one asymmetry: the runtime disposition VALUE is "voicemail"
+        // but the edge key is "Voicemail Detected" — accept both so a
+        // world_state writer emitting the disposition still routes.
         sourceHandle = result.outcome;
         if (sourceHandle === "") {
           sourceHandle = "reached";
+        } else if (sourceHandle === "voicemail") {
+          sourceHandle = "Voicemail Detected";
         }
         break;
       case "prompt": {
