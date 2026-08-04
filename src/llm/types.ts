@@ -1,5 +1,14 @@
 import type { ZodType } from "zod";
-import type { WireReasoningEffort } from "./effort.js";
+
+/**
+ * The reasoning-effort values a provider actually accepts on the wire.
+ *
+ * Deliberately does NOT include the `"inherit"` config sentinel: that is collapsed to
+ * `undefined` in the env schema (see `reasoningEffort()` in src/schema.ts), so by the time an
+ * effort reaches this layer it is either a real provider value or absent. Callers therefore
+ * cannot ship `"inherit"` to a provider — it is unrepresentable here.
+ */
+export type WireReasoningEffort = "none" | "low" | "medium" | "high";
 
 /**
  * Per-role model selection. The eval engine, simulator, and scenario generator
@@ -112,9 +121,7 @@ export interface CompleteJSONOptions<T> {
   temperature?: number;
   /** Nucleus sampling top_p. */
   topP?: number;
-  /** Reasoning effort for reasoning models; see ProviderCompleteArgs.reasoningEffort.
-   *  Callers translate their config value with resolveReasoningEffort() so the
-   *  "inherit" sentinel never reaches the wire. */
+  /** Reasoning effort for reasoning models; see ProviderCompleteArgs.reasoningEffort. */
   reasoningEffort?: WireReasoningEffort;
   /** Strict JSON-schema for structured output — guarantees required fields (OpenAI/Azure). */
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };

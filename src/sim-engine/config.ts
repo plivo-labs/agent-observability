@@ -1,5 +1,4 @@
 import { config, dbConfigured } from "../config.js";
-import { resolveReasoningEffort } from "../llm/effort.js";
 
 // AO Simulation Engine — config view + capability gates.
 //
@@ -80,17 +79,16 @@ export const simEngineConfig = {
    *  resources host; see SIM_EVAL_SCENARIO_GENERATION_MODEL in schema.ts). */
   scenarioGenerationModel: config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
   /**
-   * Reasoning effort for the two generation calls, already translated to the wire value —
-   * `undefined` means "omit the parameter" (the "inherit" default). Resolved here rather than at
-   * the call sites so the "inherit" sentinel can never reach a provider, and so both generation
-   * roles read their effort from the same place their model comes from.
+   * Reasoning effort for the two generation calls. Already wire-shaped — the schema collapses
+   * the "inherit" sentinel, so `undefined` here means "omit the parameter". Surfaced on this
+   * object so both generation roles read their effort from the same place their model comes from.
    *
    * See schema.ts for the calibration history: the planner dial measured as a null result on the
    * reference engine (latency was output-throughput-bound, not reasoning-bound); the writer dial
    * is the untested one.
    */
-  plannerReasoningEffort: resolveReasoningEffort(config.SIM_EVAL_PLANNER_REASONING_EFFORT),
-  writerReasoningEffort: resolveReasoningEffort(config.SIM_EVAL_WRITER_REASONING_EFFORT),
+  plannerReasoningEffort: config.SIM_EVAL_PLANNER_REASONING_EFFORT,
+  writerReasoningEffort: config.SIM_EVAL_WRITER_REASONING_EFFORT,
   /** Redis key prefix (default SIM_EVAL = the orchestrator service in the managed deployment; override for OSS). */
   simRedisPrefix: config.SIM_REDIS_PREFIX,
   /** agent runtime base URL; the engine POSTs /v1/simulation/session/turn here. */
@@ -107,13 +105,13 @@ export const simEngineConfig = {
    */
   userSimulatorModel: config.USER_SIMULATOR_MODEL ?? config.SIM_EVAL_SCENARIO_GENERATION_MODEL,
   /**
-   * Reasoning effort for the UserSimulator, translated to the wire value (`undefined` = omit).
+   * Reasoning effort for the UserSimulator. Already wire-shaped (`undefined` = omit).
    * This one is billed and timed per simulated TURN, so unlike the generation dials its cost
    * multiplies across a conversation. Reaches the provider via the Chat Completions path, which
    * only started forwarding the parameter in this change — before that a reasoning model here
    * silently ran at its deployment default on every turn.
    */
-  userSimulatorReasoningEffort: resolveReasoningEffort(config.SIM_USER_REASONING_EFFORT),
+  userSimulatorReasoningEffort: config.SIM_USER_REASONING_EFFORT,
   /** Number of independent SQS worker loops = max scenarios run concurrently per worker process
    *  (fan-out bound). See SIM_WORKER_CONCURRENCY + src/sim-engine/queue/consumer.ts. */
   workerConcurrency: config.SIM_WORKER_CONCURRENCY,

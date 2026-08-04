@@ -1,5 +1,5 @@
 import type { ZodType } from "zod";
-import { completeJSON, resolveReasoningEffort, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
 import { config } from "../../config.js";
 
 // AO Eval Engine — the single LLM entry every judge uses. Replaces LiveKit's private `_LLMJudge`:
@@ -90,11 +90,12 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // terminal reason="max_output_tokens", identically on all 3 retries, evals
       // lost (prod ap-south-1, 2026-07-14). Keep this and the per-judge caps in
       // lockstep — raising effort without raising the caps reintroduces the outage.
-      // Runtime fallback: tests and embedders may replace the config module with a
-      // partial object, and an undefined here would silently drop the parameter.
-      // "inherit" deliberately DOES drop it — the operator's way to restore the
-      // pre-#114 wire shape when a deployment rejects explicit effort values.
-      reasoningEffort: resolveReasoningEffort(config.JUDGE_REASONING_EFFORT, "none"),
+      // Already wire-shaped: the schema collapses the "inherit" sentinel to undefined, so this
+      // is a real effort or absent. undefined => the parameter is omitted entirely, which is
+      // the operator's way to restore the pre-#114 wire shape when a deployment rejects
+      // explicit effort values. A partial config mock (undefined) omits it too — the safe
+      // direction, since omitting can never 400.
+      reasoningEffort: config.JUDGE_REASONING_EFFORT,
       // No per-judge timeout override: judges inherit LLM_TIMEOUT_MS, which prod
       // already raises to 300s — ABOVE the reference engine's 180s. An earlier
       // revision of this change set a 180s judge-specific default and would have

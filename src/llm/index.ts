@@ -8,11 +8,9 @@ import type {
 } from "./types.js";
 import { LlmError } from "./types.js";
 
-export type { LlmProvider, LlmResult, LlmUsage, LlmRole, CompleteJSONOptions } from "./types.js";
+export type { LlmProvider, LlmResult, LlmUsage, LlmRole, CompleteJSONOptions, WireReasoningEffort } from "./types.js";
 export { LlmError } from "./types.js";
 export { MockLLM } from "./mock.js";
-export { resolveReasoningEffort } from "./effort.js";
-export type { WireReasoningEffort, ConfiguredReasoningEffort } from "./effort.js";
 
 const DEFAULT_MAX_TOKENS = 4096;
 
@@ -61,10 +59,7 @@ function resolveModel(role: LlmRole | undefined, explicit: string | undefined, p
   // Fail LOUD-ish rather than silently: the provider error this produces on a
   // gateway deployment is "DeploymentNotFound: gpt-4.1-mini", which names a model
   // the operator never configured and gives no hint that the fix is an env var.
-  // Skipped for the injected mock provider — it serves any model id by construction,
-  // so there the fallback is correct rather than suspicious, and warning would just
-  // add noise to every test that doesn't pin a model.
-  if (!warnedMissingRoleModel && providerName !== "mock") {
+  if (!warnedMissingRoleModel) {
     warnedMissingRoleModel = true;
     console.warn(
       `[llm] ${envVar} is not set — falling back to the ${providerName} provider default ` +
