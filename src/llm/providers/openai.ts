@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { config } from "../../config.js";
+import { parseRetryAfter } from "../retry-after.js";
 import type { LlmProvider, ProviderCompleteArgs, RawCompletion, LlmUsage } from "../types.js";
 
 let client: OpenAI | undefined;
@@ -94,6 +95,22 @@ interface ResponsesResult {
 /** Map a Responses API usage block to LlmUsage, surfacing reasoning tokens when reported —
  *  the invisible spend that bills against max_output_tokens and explains truncations the
  *  visible output alone can't (this went uninstrumented through two prod incidents). */
+/**
+ * Non-2xx -> Error, carrying the server's `Retry-After` when it sent one.
+ *
+ * The hint rides on the error rather than being handled here because the retry
+ * loop lives in completeJSON — this layer stays "return text or throw", and the
+ * one thing it knows that the caller cannot recover is the response headers.
+ */
+function httpError(res: Response, preview: string): Error {
+  const err = new Error(`${res.status} ${res.statusText}${preview ? ` - ${preview}` : ""}`.trim()) as Error & {
+    retryAfterMs?: number;
+  };
+  const hint = parseRetryAfter(res.headers.get("retry-after"));
+  if (hint !== null) err.retryAfterMs = hint;
+  return err;
+}
+
 function responsesUsage(u: ResponsesResult["usage"]): LlmUsage {
   const reasoning = u?.output_tokens_details?.reasoning_tokens;
   return {
@@ -176,7 +193,7 @@ async function completeViaResponses(args: ProviderCompleteArgs): Promise<RawComp
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
   if (!res.ok) {
     const preview = (await res.text().catch(() => "")).slice(0, 500);
-    throw new Error(`${res.status} ${res.statusText}${preview ? ` - ${preview}` : ""}`.trim());
+    throw httpError(res, preview);
   }
   const json = (await res.json()) as ResponsesResult;
   // The Responses API can return a 200 with a non-terminal status (incomplete output).
@@ -205,7 +222,7 @@ async function completeViaResponsesStream(args: ProviderCompleteArgs): Promise<R
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
   if (!res.ok || !res.body) {
     const preview = (await res.text().catch(() => "")).slice(0, 500);
-    throw new Error(`${res.status} ${res.statusText}${preview ? ` - ${preview}` : ""}`.trim());
+    throw httpError(res, preview);
   }
 
   // Parse the SSE stream line-by-line. OpenAI emits one JSON object per `data:` line; we read

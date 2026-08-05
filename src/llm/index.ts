@@ -1,5 +1,6 @@
 import { config } from "../config.js";
 import { costForTokens } from "../evals/pricing.js";
+import { retryAfterMsFromError } from "./retry-after.js";
 import { addUsage, emptyUsage } from "./usage.js";
 import type {
   CompleteJSONOptions,
@@ -266,9 +267,19 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       throw new LlmError("completeJSON aborted by caller", opts.signal.reason);
     }
     // Back off before a retry so a transient rate-limit (429) / timeout isn't hit
-    // again immediately. Exponential, capped; skipped on the first attempt. This
-    // matters under simulation concurrency (many simulator calls hit the LLM at once).
-    if (attempt > 1) await Bun.sleep(Math.min(4000, 400 * 2 ** (attempt - 2)));
+    // again immediately. Skipped on the first attempt. This matters under simulation
+    // concurrency (many simulator calls hit the LLM at once).
+    //
+    // A server-supplied `Retry-After` WINS over the exponential guess: on a TPM
+    // exhaustion the whole minute's allowance is already gone, so 400ms/800ms just
+    // burns the remaining attempts inside the same closed window — observed on dev
+    // 2026-08-05, where 182 429s decayed only 63 -> 60 -> 58 across three attempts.
+    // The hint is capped at RETRY_AFTER_CAP_MS by the parser, so a hostile or
+    // mistaken value cannot outlast the per-attempt timeout.
+    if (attempt > 1) {
+      const hinted = retryAfterMsFromError(lastError);
+      await Bun.sleep(hinted ?? Math.min(4000, 400 * 2 ** (attempt - 2)));
+    }
     let raw: { text: string; usage: LlmUsage };
     try {
       raw = await provider.complete({

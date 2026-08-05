@@ -410,3 +410,44 @@ describe("completeJSON — rejected attempts are visible and billed", () => {
     expect((err as InstanceType<typeof LlmError>).usage?.promptTokens).toBe(20);
   });
 });
+
+describe("Retry-After", () => {
+  // Without honouring the header, the retry loop guesses 400ms then 800ms — useless
+  // against a TPM exhaustion, where the whole minute's allowance is already gone.
+  // Observed on dev 2026-08-05: 182 429s with attempts decaying only 63 -> 60 -> 58,
+  // i.e. all three landed inside the same closed window. Timing 40ms (hinted) against
+  // 400ms (guessed) is a wide enough gap to assert without flaking.
+  const Ok = z.object({ ok: z.boolean() });
+
+  function failsOnceWith(err: unknown): LlmProvider {
+    let calls = 0;
+    return {
+      name: "flaky",
+      complete: async () => {
+        calls++;
+        if (calls === 1) throw err;
+        return { text: JSON.stringify({ ok: true }), usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+      },
+    };
+  }
+
+  test("sleeps the hinted delay rather than the exponential guess", async () => {
+    const provider = failsOnceWith(Object.assign(new Error("429 Too Many Requests"), { retryAfterMs: 40 }));
+    const started = Date.now();
+    const res = await completeJSON({ schema: Ok, prompt: "x", provider, maxRetries: 1 });
+    const elapsed = Date.now() - started;
+
+    expect(res.attempts).toBe(2);
+    expect(elapsed).toBeGreaterThanOrEqual(35); // it did wait
+    expect(elapsed).toBeLessThan(350); // ...but not the 400ms exponential
+  });
+
+  test("falls back to the exponential guess when the server sent no hint", async () => {
+    const provider = failsOnceWith(new Error("500 Internal Server Error"));
+    const started = Date.now();
+    const res = await completeJSON({ schema: Ok, prompt: "x", provider, maxRetries: 1 });
+
+    expect(res.attempts).toBe(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(380);
+  });
+});
