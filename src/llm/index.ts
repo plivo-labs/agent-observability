@@ -1,4 +1,6 @@
 import { config } from "../config.js";
+import { costForTokens } from "../evals/pricing.js";
+import { addUsage, emptyUsage } from "./usage.js";
 import type {
   CompleteJSONOptions,
   LlmProvider,
@@ -82,15 +84,6 @@ function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false;
   }
 }
 
-function addUsage(into: LlmUsage, from: LlmUsage): void {
-  into.promptTokens += from.promptTokens;
-  into.completionTokens += from.completionTokens;
-  into.totalTokens += from.totalTokens;
-  if (typeof from.reasoningTokens === "number") {
-    into.reasoningTokens = (into.reasoningTokens ?? 0) + from.reasoningTokens;
-  }
-}
-
 /** True when the provider reported output truncated by the token cap
  *  (Responses API `status="incomplete" reason="max_output_tokens"`, thrown by
  *  both the blocking and streaming paths with this exact marker). */
@@ -129,6 +122,63 @@ const JSON_ONLY_HINT =
   "No prose, no explanation, no markdown code fences.";
 
 /**
+ * Emit one structured accounting line per LLM call.
+ *
+ * completeJSON is the single chokepoint every LLM call in this service passes
+ * through (planner, writer, user simulator, judges), so this is the ONE place
+ * token spend has to be recorded for the accounting to be complete. Adding a
+ * call site later cannot silently escape it.
+ *
+ * Emitted on EVERY exit — success, retries-exhausted, and caller-abort. A call
+ * that failed still burned every token it sent, and dropping those would
+ * under-report spend exactly when something is going wrong: a schema-retry loop
+ * against a large prompt is the most expensive failure mode this service has,
+ * and counting only successes would rank the model that fails most as cheapest.
+ *
+ * `cost_usd` is best-effort and prints `unknown` when we hold no rate for the
+ * model. Never a fabricated 0: a zero silently understates a bill and reads as
+ * "this was free", whereas `unknown` is a visible prompt to add the price row.
+ */
+function logUsage(a: {
+  label?: string;
+  role?: LlmRole;
+  correlationId?: string;
+  model: string;
+  provider: string;
+  usage: LlmUsage;
+  attempts: number;
+  startedAt: number;
+  outcome: "ok" | "error" | "aborted";
+}): void {
+  // Shared with the per-session walk in evals/metrics.ts — one formula, so the two
+  // cannot report different dollars for the same tokens.
+  //
+  // reasoningTokens is deliberately NOT passed: it is a SUBSET of completionTokens
+  // (the provider counts invisible reasoning inside output_tokens and bills it at
+  // the output rate), so it is already paid for. It is logged separately purely as
+  // a truncation-pressure signal.
+  //
+  // cachedPromptTokens is likewise not passed — not because caching is ignored, but
+  // because LlmUsage does not carry it yet (see providers/openai.ts:
+  // `prompt_tokens_details.cached_tokens` is available and unread). Until it does,
+  // this over-estimates input cost when prompt caching is active. The formula
+  // itself handles caching correctly the moment the field arrives.
+  const cost = costForTokens(a.provider, a.model, {
+    promptTokens: a.usage.promptTokens,
+    completionTokens: a.usage.completionTokens,
+  });
+  console.log(
+    `[llm] usage label=${a.label ?? a.role ?? "unknown"} role=${a.role ?? "-"} ` +
+      `model=${a.model} provider=${a.provider} ` +
+      `correlation_id=${a.correlationId ?? "-"} ` +
+      `prompt_tokens=${a.usage.promptTokens} completion_tokens=${a.usage.completionTokens} ` +
+      `reasoning_tokens=${a.usage.reasoningTokens ?? 0} total_tokens=${a.usage.totalTokens} ` +
+      `attempts=${a.attempts} duration_ms=${Date.now() - a.startedAt} ` +
+      `cost_usd=${cost === null ? "unknown" : cost.toFixed(6)} outcome=${a.outcome}`,
+  );
+}
+
+/**
  * Provider-neutral structured LLM call. Sends the prompt, parses the response
  * as JSON, validates it against `schema`, and on a parse/validation failure
  * re-prompts (up to `maxRetries`) with the specific error appended. Times each
@@ -156,7 +206,22 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       : JSON_ONLY_HINT;
   let user = opts.prompt;
 
-  const usage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const usage: LlmUsage = emptyUsage();
+  // Wall clock for the whole call INCLUDING retries and their backoff — the number
+  // that matches what the caller actually waited, not just the last attempt.
+  const startedAt = Date.now();
+  const account = (attempts: number, outcome: "ok" | "error" | "aborted"): void =>
+    logUsage({
+      label: opts.label,
+      role: opts.role,
+      correlationId: opts.correlationId,
+      model,
+      provider: provider.name,
+      usage,
+      attempts,
+      startedAt,
+      outcome,
+    });
   let lastError: unknown;
   // Per-attempt request shape, escalated on truncation (see isTruncationError):
   // a truncated call MUST NOT be retried verbatim — it fails identically.
@@ -166,6 +231,12 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     // Caller abort (client disconnected): stop immediately — no retry, no backoff.
     if (opts.signal?.aborted) {
+      // An abort reached here AFTER a completed attempt still burned that attempt's
+      // tokens — the SSE client disconnecting mid-generation is the common case, and
+      // that spend is invisible today. Account for it, but only when something was
+      // actually spent: a request aborted before its first call must not emit an
+      // all-zero line into the accounting stream.
+      if (usage.totalTokens > 0) account(attempt - 1, "aborted");
       throw new LlmError("completeJSON aborted by caller", opts.signal.reason);
     }
     // Back off before a retry so a transient rate-limit (429) / timeout isn't hit
@@ -242,6 +313,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
 
     const result = opts.schema.safeParse(parsed.value);
     if (result.success) {
+      account(attempt, "ok");
       return { data: result.data, usage, raw: raw.text, attempts: attempt };
     }
     lastError = result.error;
@@ -252,6 +324,10 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
     user = `${opts.prompt}\n\nYour previous response failed schema validation: ${issues}. Return corrected JSON only.`;
   }
 
+  // Account for the spend BEFORE throwing: every attempt above sent a full prompt
+  // and was billed for it. Omitting failed calls would make the cheapest-looking
+  // model the one that fails most.
+  account(maxRetries + 1, "error");
   // Surface the underlying cause (429 / timeout / validation) in the message so a
   // failed simulation result says WHY, not just "failed".
   const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
