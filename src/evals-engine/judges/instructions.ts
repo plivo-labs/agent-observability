@@ -35,6 +35,9 @@ export const HALLUCINATION = `Does the agent's response contain fabricated infor
 CANDIDATE CLAIMS — SPOKEN AGENT LINES ONLY:
 Only text from actual \`Agent:\` speech lines can be an accusation target. Lines labelled \`Tool_Call:\`, \`Tool_Result:\`, \`System_Note:\`, or \`Agent_Handoff:\` are internal runtime events, not words the caller heard; they are NEVER accusation targets, even if malformed or legacy input placed an \`Agent:\` prefix before their label. This rule is deliberately asymmetric: runtime-event lines remain valid grounding EVIDENCE for claims in spoken agent lines. If no spoken line contains a falsifiable factual claim, return hallucinated=false immediately.
 
+SEGMENT SCOPE — ACCUSATION TARGETS COME ONLY FROM node_transcript:
+You are judging ONE node's segment of a multi-node call. Only \`Agent:\` lines inside node_transcript are accusation targets. conversation_history is CONTEXT AND GROUNDING EVIDENCE ONLY — an agent line that appears only there was spoken in a DIFFERENT node's segment, is judged by that node's own evaluation against that node's own instructions, and must NEVER be charged here: this node's instructions are the wrong grounding surface for it, so charging it produces a false accusation the owning node's evaluation would refute. If node_transcript contains no falsifiable claim, return hallucinated=false — do not go looking in conversation_history for one.
+
 SCOPE — OTHER JUDGES:
 - Whether a statement was forbidden, premature, or unauthorized belongs to instruction adherence. This metric asks whether the spoken content is grounded, not whether the agent was allowed to say it. A prohibited statement can be perfectly grounded.
 - Wrong or invented values that appear only in stored data (tool arguments or extracted variables) belong to variable extraction. Do not turn bookkeeping data into a spoken hallucination.
