@@ -55,6 +55,73 @@ describe("LLM node judges (MockLLM)", () => {
     expect(sent.node_transcript).toContain("order is 42");
   });
 
+  test("hallucination: fire whose accused line was spoken in ANOTHER node's segment is dropped", async () => {
+    // Cross-segment bleed (dev session 87a57b09, 2026-08-05): the screening
+    // node's judge charged "This is regarding your appointment in BrightSmile
+    // Dental, Koramangala" — a line spoken (and grounded) in the MAIN node's
+    // segment. The claim quote is not in this node's own transcript but IS in
+    // conversation_history → out-of-segment accusation, neutralized.
+    const fired = {
+      hallucinated: true,
+      score: 0.75,
+      reason: "The agent introduced an unsupported clinic location.",
+      technical_reason:
+        'Unsupported spoken claim: "This is regarding your appointment in BrightSmile Dental, Koramangala"; Sources checked: node_prompt, conversation history; none establishes Koramangala.',
+    };
+    const llm = new MockLLM([JSON.stringify(fired)]);
+    const screeningNode = node({
+      node_prompt: "Contact-screening step. Confirm identity, then ask permission.",
+      turns: [{ node_uuid: "n1", user: "Yes.", agent: "Hi, this is Maya from BrightSmile Dental — am I speaking with Vijay?", intent: "" }],
+    });
+    const conversation = ctx({
+      full_transcript:
+        "Agent: Hi, this is Maya from BrightSmile Dental — am I speaking with Vijay?\nUser: Yes.\nAgent: This is regarding your appointment in BrightSmile Dental, Koramangala, can you tell me when you can visit?",
+    });
+    const { data } = await runHallucinationJudge(screeningNode, conversation, llm);
+    expect(data.hallucinated).toBe(false);
+    expect(data.score).toBe(1);
+    expect(data.technical_reason).toContain("another node's segment");
+    expect(data.technical_reason).toContain(fired.technical_reason); // original verdict preserved for audit
+  });
+
+  test("hallucination: fire whose accused line IS in this node's transcript is kept", async () => {
+    const fired = {
+      hallucinated: true,
+      score: 0.5,
+      reason: "Unsupported claim.",
+      technical_reason: 'Unsupported spoken claim: "your order ships tomorrow by courier"; Sources checked: all; none grounds it.',
+    };
+    const llm = new MockLLM([JSON.stringify(fired)]);
+    const n = node({
+      turns: [{ node_uuid: "n1", user: "when does it ship?", agent: "your order ships tomorrow by courier", intent: "" }],
+    });
+    const { data } = await runHallucinationJudge(n, ctx({ full_transcript: "User: when does it ship?\nAgent: your order ships tomorrow by courier" }), llm);
+    expect(data.hallucinated).toBe(true);
+    expect(data.score).toBe(0.5);
+  });
+
+  test("hallucination: fire with an unlocatable (paraphrased) quote is left untouched", async () => {
+    // The backstop only neutralizes when the quote provably lives in another
+    // segment; a quote found nowhere (paraphrase, normalization miss) must not
+    // silence a possibly-real verdict.
+    const fired = {
+      hallucinated: true,
+      score: 0.25,
+      reason: "Fabricated detail.",
+      technical_reason: 'Unsupported spoken claim: "a completely paraphrased rendering of the line"; Sources checked: all; none grounds it.',
+    };
+    const llm = new MockLLM([JSON.stringify(fired)]);
+    const { data } = await runHallucinationJudge(node(), ctx(), llm);
+    expect(data.hallucinated).toBe(true);
+    expect(data.score).toBe(0.25);
+  });
+
+  test("hallucination: system prompt scopes accusation targets to the node's own transcript", async () => {
+    const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
+    await runHallucinationJudge(node(), ctx(), llm);
+    expect(llm.calls[0]!.system).toContain("SEGMENT SCOPE");
+  });
+
   test("hallucination: unconfigured node (no node_prompt, no global_prompt) → neutral pass, no LLM call", async () => {
     // A node ref the config doesn't know (e.g. a screening segment the sender
     // never exported) reaches the judge with an empty prompt. With no config
