@@ -11,6 +11,11 @@
 import { simEngineConfig } from "../config.js";
 
 const TURN_PATH = "/v1/simulation/session/turn";
+// SER-6070: stateful single-node sessions for task units (ScreeningUnit) — livekit holds the
+// session; continuity is keyed on simulation_session_id (plus the sticky cookie jar below).
+const FLOW_SESSION_START_PATH = "/v1/simulation/flow-session/start";
+const FLOW_SESSION_TURN_PATH = "/v1/simulation/flow-session/turn";
+const FLOW_SESSION_END_PATH = "/v1/simulation/flow-session/end";
 const DEFAULT_TIMEOUT_MS = 60_000; // matches the Go client's 60s http.Client timeout
 const MAX_ERROR_PREVIEW = 500; // matches the Go client's 500-char error body preview
 
@@ -138,6 +143,31 @@ export class LiveKitSimClient {
   async executeTurn(req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
     if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
     return this.post(TURN_PATH, req);
+  }
+
+  /** Open a server-held task-unit session (SER-6070); the response carries the unit's opener. */
+  async startFlowSession(req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
+    if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
+    return this.post(FLOW_SESSION_START_PATH, req);
+  }
+
+  /** Drive one turn of a held task-unit session; the terminal turn carries the disposition intent. */
+  async turnFlowSession(req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
+    if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
+    return this.post(FLOW_SESSION_TURN_PATH, req);
+  }
+
+  /** Best-effort cleanup of a held session (livekit also evicts on terminal turns and TTL). */
+  async endFlowSession(sessionId: string): Promise<void> {
+    if (!this.url || !sessionId) return;
+    try {
+      await this.post(FLOW_SESSION_END_PATH, {
+        phlo_run_uuid: sessionId,
+        simulation_session_id: sessionId,
+      } as LiveKitSimRequest);
+    } catch {
+      // Cleanup is advisory; TTL eviction covers the failure.
+    }
   }
 
   private authHeader(): Record<string, string> {

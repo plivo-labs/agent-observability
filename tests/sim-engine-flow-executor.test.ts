@@ -433,3 +433,209 @@ describe("resolveIntentSourceHandle", () => {
     expect(resolveIntentSourceHandle(node, "unknown")).toEqual(["", false]);
   });
 });
+
+// --- contact_screening (SER-6070): mocked multi-outcome node. Dispositions are
+// LITERAL edge sourceHandles (reached/wrong_contact/... and "Voicemail
+// Detected"), matching phlo-core's output states — no intent-UUID indirection.
+describe("contact_screening", () => {
+  function screeningGraph(): FlowGraph {
+    return parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("IC", "Dial", "initiate_call", null),
+        mockNode("SC", "Screen Contact", "contact_screening", null),
+        aiNode("A", "Reminder Conversation", [{ id: "done-uuid", intent_name: "Done" }]),
+        terminalNode("E", "End", "end_conversation", "Bye"),
+        terminalNode("VM", "Voicemail Close", "end_conversation", "VM bye"),
+      ],
+      edges: [
+        edge("S", "IC", "http"),
+        edge("IC", "SC", "answered"),
+        edge("SC", "A", "reached"),
+        edge("SC", "VM", "Voicemail Detected"),
+        edge("SC", "E", "wrong_contact"),
+        edge("A", "E", "done-uuid"),
+      ],
+    });
+  }
+
+  test("world_state disposition routes on the literal handle and records node_vars", async () => {
+    const worldState = new Map<string, WorldStateEntry>([
+      [
+        "SC",
+        {
+          outcome: "reached",
+          data: {
+            screening_disposition: "reached",
+            screening_status: "completed",
+            screening_answered_by: "Morgan Patel",
+            screening_relationship: "self",
+            screening_callback_time: "",
+          },
+        },
+      ],
+    ]);
+
+    const result = await new FlowOrchestrator(
+      screeningGraph(),
+      worldState,
+      10,
+      staticAIExecutor(aiResult("Done")),
+    ).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(1);
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "A", "E"]);
+  });
+
+  test("Voicemail Detected routes to the voicemail terminal with zero AI turns", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "Voicemail Detected" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.last_node_id).toBe("VM");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
+  });
+
+  test("the voicemail disposition VALUE aliases to the Voicemail Detected edge key", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "voicemail" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("VM");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "VM"]);
+  });
+
+  test("no world_state entry and no executor falls back to the reached mock", async () => {
+    // SC routes straight to a terminal so the executor-less run never touches
+    // an ai_agent_v2 (which would be a contract violation and throw).
+    const graph = parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("IC", "Dial", "initiate_call", null),
+        mockNode("SC", "Screen Contact", "contact_screening", null),
+        terminalNode("E", "End", "end_conversation", "Bye"),
+      ],
+      edges: [edge("S", "IC", "http"), edge("IC", "SC", "answered"), edge("SC", "E", "reached")],
+    });
+
+    const result = await new FlowOrchestrator(graph, null, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "E"]);
+  });
+
+  test("unpinned screening runs conversationally through the AI executor (SER-6070)", async () => {
+    const executor = {
+      async executeAINode(node: FlowNode): Promise<NodeExecutionResult | null> {
+        return node.type === "contact_screening" ? aiResult("reached") : aiResult("Done");
+      },
+    };
+    const result = await new FlowOrchestrator(screeningGraph(), null, 10, executor).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    // Both the screening conversation and the downstream ai_agent_v2 count turns.
+    expect(result.turn_count).toBe(2);
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "A", "E"]);
+  });
+
+  test("pinned screening never calls the AI executor", async () => {
+    const throwing = {
+      async executeAINode(node: FlowNode): Promise<NodeExecutionResult | null> {
+        if (node.type !== "ai_agent_v2") throw new Error("executor called for pinned screening");
+        return aiResult("Done");
+      },
+    };
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "wrong_contact" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, throwing).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("E");
+    expect(result.nodes_visited).toEqual(["S", "IC", "SC", "E"]);
+  });
+
+  test("screening conversation turns count toward max_turns", async () => {
+    // Executor always returns empty outcome = stay on the screening node forever.
+    const result = await new FlowOrchestrator(
+      screeningGraph(),
+      null,
+      3,
+      staticAIExecutor(aiResult("")),
+    ).run();
+
+    expect(result.stop_reason).toBe("max_turns");
+    expect(result.turn_count).toBe(4);
+  });
+
+  test("unwired disposition stops with no_matching_edge", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["SC", { outcome: "do_not_call" }]]);
+
+    const result = await new FlowOrchestrator(screeningGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("no_matching_edge");
+    expect(result.error_detail).toBe("do_not_call");
+  });
+});
+
+// The builder-canvas composite: dial + screening in ONE node, carrying the
+// disposition handles AND the carrier handles. The sim receives the canvas
+// shape (console sends flowInstance.getNodes() verbatim), so the composite
+// must execute exactly like the standalone screening node.
+describe("outbound_screening composite", () => {
+  function compositeGraph(): FlowGraph {
+    return parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("OS", "Call and Screen", "outbound_screening", null),
+        aiNode("A", "Reminder Conversation", [{ id: "done-uuid", intent_name: "Done" }]),
+        terminalNode("E", "End", "end_conversation", "Bye"),
+        terminalNode("VM", "Voicemail Close", "end_conversation", "VM bye"),
+        terminalNode("NA", "No Answer Close", "end_conversation", "NA bye"),
+      ],
+      edges: [
+        edge("S", "OS", "http"),
+        edge("OS", "A", "reached"),
+        edge("OS", "VM", "Voicemail Detected"),
+        edge("OS", "NA", "no_answer"),
+        edge("A", "E", "done-uuid"),
+      ],
+    });
+  }
+
+  test("unpinned composite runs conversationally; executor disposition routes it", async () => {
+    const executor = {
+      async executeAINode(node: FlowNode): Promise<NodeExecutionResult | null> {
+        return node.type === "outbound_screening" ? aiResult("reached") : aiResult("Done");
+      },
+    };
+    const result = await new FlowOrchestrator(compositeGraph(), null, 10, executor).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(2);
+    expect(result.nodes_visited).toEqual(["S", "OS", "A", "E"]);
+  });
+
+  test("carrier handle no_answer routes from the composite", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "no_answer" }]]);
+
+    const result = await new FlowOrchestrator(compositeGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.last_node_id).toBe("NA");
+  });
+
+  test("voicemail value aliases to the edge key on the composite too", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "voicemail" }]]);
+
+    const result = await new FlowOrchestrator(compositeGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.last_node_id).toBe("VM");
+  });
+});
