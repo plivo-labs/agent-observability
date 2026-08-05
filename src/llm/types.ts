@@ -166,9 +166,21 @@ export interface LlmResult<T> {
 
 export class LlmError extends Error {
   readonly cause?: unknown;
-  constructor(message: string, cause?: unknown) {
+  /**
+   * Tokens the failed call actually burned, summed across its attempts.
+   *
+   * A call that exhausts its retries was still billed for every attempt, and the
+   * caller is the only layer that can attribute that spend to the work that caused it
+   * — by the time this throws, `completeJSON` has already emitted its per-call
+   * accounting line, but a caller with its own retry loop on top (the generation
+   * planner replans) would otherwise report only the attempt that eventually
+   * succeeded. Carrying usage on the error is what lets a roll-up stay honest.
+   */
+  readonly usage?: LlmUsage;
+  constructor(message: string, cause?: unknown, usage?: LlmUsage) {
     super(message);
     this.name = "LlmError";
     this.cause = cause;
+    this.usage = usage;
   }
 }

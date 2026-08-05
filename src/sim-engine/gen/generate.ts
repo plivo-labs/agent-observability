@@ -1,4 +1,4 @@
-import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import { LlmError, type LlmProvider, type LlmUsage } from "../../llm/index.js";
 import { sumUsage } from "../../llm/usage.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
@@ -250,6 +250,13 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       : null;
   let planner: PlannerWithInventory | null = null;
   let plannerUsage: LlmUsage | null = null;
+  // EVERY planner call this generation paid for, including ones that threw. `plannerUsage`
+  // above stays the LAST SUCCESSFUL call because it is the `planner_usage` metadata
+  // contract; this accumulator is what the timing roll-up bills against. They diverge
+  // exactly when the planner is retried — which is the case where reporting only the
+  // survivor understates the run (2026-08-05 smoke: 20,470 tokens burned by a rejected
+  // call, invisible in a roll-up that showed 23,974).
+  const plannerUsages: LlmUsage[] = [];
   let plannerCacheHit = false;
   if (cacheKey) {
     const cached = plannerCacheGet(cacheKey, cacheTtlMs);
@@ -278,9 +285,13 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       });
       planner = out.planner;
       plannerUsage = out.usage;
+      plannerUsages.push(out.usage);
       yield { type: "planning_done", attempt, capability_count: planner.capabilities.length };
       break;
     } catch (e) {
+      // A rejected planner call was still billed for every attempt it made; completeJSON
+      // hands those tokens back on the error so the replan does not erase them.
+      if (e instanceof LlmError && e.usage) plannerUsages.push(e.usage);
       if (attempt >= PLANNER_RETRIES) throw new Error(`Planner failed after ${PLANNER_RETRIES} attempts: ${(e as Error).message}`);
     }
   }
@@ -336,6 +347,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       // cache hit (planner_cache_hit + planner_usage:null would report zero planning
       // cost on a generation that paid it in full — corrupting the timing evidence).
       plannerUsage = out.usage;
+      plannerUsages.push(out.usage);
       plannerCacheHit = false;
     }
   }
@@ -499,7 +511,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // enumeration with no LLM call (see allocateScenarioSlots), so its token cost is
   // structurally zero and `allocation_ms` is its whole story. Emitting a hardcoded
   // `allocation_tokens=0` would imply it was measured and could one day be non-zero.
-  const { usage: plannerU, calls: plannerCalls } = sumUsage(plannerUsage ? [plannerUsage] : []);
+  const { usage: plannerU, calls: plannerCalls } = sumUsage(plannerUsages);
   const { usage: writerU, calls: writerCalls } = sumUsage(writerUsages);
   // No cost_usd here, deliberately. Costing needs a PROVIDER name, and this whole
   // module tree (generate/planner/writer/allocator) takes everything through

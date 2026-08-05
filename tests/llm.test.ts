@@ -345,3 +345,68 @@ describe("completeJSON — usage accounting", () => {
     expect(f.reasoning_tokens).toBe("4");
   });
 });
+
+describe("completeJSON — rejected attempts are visible and billed", () => {
+  function captureWarn(): { lines: string[]; restore: () => void } {
+    const original = console.warn;
+    const lines: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[llm] attempt")) lines.push(line);
+    };
+    return { lines, restore: () => { console.warn = original; } };
+  }
+
+  test("logs WHICH field failed the schema, not just that something did", async () => {
+    // The gap this closes: a transport failure always logged, a rejection never did.
+    // 2026-08-05, a smoke planner burned 56s on two rejected attempts and triggered a
+    // 28s replan; the only trace was outcome=error, which says a call failed but not
+    // why — so it could be seen and not fixed.
+    const cap = captureWarn();
+    try {
+      await expect(
+        completeJSON({
+          schema: Verdict,
+          prompt: "x",
+          label: "planner",
+          provider: new MockLLM([JSON.stringify({ verdict: "nope" }), JSON.stringify({ verdict: "still-nope" })]),
+        }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(2);           // one per rejected attempt
+    expect(cap.lines[0]).toContain("label=planner");
+    expect(cap.lines[0]).toContain("schema");
+    expect(cap.lines[0]).toContain("verdict");   // the offending path, not a generic message
+  });
+
+  test("distinguishes unparseable output from schema-invalid output", async () => {
+    const cap = captureWarn();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM(["not json at all", JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(1);
+    expect(cap.lines[0]).toContain("invalid JSON");
+  });
+
+  test("hands the burned tokens back on the error so a caller's retry loop can bill them", async () => {
+    // A caller with its own retry on top (the generation planner replans) would otherwise
+    // report only the attempt that eventually succeeded, understating what the run cost.
+    let err: unknown;
+    const cap = captureWarn();
+    try {
+      await completeJSON({ schema: Verdict, prompt: "x", provider: new MockLLM(["bad", "still bad"]) });
+    } catch (e) { err = e; } finally { cap.restore(); }
+    expect(err).toBeInstanceOf(LlmError);
+    // Both attempts were billed: 2 x the mock's 10/5/15.
+    expect((err as InstanceType<typeof LlmError>).usage?.totalTokens).toBe(30);
+    expect((err as InstanceType<typeof LlmError>).usage?.promptTokens).toBe(20);
+  });
+});
