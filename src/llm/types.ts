@@ -54,15 +54,28 @@ export interface ProviderCompleteArgs {
   topP?: number;
   /**
    * Reasoning effort for reasoning models (gpt-5.x). Undefined => omit the
-   * parameter and inherit the model's own default. The reference engine pins
-   * "none" (cx-sqs-worker config/env.ctmpl:92), which is what makes its 1500-5000
-   * output caps sufficient: at effort "none" almost none of max_output_tokens is
-   * spent on invisible reasoning tokens.
+   * parameter and inherit the model's own default.
    *
    * Honored on BOTH OpenAI paths, with different wire shapes the provider handles:
    * Responses sends nested `reasoning: {effort}`, Chat Completions sends a flat
    * `reasoning_effort`. Anthropic ignores it (thinking is deliberately off there —
    * see providers/anthropic.ts).
+   *
+   * REFERENCE PARITY, precisely — the global pin and the per-path behaviour differ,
+   * and conflating them sends you looking for a bug that isn't there:
+   *
+   *   cx-sqs pins DefaultReasoningEffort="none" (config/env.ctmpl:92), and its
+   *   RESPONSES builder applies it (`body["reasoning"] = {effort}`) — which is what
+   *   makes its 1500-5000 output caps sufficient, since at "none" almost none of
+   *   max_output_tokens goes to invisible reasoning. But its CHAT builder
+   *   (buildChatCompletionsBody) has no reasoning key at ALL, so on that transport
+   *   the pin is unreachable and the deployment default applies.
+   *
+   * Consequence: AO forwarding effort on the Chat path is a deliberate EXTENSION of
+   * the reference, not parity with it. The one caller pinned to Chat is the user
+   * simulator, so its default must stay "omit" to match — see
+   * SIM_USER_REASONING_EFFORT in schema.ts and the invariant test in
+   * tests/sim-engine-config.test.ts.
    */
   reasoningEffort?: WireReasoningEffort;
   /**
