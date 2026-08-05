@@ -1,4 +1,4 @@
-import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import type { LlmProvider, LlmUsage, WireReasoningEffort } from "../../llm/index.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
@@ -80,6 +80,12 @@ export interface GenerateInput {
   phloUuid: string;
   maxScenarios: number;
   model: string;
+  /** Per-role reasoning effort for the two generation LLM calls; `undefined` omits the parameter
+   *  (the "inherit" default, i.e. the deployment's own default). Passed in rather than read from
+   *  env because this pipeline is config-free by design — the route wires
+   *  SIM_EVAL_PLANNER_REASONING_EFFORT / SIM_EVAL_WRITER_REASONING_EFFORT, exactly like `model`. */
+  plannerReasoningEffort?: WireReasoningEffort;
+  writerReasoningEffort?: WireReasoningEffort;
   simulationMode?: SimulationMode;
   testCaseGenerationInstructions?: string;
   existingSummaries?: ExistingScenarioSummary[];
@@ -143,7 +149,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
  *  an attempt that emits scenarios and THEN throws mid-stream still can't get
  *  those slots re-requested or marked failed. */
 async function runChunkWithRetry(
-  base: { flowJson: Dict; planner: PlannerWithInventory; model: string; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider; signal?: AbortSignal },
+  base: { flowJson: Dict; planner: PlannerWithInventory; model: string; reasoningEffort?: WireReasoningEffort; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider; signal?: AbortSignal },
   slots: Slot[],
   onScenario?: (s: RuntimeScenario) => void,
 ): Promise<{ scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[]; incrementalDisabled: boolean }> {
@@ -238,6 +244,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
           flowJson: input.flowJson,
           phloUuid: input.phloUuid,
           model: input.model,
+          reasoningEffort: input.plannerReasoningEffort,
           simulationMode: mode,
           smokeCap,
           instructions: input.testCaseGenerationInstructions ?? "",
@@ -267,6 +274,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         flowJson: input.flowJson,
         phloUuid: input.phloUuid,
         model: input.model,
+        reasoningEffort: input.plannerReasoningEffort,
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
@@ -321,6 +329,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         flowJson: input.flowJson,
         phloUuid: input.phloUuid,
         model: input.model,
+        reasoningEffort: input.plannerReasoningEffort,
         existingSummaries: existing,
         userInstructions: instructions,
         simulationMode: mode,
@@ -372,7 +381,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   for (let i = 0; i < chunks.length; i++) {
     const c = chunks[i];
     runChunkWithRetry(
-      { flowJson: input.flowJson, planner: planner!, model: input.model, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
+      { flowJson: input.flowJson, planner: planner!, model: input.model, reasoningEffort: input.writerReasoningEffort, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
       c,
       incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: i, scenario }) : undefined,
     ).then(

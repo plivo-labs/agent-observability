@@ -1,4 +1,4 @@
-import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { completeJSON, type LlmProvider, type LlmUsage, type WireReasoningEffort } from "../../llm/index.js";
 import { PlannerOutputZ, PLANNER_SCHEMA_NAME, PLANNER_JSON_SCHEMA } from "./schemas.js";
 import { plannerSystemPrompt } from "./prompts.js";
 import { buildFlowInventory, containsOutOfScopeRouteTerm, type MechanicalInventory } from "./inventory.js";
@@ -49,6 +49,9 @@ export interface PlanCapabilitiesArgs {
   flowJson: Dict;
   phloUuid: string;
   model: string;
+  /** Reasoning effort for the planner call; `undefined` omits the parameter (the "inherit"
+   *  default). Threaded from simEngineConfig by routes.ts, like `model`. */
+  reasoningEffort?: WireReasoningEffort;
   existingSummaries?: ExistingScenarioSummary[];
   userInstructions?: string;
   simulationMode?: SimulationMode;
@@ -86,6 +89,10 @@ export async function planCapabilities(
     // doesn't free-form past max_output_tokens → status="incomplete". Replicates aiassist's
     // planner exactly (PLANNER_OUTPUT_SCHEMA, strict:false); we still re-validate with Zod.
     jsonSchema: { name: PLANNER_SCHEMA_NAME, schema: PLANNER_JSON_SCHEMA, strict: false },
+    // Operator-tunable reasoning effort; `undefined` (the "inherit" default) omits the parameter,
+    // which is the pre-existing wire shape. Safe to raise here — unlike the judges, the planner's
+    // cap (PLANNER_MAX_OUTPUT_TOKENS) is generous enough that reasoning spend can't truncate it.
+    reasoningEffort: args.reasoningEffort,
     provider: args.provider,
     signal: args.signal,
   });
