@@ -123,6 +123,26 @@ export interface CompleteJSONOptions<T> {
   system?: string;
   /** Role drives default model selection when `model` is not given. */
   role?: LlmRole;
+  /**
+   * Operation name for the `[llm] usage` accounting line. `role` is too coarse to
+   * bill against — the planner and the writer are BOTH "generator", and they have
+   * very different token profiles, so a per-role total can't tell you which half of
+   * generation a cost regression came from.
+   *
+   * Keep the cardinality low and stable (it is a log field that gets grouped on):
+   * "planner", "writer", "user_sim", "eval_hallucination", …
+   */
+  label?: string;
+  /**
+   * Opaque id tying this call to the unit of work that caused it — a generation id
+   * or a scenario id. Purely observational: it is never sent to the provider, only
+   * printed on the usage line, so the per-call token spend of a 30-scenario
+   * generation or a 7-turn simulation can be summed by grouping on one field.
+   *
+   * This is what makes per-call logging sufficient on its own, and is the reason
+   * roll-up totals don't have to be threaded back up through every return type.
+   */
+  correlationId?: string;
   /** Explicit model id; overrides role-based selection. */
   model?: string;
   /** Output token cap. Omit for the default; pass `null` for "no cap" (the
@@ -173,9 +193,21 @@ export interface LlmResult<T> {
 
 export class LlmError extends Error {
   readonly cause?: unknown;
-  constructor(message: string, cause?: unknown) {
+  /**
+   * Tokens the failed call actually burned, summed across its attempts.
+   *
+   * A call that exhausts its retries was still billed for every attempt, and the
+   * caller is the only layer that can attribute that spend to the work that caused it
+   * — by the time this throws, `completeJSON` has already emitted its per-call
+   * accounting line, but a caller with its own retry loop on top (the generation
+   * planner replans) would otherwise report only the attempt that eventually
+   * succeeded. Carrying usage on the error is what lets a roll-up stay honest.
+   */
+  readonly usage?: LlmUsage;
+  constructor(message: string, cause?: unknown, usage?: LlmUsage) {
     super(message);
     this.name = "LlmError";
     this.cause = cause;
+    this.usage = usage;
   }
 }

@@ -1,4 +1,5 @@
-import type { LlmProvider, LlmUsage, WireReasoningEffort } from "../../llm/index.js";
+import { LlmError, type LlmProvider, type LlmUsage, type WireReasoningEffort } from "../../llm/index.js";
+import { sumUsage } from "../../llm/usage.js";
 import { planCapabilities } from "./planner.js";
 import { allocateScenarioSlots } from "./allocator.js";
 import { allocateSmokeSlots } from "./smoke-allocator.js";
@@ -183,6 +184,11 @@ async function runChunkWithRetry(
       remaining = remaining.filter((s) => !got.has(s.slot_id));
     } catch (err) {
       if (base.signal?.aborted) throw err; // abort is the ONLY rejection that escapes
+      // A rejected chunk attempt was still billed for every provider call it made. Dropping
+      // it here would leave the writer half of the roll-up quietly understated while the
+      // planner half is honest — the worst outcome, since nothing in the output would say
+      // which number to trust.
+      if (err instanceof LlmError && err.usage) usages.push(err.usage);
       logAttemptFailure("chunk", attempt, err);
     }
   }
@@ -210,6 +216,7 @@ async function runChunkWithRetry(
           if (res.scenarios.length > 0 || consumed.has(slot.slot_id)) return { slot, scenarios: res.scenarios };
         } catch (err) {
           if (base.signal?.aborted) throw err;
+          if (err instanceof LlmError && err.usage) usages.push(err.usage);
           logAttemptFailure(`slot ${slot.slot_id}`, attempt, err);
         }
       }
@@ -255,7 +262,15 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         })
       : null;
   let planner: PlannerWithInventory | null = null;
-  let plannerUsage: LlmUsage | null = null;
+  // EVERY planner call this generation paid for, including ones that threw. Both the
+  // timing roll-up and the `planner_usage` metadata derive from this — there is no second
+  // scalar to keep in step, because the two inevitably diverge exactly when the planner is
+  // retried, and that is the case where reporting only the survivor understates the run
+  // (2026-08-05 smoke: 20,470 tokens burned by a rejected call, against a reported 23,974).
+  //
+  // Stays EMPTY on a planner-cache hit — no call, no tokens — which is what
+  // `planner_cache_hit`'s documented invariant requires of a null `planner_usage`.
+  const plannerUsages: LlmUsage[] = [];
   let plannerCacheHit = false;
   if (cacheKey) {
     const cached = plannerCacheGet(cacheKey, cacheTtlMs);
@@ -279,14 +294,18 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         userInstructions: instructions,
         simulationMode: mode,
         smokeCap,
+        generationId,
         provider: input.plannerProvider,
         signal: input.signal,
       });
       planner = out.planner;
-      plannerUsage = out.usage;
+      plannerUsages.push(out.usage);
       yield { type: "planning_done", attempt, capability_count: planner.capabilities.length };
       break;
     } catch (e) {
+      // A rejected planner call was still billed for every attempt it made; completeJSON
+      // hands those tokens back on the error so the replan does not erase them.
+      if (e instanceof LlmError && e.usage) plannerUsages.push(e.usage);
       if (attempt >= PLANNER_RETRIES) throw new Error(`Planner failed after ${PLANNER_RETRIES} attempts: ${(e as Error).message}`);
     }
   }
@@ -334,6 +353,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         userInstructions: instructions,
         simulationMode: mode,
         smokeCap,
+        generationId,
         provider: input.plannerProvider,
         signal: input.signal,
       });
@@ -341,7 +361,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       // The replan is a REAL planner call: the metadata must not keep claiming a
       // cache hit (planner_cache_hit + planner_usage:null would report zero planning
       // cost on a generation that paid it in full — corrupting the timing evidence).
-      plannerUsage = out.usage;
+      plannerUsages.push(out.usage);
       plannerCacheHit = false;
     }
   }
@@ -378,8 +398,14 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   // provider without text deltas) nothing streams mid-chunk and behavior is
   // chunk-granular, exactly as before.
   const incremental = input.incrementalEmit ?? true;
+  // Per-chunk wall clock. Chunks are launched in this loop and run CONCURRENTLY, so
+  // their durations overlap and deliberately do NOT sum to writer_ms — each is the
+  // latency of one chunk's own LLM call(s), which is what identifies the straggler
+  // that set the generation's end time.
+  const chunkStartedAt = new Map<number, number>();
   for (let i = 0; i < chunks.length; i++) {
     const c = chunks[i];
+    chunkStartedAt.set(i, Date.now());
     runChunkWithRetry(
       { flowJson: input.flowJson, planner: planner!, model: input.model, reasoningEffort: input.writerReasoningEffort, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
       c,
@@ -413,6 +439,9 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   const perChunkSaved = new Map<number, number>();
   let saved = 0;
   let deduped = 0;
+  // Anchors the per-scenario `delta_ms`. Starts at genStart so the first scenario's
+  // delta equals its at_ms (= ttfs_ms) rather than reading as an instant arrival.
+  let lastScenarioAt = genStart;
   const admit = (scenario: RuntimeScenario, chunkIndex: number): boolean => {
     // Smoke units under one capability legitimately share all 8 coverage axes (same
     // kind + route ⇒ identical coverage_key), so dedup smoke by the audit-unique
@@ -437,6 +466,21 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       // single ledger owner by construction, and each slot flows through it once
       // (the writer excludes incrementally-delivered slots from its final result).
       if (admit(ev.scenario, ev.chunkIndex)) {
+        // Per-scenario emission timeline.
+        //
+        // A scenario has no individually measurable token cost — ONE writer LLM call
+        // streams a whole chunk of them — so the honest per-scenario quantity is WHEN
+        // it landed: `at_ms` from generation start and `delta_ms` since the previous
+        // scenario. Together these give the arrival curve for a 30/40/50-scenario run
+        // (which is what the streaming console renders) and make a chunk stalling
+        // mid-stream visible as a single large delta instead of a flat average.
+        const at = Date.now();
+        console.log(
+          `[sim-gen] scenario generation=${generationId} index=${saved - 1} ` +
+            `slot_id=${ev.scenario.eval_metadata?.slot_id ?? "-"} chunk=${ev.chunkIndex} ` +
+            `at_ms=${at - genStart} delta_ms=${at - lastScenarioAt}`,
+        );
+        lastScenarioAt = at;
         yield { type: "scenario", scenario: ev.scenario };
         yield { type: "writer_scenario_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, scenario_index: (perChunkSaved.get(ev.chunkIndex) ?? 1) - 1, saved_count: saved, slot_id: ev.scenario.eval_metadata?.slot_id ?? "" };
       }
@@ -446,6 +490,19 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     writerUsages.push(...ev.usages);
     failedSlotIds.push(...ev.failedSlotIds);
     incrementalDisabled ||= ev.incrementalDisabled;
+    // Per-chunk accounting: the finest granularity at which token cost is genuinely
+    // ATTRIBUTABLE, because a chunk is one LLM call (or its retries). Cost per
+    // scenario is chunk tokens ÷ chunk saved — an amortisation, which is why it is
+    // left to the reader rather than printed as if it were measured per scenario.
+    const { usage: chunkUsage, calls: chunkCalls } = sumUsage(ev.usages);
+    const chunkSaved = perChunkSaved.get(ev.chunkIndex) ?? 0;
+    console.log(
+      `[sim-gen] chunk generation=${generationId} chunk=${ev.chunkIndex}/${chunks.length} ` +
+        `slots=${chunks[ev.chunkIndex]?.length ?? 0} saved=${chunkSaved} failed=${ev.failedSlotIds.length} ` +
+        `duration_ms=${Date.now() - (chunkStartedAt.get(ev.chunkIndex) ?? writerStart)} llm_calls=${chunkCalls} ` +
+        `prompt_tokens=${chunkUsage.promptTokens} completion_tokens=${chunkUsage.completionTokens} ` +
+        `reasoning_tokens=${chunkUsage.reasoningTokens ?? 0} total_tokens=${chunkUsage.totalTokens}`,
+    );
     yield { type: "writer_chunk_done", chunk_index: ev.chunkIndex, chunk_count: chunks.length, chunk_saved_count: perChunkSaved.get(ev.chunkIndex) ?? 0, failed_slot_ids: ev.failedSlotIds };
   }
 
@@ -459,8 +516,32 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
   }
 
   const writerMs = Date.now() - writerStart;
+  // Per-STAGE token roll-up alongside the per-stage timings, so one grep answers
+  // "what did these N scenarios cost, where did the tokens go, and how long did each
+  // stage take". The per-call `[llm] usage` lines stay the source of truth; this is
+  // the headline.
+  //
+  // The ALLOCATOR is absent here on purpose, not by oversight: it is pure deterministic
+  // enumeration with no LLM call (see allocateScenarioSlots), so its token cost is
+  // structurally zero and `allocation_ms` is its whole story. Emitting a hardcoded
+  // `allocation_tokens=0` would imply it was measured and could one day be non-zero.
+  const { usage: plannerU, calls: plannerCalls } = sumUsage(plannerUsages);
+  const { usage: writerU, calls: writerCalls } = sumUsage(writerUsages);
+  // No cost_usd here, deliberately. Costing needs a PROVIDER name, and this whole
+  // module tree (generate/planner/writer/allocator) takes everything through
+  // GenerateInput and imports no config — which is what lets the gen tests run
+  // without parsing real env. Importing config, or plumbing a provider name through
+  // GenerateInput, to print one log field would trade that invariant for nothing:
+  // the per-call `[llm] usage` lines already carry both cost_usd AND
+  // correlation_id=<generation-id>, so generation cost is a group-by away:
+  //   phrase "[llm] usage" AND correlation_id=<id>  ->  sum(cost_usd)
   console.log(
-    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length}`,
+    `[sim-gen] timing generation=${generationId} planner_ms=${plannerMs} allocation_ms=${allocationMs} writer_ms=${writerMs} ttfs_ms=${ttfsMs} saved=${saved}/${slots.length} ` +
+      `planner_prompt_tokens=${plannerU.promptTokens} planner_completion_tokens=${plannerU.completionTokens} ` +
+      `planner_reasoning_tokens=${plannerU.reasoningTokens ?? 0} planner_llm_calls=${plannerCalls} ` +
+      `writer_prompt_tokens=${writerU.promptTokens} writer_completion_tokens=${writerU.completionTokens} ` +
+      `writer_reasoning_tokens=${writerU.reasoningTokens ?? 0} writer_llm_calls=${writerCalls} ` +
+      `total_tokens=${plannerU.totalTokens + writerU.totalTokens} llm_calls=${plannerCalls + writerCalls}`,
   );
   yield {
     type: "metadata",
@@ -473,7 +554,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       deduped_count: deduped,
       // Partial success requires at least one saved scenario (aiassist parity).
       partial_success: saved > 0 && saved < slots.length,
-      planner_usage: plannerUsage,
+      planner_usage: plannerUsages.length ? sumUsage(plannerUsages).usage : null,
       writer_usages: writerUsages,
       ...(mode === "smoke"
         ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
