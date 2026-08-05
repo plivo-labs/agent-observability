@@ -199,8 +199,14 @@ export function extractEmbeddedActions(flow: Dict): EmbeddedActionsNode[] {
   return result;
 }
 
+// The builder canvas keeps outbound screening as a composite (no initiate_call
+// node until save expansion), so the composite and the standalone screening
+// node both mark a flow outbound (SER-6070) — otherwise the default outbound
+// topology is framed as inbound in scenario prompts and the user-simulator.
+const OUTBOUND_CALL_NODE_TYPES = new Set(["initiate_call", "outbound_screening", "contact_screening"]);
+
 export function flowHasOutboundCall(flow: Dict): boolean {
-  return ((flow.nodes as Dict[]) || []).some((n) => isObj(n) && n.type === "initiate_call");
+  return ((flow.nodes as Dict[]) || []).some((n) => isObj(n) && OUTBOUND_CALL_NODE_TYPES.has(n.type as string));
 }
 
 export function extractAvailableLanguages(flow: Dict): string[] {

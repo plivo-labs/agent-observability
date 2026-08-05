@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { normalizeFlow } from "../src/simulation/flow/flow-normalize.js";
-import { buildFlowInventory } from "../src/sim-engine/gen/inventory.js";
+import { flowHasOutboundCall, buildFlowInventory } from "../src/sim-engine/gen/inventory.js";
 import realShape from "./fixtures/flow-real-shape.json";
 
 // buildFlowInventory runs on the canonical flow (output of normalizeFlow), mirroring
@@ -54,5 +54,26 @@ describe("buildFlowInventory — variables / actions / languages / outbound / st
     expect(inv.languages).toEqual(["en-US"]);
     expect(inv.is_outbound_call).toBe(false);
     expect(inv.start_node_param_keys).toEqual([]);
+  });
+});
+
+describe("flowHasOutboundCall (SER-6070)", () => {
+  test("composite-only screening flow counts as outbound", () => {
+    const flow = {
+      nodes: [
+        { id: "s", type: "start" },
+        { id: "os", type: "outbound_screening" },
+        { id: "a", type: "ai_agent_v2" },
+      ],
+    };
+    expect(flowHasOutboundCall(flow)).toBe(true);
+  });
+
+  test("standalone contact_screening counts as outbound", () => {
+    expect(flowHasOutboundCall({ nodes: [{ id: "sc", type: "contact_screening" }] })).toBe(true);
+  });
+
+  test("chat-only flow stays inbound", () => {
+    expect(flowHasOutboundCall({ nodes: [{ id: "a", type: "ai_agent_v2" }] })).toBe(false);
   });
 });

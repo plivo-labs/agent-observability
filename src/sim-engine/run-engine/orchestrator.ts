@@ -490,7 +490,12 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const handoffGraph = buildHandoffGraph(flowObj);
     const worldState = toWorldStateMap(job.scenario.world_state as Record<string, SchemaWorldStateEntry>);
     // Outbound when the flow has an initiate_call node (worker simulation_eval_handler.go:163).
-    const isOutboundCall = Array.from(graph.nodes.values()).some((n) => n.type === "initiate_call");
+    // Builder canvases carry outbound screening as a composite (no
+    // initiate_call until save expansion) — count both spellings so the
+    // user-simulator frames the caller as ANSWERING a call (SER-6070).
+    const isOutboundCall = Array.from(graph.nodes.values()).some(
+      (n) => n.type === "initiate_call" || n.type === "outbound_screening" || n.type === "contact_screening",
+    );
 
     const runner = new ScenarioRunner(deps, job, flowObj, handoffGraph, flowRunUuid, isOutboundCall);
     runnerRef = runner;
