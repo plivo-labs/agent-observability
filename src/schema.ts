@@ -282,6 +282,20 @@ export const envSchema = z.object({
   // Historically this knob could not exist: the Chat Completions path never forwarded the
   // parameter at all, so a reasoning model configured here silently ran at the deployment's
   // default effort on every turn. That gap is closed in this change (see providers/openai.ts).
+  //
+  // KEEP THE DEFAULT AT "inherit" (= omit). Verified reference behaviour, 2026-08-05:
+  // cx-sqs pins DefaultReasoningEffort="none" (config/env.ctmpl:92), but only its RESPONSES
+  // builder reads it — buildChatCompletionsBody has no reasoning key at all, and
+  // user_simulator.go forces APIFormatChatCompletions. So the reference's simulated caller
+  // sends NO effort, and prod AO has always matched it (main's Chat path dropped the
+  // parameter, and this key did not exist there). Defaulting to a real effort here would
+  // silently change every simulation's latency and spend on every environment at once.
+  //
+  // Tuning a specific model is therefore a per-environment CONSUL decision, not a code
+  // default — e.g. a deployment whose own default effort is expensive (measured on
+  // gpt-5.6-luna: ~1.9x the per-turn latency of gpt-5.5, widening with turn index) is fixed
+  // by setting this to "none"/"low" for THAT environment, verifiable via the
+  // `reasoning_tokens=` field on the `[llm] usage label=user_sim` line.
   SIM_USER_REASONING_EFFORT: reasoningEffort("inherit"),
   // SQS consumer fan-out: the number of independent worker loops the consumer runs, i.e. the max
   // scenarios processed concurrently per worker process. Each worker polls SQS independently and
