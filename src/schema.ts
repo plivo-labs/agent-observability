@@ -151,6 +151,35 @@ export const envSchema = z.object({
   SIMULATOR_MODEL: z.string().optional(),
   GENERATOR_MODEL: z.string().optional(),
 
+  // Per-role RATE-LIMIT fallback. When a call's retries are exhausted by 429s and
+  // one of these is set, completeJSON spends its last attempt on this model instead
+  // of failing. Absent = off, so the feature ships inert.
+  //
+  // Sized for the prod Luna cutover: gpt-5.6-luna runs on 2,500K TPM per region,
+  // above p99.9 but BELOW the observed peak minute (3,547K, us-east-1), so a few
+  // minutes a week will throttle. gpt-5.5 sits on the same Azure resources with
+  // 3,718K quota that goes largely idle after the cutover — real spare capacity next
+  // to the constrained deployment. Retry-After (llm/retry-after.ts) covers a
+  // TRANSIENT limit; this covers an EXHAUSTED window, where waiting cannot help.
+  //
+  // Set these to a DEPLOYMENT name, not a model id — same as the knobs above. A wrong
+  // name surfaces as DeploymentNotFound only when the fallback fires, i.e. exactly
+  // when you need it to work.
+  //
+  // KEEP JUDGE_MODEL_FALLBACK UNSET. Two reasons, both load-bearing:
+  //   1. Verdict rows do not record which model judged them, so a run whose judges
+  //      switched mid-way yields a silently mixed verdict set — a data-quality
+  //      problem, not a resilience win. Fixing it properly means persisting the model
+  //      per verdict (a DB column), which nothing does today.
+  //   2. Judges already have a better recovery path: eval-sweeper.ts classifies a 429
+  //      as transient, keeps the claim, and re-runs the whole session later. Nothing
+  //      is lost, only delayed.
+  // completeJSON still honours it if set, and logs a loud comparability warning, so
+  // the consequence is never silent.
+  JUDGE_MODEL_FALLBACK: z.string().optional(),
+  SIMULATOR_MODEL_FALLBACK: z.string().optional(),
+  GENERATOR_MODEL_FALLBACK: z.string().optional(),
+
   // Reasoning effort for the judge role, sent as `reasoning: {effort}` on the
   // Responses API. Defaults to "none" for reference-engine parity: cx-sqs-worker
   // pins effort "none" in prod (config/env.ctmpl:92) and AO's per-judge output

@@ -42,6 +42,25 @@ export function parseRetryAfter(raw: string | null | undefined, now = Date.now()
 }
 
 /**
+ * Is this the provider saying "you are over your quota"?
+ *
+ * Narrow on purpose. It gates the model fallback, and a 500 or a timeout is not a
+ * capacity problem — switching model cannot fix it and the fallback is ~25x the
+ * price. Only a genuine 429 should buy a call the more expensive model.
+ *
+ * Same two shapes as the hint reader: `status` from the OpenAI SDK's error on the
+ * Chat path, and a message beginning "429" from the raw-fetch Responses path
+ * (see httpError in providers/openai.ts). The message check is anchored so a 429
+ * quoted inside a body preview cannot false-positive.
+ */
+export function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: unknown; message?: unknown };
+  if (e.status === 429) return true;
+  return typeof e.message === "string" && /^429\b/.test(e.message);
+}
+
+/**
  * Pull a hint off whatever the provider threw, or null when there isn't one.
  *
  * Deliberately duck-typed rather than keyed off an error class: the Chat path's

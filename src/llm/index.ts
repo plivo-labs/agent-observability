@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { costForTokens } from "../evals/pricing.js";
-import { retryAfterMsFromError } from "./retry-after.js";
+import { isRateLimitError, retryAfterMsFromError } from "./retry-after.js";
 import { addUsage, emptyUsage } from "./usage.js";
 import type {
   CompleteJSONOptions,
@@ -73,6 +73,26 @@ function resolveModel(role: LlmRole | undefined, explicit: string | undefined, p
     );
   }
   return fallback;
+}
+
+/**
+ * The model to spend a call's LAST attempt on when 429s have exhausted the retries.
+ * Undefined = the feature is off for this role, which is the default everywhere.
+ *
+ * Read from config by ROLE rather than passed in by the caller, deliberately: the
+ * primary model is a per-call parameter (the sim engine threads its own), but a
+ * rate-limit fallback is a deployment-wide resilience policy. Resolving it here is
+ * what keeps this change from adding a field to four sim-engine option bags.
+ *
+ * See the SIMULATOR_MODEL_FALLBACK block in schema.ts for why the judge role is
+ * left unset by default.
+ */
+function resolveFallbackModel(role: LlmRole | undefined): string | undefined {
+  return role === "simulator"
+    ? config.SIMULATOR_MODEL_FALLBACK
+    : role === "generator"
+      ? config.GENERATOR_MODEL_FALLBACK
+      : config.JUDGE_MODEL_FALLBACK;
 }
 
 /** Strip markdown code fences and parse. Models sometimes wrap JSON in ```. */
@@ -192,6 +212,12 @@ function logUsage(a: {
 export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<LlmResult<T>> {
   const provider = opts.provider ?? (await resolveProvider());
   const model = resolveModel(opts.role, opts.model, provider.name);
+  const fallbackModel = resolveFallbackModel(opts.role);
+  // The model actually sent this attempt. Starts as the primary and switches ONCE,
+  // to `fallbackModel`, when 429s have used up the retry budget — see the catch
+  // block. Declared here so the account()/reject() closures below capture the
+  // variable and report the model that really ran, not the one we started with.
+  let attemptModel = model;
   // undefined → the default cap; explicit null → 0, which the provider reads as
   // "omit max_output_tokens" (no cap — used by the streaming writer).
   const maxTokens = opts.maxTokens === undefined ? DEFAULT_MAX_TOKENS : (opts.maxTokens ?? 0);
@@ -216,7 +242,11 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       label: opts.label,
       role: opts.role,
       correlationId: opts.correlationId,
-      model,
+      // attemptModel, not model: logUsage prices the tokens via costForTokens(), so
+      // after a fallback the primary would charge gpt-5.5 volume at Luna rates. A
+      // 429 bills nothing and never reaches addUsage, so the model that produced
+      // the result is the right one to attribute the whole call to.
+      model: attemptModel,
       provider: provider.name,
       usage,
       attempts,
@@ -246,7 +276,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   const reject = (attempt: number, kind: "schema" | "invalid JSON", reason: string): void => {
     console.warn(
       `[llm] attempt ${attempt}/${maxRetries + 1} rejected ` +
-        `(model=${model} label=${opts.label ?? opts.role ?? "-"}): ${kind} — ${reason}`,
+        `(model=${attemptModel} label=${opts.label ?? opts.role ?? "-"}): ${kind} — ${reason}`,
     );
   };
   let lastError: unknown;
@@ -285,7 +315,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       raw = await provider.complete({
         system,
         user,
-        model,
+        model: attemptModel,
         maxTokens: attemptMaxTokens,
         temperature: opts.temperature,
         topP: opts.topP,
@@ -308,7 +338,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       // re-raises the streamed error. No secret/api-key is in the message; the prompt is omitted.
       lastError = e;
       console.error(
-        `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${model}): ` +
+        `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${attemptModel}): ` +
           (e instanceof Error ? e.message : String(e)),
       );
       // Truncation is deterministic for a fixed request — escalate before the
@@ -327,6 +357,35 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
           attemptMaxTokens = nextMaxTokens;
           attemptEffort = nextEffort;
         }
+      }
+      // Rate-limit fallback. Retry-After above handles a TRANSIENT limit; this
+      // handles an EXHAUSTED one, where the minute's whole allowance is gone and
+      // waiting cannot help. Spend the LAST attempt on the fallback deployment
+      // rather than failing the call.
+      //
+      // `attempt === maxRetries` means "the next attempt is the final one", so the
+      // primary keeps every retry it was going to get and the switch costs nothing
+      // extra. At maxRetries=0 there is no next attempt and this never fires — one
+      // attempt means one attempt.
+      //
+      // `attemptModel === model` bounds it to a single switch: never back to the
+      // primary, never twice.
+      if (attemptModel === model && fallbackModel && isRateLimitError(e) && attempt === maxRetries) {
+        console.warn(
+          `[llm] rate-limited on ${model} — falling back to ${fallbackModel} ` +
+            `(label=${opts.label ?? opts.role ?? "-"} attempt=${attempt}/${maxRetries + 1})`,
+        );
+        if (opts.role === "judge") {
+          // Deliberately loud. Verdict rows do not record which model judged them,
+          // so a run that switches mid-way yields a silently mixed verdict set.
+          // schema.ts says keep JUDGE_MODEL_FALLBACK unset; if someone set it
+          // anyway, the consequence must at least be visible in the logs.
+          console.warn(
+            `[llm] WARN judge fell back to ${fallbackModel} — verdicts in this run are NOT ` +
+              `model-comparable, and the verdict rows do not record which model produced them`,
+          );
+        }
+        attemptModel = fallbackModel;
       }
       continue;
     }

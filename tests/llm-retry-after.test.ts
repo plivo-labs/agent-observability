@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { RETRY_AFTER_CAP_MS, parseRetryAfter, retryAfterMsFromError } from "../src/llm/retry-after.js";
+import {
+  RETRY_AFTER_CAP_MS,
+  isRateLimitError,
+  parseRetryAfter,
+  retryAfterMsFromError,
+} from "../src/llm/retry-after.js";
 
 // Why this exists: without an honoured Retry-After, completeJSON's exponential
 // backoff sleeps 400ms then 800ms and gives up — useless against a TPM exhaustion
@@ -83,5 +88,32 @@ describe("retryAfterMsFromError", () => {
       headers: new Headers({ "retry-after": "29" }),
     });
     expect(retryAfterMsFromError(err)).toBe(1000);
+  });
+});
+
+describe("isRateLimitError", () => {
+  // Gates the model fallback, so it has to be narrow: the fallback deployment is
+  // ~25x the price, and a 500 or a timeout is not a capacity problem.
+  it("matches a status of 429 — the OpenAI SDK's shape on the Chat path", () => {
+    expect(isRateLimitError(Object.assign(new Error("rate limited"), { status: 429 }))).toBe(true);
+  });
+
+  it("matches a message beginning 429 — our raw-fetch shape on the Responses path", () => {
+    expect(isRateLimitError(new Error("429 Too Many Requests - {...}"))).toBe(true);
+  });
+
+  it("does NOT match other transport failures", () => {
+    expect(isRateLimitError(new Error("500 Internal Server Error"))).toBe(false);
+    expect(isRateLimitError(new Error("The operation timed out"))).toBe(false);
+    expect(isRateLimitError(Object.assign(new Error("nope"), { status: 503 }))).toBe(false);
+  });
+
+  it("is anchored, so a 429 quoted inside a body preview can't false-positive", () => {
+    // The provider appends up to 500 chars of response body to the message.
+    expect(isRateLimitError(new Error('500 Server Error - {"detail":"upstream returned 429"}'))).toBe(false);
+  });
+
+  it("does not match non-objects", () => {
+    for (const v of [null, undefined, "429", 429]) expect(isRateLimitError(v)).toBe(false);
   });
 });
