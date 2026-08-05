@@ -222,6 +222,32 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       startedAt,
       outcome,
     });
+  /**
+   * An attempt the model ANSWERED but we refused — unparseable JSON, or JSON that failed
+   * the Zod schema.
+   *
+   * A transport failure has always logged; a rejection never did. It set `lastError`,
+   * re-prompted, and moved on in silence, which made the most expensive failure mode in
+   * the service its least visible one: the model is paid for every rejected attempt, and
+   * a caller with its own retry loop on top (the generation planner replans) can burn
+   * minutes without a single line saying why.
+   *
+   * Concretely, 2026-08-05: a smoke-mode planner call spent 56s on two rejected attempts
+   * and triggered a 28s replan — 84s against the same flow's 25s in stress mode — and the
+   * only trace anywhere was `outcome=error` on the usage line. Nothing named the failing
+   * field, so the failure could be seen but not fixed.
+   *
+   * Shares `account()`'s captured context deliberately: the model, label and attempt
+   * budget are the same facts, and passing them positionally instead invited transposing
+   * two adjacent strings into a silently wrong line. `reason` is the detail already
+   * computed for the re-prompt, so this costs nothing beyond the write.
+   */
+  const reject = (attempt: number, kind: "schema" | "invalid JSON", reason: string): void => {
+    console.warn(
+      `[llm] attempt ${attempt}/${maxRetries + 1} rejected ` +
+        `(model=${model} label=${opts.label ?? opts.role ?? "-"}): ${kind} — ${reason}`,
+    );
+  };
   let lastError: unknown;
   // Per-attempt request shape, escalated on truncation (see isTruncationError):
   // a truncated call MUST NOT be retried verbatim — it fails identically.
@@ -307,6 +333,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
     const parsed = tryParseJson(raw.text);
     if (!parsed.ok) {
       lastError = new Error(`invalid JSON: ${parsed.error}`);
+      reject(attempt, "invalid JSON", parsed.error);
       user = `${opts.prompt}\n\nYour previous response was not valid JSON (${parsed.error}). Return a single JSON object only.`;
       continue;
     }
@@ -321,6 +348,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       .slice(0, 5)
       .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
       .join("; ");
+    reject(attempt, "schema", issues);
     user = `${opts.prompt}\n\nYour previous response failed schema validation: ${issues}. Return corrected JSON only.`;
   }
 
@@ -331,5 +359,5 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   // Surface the underlying cause (429 / timeout / validation) in the message so a
   // failed simulation result says WHY, not just "failed".
   const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
-  throw new LlmError(`completeJSON failed after ${maxRetries + 1} attempt(s): ${detail}`, lastError);
+  throw new LlmError(`completeJSON failed after ${maxRetries + 1} attempt(s): ${detail}`, lastError, usage);
 }

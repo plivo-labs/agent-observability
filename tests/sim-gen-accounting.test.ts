@@ -191,3 +191,102 @@ describe("generateScenarios — timing + token accounting lines", () => {
     expect(f.allocation_tokens).toBeUndefined();
   });
 });
+
+describe("generateScenarios — a replanned generation bills every planner call", () => {
+  function captureGenLines(): { lines: string[]; restore: () => void } {
+    const original = console.log, ow = console.warn;
+    const lines: string[] = [];
+    console.log = (...a: unknown[]) => { const l = a.map(String).join(" "); if (l.startsWith("[sim-gen] ")) lines.push(l); };
+    console.warn = () => {};
+    return { lines, restore: () => { console.log = original; console.warn = ow; } };
+  }
+  function fields(line: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [, k, v] of line.matchAll(/(\w+)=(\S+)/g)) out[k] = v;
+    return out;
+  }
+
+  test("planner tokens include the rejected call, not just the survivor", async () => {
+    // Regression guard for the 2026-08-05 smoke run: the first planner call was rejected
+    // twice (20,470 tokens) and the outer loop replanned. `plannerUsage` holds only the
+    // LAST call because that is the planner_usage metadata contract, so a roll-up reading
+    // it reported 23,974 tokens against ~44,444 actually burned — a 46% under-report,
+    // precisely on the runs that cost the most.
+    //
+    // First planner response is schema-invalid, so completeJSON exhausts its attempts and
+    // throws; the second planner call succeeds.
+    const badPlanner = new MockLLM([
+      JSON.stringify({ nope: true }), JSON.stringify({ nope: true }),  // call 1: 2 rejected attempts
+      PLANNER_JSON,                                                    // call 2 (replan): ok
+    ]);
+    const cap = captureGenLines();
+    try {
+      await collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "agent-1", maxScenarios: 4, model: "m",
+          plannerProvider: badPlanner, writerProvider: new MockLLM([writerResponder]),
+        }),
+      );
+    } finally { cap.restore(); }
+
+    const f = fields(cap.lines.find((l) => l.startsWith("[sim-gen] timing "))!);
+    // 3 provider calls total (2 rejected attempts + 1 success) at the mock's 10p/5c each.
+    expect(Number(f.planner_llm_calls)).toBe(2);          // two completeJSON invocations
+    expect(Number(f.planner_prompt_tokens)).toBe(30);     // 3 attempts x 10 — the rejected ones counted
+    expect(Number(f.planner_completion_tokens)).toBe(15);
+  });
+
+  test("a rejected WRITER attempt is billed too, not just the planner's", async () => {
+    // The asymmetry this guards: the planner path bills rejected attempts, so a reader who
+    // has seen that will reasonably trust the writer number beside it. Dropping usage in the
+    // writer catch would leave one half of the same roll-up quietly understated with nothing
+    // in the output saying which half.
+    //
+    // First writer response is schema-invalid, so completeJSON exhausts its attempts and
+    // throws; runChunkWithRetry retries the chunk and the second response is accepted.
+    let call = 0;
+    const flakyWriter = {
+      name: "flaky",
+      complete: async (args: ProviderCompleteArgs) => ({
+        text: ++call <= 2 ? JSON.stringify({ nope: true }) : writerResponder(args),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      }),
+    };
+    const cap = captureGenLines();
+    try {
+      await collect(
+        generateScenarios({
+          flowJson: canonical, phloUuid: "agent-1", maxScenarios: 2, model: "m",
+          plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: flakyWriter as any,
+        }),
+      );
+    } finally { cap.restore(); }
+
+    const f = fields(cap.lines.find((l) => l.startsWith("[sim-gen] timing "))!);
+    // 2 rejected attempts + 1 accepted = 3 provider calls at the mock's 10p/5c each.
+    expect(Number(f.writer_prompt_tokens)).toBe(30);
+    expect(Number(f.writer_completion_tokens)).toBe(15);
+  });
+
+  test("planner_usage metadata SUMS a replan instead of reporting only the survivor", async () => {
+    // Previously the metadata carried a separate scalar holding the last SUCCESSFUL planner
+    // call, hand-synced with the accumulator beside it. On a replanned generation that
+    // understated planning cost in exactly the way the roll-up one line below had just been
+    // fixed not to. Deriving both from one array removed the second representation and the
+    // divergence with it.
+    const badPlanner = new MockLLM([
+      JSON.stringify({ nope: true }), JSON.stringify({ nope: true }),  // call 1: rejected
+      PLANNER_JSON,                                                    // call 2: replan, ok
+    ]);
+    const events = await collect(
+      generateScenarios({
+        flowJson: canonical, phloUuid: "agent-1", maxScenarios: 4, model: "m",
+        plannerProvider: badPlanner, writerProvider: new MockLLM([writerResponder]),
+      }),
+    );
+    const meta = (events.find((e) => e.type === "metadata") as any).metadata;
+    // 3 provider calls (2 rejected + 1 accepted) at the mock's 10p/5c — not just the last.
+    expect(meta.planner_usage.promptTokens).toBe(30);
+    expect(meta.planner_usage.completionTokens).toBe(15);
+  });
+});
