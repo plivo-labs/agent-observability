@@ -178,6 +178,11 @@ async function runChunkWithRetry(
       remaining = remaining.filter((s) => !got.has(s.slot_id));
     } catch (err) {
       if (base.signal?.aborted) throw err; // abort is the ONLY rejection that escapes
+      // A rejected chunk attempt was still billed for every provider call it made. Dropping
+      // it here would leave the writer half of the roll-up quietly understated while the
+      // planner half is honest — the worst outcome, since nothing in the output would say
+      // which number to trust.
+      if (err instanceof LlmError && err.usage) usages.push(err.usage);
       logAttemptFailure("chunk", attempt, err);
     }
   }
@@ -205,6 +210,7 @@ async function runChunkWithRetry(
           if (res.scenarios.length > 0 || consumed.has(slot.slot_id)) return { slot, scenarios: res.scenarios };
         } catch (err) {
           if (base.signal?.aborted) throw err;
+          if (err instanceof LlmError && err.usage) usages.push(err.usage);
           logAttemptFailure(`slot ${slot.slot_id}`, attempt, err);
         }
       }
@@ -249,13 +255,14 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         })
       : null;
   let planner: PlannerWithInventory | null = null;
-  let plannerUsage: LlmUsage | null = null;
-  // EVERY planner call this generation paid for, including ones that threw. `plannerUsage`
-  // above stays the LAST SUCCESSFUL call because it is the `planner_usage` metadata
-  // contract; this accumulator is what the timing roll-up bills against. They diverge
-  // exactly when the planner is retried — which is the case where reporting only the
-  // survivor understates the run (2026-08-05 smoke: 20,470 tokens burned by a rejected
-  // call, invisible in a roll-up that showed 23,974).
+  // EVERY planner call this generation paid for, including ones that threw. Both the
+  // timing roll-up and the `planner_usage` metadata derive from this — there is no second
+  // scalar to keep in step, because the two inevitably diverge exactly when the planner is
+  // retried, and that is the case where reporting only the survivor understates the run
+  // (2026-08-05 smoke: 20,470 tokens burned by a rejected call, against a reported 23,974).
+  //
+  // Stays EMPTY on a planner-cache hit — no call, no tokens — which is what
+  // `planner_cache_hit`'s documented invariant requires of a null `planner_usage`.
   const plannerUsages: LlmUsage[] = [];
   let plannerCacheHit = false;
   if (cacheKey) {
@@ -284,7 +291,6 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
         signal: input.signal,
       });
       planner = out.planner;
-      plannerUsage = out.usage;
       plannerUsages.push(out.usage);
       yield { type: "planning_done", attempt, capability_count: planner.capabilities.length };
       break;
@@ -346,7 +352,6 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       // The replan is a REAL planner call: the metadata must not keep claiming a
       // cache hit (planner_cache_hit + planner_usage:null would report zero planning
       // cost on a generation that paid it in full — corrupting the timing evidence).
-      plannerUsage = out.usage;
       plannerUsages.push(out.usage);
       plannerCacheHit = false;
     }
@@ -540,7 +545,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       deduped_count: deduped,
       // Partial success requires at least one saved scenario (aiassist parity).
       partial_success: saved > 0 && saved < slots.length,
-      planner_usage: plannerUsage,
+      planner_usage: plannerUsages.length ? sumUsage(plannerUsages).usage : null,
       writer_usages: writerUsages,
       ...(mode === "smoke"
         ? { smoke_cap: smokeCap, smoke_units_hash: smokeUnitsHashOut, dropped_unit_ids: droppedUnitIds }
