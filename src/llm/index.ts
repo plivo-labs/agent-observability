@@ -47,16 +47,29 @@ async function resolveProvider(): Promise<LlmProvider> {
   return (await import("./providers/anthropic.js")).anthropicProvider;
 }
 
+/**
+ * The config keys each role reads, in one table.
+ *
+ * The role branch exists exactly ONCE. Three parallel ternaries over the same three
+ * roles — one for the env var name, one for the primary value, one for the fallback —
+ * is a missing map, and a new per-role knob should cost one row here rather than an
+ * edit in every resolver plus remembering they all exist.
+ *
+ * An absent role means "judge": that is the historical default (only judges reach
+ * role-based resolution at all — generation and the simulator always pass an explicit
+ * model), and `ROLE_CONFIG[role ?? "judge"]` states it instead of hiding it in the
+ * trailing arm of a ternary, where it reads like a deliberate judge-specific branch.
+ */
+const ROLE_CONFIG = {
+  judge: { model: "JUDGE_MODEL", fallback: "JUDGE_MODEL_FALLBACK" },
+  simulator: { model: "SIMULATOR_MODEL", fallback: "SIMULATOR_MODEL_FALLBACK" },
+  generator: { model: "GENERATOR_MODEL", fallback: "GENERATOR_MODEL_FALLBACK" },
+} as const satisfies Record<LlmRole, { model: string; fallback: string }>;
+
 function resolveModel(role: LlmRole | undefined, explicit: string | undefined, providerName: string): string {
   if (explicit) return explicit;
-  const envVar =
-    role === "simulator" ? "SIMULATOR_MODEL"
-    : role === "generator" ? "GENERATOR_MODEL"
-    : "JUDGE_MODEL";
-  const roleModel =
-    role === "simulator" ? config.SIMULATOR_MODEL
-    : role === "generator" ? config.GENERATOR_MODEL
-    : config.JUDGE_MODEL;
+  const envVar = ROLE_CONFIG[role ?? "judge"].model;
+  const roleModel = config[envVar];
   if (roleModel) return roleModel;
   const fallback = PROVIDER_DEFAULT_MODEL[providerName] || "claude-opus-4-8";
   // Fail LOUD-ish rather than silently: the provider error this produces on a
@@ -88,11 +101,7 @@ function resolveModel(role: LlmRole | undefined, explicit: string | undefined, p
  * left unset by default.
  */
 function resolveFallbackModel(role: LlmRole | undefined): string | undefined {
-  return role === "simulator"
-    ? config.SIMULATOR_MODEL_FALLBACK
-    : role === "generator"
-      ? config.GENERATOR_MODEL_FALLBACK
-      : config.JUDGE_MODEL_FALLBACK;
+  return config[ROLE_CONFIG[role ?? "judge"].fallback];
 }
 
 /** Strip markdown code fences and parse. Models sometimes wrap JSON in ```. */
@@ -213,14 +222,18 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   const provider = opts.provider ?? (await resolveProvider());
   const model = resolveModel(opts.role, opts.model, provider.name);
   const fallbackModel = resolveFallbackModel(opts.role);
-  // The model actually sent this attempt. Starts as the primary and switches ONCE,
-  // to `fallbackModel`, when 429s have used up the retry budget — see the catch
-  // block. Declared here so the account()/reject() closures below capture the
-  // variable and report the model that really ran, not the one we started with.
-  let attemptModel = model;
   // undefined → the default cap; explicit null → 0, which the provider reads as
   // "omit max_output_tokens" (no cap — used by the streaming writer).
   const maxTokens = opts.maxTokens === undefined ? DEFAULT_MAX_TOKENS : (opts.maxTokens ?? 0);
+  // The request shape for the CURRENT attempt. It ADAPTS between attempts, which is
+  // why these three travel together rather than as separate variables: a truncated
+  // call doubles maxTokens and lowers reasoningEffort (retrying verbatim fails
+  // identically), and a rate limit that outlasts the retry budget switches model to
+  // the fallback. Both adaptations live in the catch block below.
+  //
+  // Declared before account()/reject() so those closures read the shape that actually
+  // ran — after a fallback, `model` is no longer what answered.
+  let req = { model, maxTokens, reasoningEffort: opts.reasoningEffort };
   const timeoutMs = opts.timeoutMs ?? config.LLM_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? config.LLM_MAX_RETRIES;
 
@@ -242,11 +255,11 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       label: opts.label,
       role: opts.role,
       correlationId: opts.correlationId,
-      // attemptModel, not model: logUsage prices the tokens via costForTokens(), so
+      // req.model, not model: logUsage prices the tokens via costForTokens(), so
       // after a fallback the primary would charge gpt-5.5 volume at Luna rates. A
       // 429 bills nothing and never reaches addUsage, so the model that produced
       // the result is the right one to attribute the whole call to.
-      model: attemptModel,
+      model: req.model,
       provider: provider.name,
       usage,
       attempts,
@@ -276,14 +289,10 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   const reject = (attempt: number, kind: "schema" | "invalid JSON", reason: string): void => {
     console.warn(
       `[llm] attempt ${attempt}/${maxRetries + 1} rejected ` +
-        `(model=${attemptModel} label=${opts.label ?? opts.role ?? "-"}): ${kind} — ${reason}`,
+        `(model=${req.model} label=${opts.label ?? opts.role ?? "-"}): ${kind} — ${reason}`,
     );
   };
   let lastError: unknown;
-  // Per-attempt request shape, escalated on truncation (see isTruncationError):
-  // a truncated call MUST NOT be retried verbatim — it fails identically.
-  let attemptMaxTokens = maxTokens;
-  let attemptEffort = opts.reasoningEffort;
 
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     // Caller abort (client disconnected): stop immediately — no retry, no backoff.
@@ -315,11 +324,11 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       raw = await provider.complete({
         system,
         user,
-        model: attemptModel,
-        maxTokens: attemptMaxTokens,
+        model: req.model,
+        maxTokens: req.maxTokens,
         temperature: opts.temperature,
         topP: opts.topP,
-        reasoningEffort: attemptEffort,
+        reasoningEffort: req.reasoningEffort,
         jsonSchema: opts.jsonSchema,
         stream: opts.stream,
         apiMode: opts.apiMode,
@@ -338,24 +347,24 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       // re-raises the streamed error. No secret/api-key is in the message; the prompt is omitted.
       lastError = e;
       console.error(
-        `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${attemptModel}): ` +
+        `[llm] ${provider.name} attempt ${attempt}/${maxRetries + 1} failed (model=${req.model}): ` +
           (e instanceof Error ? e.message : String(e)),
       );
       // Truncation is deterministic for a fixed request — escalate before the
       // next attempt instead of resending byte-identical parameters: double the
       // cap (bounded) and drop reasoning effort above "low" down to "low".
       // Transient failures (429/timeout/5xx) keep the original shape.
-      if (isTruncationError(e) && attemptMaxTokens > 0) {
-        const nextMaxTokens = Math.min(attemptMaxTokens * 2, maxTokens * TRUNCATION_CAP_MULTIPLIER_LIMIT);
-        const nextEffort = attemptEffort === "medium" || attemptEffort === "high" ? "low" : attemptEffort;
-        if (nextMaxTokens !== attemptMaxTokens || nextEffort !== attemptEffort) {
+      if (isTruncationError(e) && req.maxTokens > 0) {
+        const nextMaxTokens = Math.min(req.maxTokens * 2, maxTokens * TRUNCATION_CAP_MULTIPLIER_LIMIT);
+        const nextEffort = req.reasoningEffort === "medium" || req.reasoningEffort === "high" ? "low" : req.reasoningEffort;
+        if (nextMaxTokens !== req.maxTokens || nextEffort !== req.reasoningEffort) {
           console.warn(
             `[llm] truncated at max_output_tokens (model=${model}) — escalating retry: ` +
-              `maxTokens ${attemptMaxTokens}→${nextMaxTokens}` +
-              (nextEffort !== attemptEffort ? `, reasoningEffort ${attemptEffort}→${nextEffort}` : ""),
+              `maxTokens ${req.maxTokens}→${nextMaxTokens}` +
+              (nextEffort !== req.reasoningEffort ? `, reasoningEffort ${req.reasoningEffort}→${nextEffort}` : ""),
           );
-          attemptMaxTokens = nextMaxTokens;
-          attemptEffort = nextEffort;
+          req.maxTokens = nextMaxTokens;
+          req.reasoningEffort = nextEffort;
         }
       }
       // Rate-limit fallback. Retry-After above handles a TRANSIENT limit; this
@@ -368,9 +377,12 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       // extra. At maxRetries=0 there is no next attempt and this never fires — one
       // attempt means one attempt.
       //
-      // `attemptModel === model` bounds it to a single switch: never back to the
-      // primary, never twice.
-      if (attemptModel === model && fallbackModel && isRateLimitError(e) && attempt === maxRetries) {
+      // That single condition is also what bounds this to ONE switch: `attempt` takes
+      // each value once, so the branch is reachable on exactly one iteration. An
+      // additional `req.model === model` guard was here and has been removed — it
+      // could never fire, and a guard that cannot guard misleads the next reader
+      // about what actually makes this safe.
+      if (fallbackModel && isRateLimitError(e) && attempt === maxRetries) {
         console.warn(
           `[llm] rate-limited on ${model} — falling back to ${fallbackModel} ` +
             `(label=${opts.label ?? opts.role ?? "-"} attempt=${attempt}/${maxRetries + 1})`,
@@ -385,7 +397,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
               `model-comparable, and the verdict rows do not record which model produced them`,
           );
         }
-        attemptModel = fallbackModel;
+        req.model = fallbackModel;
       }
       continue;
     }
@@ -393,9 +405,9 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
     // Reasoning-pressure breadcrumb: invisible reasoning spend at ≥50% of the cap
     // means the next model/deployment shift can tip this call into truncation —
     // surface it while the call still succeeds, not after evals start dying.
-    if (attemptMaxTokens > 0 && (raw.usage.reasoningTokens ?? 0) >= attemptMaxTokens / 2) {
+    if (req.maxTokens > 0 && (raw.usage.reasoningTokens ?? 0) >= req.maxTokens / 2) {
       console.warn(
-        `[llm] reasoning tokens at ${raw.usage.reasoningTokens}/${attemptMaxTokens} cap (model=${model}) — ` +
+        `[llm] reasoning tokens at ${raw.usage.reasoningTokens}/${req.maxTokens} cap (model=${model}) — ` +
           `truncation pressure; check reasoningEffort vs the cap`,
       );
     }
