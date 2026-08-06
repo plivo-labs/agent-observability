@@ -146,6 +146,75 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.hallucinated).toBe(false);
   });
 
+  test("hallucination: fire whose quoted claim exists only in a Tool_Call line is dropped", async () => {
+    // Prod 5.5-1's dominant FP class (16/188 in the Aug-6 audit): the judge
+    // charges a silent record_* payload as a spoken claim. The prompt already
+    // forbids it (rule 8); this is the deterministic backstop.
+    const fired = {
+      hallucinated: true,
+      score: 0.25,
+      reason: "Fabricated verification status.",
+      technical_reason: 'Unsupported spoken claim: "verification completed successfully for the caller"; Sources checked: none ground it.',
+    };
+    const llm = new MockLLM([JSON.stringify(fired)]);
+    const n = node({
+      turns: [
+        { node_uuid: "n1", user: "my name is Sam", agent: "Thanks, Sam.", intent: "" },
+        { node_uuid: "n1", user: "", agent: 'Tool_Call: record_verified("{\"value\": \"verification completed successfully for the caller\"}")', intent: "", evidence: true },
+      ],
+      turn_count: 2,
+    });
+    const { data } = await runHallucinationJudge(n, ctx({ full_transcript: "User: my name is Sam\nAgent: Thanks, Sam." }), llm);
+    expect(data.hallucinated).toBe(false);
+    expect(data.score).toBe(1);
+    expect(data.technical_reason).toContain("tool/runtime event line");
+    expect(data.technical_reason).toContain(fired.technical_reason); // original preserved for audit
+  });
+
+  test("hallucination: fire on a claim present in a spoken Agent line is untouched by the tool-arg backstop", async () => {
+    const fired = {
+      hallucinated: true,
+      score: 0.5,
+      reason: "Unsupported claim.",
+      technical_reason: 'Unsupported spoken claim: "your order ships tomorrow by courier"; Sources checked: none.',
+    };
+    const llm = new MockLLM([JSON.stringify(fired)]);
+    const n = node({
+      turns: [
+        { node_uuid: "n1", user: "when does it ship?", agent: "your order ships tomorrow by courier", intent: "" },
+        { node_uuid: "n1", user: "", agent: 'Tool_Call: record_note("{\"value\": \"your order ships tomorrow by courier\"}")', intent: "", evidence: true },
+      ],
+      turn_count: 2,
+    });
+    const { data } = await runHallucinationJudge(n, ctx({ full_transcript: "User: when does it ship?\nAgent: your order ships tomorrow by courier" }), llm);
+    expect(data.hallucinated).toBe(true);
+    expect(data.score).toBe(0.5);
+  });
+
+  test("variable extraction: catalog/database-sourced rule is cleared as out-of-scope", async () => {
+    // Known slip (2026-07-26 audit): lookup-backed variables whose rules say
+    // "from the service catalog" (not the literal word "lookup") were still
+    // landing in missing_variables.
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false,
+        score: 0.5,
+        reason: "service_id missing",
+        technical_reason: "caller implied a service but no id captured",
+        missing_variables: ["service_id"],
+        incorrect_variables: [],
+      }),
+    ]);
+    const n = node({
+      required_variables: ["service_id"],
+      variable_rules: { service_id: "Capture the selected Southlake service ID exactly from the service catalog when the caller identifies or implies a service." },
+      extracted_variables: {},
+    });
+    const { data } = await runVariableExtractionJudge(n, ctx(), llm);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.missing_variables).toEqual([]);
+  });
+
   test("every judge call carries the configured reasoning effort", async () => {
     // The per-judge output caps (1500-5000) are copied from cx-sqs, which pins
     // effort "none". AO never sent the parameter, so judges inherited the model's
@@ -843,6 +912,17 @@ describe("LLM node judges (MockLLM)", () => {
 });
 
 describe("intent judge (LLM, cx-sqs MetricIntent)", () => {
+  test("null chosen intent can never be a wrong identification (deterministic guard)", async () => {
+    // Prod FP class: judges returned intent_wrongly_identified=true on calls
+    // where NO intent was recorded. The prompt's rule 2 says an empty chosen
+    // intent is "not recorded", not wrong — enforce it in code.
+    const llm = new MockLLM([JSON.stringify({ intent_not_found: false, intent_wrongly_identified: true, reason: "contradicts", technical_reason: "t" })]);
+    const { data } = await runIntentJudge(node({ chosen_intent: "" }), ctx(), llm);
+    expect(data.intent_wrongly_identified).toBe(false);
+    expect(data.score).toBe(1);
+    expect(data.technical_reason).toContain("no intent was recorded");
+  });
+
   test("both flags false → score 1; available intents land in the system prompt", async () => {
     const llm = new MockLLM([JSON.stringify({ intent_not_found: false, intent_wrongly_identified: false, reason: "correct" })]);
     const { data } = await runIntentJudge(node(), ctx(), llm);

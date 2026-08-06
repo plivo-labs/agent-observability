@@ -68,7 +68,11 @@ const EARLY_RECORDING_RULE = /immediately|at once|as soon as|after each|record (
 const WORKFLOW_RULE_EVIDENCE =
   /agent-authored|workflow (?:field|status|disposition|label)|mapped (?:workflow )?(?:status|disposition|outcome)|internal score|concise summary|normalized overall (?:interest )?status|final (?:workflow )?(?:status|disposition|outcome|classification)|final outcome (?:was )?reached/;
 const PLATFORM_RULE_EVIDENCE =
-  /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/;
+  // "from the service catalog / property database / listing data" describe a
+  // system-sourced value even when the rule never says "lookup" — the Aug-6
+  // prod audit confirmed such variables were still landing in
+  // missing_variables (catalog-sourced service_id, listing-backed rent).
+  /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)|from (?:the |a )?[^.]{0,30}(?:catalog|database|inventory|listing)/;
 
 type VariableIssueKey = `missing:${string}` | `incorrect:${string}`;
 type IssueType = "missing" | "incorrect";

@@ -3,6 +3,7 @@ import { describe, test, expect } from "bun:test";
 import {
   buildSessionEvalInput,
   type AgentConfig,
+  nonHumanCallerGate,
 } from "../src/evals-engine/integration/session-evals.js";
 
 // Unit tests for the ingest→engine input builder. Pure logic (no LLM): verifies
@@ -404,5 +405,45 @@ describe("buildSessionEvalInput", () => {
       ev("visit-2", "assistant", "Hello, welcome to the clinic."),
     ]);
     for (const n of input.nodes) for (const t of n.turns) expect(t.idle).toBeUndefined();
+  });
+});
+
+
+describe("nonHumanCallerGate", () => {
+  const firedNode = () => ({
+    ref: "r1", node_uuid: "n1", node_name: "n", turn_count: 3,
+    instructions_adherence: { adherence_passed: false, score: 0.5, reason: "fail", technical_reason: "t",
+      objective_progress: { achieved: false, score: 0.5, reason_code: "x", reason: "", technical_reason: "" },
+      procedure_compliance: { passed: false, score: 0.5, reason_code: "x", missed_steps: [], reason: "", technical_reason: "" },
+      interaction_quality: { score: 1, reason_code: "x", issues: [], reason: "", technical_reason: "" },
+      policy_boundary_compliance: { passed: true, score: 1, reason_code: "x", reason: "", technical_reason: "" } },
+    intent_identification: { score: 0, intent_not_found: true, intent_wrongly_identified: false, reason: "no intent", technical_reason: "t" },
+    variable_extraction: { score: 0.5, extraction_successful: false, missing_variables: ["caller_need"], incorrect_variables: [], required_variables: ["caller_need"], reason: "missing", technical_reason: "t" },
+    hallucination: { hallucinated: false, score: 1, reason: "", technical_reason: "" },
+    node_loop: { loop_detected: false, score: 1, reason: "", technical_reason: "" },
+  }) as any;
+  const detection = (on: boolean) => ({ detected: on, available: true, detected_value: on ? 1 : 0, reason: "", technical_reason: "" });
+  const metrics = (bot: boolean) => ({
+    bot_detected: detection(bot), voicemail_detected: detection(false), call_screening: detection(false),
+  }) as any;
+
+  test("bot caller neutralizes varx/intent/adherence fires, preserves originals in the note", () => {
+    const out = nonHumanCallerGate({ node_evaluations: [firedNode()], conversation_metrics: metrics(true) } as any);
+    const ne = out.node_evaluations[0]!;
+    expect(ne.variable_extraction.extraction_successful).toBe(true);
+    expect(ne.variable_extraction.missing_variables).toEqual([]);
+    expect(ne.intent_identification.intent_not_found).toBe(false);
+    expect(ne.instructions_adherence.adherence_passed).toBe(true);
+    expect(ne.variable_extraction.technical_reason).toContain("non-human caller");
+    expect(ne.variable_extraction.technical_reason).toContain("Original verdict");
+    // hallucination and loop untouched
+    expect(ne.hallucination.score).toBe(1);
+  });
+
+  test("human caller leaves everything untouched", () => {
+    const v = { node_evaluations: [firedNode()], conversation_metrics: metrics(false) } as any;
+    const out = nonHumanCallerGate(v);
+    expect(out.node_evaluations[0]!.variable_extraction.extraction_successful).toBe(false);
+    expect(out.node_evaluations[0]!.intent_identification.intent_not_found).toBe(true);
   });
 });

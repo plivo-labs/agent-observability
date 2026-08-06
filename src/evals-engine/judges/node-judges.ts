@@ -50,7 +50,7 @@ export async function runHallucinationJudge(
     };
   }
   const res = await runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
-  return { ...res, data: withoutOutOfSegmentFire(res.data, node, ctx) };
+  return { ...res, data: withoutOutOfSegmentFire(withoutToolArgFire(res.data, node), node, ctx) };
 }
 
 /** Lowercase, straighten typographic quotes, collapse whitespace — so a claim
@@ -89,6 +89,33 @@ function quotedClaims(technicalReason: string): string[] {
  *  keeping the original verdict in technical_reason for audit. A claim found
  *  NOWHERE (paraphrased quote) leaves the verdict untouched — the backstop
  *  only acts when the out-of-segment origin is provable. */
+/** Deterministic backstop for prompt rules 8/36 (Tool_Call:/Tool_Result:/
+ *  System_Note: lines are never accusation targets). The dominant confirmed
+ *  prod FP class (Aug-6 audit) is the judge charging a silent record_* payload
+ *  as a spoken claim. A fire whose every quoted claim is absent from the
+ *  node's SPOKEN lines but present in its tool/runtime-event lines is
+ *  neutralized, preserving the original verdict for audit. Claims found in
+ *  neither (paraphrase) are left untouched — the backstop only acts when the
+ *  internal-line origin is provable. */
+export function withoutToolArgFire(data: HallucinationRaw, node: NodeEvalInput): HallucinationRaw {
+  if (!data.hallucinated) return data;
+  const claims = quotedClaims(data.technical_reason);
+  if (claims.length === 0) return data;
+  const lines = renderNodeTranscript(node).split("\n");
+  const spoken = normalizeForMatch(lines.filter((l) => l.startsWith("Agent: ") || l.startsWith("User: ")).join("\n"));
+  const internal = normalizeForMatch(
+    lines.filter((l) => /^(Tool_Call|Tool_Result|System_Note|Agent_Handoff):/.test(l)).join("\n"),
+  );
+  if (claims.some((c) => spoken.includes(c))) return data;
+  if (!claims.some((c) => internal.includes(c))) return data;
+  return {
+    hallucinated: false,
+    score: 1.0,
+    reason: "The accused text appears only in internal tool/runtime events, not in anything the agent spoke.",
+    technical_reason: `dropped: every quoted claim was found only in a tool/runtime event line (Tool_Call/Tool_Result/System_Note), which the hallucination dimension excludes as accusation targets. Original verdict: ${data.technical_reason}`,
+  };
+}
+
 export function withoutOutOfSegmentFire(
   data: HallucinationRaw,
   node: NodeEvalInput,

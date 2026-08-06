@@ -62,13 +62,24 @@ export async function runIntentJudge(
     provider,
   });
   const raw = res.data;
-  const correct = !raw.intent_not_found && !raw.intent_wrongly_identified;
+  // Deterministic enforcement of the prompt's rule 2: an EMPTY chosen intent
+  // means the framework recorded nothing — that can never be a WRONG
+  // identification (there is no identification to be wrong). Models violate
+  // this rule under ambiguity (8/188 confirmed prod FPs, Aug-6 audit), so the
+  // rule lives in code, same pattern as the loop judge's idle strip.
+  let wrong = raw.intent_wrongly_identified;
+  let technical = raw.technical_reason;
+  if (wrong && !node.chosen_intent?.trim()) {
+    wrong = false;
+    technical = `guarded: no intent was recorded (empty chosen intent), so intent_wrongly_identified cannot apply. Original verdict: ${raw.technical_reason}`;
+  }
+  const correct = !raw.intent_not_found && !wrong;
   const data: IntentIdentificationMetrics = {
     intent_not_found: raw.intent_not_found,
-    intent_wrongly_identified: raw.intent_wrongly_identified,
+    intent_wrongly_identified: wrong,
     score: correct ? 1.0 : 0.0,
     reason: raw.reason,
-    technical_reason: raw.technical_reason,
+    technical_reason: technical,
   };
   return { data, usage: res.usage };
 }
