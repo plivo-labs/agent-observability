@@ -18,6 +18,8 @@ mock.module("../src/config.js", () => ({
 }));
 
 const { completeJSON, MockLLM, LlmError } = await import("../src/llm/index.js");
+const { config } = await import("../src/config.js");
+const { __setPricesForTesting, __getPricesForTesting } = await import("../src/evals/pricing.js");
 import type { LlmProvider } from "../src/llm/types.js";
 
 const Verdict = z.object({
@@ -191,5 +193,389 @@ describe("completeJSON — reasoning-token usage", () => {
     const llm = new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]);
     const res = await completeJSON({ schema: Verdict, prompt: "x", provider: llm });
     expect(res.usage.reasoningTokens).toBeUndefined();
+  });
+});
+
+describe("completeJSON — usage accounting", () => {
+  // completeJSON is the single chokepoint every LLM call in this service passes
+  // through, so these `[llm] usage` lines ARE the token accounting. A regression
+  // here is silent — nothing throws, the numbers just quietly stop existing —
+  // which is exactly how the Luna-vs-5.5 comparison ended up with no cost data.
+  function captureUsage(): { lines: string[]; restore: () => void } {
+    const original = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[llm] usage")) lines.push(line);
+    };
+    return { lines, restore: () => { console.log = original; } };
+  }
+
+  /** Parse the `k=v` line back into an object so assertions read as facts. */
+  function fields(line: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [, k, v] of line.matchAll(/(\w+)=(\S+)/g)) out[k] = v;
+    return out;
+  }
+
+  test("emits one line on success carrying label, correlation id and tokens", async () => {
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+        role: "generator",
+        label: "planner",
+        correlationId: "gen-abc",
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(1);
+    const f = fields(cap.lines[0]!);
+    expect(f.label).toBe("planner");
+    expect(f.role).toBe("generator");
+    expect(f.correlation_id).toBe("gen-abc");
+    expect(f.prompt_tokens).toBe("10");
+    expect(f.completion_tokens).toBe("5");
+    expect(f.attempts).toBe("1");
+    expect(f.outcome).toBe("ok");
+  });
+
+  test("falls back to the role when no label is given", async () => {
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+        role: "judge",
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(fields(cap.lines[0]!).label).toBe("judge");
+  });
+
+  test("accounts for a FAILED call — retries burned tokens and must still be billed", async () => {
+    // Counting only successes would rank the model that fails most as the cheapest.
+    const cap = captureUsage();
+    try {
+      await expect(
+        completeJSON({
+          schema: Verdict,
+          prompt: "x",
+          provider: new MockLLM(["bad", "still bad"]),
+          label: "writer",
+        }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(1);
+    const f = fields(cap.lines[0]!);
+    expect(f.outcome).toBe("error");
+    expect(f.attempts).toBe("2");
+    expect(f.prompt_tokens).toBe("20"); // both attempts, not just the last
+    expect(f.total_tokens).toBe("30");
+  });
+
+  test("stays silent when a call is aborted before spending anything", async () => {
+    // A request aborted before its first provider call must not push an all-zero
+    // row into the accounting stream.
+    const cap = captureUsage();
+    try {
+      await expect(
+        completeJSON({
+          schema: Verdict,
+          prompt: "x",
+          provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+          signal: AbortSignal.abort(),
+        }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(0);
+  });
+
+  test("reports cost_usd=unknown rather than a fabricated 0 for an unpriced model", async () => {
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM([JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+        model: "some-model-we-have-no-rate-for",
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(fields(cap.lines[0]!).cost_usd).toBe("unknown");
+  });
+
+  test("computes cost from prompt+completion, NOT double-counting reasoning tokens", async () => {
+    // reasoningTokens is a subset of completionTokens (the provider already counts
+    // invisible reasoning inside output_tokens and bills it at the output rate).
+    // Adding it again would silently inflate every reasoning model's reported cost.
+    const snapshot = __getPricesForTesting();
+    __setPricesForTesting({ "priced:test-model": { input: 100_000, output: 200_000 } });
+    const cap = captureUsage();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        model: "test-model",
+        provider: {
+          name: "priced",
+          complete: async () => ({
+            text: JSON.stringify({ verdict: "pass", reasoning: "ok" }),
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, reasoningTokens: 4 },
+          }),
+        },
+      });
+    } finally {
+      cap.restore();
+      __setPricesForTesting(snapshot);
+    }
+    const f = fields(cap.lines[0]!);
+    // (10 * 100_000 + 5 * 200_000) / 1e6 = 2.0 — reasoning's 4 tokens are already
+    // inside the 5 completion tokens and contribute nothing extra.
+    expect(f.cost_usd).toBe("2.000000");
+    expect(f.reasoning_tokens).toBe("4");
+  });
+});
+
+describe("completeJSON — rejected attempts are visible and billed", () => {
+  function captureWarn(): { lines: string[]; restore: () => void } {
+    const original = console.warn;
+    const lines: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[llm] attempt")) lines.push(line);
+    };
+    return { lines, restore: () => { console.warn = original; } };
+  }
+
+  test("logs WHICH field failed the schema, not just that something did", async () => {
+    // The gap this closes: a transport failure always logged, a rejection never did.
+    // 2026-08-05, a smoke planner burned 56s on two rejected attempts and triggered a
+    // 28s replan; the only trace was outcome=error, which says a call failed but not
+    // why — so it could be seen and not fixed.
+    const cap = captureWarn();
+    try {
+      await expect(
+        completeJSON({
+          schema: Verdict,
+          prompt: "x",
+          label: "planner",
+          provider: new MockLLM([JSON.stringify({ verdict: "nope" }), JSON.stringify({ verdict: "still-nope" })]),
+        }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(2);           // one per rejected attempt
+    expect(cap.lines[0]).toContain("label=planner");
+    expect(cap.lines[0]).toContain("schema");
+    expect(cap.lines[0]).toContain("verdict");   // the offending path, not a generic message
+  });
+
+  test("distinguishes unparseable output from schema-invalid output", async () => {
+    const cap = captureWarn();
+    try {
+      await completeJSON({
+        schema: Verdict,
+        prompt: "x",
+        provider: new MockLLM(["not json at all", JSON.stringify({ verdict: "pass", reasoning: "ok" })]),
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(cap.lines).toHaveLength(1);
+    expect(cap.lines[0]).toContain("invalid JSON");
+  });
+
+  test("hands the burned tokens back on the error so a caller's retry loop can bill them", async () => {
+    // A caller with its own retry on top (the generation planner replans) would otherwise
+    // report only the attempt that eventually succeeded, understating what the run cost.
+    let err: unknown;
+    const cap = captureWarn();
+    try {
+      await completeJSON({ schema: Verdict, prompt: "x", provider: new MockLLM(["bad", "still bad"]) });
+    } catch (e) { err = e; } finally { cap.restore(); }
+    expect(err).toBeInstanceOf(LlmError);
+    // Both attempts were billed: 2 x the mock's 10/5/15.
+    expect((err as InstanceType<typeof LlmError>).usage?.totalTokens).toBe(30);
+    expect((err as InstanceType<typeof LlmError>).usage?.promptTokens).toBe(20);
+  });
+});
+
+describe("Retry-After", () => {
+  // Without honouring the header, the retry loop guesses 400ms then 800ms — useless
+  // against a TPM exhaustion, where the whole minute's allowance is already gone.
+  // Observed on dev 2026-08-05: 182 429s with attempts decaying only 63 -> 60 -> 58,
+  // i.e. all three landed inside the same closed window. Timing 40ms (hinted) against
+  // 400ms (guessed) is a wide enough gap to assert without flaking.
+  const Ok = z.object({ ok: z.boolean() });
+
+  function failsOnceWith(err: unknown): LlmProvider {
+    let calls = 0;
+    return {
+      name: "flaky",
+      complete: async () => {
+        calls++;
+        if (calls === 1) throw err;
+        return { text: JSON.stringify({ ok: true }), usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+      },
+    };
+  }
+
+  test("sleeps the hinted delay rather than the exponential guess", async () => {
+    const provider = failsOnceWith(Object.assign(new Error("429 Too Many Requests"), { retryAfterMs: 40 }));
+    const started = Date.now();
+    const res = await completeJSON({ schema: Ok, prompt: "x", provider, maxRetries: 1 });
+    const elapsed = Date.now() - started;
+
+    expect(res.attempts).toBe(2);
+    expect(elapsed).toBeGreaterThanOrEqual(35); // it did wait
+    expect(elapsed).toBeLessThan(350); // ...but not the 400ms exponential
+  });
+
+  test("falls back to the exponential guess when the server sent no hint", async () => {
+    const provider = failsOnceWith(new Error("500 Internal Server Error"));
+    const started = Date.now();
+    const res = await completeJSON({ schema: Ok, prompt: "x", provider, maxRetries: 1 });
+
+    expect(res.attempts).toBe(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(380);
+  });
+});
+
+describe("rate-limit model fallback", () => {
+  // Retry-After (above) covers a TRANSIENT limit. This covers an EXHAUSTED quota
+  // window, where waiting cannot help: gpt-5.6-luna runs on 2,500K TPM per region,
+  // above p99.9 but below the observed peak minute (3,547K), so a few minutes a week
+  // will throttle. gpt-5.5 sits on the same Azure resources with quota that goes
+  // idle after the cutover — so the last attempt buys an answer instead of an error.
+  const Ok = z.object({ ok: z.boolean() });
+  const FALLBACK = "gpt-5.5-fallback";
+
+  function capture(): { lines: string[]; restore: () => void } {
+    const original = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[llm] usage")) lines.push(line);
+    };
+    return { lines, restore: () => { console.log = original; } };
+  }
+
+  function rateLimit(): Error {
+    return Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+  }
+
+  /** Fails the first `n` attempts with `err`, then succeeds. Records every model seen. */
+  function provider(n: number, err: () => unknown): { p: LlmProvider; models: string[] } {
+    const models: string[] = [];
+    let calls = 0;
+    return {
+      models,
+      p: {
+        name: "flaky",
+        complete: async ({ model }) => {
+          models.push(model);
+          calls++;
+          if (calls <= n) throw err();
+          return { text: JSON.stringify({ ok: true }), usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } };
+        },
+      },
+    };
+  }
+
+  function withFallback<T>(key: "SIMULATOR_MODEL_FALLBACK" | "JUDGE_MODEL_FALLBACK", fn: () => Promise<T>): Promise<T> {
+    // The mocked config is a plain object and resolveFallbackModel reads it at call
+    // time, so mutate-and-restore is enough — and stays inside this file, which
+    // already owns the config mock.module (a second one would leak process-globally).
+    const cfg = config as unknown as Record<string, string | undefined>;
+    const prev = cfg[key];
+    cfg[key] = FALLBACK;
+    return fn().finally(() => { cfg[key] = prev; });
+  }
+
+  test("spends the LAST attempt on the fallback after 429s exhaust the retries", async () => {
+    const { p, models } = provider(2, rateLimit);
+    const res = await withFallback("SIMULATOR_MODEL_FALLBACK", () =>
+      completeJSON({ schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2 }),
+    );
+    expect(res.attempts).toBe(3);
+    // Primary keeps every retry it was going to get; only the final attempt switches.
+    expect(models).toEqual(["luna", "luna", FALLBACK]);
+  });
+
+  test("attributes the call to the model that answered, so cost is priced right", async () => {
+    const cap = capture();
+    try {
+      const { p } = provider(2, rateLimit);
+      await withFallback("SIMULATOR_MODEL_FALLBACK", () =>
+        completeJSON({ schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2 }),
+      );
+      const usage = cap.lines.find((l) => l.includes("[llm] usage"));
+      // A 429 bills nothing and never reaches addUsage, so every token counted here
+      // came from the fallback — pricing it as "luna" would understate the bill ~25x.
+      expect(usage).toContain(`model=${FALLBACK}`);
+    } finally {
+      cap.restore();
+    }
+  });
+
+  test("does NOT switch on a non-429 — a 500 is not a capacity problem", async () => {
+    // Fails TWICE, so the failure lands exactly on the attempt that would trigger a
+    // switch (attempt === maxRetries). Failing only once would leave the switch point
+    // untouched and the test would pass even with the 429 guard removed — which it
+    // did, on the first draft.
+    const { p, models } = provider(2, () => new Error("500 Internal Server Error"));
+    await withFallback("SIMULATOR_MODEL_FALLBACK", () =>
+      completeJSON({ schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2 }),
+    );
+    expect(models).toEqual(["luna", "luna", "luna"]);
+  });
+
+  test("does nothing when no fallback is configured — the shipped default", async () => {
+    const { p, models } = provider(2, rateLimit);
+    const res = await completeJSON({
+      schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2,
+    });
+    // Unconfigured, the third attempt is just another primary retry — which here
+    // succeeds. The point is that no switch happened, not that the call failed.
+    expect(res.attempts).toBe(3);
+    expect(models).toEqual(["luna", "luna", "luna"]);
+  });
+
+  test("switches at most once — never back to the primary, never twice", async () => {
+    const { p, models } = provider(3, rateLimit); // every attempt 429s
+    await expect(
+      withFallback("SIMULATOR_MODEL_FALLBACK", () =>
+        completeJSON({ schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2 }),
+      ),
+    ).rejects.toThrow(LlmError);
+    expect(models).toEqual(["luna", "luna", FALLBACK]);
+  });
+
+  test("warns loudly about verdict comparability when a JUDGE falls back", async () => {
+    const warns: string[] = [];
+    const original = console.warn;
+    console.warn = (...a: unknown[]) => { warns.push(a.map(String).join(" ")); };
+    try {
+      const { p } = provider(2, rateLimit);
+      await withFallback("JUDGE_MODEL_FALLBACK", () =>
+        completeJSON({ schema: Ok, prompt: "x", provider: p, role: "judge", model: "luna", maxRetries: 2 }),
+      );
+      expect(warns.some((w) => w.includes("falling back to"))).toBe(true);
+      expect(warns.some((w) => w.includes("NOT model-comparable"))).toBe(true);
+    } finally {
+      console.warn = original;
+    }
   });
 });

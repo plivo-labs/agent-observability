@@ -1,4 +1,4 @@
-import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { completeJSON, type LlmProvider, type LlmUsage, type WireReasoningEffort } from "../../llm/index.js";
 import { PlannerOutputZ, PLANNER_SCHEMA_NAME, PLANNER_JSON_SCHEMA } from "./schemas.js";
 import { plannerSystemPrompt } from "./prompts.js";
 import { buildFlowInventory, containsOutOfScopeRouteTerm, type MechanicalInventory } from "./inventory.js";
@@ -49,6 +49,12 @@ export interface PlanCapabilitiesArgs {
   flowJson: Dict;
   phloUuid: string;
   model: string;
+  /** Reasoning effort for the planner call; `undefined` omits the parameter (the "inherit"
+   *  default). Threaded from simEngineConfig by routes.ts, like `model`. */
+  reasoningEffort?: WireReasoningEffort;
+  /** Generation id, forwarded to the `[llm] usage` line so planner token spend can
+   *  be attributed to the generation that caused it. Observational only. */
+  generationId?: string;
   existingSummaries?: ExistingScenarioSummary[];
   userInstructions?: string;
   simulationMode?: SimulationMode;
@@ -78,6 +84,11 @@ export async function planCapabilities(
   const res = await completeJSON({
     schema: PlannerOutputZ,
     role: "generator",
+    // Split from the writer in usage accounting: both are role "generator" but they
+    // have very different token profiles (one big reasoning call vs N large streamed
+    // ones), so a per-role total can't attribute a cost regression to either.
+    label: "planner",
+    correlationId: args.generationId,
     model: args.model,
     system: plannerSystemPrompt(mode, args.smokeCap ?? 0),
     prompt: JSON.stringify(payload),
@@ -86,6 +97,10 @@ export async function planCapabilities(
     // doesn't free-form past max_output_tokens → status="incomplete". Replicates aiassist's
     // planner exactly (PLANNER_OUTPUT_SCHEMA, strict:false); we still re-validate with Zod.
     jsonSchema: { name: PLANNER_SCHEMA_NAME, schema: PLANNER_JSON_SCHEMA, strict: false },
+    // Operator-tunable reasoning effort; `undefined` (the "inherit" default) omits the parameter,
+    // which is the pre-existing wire shape. Safe to raise here — unlike the judges, the planner's
+    // cap (PLANNER_MAX_OUTPUT_TOKENS) is generous enough that reasoning spend can't truncate it.
+    reasoningEffort: args.reasoningEffort,
     provider: args.provider,
     signal: args.signal,
   });

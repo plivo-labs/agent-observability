@@ -1,10 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import {
+  costForTokens,
   priceFor,
   normalizeProvider,
   normalizeModel,
   reloadPrices,
   __setPricesForTesting,
+  __getPricesForTesting,
   __resetPricingForTesting,
 } from "../src/evals/pricing.js";
 
@@ -42,6 +44,24 @@ describe("normalizeModel", () => {
 
   test("passes through unmodified for plain model ids", () => {
     expect(normalizeModel("gpt-4o-mini")).toBe("gpt-4o-mini");
+  });
+
+  test("strips deployment environment suffixes", () => {
+    // Every configured model value in this service is an Azure DEPLOYMENT name, not
+    // an OpenAI model id. Without this a non-prod deployment matches no price row
+    // and reports its cost as unknown.
+    expect(normalizeModel("gpt-5.5-dev")).toBe("gpt-5.5");
+    expect(normalizeModel("gpt-5.6-luna-dev")).toBe("gpt-5.6-luna");
+    expect(normalizeModel("gpt-5.5-stage")).toBe("gpt-5.5");
+    expect(normalizeModel("gpt-5.5-prod")).toBe("gpt-5.5");
+  });
+
+  test("does NOT strip suffixes that are part of a real model id", () => {
+    // The suffix set is deliberately closed. A blanket `-\w+$` strip would turn
+    // "gpt-4.1-mini" into "gpt-4.1" — a different, ~5x more expensive model — and
+    // report a confidently wrong cost instead of admitting it has no rate.
+    expect(normalizeModel("gpt-4.1-mini")).toBe("gpt-4.1-mini");
+    expect(normalizeModel("claude-haiku-4-5")).toBe("claude-haiku-4-5");
   });
 });
 
@@ -141,6 +161,34 @@ describe("reloadPrices (models.dev fetch)", () => {
     expect(priceFor("anthropic", "claude-sonnet-4-7")?.input).toBe(3);
   });
 
+  test("internal deployment prices SURVIVE a successful refresh", async () => {
+    // Regression guard. The fetch replaces the map wholesale, and models.dev is a
+    // public catalogue that will never list AO's internal deployments — so before
+    // the INTERNAL_PRICES overlay, the first successful refresh silently deleted
+    // the rows for the only two models AO actually runs on, and every generation
+    // and judge cost went null with no error anywhere.
+    expect(priceFor("openai", "gpt-5.5")?.input).toBe(5);
+    expect(priceFor("openai", "gpt-5.6-luna")?.output).toBe(1.2);
+
+    globalThis.fetch = mock(async () =>
+      new Response(
+        JSON.stringify({
+          openai: { models: { "gpt-4o-mini": { cost: { input: 0.15, output: 0.6 } } } },
+        }),
+        { status: 200 },
+      ),
+    ) as unknown as typeof globalThis.fetch;
+
+    await reloadPrices();
+
+    // The catalogue landed...
+    expect(priceFor("openai", "gpt-4o-mini")?.input).toBe(0.15);
+    // ...and the internal rows are still there, including via a deployment alias.
+    expect(priceFor("openai", "gpt-5.5")?.input).toBe(5);
+    expect(priceFor("openai", "gpt-5.6-luna")?.output).toBe(1.2);
+    expect(priceFor("openai", "gpt-5.6-luna-dev")?.output).toBe(1.2);
+  });
+
   test("ignores models that have malformed cost objects", async () => {
     globalThis.fetch = mock(async () =>
       new Response(
@@ -213,5 +261,71 @@ describe("reloadPrices (models.dev fetch)", () => {
     await reloadPrices();
 
     expect(priceFor("openai", "gpt-4o-mini")?.input).toBe(0.15);
+  });
+});
+
+describe("costForTokens — the single cost formula", () => {
+  const ORIGINAL = __getPricesForTesting();
+  beforeEach(() => {
+    // $10/1M input, $20/1M output, $1/1M cached input — round numbers so an
+    // arithmetic slip is visible by inspection rather than by decimal squinting.
+    __setPricesForTesting({ "openai:t": { input: 10, output: 20, cache_read: 1 } });
+  });
+  afterEach(() => __setPricesForTesting(ORIGINAL));
+
+  test("prices fresh prompt + completion tokens", () => {
+    // 100_000 * 10/1M = 1.0 ; 50_000 * 20/1M = 1.0
+    expect(costForTokens("openai", "t", { promptTokens: 100_000, completionTokens: 50_000 })).toBe(2);
+  });
+
+  test("bills the cached SUBSET at the cache_read rate, not the input rate", () => {
+    // Cached tokens are a subset of promptTokens, so 100k prompt of which 80k cached
+    // is 20k fresh: 20_000*10/1M = 0.2, plus 80_000*1/1M = 0.08, plus 0 completion.
+    expect(
+      costForTokens("openai", "t", { promptTokens: 100_000, cachedPromptTokens: 80_000, completionTokens: 0 }),
+    ).toBeCloseTo(0.28, 6);
+    // Treating cached as ADDITIONAL rather than a subset would give 1.08 — the bug
+    // this asserts against.
+  });
+
+  test("falls back to the input rate when a model has no cache_read", () => {
+    __setPricesForTesting({ "openai:t": { input: 10, output: 20 } });
+    // No cache saving invented: all 100k prompt tokens bill at $10/1M = 1.0
+    expect(
+      costForTokens("openai", "t", { promptTokens: 100_000, cachedPromptTokens: 80_000, completionTokens: 0 }),
+    ).toBe(1);
+  });
+
+  test("returns null — never 0 — for a model with no price row", () => {
+    // A fabricated 0 understates a bill and reads as "this was free".
+    expect(costForTokens("openai", "unpriced", { promptTokens: 999, completionTokens: 999 })).toBeNull();
+    expect(costForTokens(null, "t", { promptTokens: 1, completionTokens: 1 })).toBeNull();
+  });
+
+  test("resolves deployment aliases, so dev deployments are priced", () => {
+    __setPricesForTesting({ "openai:gpt-5.6-luna": { input: 0.2, output: 1.2 } });
+    const viaAlias = costForTokens("openai", "gpt-5.6-luna-dev", { promptTokens: 1_000_000, completionTokens: 0 });
+    expect(viaAlias).toBe(0.2);
+  });
+
+  test("is the SAME formula the per-session metrics walk uses", async () => {
+    // The regression this guards: llm/index.ts and evals/metrics.ts each had their own
+    // arithmetic, and only one handled cached tokens — two live paths reporting
+    // different dollars for identical tokens. They must now agree by construction.
+    const { computeCaseMetrics } = await import("../src/evals/metrics.js");
+    const tokens = { promptTokens: 100_000, cachedPromptTokens: 80_000, completionTokens: 50_000 };
+    const direct = costForTokens("openai", "t", tokens);
+    const viaMetrics = computeCaseMetrics([
+      {
+        type: "usage",
+        model_provider: "openai",
+        model_name: "t",
+        prompt_tokens: tokens.promptTokens,
+        cached_prompt_tokens: tokens.cachedPromptTokens,
+        completion_tokens: tokens.completionTokens,
+        total_tokens: tokens.promptTokens + tokens.completionTokens,
+      },
+    ]).estimated_cost_usd;
+    expect(viaMetrics).toBeCloseTo(direct!, 6);
   });
 });

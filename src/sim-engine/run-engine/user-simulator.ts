@@ -17,7 +17,7 @@
 // mirroring the Go `GenerateUserMessage` retry-on-empty.
 
 import { z } from "zod";
-import { completeJSON, type LlmProvider } from "../../llm/index.js";
+import { completeJSON, type LlmProvider, type WireReasoningEffort } from "../../llm/index.js";
 import type { Scenario, ScenarioPersona } from "../schema.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -569,6 +569,21 @@ export interface GenerateUserMessageInput {
   provider?: LlmProvider;
   /** Explicit model override; defaults to the configured SIMULATOR_MODEL. */
   model?: string;
+  /** Reasoning effort for this call; `undefined` omits the parameter (the "inherit" default).
+   *  Threaded from SIM_USER_REASONING_EFFORT by the orchestrator. Reaches the provider on the
+   *  Chat Completions path as a flat `reasoning_effort` — see the apiMode note below. */
+  reasoningEffort?: WireReasoningEffort;
+  /**
+   * Scenario id, forwarded to the `[llm] usage` accounting line so a conversation's
+   * per-turn token spend can be summed by scenario in log search. Observational
+   * only — never sent to the provider, and never used for control flow.
+   *
+   * This is what lets the simulator stay `Promise<string>`: the alternative was
+   * widening the return type to carry usage back up through the empty-message
+   * retry and every caller, purely so the orchestrator could re-aggregate what
+   * the accounting layer already knows.
+   */
+  correlationId?: string;
 }
 
 /**
@@ -600,9 +615,18 @@ export async function generateUserMessage(input: GenerateUserMessageInput): Prom
       prompt: "",
       noJsonHint: true,
       role: "simulator",
+      label: "user_sim",
+      correlationId: input.correlationId,
       model: input.model,
       jsonSchema: USER_MESSAGE_JSON_SCHEMA,
       apiMode: "chat",
+      // Operator-tunable per-turn reasoning effort; `undefined` (the "inherit" default) omits the
+      // parameter, which is the pre-existing wire shape. Note this is the one call that pins
+      // apiMode:"chat" — the Chat Completions path forwards effort as a flat `reasoning_effort`
+      // (it silently dropped the parameter entirely before this change), so a reasoning model
+      // configured here now actually honors the setting instead of running at the deployment
+      // default on every turn.
+      reasoningEffort: input.reasoningEffort,
       maxTokens: null,
       timeoutMs: 180_000,
       // cx-sqs makes ONE LLM call (no parse/network retry); the only retry is the empty-message one below.

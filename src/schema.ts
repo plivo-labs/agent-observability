@@ -1,6 +1,28 @@
 import { z } from "zod";
 import { SMOKE_CAP_FALLBACK } from "./sim-engine/gen/combos.js"; // pure data leaf — safe at env-parse time
 
+/**
+ * A reasoning-effort env knob, parsed straight into the value the provider accepts.
+ *
+ * Operators may write `inherit`, which is NOT a provider value — it means "send no
+ * `reasoning_effort` at all and let the deployment's own default apply". That escape hatch
+ * exists because an explicit effort can be REJECTED by a deployment ("none" is not universally
+ * valid across gpt-5.x), and a rejected enum 400s every call on that path.
+ *
+ * The sentinel is collapsed HERE, at the boundary, so `config.*_REASONING_EFFORT` is already
+ * `"none" | "low" | "medium" | "high" | undefined` — the exact shape the wire takes. A role
+ * that reads the config value therefore CANNOT ship `"inherit"` to a provider; it is
+ * unrepresentable past this point rather than something each call site has to remember to
+ * translate. An invalid value still fails at boot, not per-request.
+ *
+ * @param fallback the effort when the var is unset. "inherit" => omit the parameter.
+ */
+const reasoningEffort = (fallback: "inherit" | "none" | "low" | "medium" | "high") =>
+  z
+    .enum(["inherit", "none", "low", "medium", "high"])
+    .default(fallback)
+    .transform((v) => (v === "inherit" ? undefined : v));
+
 export const envSchema = z.object({
   PORT: z.coerce.number().default(9090),
 
@@ -129,6 +151,39 @@ export const envSchema = z.object({
   SIMULATOR_MODEL: z.string().optional(),
   GENERATOR_MODEL: z.string().optional(),
 
+  // Per-role RATE-LIMIT fallback. When a call's retries are exhausted by 429s and
+  // one of these is set, completeJSON spends its last attempt on this model instead
+  // of failing. Absent = off, so the feature ships inert.
+  //
+  // Sized for the prod Luna cutover: gpt-5.6-luna runs on 2,500K TPM per region,
+  // above p99.9 but BELOW the observed peak minute (3,547K, us-east-1), so a few
+  // minutes a week will throttle. gpt-5.5 sits on the same Azure resources with
+  // 3,718K quota that goes largely idle after the cutover — real spare capacity next
+  // to the constrained deployment. Retry-After (llm/retry-after.ts) covers a
+  // TRANSIENT limit; this covers an EXHAUSTED window, where waiting cannot help.
+  //
+  // Set these to a DEPLOYMENT name, not a model id — same as the knobs above. A wrong
+  // name surfaces as DeploymentNotFound only when the fallback fires, i.e. exactly
+  // when you need it to work.
+  //
+  // JUDGE_MODEL_FALLBACK carries a known cost, accepted deliberately. Judges are the
+  // bulk of this service's token volume (~71% of a measured run), so once JUDGE_MODEL
+  // is on Luna they are also the workload most likely to exhaust its 2,500K and take
+  // this path. When they do:
+  //   1. Verdict rows do not record which model judged them, so a run whose judges
+  //      switched mid-way yields a MIXED verdict set that is invisible in the data.
+  //      Judges are calibrated against gpt-5.5 at effort "low", so a Luna verdict and
+  //      a 5.5 verdict are not the same measurement. The real fix is persisting the
+  //      model per verdict (a DB column); nothing does that today.
+  //   2. The savings shrink: a fallen-back judge call is billed at gpt-5.5 rates.
+  // Judges also have a recovery path that loses nothing — eval-sweeper.ts treats a 429
+  // as transient, keeps the claim, and re-runs the whole session later — so setting
+  // this trades verdict consistency for latency. completeJSON logs a loud
+  // comparability warning on every judge fallback so the consequence is never silent.
+  JUDGE_MODEL_FALLBACK: z.string().optional(),
+  SIMULATOR_MODEL_FALLBACK: z.string().optional(),
+  GENERATOR_MODEL_FALLBACK: z.string().optional(),
+
   // Reasoning effort for the judge role, sent as `reasoning: {effort}` on the
   // Responses API. Defaults to "none" for reference-engine parity: cx-sqs-worker
   // pins effort "none" in prod (config/env.ctmpl:92) and AO's per-judge output
@@ -143,7 +198,7 @@ export const envSchema = z.object({
   // way to express "let the deployment's own default decide", needed because an
   // explicit value can be REJECTED by a deployment ("none" is not universally
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
-  JUDGE_REASONING_EFFORT: z.enum(["inherit", "none", "low", "medium", "high"]).default("none"),
+  JUDGE_REASONING_EFFORT: reasoningEffort("none"),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -169,9 +224,34 @@ export const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true" || v === "1"),
   AWS_REGION: z.string().optional(),
-  // Scenario-generation model. Default gpt-5.5-1 matches the orchestrator service (the managed deployment). For a
-  // non-Azure deploy, override + point OPENAI_BASE_URL at the endpoint.
-  SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5-1"),
+  // Scenario-generation model. Default gpt-5.5 matches the deployment name the managed
+  // deployment's dedicated AO Azure resources actually host. It was previously "gpt-5.5-1",
+  // a deployment on the LEGACY SHARED Vibe resource that the dedicated AO resources do NOT
+  // host — so the default could only ever resolve to an Azure DeploymentNotFound there. The
+  // managed config always sets this key explicitly, which is why the wrong default stayed
+  // invisible; it only surfaced if the key went missing. For a non-Azure deploy, override +
+  // point OPENAI_BASE_URL at the endpoint.
+  SIM_EVAL_SCENARIO_GENERATION_MODEL: z.string().default("gpt-5.5"),
+
+  // Reasoning effort for the two generation LLM calls, sent as `reasoning: {effort}` on the
+  // Responses API (generation runs with OPENAI_API_MODE=responses on the managed deployment).
+  // Independent knobs because the roles do different work: the planner does the genuinely hard
+  // flow-comprehension thinking, while the writer executes an already-fixed plan (closer to
+  // transcription than problem-solving). Both default to "inherit" — the parameter is not sent
+  // and the deployment's own default applies, i.e. byte-identical to the pre-existing wire
+  // shape — so merging this changes nothing until an operator opts in via config.
+  //
+  // Calibration note before you reach for these: an equivalent planner dial was already A/B'd
+  // on the reference engine (aiassist PR #102) and came back a NULL RESULT — identical latency
+  // and identical output-token counts across default/low/none, because planner latency there was
+  // bound by output-token THROUGHPUT (~90 tok/s), not by reasoning spend. The writer dial was
+  // never measured. Expect the planner knob to be inert and treat the writer knob as the
+  // untested one. Neither is a substitute for choosing a faster-output model.
+  //
+  // Unlike the judge caps, raising effort here cannot truncate: the planner cap is generous
+  // (PLANNER_MAX_OUTPUT_TOKENS) and the writer runs uncapped (maxTokens:null, streaming).
+  SIM_EVAL_PLANNER_REASONING_EFFORT: reasoningEffort("inherit"),
+  SIM_EVAL_WRITER_REASONING_EFFORT: reasoningEffort("inherit"),
 
   // Sim persistence mode. Selects whether AO writes its ao_sim_* tables:
   //   • true  (default) — PERSISTENT: generated scenarios land in ao_sim_scenario, run results
@@ -227,6 +307,30 @@ export const envSchema = z.object({
   // same as unset, so it falls back cleanly via `??` instead of slipping through as "" (which
   // would otherwise be sent as an empty model id). Mirrors DATABASE_URL above.
   USER_SIMULATOR_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
+  // Reasoning effort for the UserSimulator call. Separate from the generation knobs because the
+  // simulator is the one role forced onto Chat Completions (user-simulator.ts pins apiMode:"chat"
+  // for cx-sqs parity), so it is billed and timed per simulated TURN — the effort choice there
+  // multiplies across a whole conversation rather than applying once per generate request.
+  // Defaults to "inherit" (parameter omitted = today's wire shape).
+  //
+  // Historically this knob could not exist: the Chat Completions path never forwarded the
+  // parameter at all, so a reasoning model configured here silently ran at the deployment's
+  // default effort on every turn. That gap is closed in this change (see providers/openai.ts).
+  //
+  // KEEP THE DEFAULT AT "inherit" (= omit). Verified reference behaviour, 2026-08-05:
+  // cx-sqs pins DefaultReasoningEffort="none" (config/env.ctmpl:92), but only its RESPONSES
+  // builder reads it — buildChatCompletionsBody has no reasoning key at all, and
+  // user_simulator.go forces APIFormatChatCompletions. So the reference's simulated caller
+  // sends NO effort, and prod AO has always matched it (main's Chat path dropped the
+  // parameter, and this key did not exist there). Defaulting to a real effort here would
+  // silently change every simulation's latency and spend on every environment at once.
+  //
+  // Tuning a specific model is therefore a per-environment CONSUL decision, not a code
+  // default — e.g. a deployment whose own default effort is expensive (measured on
+  // gpt-5.6-luna: ~1.9x the per-turn latency of gpt-5.5, widening with turn index) is fixed
+  // by setting this to "none"/"low" for THAT environment, verifiable via the
+  // `reasoning_tokens=` field on the `[llm] usage label=user_sim` line.
+  SIM_USER_REASONING_EFFORT: reasoningEffort("inherit"),
   // SQS consumer fan-out: the number of independent worker loops the consumer runs, i.e. the max
   // scenarios processed concurrently per worker process. Each worker polls SQS independently and
   // processes one message at a time (see src/sim-engine/queue/consumer.ts), so N scenarios stay in

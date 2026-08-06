@@ -327,3 +327,41 @@ describe("generateUserMessage — LLM call (MockLLM injected)", () => {
     ).rejects.toThrow(/empty message after retry/);
   });
 });
+
+describe("generateUserMessage — reasoning effort (the per-turn dial)", () => {
+  const base = {
+    scenario: scenario(),
+    history: [] as ConversationTurn[],
+    agentFlowDescription: "Refund helpline",
+    isOutboundCall: false,
+    partialAssistantMsg: "",
+    nonAnswerType: "",
+  };
+
+  test("forwards the configured effort on the pinned chat transport", async () => {
+    // This role is billed and timed per simulated TURN, so its effort multiplies across a
+    // conversation — unlike the generation dials, which apply once per request.
+    const provider = new MockLLM([JSON.stringify({ message: "Yes, please." })]);
+    await generateUserMessage({ ...base, provider, reasoningEffort: "none" });
+    expect(provider.calls[0].reasoningEffort).toBe("none");
+    // apiMode must stay pinned: the effort only reaches the wire because the Chat
+    // Completions path now forwards it as a flat `reasoning_effort`.
+    expect(provider.calls[0].apiMode).toBe("chat");
+  });
+
+  test("omits the parameter when unset, preserving the pre-existing wire shape", async () => {
+    const provider = new MockLLM([JSON.stringify({ message: "Sure." })]);
+    await generateUserMessage({ ...base, provider });
+    expect(provider.calls[0].reasoningEffort).toBeUndefined();
+    expect(provider.calls[0].apiMode).toBe("chat");
+  });
+
+  test("still sends no output cap — effort must not reintroduce max_tokens", async () => {
+    // The uncapped call is what keeps `max_tokens` (which gpt-5.x rejects on
+    // chat/completions) out of the body. Pairing an explicit effort with a cap here
+    // would 400 every turn.
+    const provider = new MockLLM([JSON.stringify({ message: "Ok." })]);
+    await generateUserMessage({ ...base, provider, reasoningEffort: "low" });
+    expect(provider.calls[0].maxTokens).toBe(0);
+  });
+});

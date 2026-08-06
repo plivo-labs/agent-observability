@@ -140,3 +140,70 @@ describe("envSchema", () => {
     }
   });
 });
+
+describe("envSchema — reasoning-effort knobs", () => {
+  // Every effort key is parsed straight into the value the provider accepts: the "inherit"
+  // sentinel is collapsed to undefined HERE, at the boundary, so no downstream role can ship
+  // it on the wire. These tests pin that boundary — they are the reason no call site needs a
+  // translation step.
+  const parse = (env: Record<string, string> = {}) =>
+    envSchema.parse({ ALLOW_UNAUTHENTICATED: "true", SIM_PERSIST: "false", ...env });
+
+  test('"inherit" parses to undefined — the parameter is omitted, not sent', () => {
+    const c = parse({
+      JUDGE_REASONING_EFFORT: "inherit",
+      SIM_EVAL_PLANNER_REASONING_EFFORT: "inherit",
+      SIM_EVAL_WRITER_REASONING_EFFORT: "inherit",
+      SIM_USER_REASONING_EFFORT: "inherit",
+    });
+    expect(c.JUDGE_REASONING_EFFORT).toBeUndefined();
+    expect(c.SIM_EVAL_PLANNER_REASONING_EFFORT).toBeUndefined();
+    expect(c.SIM_EVAL_WRITER_REASONING_EFFORT).toBeUndefined();
+    expect(c.SIM_USER_REASONING_EFFORT).toBeUndefined();
+  });
+
+  test("each key keeps its OWN unset default", () => {
+    // The judge default is a real effort ("none", reference-engine parity); the three
+    // generation/simulator keys default to omitting the parameter. Collapsing them to one
+    // shared default would silently change judge behaviour.
+    const c = parse();
+    expect(c.JUDGE_REASONING_EFFORT).toBe("none");
+    expect(c.SIM_EVAL_PLANNER_REASONING_EFFORT).toBeUndefined();
+    expect(c.SIM_EVAL_WRITER_REASONING_EFFORT).toBeUndefined();
+    expect(c.SIM_USER_REASONING_EFFORT).toBeUndefined();
+  });
+
+  test('"none" survives as a real effort — it is not treated as absence', () => {
+    // The trap this guards: "none" is a meaningful instruction ("do not reason"), NOT the
+    // same as omitting the parameter. A truthiness check anywhere in this path would drop it.
+    expect(parse({ SIM_EVAL_WRITER_REASONING_EFFORT: "none" }).SIM_EVAL_WRITER_REASONING_EFFORT).toBe("none");
+  });
+
+  test("real efforts pass through, and the keys are independent", () => {
+    const c = parse({
+      SIM_EVAL_PLANNER_REASONING_EFFORT: "high",
+      SIM_EVAL_WRITER_REASONING_EFFORT: "low",
+      SIM_USER_REASONING_EFFORT: "medium",
+    });
+    expect(c.SIM_EVAL_PLANNER_REASONING_EFFORT).toBe("high");
+    expect(c.SIM_EVAL_WRITER_REASONING_EFFORT).toBe("low");
+    expect(c.SIM_USER_REASONING_EFFORT).toBe("medium");
+  });
+
+  test("an invalid effort fails at BOOT, not per-request", () => {
+    // A bad value that reached the provider would 400 every single call on that path.
+    expect(() => parse({ SIM_EVAL_WRITER_REASONING_EFFORT: "minimal" })).toThrow();
+    expect(() => parse({ JUDGE_REASONING_EFFORT: "xhigh" })).toThrow();
+    expect(() => parse({ SIM_USER_REASONING_EFFORT: "" })).toThrow();
+  });
+});
+
+describe("envSchema — scenario generation model default", () => {
+  test('defaults to "gpt-5.5", the deployment the AO Azure resources actually host', () => {
+    // Regression guard for the previous default "gpt-5.5-1", a deployment on the LEGACY
+    // SHARED Vibe resource that the dedicated AO resources do not host — so the old default
+    // could only ever resolve to DeploymentNotFound there.
+    const c = envSchema.parse({ ALLOW_UNAUTHENTICATED: "true", SIM_PERSIST: "false" });
+    expect(c.SIM_EVAL_SCENARIO_GENERATION_MODEL).toBe("gpt-5.5");
+  });
+});

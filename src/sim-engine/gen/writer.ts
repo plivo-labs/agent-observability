@@ -1,4 +1,4 @@
-import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { completeJSON, type LlmProvider, type LlmUsage, type WireReasoningEffort } from "../../llm/index.js";
 import { WriterOutputZ, WRITER_JSON_SCHEMA, WRITER_SCHEMA_NAME } from "./schemas.js";
 import { writerSystemPrompt } from "./prompts.js";
 import {
@@ -341,6 +341,9 @@ export interface WriteScenarioChunkArgs {
   planner: PlannerWithInventory;
   slots: Slot[];
   model: string;
+  /** Reasoning effort for the writer call; `undefined` omits the parameter (the "inherit"
+   *  default). Threaded from simEngineConfig by routes.ts, like `model`. */
+  reasoningEffort?: WireReasoningEffort;
   generationId: string;
   phloUuid: string;
   chunkIndex: number;
@@ -435,6 +438,8 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
   const res = await completeJSON({
     schema: WriterOutputZ,
     role: "generator",
+    label: "writer",
+    correlationId: generationId,
     model,
     system: writerSystemPrompt(),
     prompt: JSON.stringify(payload),
@@ -444,6 +449,11 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
     stream: true,
     maxTokens: null,
     jsonSchema: { name: WRITER_SCHEMA_NAME, schema: WRITER_JSON_SCHEMA },
+    // Operator-tunable reasoning effort; `undefined` (the "inherit" default) omits the parameter.
+    // The writer executes an already-fixed plan, so this is the dial most likely to buy latency
+    // without costing quality — and unlike the judges it runs uncapped (maxTokens:null above), so
+    // changing effort cannot push it into a max_output_tokens truncation.
+    reasoningEffort: args.reasoningEffort,
     provider: args.provider,
     signal: args.signal,
     makeOnText,
