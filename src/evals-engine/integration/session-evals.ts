@@ -508,11 +508,67 @@ export async function evaluateIngestedSession(
   // evaluateSimulation preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
   const node_evaluations = scored.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" }));
 
-  return {
+  return nonHumanCallerGate({
     node_evaluations,
     conversation_metrics,
     ...(scored.goal_evaluation ? { goal_evaluation: scored.goal_evaluation } : {}),
-  };
+  });
+}
+
+/** Deterministic gate for non-human callers. When the call-level judges
+ *  detect a bot, voicemail, or an unresolved call-screening system, the
+ *  "caller" is a machine — grading variable capture, intent identification,
+ *  or procedure adherence against it can only produce noise (36 of 188
+ *  confirmed prod FPs in the Aug-6 audit, the single largest class; the
+ *  canonical case: a spam robocall flagged for a missing `caller_need`).
+ *  Fired verdicts on those three dimensions are neutralized post-hoc — the
+ *  metrics and node judges run in parallel, so this cannot be a pre-gate —
+ *  with the original verdict preserved for audit. Hallucination and loop are
+ *  left untouched: an agent can still fabricate or loop AT a machine. */
+export function nonHumanCallerGate(v: SessionEvalVerdicts): SessionEvalVerdicts {
+  const cm = v.conversation_metrics as Record<string, { detected?: boolean } | undefined>;
+  const kinds = (["bot_detected", "voicemail_detected", "call_screening"] as const).filter(
+    (k) => cm?.[k]?.detected === true,
+  );
+  if (kinds.length === 0) return v;
+  const why = `non-human caller (${kinds.join(", ")})`;
+  const note = (original: string) =>
+    `skipped: ${why} — this dimension is not judged against machine callers. Original verdict: ${original}`;
+  const node_evaluations = v.node_evaluations.map((ne) => {
+    const out = { ...ne };
+    if (out.variable_extraction && out.variable_extraction.extraction_successful === false) {
+      out.variable_extraction = {
+        ...out.variable_extraction,
+        extraction_successful: true,
+        score: 1.0,
+        missing_variables: [],
+        incorrect_variables: [],
+        reason: `Caller was a machine (${kinds.join(", ")}) — variable extraction not applicable.`,
+        technical_reason: note(out.variable_extraction.technical_reason ?? ""),
+      };
+    }
+    if (out.intent_identification && (out.intent_identification.intent_not_found || out.intent_identification.intent_wrongly_identified)) {
+      out.intent_identification = {
+        ...out.intent_identification,
+        intent_not_found: false,
+        intent_wrongly_identified: false,
+        score: 1.0,
+        reason: `Caller was a machine (${kinds.join(", ")}) — intent identification not applicable.`,
+        technical_reason: note(out.intent_identification.technical_reason ?? ""),
+      };
+    }
+    if (out.instructions_adherence && out.instructions_adherence.adherence_passed === false) {
+      out.instructions_adherence = {
+        ...out.instructions_adherence,
+        adherence_passed: true,
+        score: 1.0,
+        reason: `Caller was a machine (${kinds.join(", ")}) — steps gated on human responses were unreachable.`,
+        technical_reason: note(out.instructions_adherence.technical_reason ?? ""),
+      };
+    }
+    return out;
+  });
+  return { ...v, node_evaluations };
 }
 
 type ToolCall = { name: string; args: Record<string, unknown> | null };
