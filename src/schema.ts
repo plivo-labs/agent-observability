@@ -166,16 +166,20 @@ export const envSchema = z.object({
   // name surfaces as DeploymentNotFound only when the fallback fires, i.e. exactly
   // when you need it to work.
   //
-  // KEEP JUDGE_MODEL_FALLBACK UNSET. Two reasons, both load-bearing:
+  // JUDGE_MODEL_FALLBACK carries a known cost, accepted deliberately. Judges are the
+  // bulk of this service's token volume (~71% of a measured run), so once JUDGE_MODEL
+  // is on Luna they are also the workload most likely to exhaust its 2,500K and take
+  // this path. When they do:
   //   1. Verdict rows do not record which model judged them, so a run whose judges
-  //      switched mid-way yields a silently mixed verdict set — a data-quality
-  //      problem, not a resilience win. Fixing it properly means persisting the model
-  //      per verdict (a DB column), which nothing does today.
-  //   2. Judges already have a better recovery path: eval-sweeper.ts classifies a 429
-  //      as transient, keeps the claim, and re-runs the whole session later. Nothing
-  //      is lost, only delayed.
-  // completeJSON still honours it if set, and logs a loud comparability warning, so
-  // the consequence is never silent.
+  //      switched mid-way yields a MIXED verdict set that is invisible in the data.
+  //      Judges are calibrated against gpt-5.5 at effort "low", so a Luna verdict and
+  //      a 5.5 verdict are not the same measurement. The real fix is persisting the
+  //      model per verdict (a DB column); nothing does that today.
+  //   2. The savings shrink: a fallen-back judge call is billed at gpt-5.5 rates.
+  // Judges also have a recovery path that loses nothing — eval-sweeper.ts treats a 429
+  // as transient, keeps the claim, and re-runs the whole session later — so setting
+  // this trades verdict consistency for latency. completeJSON logs a loud
+  // comparability warning on every judge fallback so the consequence is never silent.
   JUDGE_MODEL_FALLBACK: z.string().optional(),
   SIMULATOR_MODEL_FALLBACK: z.string().optional(),
   GENERATOR_MODEL_FALLBACK: z.string().optional(),
