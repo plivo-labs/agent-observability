@@ -25,6 +25,9 @@ import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, kickEvalForSession } from "./evals-engine/eval-sweeper.js";
+import { startSupervisorSweeper, stopSupervisorSweeper } from "./evals-engine/supervisor/supervisor-sweeper.js";
+import { misflagsByAxis, misflagsForAxis } from "./evals-engine/supervisor/db.js";
+import { AXIS_LABEL } from "./evals-engine/supervisor/axes.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
@@ -60,6 +63,13 @@ if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbCon
   // Loud on purpose: with EVAL_SWEEPER=off nobody judges ingested sessions.
   // ("worker" is the normal non-inline value — the dedicated worker handles it.)
   console.warn("[evals] EVAL_SWEEPER=off — ingested-session judging is disabled everywhere; set it to \"inline\" (API) or \"worker\" (worker) to enable.");
+}
+
+// Supervisor: re-judge stored verdicts + record misflags for the Supervisor tab.
+// Inline in the API for local/dev single-container; EVAL_REVIEW=worker runs it
+// on the dedicated worker instead.
+if (process.env.NODE_ENV !== "test" && config.EVAL_REVIEW === "inline" && dbConfigured) {
+  startSupervisorSweeper();
 }
 
 // Goal analyzer: post-session LLM judging of goal:<text> tags. Same
@@ -502,6 +512,28 @@ app.post("/observability/metrics/otlp/v0", async (c) => {
 const TS_HEADLINE_OPTIONS =
   'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "';
 
+// ── Supervisor tab ───────────────────────────────────────────────────────────
+// Misflags (supervisor disagreed with the judge) grouped by judge axis.
+app.get("/api/supervisor", async (c) => {
+  const rows = await misflagsByAxis();
+  const objects = rows.map((r) => ({
+    axis: r.axis,
+    label: AXIS_LABEL[r.axis] ?? r.axis,
+    misflags: r.misflags,
+    reviewed: r.reviewed,
+    last_at: r.last_at,
+  }));
+  return c.json({ objects });
+});
+
+// Drill-down: the misflagged cases for one judge axis + their suggested prompt fixes.
+app.get("/api/supervisor/:axis", async (c) => {
+  const axis = c.req.param("axis");
+  const limit = Math.min(500, Math.max(1, Number(c.req.query("limit")) || 100));
+  const objects = await misflagsForAxis(axis, limit);
+  return c.json({ axis, label: AXIS_LABEL[axis] ?? axis, objects });
+});
+
 app.get("/api/sessions", async (c) => {
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
@@ -862,6 +894,7 @@ if (import.meta.main) {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
     stopEvalSweeper();
+    stopSupervisorSweeper();
     stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();

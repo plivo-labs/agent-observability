@@ -93,7 +93,7 @@ export async function fanOutExternalEvals(
  *  policy). Transient provider trouble (timeouts, 429s, 5xx, network) must
  *  NOT terminally poison a session — leaving the claim `running` lets the
  *  stale-claim adoption re-judge it after EVAL_CLAIM_STALE_MINUTES. */
-function isTerminalEvalError(e: unknown): boolean {
+export function isTerminalEvalError(e: unknown): boolean {
   const seen = new Set<unknown>();
   let messages = "";
   for (let cur = e; cur && typeof cur === "object" && !seen.has(cur); cur = (cur as { cause?: unknown }).cause) {
@@ -116,7 +116,7 @@ function isTerminalEvalError(e: unknown): boolean {
 /** Synthesize builder events from stored chat_history items when the OTLP
  *  event channel was lost — judging the recording's transcript beats marking
  *  a fully transcribed call "done" with phantom empty-input verdicts. */
-function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
+export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
   if (!Array.isArray(chatHistory)) return [];
   return chatHistory
     .filter((item) => item && typeof item === "object")

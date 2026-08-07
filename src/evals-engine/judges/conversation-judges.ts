@@ -103,6 +103,10 @@ Rules: evaluate every user turn; at most one error per turn; recovered_count mus
 
 Default bias: CONSERVATIVE — when unsure whether a turn is an STT error or genuine user speech, do NOT flag it; when unsure about recovery, count it as not recovered.`;
 
+// Re-exported so the supervisor layer can show/critique the exact judge prompt
+// when it suggests prompt fixes for a misflag.
+export { VOICEMAIL, BOT, CALL_SCREENING, LOW_ENGAGEMENT, WRONG_NUMBER, DO_NOT_DISTURB, USER_SENTIMENT };
+
 const OUT_DETECTION =
   '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
 const OUT_SENTIMENT =
