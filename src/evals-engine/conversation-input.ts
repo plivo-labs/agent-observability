@@ -50,6 +50,45 @@ function availableIntents(config: Record<string, unknown> | null): unknown[] {
   return Array.isArray(intents) ? intents : [];
 }
 
+function serializeEvidenceValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
+}
+
+function serializeToolArguments(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  return typeof value === "string" ? value : serializeEvidenceValue(value);
+}
+
+/** Convert the tool calls carried by a simulation turn into the same labelled,
+ *  non-speech evidence understood by the live-session judges. */
+function renderToolEvidence(toolCalls: unknown[] | undefined): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const lines: string[] = [];
+  for (const raw of toolCalls) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const call = raw as Record<string, unknown>;
+    const name = typeof call.name === "string" ? call.name.trim() : "";
+    if (!name) continue;
+    lines.push(`Tool_Call: ${name}(${serializeToolArguments(call.arguments)})`);
+    const hasOutput = Object.prototype.hasOwnProperty.call(call, "output")
+      && call.output !== null
+      && call.output !== undefined;
+    if (call.is_error === true) {
+      const detail = hasOutput ? serializeEvidenceValue(call.output) : "";
+      lines.push(`Tool_Result: ${name} -> ERROR${detail ? `: ${detail}` : ""}`);
+    } else if (hasOutput) {
+      lines.push(`Tool_Result: ${name} -> ${serializeEvidenceValue(call.output)}`);
+    }
+  }
+  return lines;
+}
+
 /** Render turns for node and full-conversation judge context.
  *
  * Evidence turns render bare because Tool_Call:/Tool_Result:/System_Note:/
@@ -62,6 +101,7 @@ export function renderFullTranscript(turns: EvalTurn[]): string {
   const lines: string[] = [];
   for (const t of turns) {
     if (t.user) lines.push(`User: ${t.user}`);
+    lines.push(...renderToolEvidence(t.tool_calls));
     if (t.agent) lines.push(t.evidence ? t.agent : `Agent: ${t.agent}`);
   }
   return lines.join("\n");

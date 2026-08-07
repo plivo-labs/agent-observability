@@ -26,6 +26,10 @@ export interface EvalTurn {
   agent: string;
   /** Intent the agent/framework selected on this turn ("" when none). */
   intent: string;
+  /** Tool calls returned with a simulation turn. Each valid call is rendered
+   *  as bare Tool_Call/Tool_Result evidence for the judges while remaining on
+   *  its original conversational turn (so turn counts do not change). */
+  tool_calls?: unknown[];
   /** True for synthetic evidence lines (tool calls, handoffs, system notes)
    *  that are NOT spoken words. The speech-only transcript filters on this
    *  flag instead of re-matching the rendered label strings. */

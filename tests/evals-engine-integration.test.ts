@@ -7,6 +7,7 @@ mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
 const { fromSimTranscript } = await import("../src/evals-engine/conversation-input.js");
+const { renderNodeTranscript } = await import("../src/evals-engine/judges/node-judge-payload.js");
 const { evaluateSimulationForRun } = await import("../src/evals-engine/integration/sim-adapter.js");
 type EvalTurn = import("../src/evals-engine/types.js").EvalTurn;
 
@@ -85,6 +86,106 @@ describe("fromSimTranscript", () => {
   test("no goals when agent_settings has none", () => {
     const input = fromSimTranscript({ turns: TURNS, graph: GRAPH, flowObj: { flow_name: "x" }, variablesByNode: {} });
     expect(input.goals).toEqual([]);
+  });
+
+  test("renders simulation tool calls and results as evidence without changing turn count", () => {
+    const turns = [{
+      node_uuid: "A1",
+      user: "Did the order ship?",
+      agent: "Order 42 shipped.",
+      intent: "provide_order",
+      tool_calls: [{
+        name: "lookup_order",
+        arguments: '{ "order_id": 9007199254740993 }',
+        output: { status: "shipped" },
+      }],
+    }] as EvalTurn[];
+
+    const input = fromSimTranscript({ turns, graph: GRAPH, flowObj: FLOW_OBJ, variablesByNode: {} });
+    const expected = [
+      "User: Did the order ship?",
+      'Tool_Call: lookup_order({ "order_id": 9007199254740993 })',
+      'Tool_Result: lookup_order -> {"status":"shipped"}',
+      "Agent: Order 42 shipped.",
+    ].join("\n");
+
+    expect(input.full_transcript).toBe(expected);
+    expect(renderNodeTranscript(input.nodes[0]!)).toBe(expected);
+    expect(input.full_transcript).not.toContain("Agent: Tool_Call:");
+    expect(input.full_transcript).not.toContain("Agent: Tool_Result:");
+    expect(input.nodes[0]!.turn_count).toBe(1);
+  });
+
+  test("renders call-only evidence for null outputs and ignores malformed tool entries", () => {
+    const turns = [{
+      node_uuid: "A1",
+      user: "Call tomorrow.",
+      agent: "Okay.",
+      intent: "callback",
+      tool_calls: [
+        null,
+        "not-an-object",
+        {},
+        { name: " ", arguments: "{}" },
+        { name: "handoff_busy_callback", arguments: "{}", output: null },
+      ],
+    }] as EvalTurn[];
+
+    const input = fromSimTranscript({ turns, graph: GRAPH, flowObj: FLOW_OBJ, variablesByNode: {} });
+
+    expect(input.full_transcript).toBe([
+      "User: Call tomorrow.",
+      "Tool_Call: handoff_busy_callback({})",
+      "Agent: Okay.",
+    ].join("\n"));
+    expect(input.full_transcript).not.toContain("Tool_Result:");
+    expect(input.nodes[0]!.turn_count).toBe(1);
+  });
+
+  test("distinguishes successful mocked results from failed tool outcomes", () => {
+    const turns = [{
+      node_uuid: "A1",
+      user: "Check the plan and save it.",
+      agent: "I checked the plan.",
+      intent: "provide_plan",
+      tool_calls: [
+        {
+          name: "lookup_price",
+          arguments: '{"plan":"pro"}',
+          output: { price: 99, currency: "USD" },
+          mocked: true,
+          is_error: false,
+        },
+        {
+          name: "lookup_inventory",
+          arguments: "{}",
+          output: "timeout",
+          mocked: true,
+          is_error: true,
+        },
+        {
+          name: "save_lead",
+          arguments: "{}",
+          output: null,
+          mocked: true,
+          is_error: true,
+        },
+      ],
+    }] as EvalTurn[];
+
+    const input = fromSimTranscript({ turns, graph: GRAPH, flowObj: FLOW_OBJ, variablesByNode: {} });
+
+    expect(input.full_transcript).toBe([
+      "User: Check the plan and save it.",
+      'Tool_Call: lookup_price({"plan":"pro"})',
+      'Tool_Result: lookup_price -> {"price":99,"currency":"USD"}',
+      "Tool_Call: lookup_inventory({})",
+      "Tool_Result: lookup_inventory -> ERROR: timeout",
+      "Tool_Call: save_lead({})",
+      "Tool_Result: save_lead -> ERROR",
+      "Agent: I checked the plan.",
+    ].join("\n"));
+    expect(input.nodes[0]!.turn_count).toBe(1);
   });
 });
 
