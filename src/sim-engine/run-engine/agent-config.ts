@@ -110,6 +110,50 @@ export function buildAgentConfig(
   return agentConfig;
 }
 
+/**
+ * Build the `agent_config` for an agent_node's flow-session (SER-6078). The saved node config
+ * already IS the wire model livekit's task-unit factory consumes (`agent_tasks` selects
+ * AgentTasksUnit/SubtleAgentTasksUnit), so unlike screening nothing is synthesized — but the
+ * `{{Node.var}}` refs the real runtime resolves upstream (phlo-core renders the node config
+ * against flow-run variables before livekit sees it) must be rendered here against the sim's
+ * variable store: per livekit's AgentTaskVariable model, `known_value` is "rendered upstream,
+ * so at runtime it holds the resolved value or ''". Rendered fields: each
+ * `agent_tasks.variables[]` instructions/known_value, each `agent_tasks.extract_only[]`
+ * instructions, and `agent_tasks.confirm_announcement`. `initial_wait_time` is forced to 0 —
+ * the walk's on_enter sleeps it, and the text sim has no call-start audio to wait for (same
+ * rule as screening). Top-level instructions/first_response rendering and the flow-level
+ * hoists come from buildAgentConfig on the deep copy.
+ */
+export function buildAgentTasksAgentConfig(
+  node: AgentConfigNode,
+  variableStore: VariableStore,
+  flowConfig: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const agentConfig = buildAgentConfig(node, variableStore, flowConfig);
+  agentConfig["initial_wait_time"] = 0;
+
+  const tasks = agentConfig["agent_tasks"];
+  if (isRecord(tasks)) {
+    for (const listKey of ["variables", "extract_only"] as const) {
+      const rows = tasks[listKey];
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        if (!isRecord(row)) continue;
+        for (const field of ["instructions", "known_value"] as const) {
+          if (typeof row[field] === "string" && row[field] !== "") {
+            row[field] = variableStore.render(row[field] as string);
+          }
+        }
+      }
+    }
+    if (typeof tasks["confirm_announcement"] === "string" && tasks["confirm_announcement"] !== "") {
+      tasks["confirm_announcement"] = variableStore.render(tasks["confirm_announcement"] as string);
+    }
+  }
+
+  return agentConfig;
+}
+
 // SER-6070: screening dispositions — ids double as edge sourceHandles and intent names,
 // mirroring the CLI bundle synthesis (plivo-cx-livekit src/simulation/cli/flow.py) and the
 // console's publish-time wire model (contact-screening.config.ts).

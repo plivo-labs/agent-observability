@@ -173,7 +173,7 @@ export const SCENARIO_TYPE_DEFAULT_PATTERNS: Record<string, string[]> = {
   boundary_pressure: ["topic_out_of_scope", "identity_challenge", "purpose_challenge", "bot_suspicion", "bad_time_call_later", "low_interest", "alternate_channel_request", "ao_knowledge_grill", "ao_aggressive_refund_demand", "ao_prompt_injection"],
 };
 
-export const EXECUTABLE_NODE_TYPES = new Set<string>(["start", "initiate_call", "ai_agent_v2", "http_request", "branch_v2", "ai_action", "prompt", "contact_screening", "outbound_screening"]);
+export const EXECUTABLE_NODE_TYPES = new Set<string>(["start", "initiate_call", "ai_agent_v2", "http_request", "branch_v2", "ai_action", "prompt", "contact_screening", "outbound_screening", "agent_node"]);
 export const SUPPORTED_TERMINAL_NODE_TYPES = new Set<string>(["end_conversation", "call_forward"]);
 export const BLOCKED_NODE_TYPES = new Set<string>(["queue_and_route", "ai_agent_whatsapp"]);
 

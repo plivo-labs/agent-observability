@@ -5,7 +5,7 @@ import {
   type HandoffEntry,
 } from "../src/sim-engine/run-engine/handoff-planner.js";
 import { VariableStore } from "../src/sim-engine/run-engine/variable-renderer.js";
-import { buildAgentConfig, type AgentConfigNode } from "../src/sim-engine/run-engine/agent-config.js";
+import { buildAgentConfig, buildAgentTasksAgentConfig, type AgentConfigNode } from "../src/sim-engine/run-engine/agent-config.js";
 import type { WorldStateEntry } from "../src/sim-engine/schema.js";
 
 // ── Flow builders (mirror the Go test helpers: aiNode / mockNode / terminalNode / edge) ──
@@ -415,5 +415,74 @@ describe("buildAgentConfig — field-for-field (port of buildAgentConfig)", () =
     // ...but a KB list already on the NODE config survives the deep copy.
     const out2 = buildAgentConfig(node({ name: "Agent", knowledge_base_ids: ["node-kb"] }), store, flowConfig);
     expect(out2["knowledge_base_ids"]).toEqual(["node-kb"]);
+  });
+});
+
+describe("buildAgentTasksAgentConfig — agent_node flow-session config (SER-6078)", () => {
+  function agentNode(config: Dict): AgentConfigNode {
+    return { id: "an1", type: "agent_node", config, configName: String(config["name"] ?? "an1") };
+  }
+
+  function sourceConfig(): Dict {
+    return {
+      name: "Confirm Delivery Details",
+      channel: "call",
+      instructions: "Confirm details for {{Start.contact_name}}.",
+      initial_wait_time: 5,
+      intents: [{ id: "done-uuid", intent_name: "Done" }],
+      agent_tasks: {
+        variables: [
+          {
+            name: "address_confirmation",
+            type: "text",
+            instructions: "Confirm the address for {{Start.contact_name}}.",
+            known_value: "{{Start.street_address}}",
+            confirm_if_known: true,
+          },
+          { name: "backup_phone", type: "phone", instructions: "Ask for a backup number." },
+        ],
+        extract_only: [{ name: "notes", instructions: "Note anything about {{Start.contact_name}}." }],
+        confirm_announcement: "I have your details from {{Start.street_address}} on file.",
+      },
+    };
+  }
+
+  function storeWithStart(): VariableStore {
+    const store = new VariableStore();
+    store.set("Start", "start-1", { contact_name: "Jordan Lee", street_address: "1468 Cedar Ave" });
+    return store;
+  }
+
+  test("renders known_value, task instructions, and confirm_announcement against the store", () => {
+    const out = buildAgentTasksAgentConfig(agentNode(sourceConfig()), storeWithStart(), null);
+    const tasks = out["agent_tasks"] as Dict;
+    const variables = tasks["variables"] as Dict[];
+    expect(variables[0]!["known_value"]).toBe("1468 Cedar Ave");
+    expect(variables[0]!["instructions"]).toBe("Confirm the address for Jordan Lee.");
+    expect((tasks["extract_only"] as Dict[])[0]!["instructions"]).toBe("Note anything about Jordan Lee.");
+    expect(tasks["confirm_announcement"]).toBe("I have your details from 1468 Cedar Ave on file.");
+    expect(out["instructions"]).toBe("Confirm details for Jordan Lee.");
+  });
+
+  test("forces initial_wait_time to 0 (text sim has no call-start audio)", () => {
+    const out = buildAgentTasksAgentConfig(agentNode(sourceConfig()), storeWithStart(), null);
+    expect(out["initial_wait_time"]).toBe(0);
+  });
+
+  test("does NOT mutate the source node config", () => {
+    const src = sourceConfig();
+    buildAgentTasksAgentConfig(agentNode(src), storeWithStart(), null);
+    const srcTasks = src["agent_tasks"] as Dict;
+    expect((srcTasks["variables"] as Dict[])[0]!["known_value"]).toBe("{{Start.street_address}}");
+    expect(srcTasks["confirm_announcement"]).toBe("I have your details from {{Start.street_address}} on file.");
+    expect(src["initial_wait_time"]).toBe(5);
+  });
+
+  test("unresolvable refs and absent fields pass through untouched", () => {
+    const config = sourceConfig();
+    ((config["agent_tasks"] as Dict)["variables"] as Dict[])[1]!["known_value"] = "{{Start.missing_param}}";
+    const out = buildAgentTasksAgentConfig(agentNode(config), storeWithStart(), null);
+    const variables = (out["agent_tasks"] as Dict)["variables"] as Dict[];
+    expect(variables[1]!["known_value"]).toBe("{{Start.missing_param}}");
   });
 });

@@ -27,7 +27,7 @@ import type {
   VariableStore,
   WorldStateEntry,
 } from "./flow-types.js";
-import { buildAgentConfig, buildScreeningAgentConfig } from "./agent-config.js";
+import { buildAgentConfig, buildAgentTasksAgentConfig, buildScreeningAgentConfig } from "./agent-config.js";
 import { buildHandoffGraph, computeHandoffPlan, type HandoffGraph } from "./handoff-planner.js";
 import { generateUserMessage, type ConversationTurn } from "./user-simulator.js";
 import {
@@ -135,8 +135,9 @@ class ScenarioRunner implements AINodeExecutor {
   // Mutable per-scenario state, threaded across turns (mirrors the Go ScenarioRunner fields).
   private conversationHistory: ConversationTurn[] = [];
   private sessionTtlSet = false;
-  /** SER-6070: node ids with an open livekit flow-session (screening runs conversationally). */
-  private readonly openScreeningSessions = new Set<string>();
+  /** SER-6070/6078: node ids with an open livekit flow-session (screening and
+   *  agent_node run conversationally as server-held sessions). */
+  private readonly openFlowSessions = new Set<string>();
   private currentNodeId = "";
   private currentNodeRunUuid = "";
   private contextItems: unknown[] = [];
@@ -172,20 +173,16 @@ class ScenarioRunner implements AINodeExecutor {
     this.worldStateMap = toWorldStateMap(job.scenario.world_state as Record<string, SchemaWorldStateEntry>);
   }
 
-  /** Action mocks for a node, by node id then config name (port of resolveActionMocks). */
-  /** SER-6070: open the server-held screening session and surface its opener as a
-   *  standalone transcript turn (user never spoke yet — outbound shape). */
-  private async openScreeningSession(
+  /** SER-6070/6078: open the server-held flow-session (screening or agent_node)
+   *  and surface its opener as a standalone transcript turn (user never spoke
+   *  yet — the task unit speaks first). */
+  private async openFlowSession(
     node: FlowNode,
     variableStore: VariableStore,
     sessionId: string,
     turnIndex: number,
   ): Promise<string> {
-    const agentConfig = buildScreeningAgentConfig(
-      { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
-      variableStore,
-      this.flowConfig,
-    );
+    const agentConfig = this.buildFlowSessionConfig(node, variableStore);
     if (node.id !== this.currentNodeId) {
       this.currentNodeRunUuid = crypto.randomUUID();
       this.currentNodeId = node.id;
@@ -202,7 +199,7 @@ class ScenarioRunner implements AINodeExecutor {
       context_items: [],
       variables_by_node: this.variablesByNode,
     });
-    this.openScreeningSessions.add(node.id);
+    this.openFlowSessions.add(node.id);
     const opener = startResp.message ?? "";
     if (opener !== "") {
       await writeAssistantTurn(this.redis, this.flowRunUuid, node.id, "", {}, opener);
@@ -232,6 +229,27 @@ class ScenarioRunner implements AINodeExecutor {
     return opener;
   }
 
+  /** Node types that run as a server-held livekit flow-session instead of the
+   *  stateless /turn contract: screening (SER-6070) and the agent_tasks walk
+   *  (agent_node, SER-6078) — both hold walk state livekit-side. */
+  private runsAsFlowSession(node: FlowNode): boolean {
+    return (
+      node.type === "contact_screening" ||
+      node.type === "outbound_screening" ||
+      node.type === "agent_node"
+    );
+  }
+
+  /** The per-type flow-session agent_config: screening synthesizes its wire
+   *  model; agent_node's saved config already is one (rendered + wait-zeroed
+   *  by buildAgentTasksAgentConfig). */
+  private buildFlowSessionConfig(node: FlowNode, variableStore: VariableStore): Record<string, unknown> {
+    const configNode = { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} };
+    return node.type === "agent_node"
+      ? buildAgentTasksAgentConfig(configNode, variableStore, this.flowConfig)
+      : buildScreeningAgentConfig(configNode, variableStore, this.flowConfig);
+  }
+
   private resolveActionMocks(node: FlowNode): Record<string, unknown> | undefined {
     const byId = this.worldStateMap.get(node.id);
     if (byId?.actionMocks) return byId.actionMocks;
@@ -247,7 +265,7 @@ class ScenarioRunner implements AINodeExecutor {
   ): Promise<NodeExecutionResult | null> {
     // 1. Determine the user message + interruption/non-answer state (mutually exclusive).
     const turnStart = Date.now();
-    const isNodeSwitch = this.conversationHistory.length > 0 && node.id !== this.currentNodeId;
+    let isNodeSwitch = this.conversationHistory.length > 0 && node.id !== this.currentNodeId;
 
     let userMsg = "";
     let isInterruption = false;
@@ -319,16 +337,18 @@ class ScenarioRunner implements AINodeExecutor {
     this.lastTurnWasNonAnswer = isNonAnswer;
     this.lastTurnWasInterruption = isInterruption;
 
-    // SER-6070: screening nodes run as a server-held livekit flow-session. On the first visit,
-    // open the session BEFORE generating the caller's message: the unit speaks first (outbound
-    // shape), so the opener must be in history for the simulator to answer. The opener is
-    // recorded as its own transcript turn; the visit then proceeds as a normal exchange.
-    const isScreening = node.type === "contact_screening" || node.type === "outbound_screening";
-    const screeningSessionId = `${this.flowRunUuid}:sc:${node.id}`;
-    if (isScreening && !this.openScreeningSessions.has(node.id)) {
-      const opener = await this.openScreeningSession(node, variableStore, screeningSessionId, turnIndex);
+    // SER-6070/6078: screening and agent_node run as a server-held livekit
+    // flow-session. On the first visit, open the session BEFORE generating the
+    // caller's message: the task unit speaks first (screening's greeting, the
+    // walk's first collector question), so the opener must be in history for
+    // the simulator to answer. The opener is recorded as its own transcript
+    // turn; the visit then proceeds as a normal exchange.
+    const isFlowSession = this.runsAsFlowSession(node);
+    const flowSessionId = `${this.flowRunUuid}:fs:${node.id}`;
+    if (isFlowSession && !this.openFlowSessions.has(node.id)) {
+      const opener = await this.openFlowSession(node, variableStore, flowSessionId, turnIndex);
       // Regenerate the caller message against the opener (the earlier block saw empty history
-      // and fabricated "Hello!" — the caller must answer the screening question instead).
+      // and fabricated "Hello!" — the caller must answer the unit's question instead).
       const userSimStart = Date.now();
       userMsg = await generateUserMessage({
         scenario: this.job.scenario,
@@ -347,6 +367,11 @@ class ScenarioRunner implements AINodeExecutor {
       isNonAnswer = false;
       nonAnswerType = "";
       partialAssistantMsg = "";
+      // A first visit reached via a node switch (screening/opener → agent_node)
+      // is now a NORMAL exchange: the opener is already recorded standalone and
+      // the caller's answer above must be pre-written and enter history —
+      // leaving isNodeSwitch true here would silently drop the user turn.
+      isNodeSwitch = false;
       void opener;
     }
 
@@ -369,19 +394,19 @@ class ScenarioRunner implements AINodeExecutor {
     const nodeRunUuid = this.currentNodeRunUuid;
 
     // 4. agent_config + the handoff plan livekit uses to route tool-based handoffs.
+    // Flow-session nodes get NO output_state_config: with an empty turn plan any
+    // unit exit terminates the session (continue_ai's no_matching_handoff path)
+    // and hands the intent back here for edge resolution — livekit must never
+    // model-swap out of a server-held session.
     // FlowNode → AgentConfigNode: buildAgentConfig only reads `config`; coerce its nullable field.
-    const agentConfig = isScreening
-      ? buildScreeningAgentConfig(
-          { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
-          variableStore,
-          this.flowConfig,
-        )
+    const agentConfig = isFlowSession
+      ? this.buildFlowSessionConfig(node, variableStore)
       : buildAgentConfig(
           { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
           variableStore,
           this.flowConfig,
         );
-    if (!isScreening) {
+    if (!isFlowSession) {
       const handoffNode = this.handoffGraph.nodes.get(node.id) ?? null;
       agentConfig["output_state_config"] = computeHandoffPlan(
         handoffNode,
@@ -394,7 +419,7 @@ class ScenarioRunner implements AINodeExecutor {
     // 5. Call /turn with the full stateless context.
     const req: LiveKitSimRequest = {
       phlo_run_uuid: this.flowRunUuid,
-      simulation_session_id: isScreening ? screeningSessionId : this.flowRunUuid,
+      simulation_session_id: isFlowSession ? flowSessionId : this.flowRunUuid,
       node_uuid: node.id,
       node_run_uuid: nodeRunUuid,
       auth_id: this.job.authId,
@@ -409,10 +434,10 @@ class ScenarioRunner implements AINodeExecutor {
       req.partial_assistant_message = partialAssistantMsg;
     }
     const livekitStart = Date.now();
-    const resp = isScreening ? await this.livekit.turnFlowSession(req) : await this.livekit.executeTurn(req);
-    if (isScreening && resp.ended) {
-      this.openScreeningSessions.delete(node.id);
-      this.livekit.forgetSession(screeningSessionId);
+    const resp = isFlowSession ? await this.livekit.turnFlowSession(req) : await this.livekit.executeTurn(req);
+    if (isFlowSession && resp.ended) {
+      this.openFlowSessions.delete(node.id);
+      this.livekit.forgetSession(flowSessionId);
     }
     const livekitMs = Date.now() - livekitStart;
     this.livekitDurations.push(livekitMs);
