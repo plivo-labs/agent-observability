@@ -639,3 +639,94 @@ describe("outbound_screening composite", () => {
     expect(result.last_node_id).toBe("VM");
   });
 });
+
+// --- agent_node (SER-6078): the agent_tasks walk runs as a livekit flow-session
+// (conversational, same executor contract as ai_agent_v2/unpinned screening).
+// Exits through node-level intents; edges use intent-UUID sourceHandles like
+// ai_agent_v2. A world_state outcome pins the deterministic mock instead.
+describe("agent_node", () => {
+  function agentNodeGraph(): FlowGraph {
+    return parseGraph({
+      nodes: [
+        startNode("S"),
+        mockNode("OS", "Delivery Screening", "outbound_screening", null),
+        mockNode("AN", "Confirm Delivery Details", "agent_node", [
+          { id: "confirmed-uuid", intent_name: "Delivery Confirmed" },
+          { id: "callback-uuid", intent_name: "Callback Requested" },
+        ]),
+        terminalNode("E", "Confirmed End", "end_conversation", "Bye"),
+        terminalNode("CB", "Callback End", "end_conversation", "Later"),
+      ],
+      edges: [
+        edge("S", "OS", "http"),
+        edge("OS", "AN", "reached"),
+        edge("AN", "E", "confirmed-uuid"),
+        edge("AN", "CB", "callback-uuid"),
+      ],
+    });
+  }
+
+  test("conversational exit intent resolves through the intent-UUID edge", async () => {
+    // Screening pinned so the static executor's canned intent only reaches
+    // the agent_node turn (screening resolves on literal handles, not intents).
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "reached" }]]);
+
+    const result = await new FlowOrchestrator(
+      agentNodeGraph(),
+      worldState,
+      10,
+      staticAIExecutor(aiResult("Delivery Confirmed")),
+    ).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(1);
+    expect(result.last_node_id).toBe("E");
+    expect(result.nodes_visited).toEqual(["S", "OS", "AN", "E"]);
+  });
+
+  test("world_state pins the intent and skips the conversation", async () => {
+    const worldState = new Map<string, WorldStateEntry>([
+      ["OS", { outcome: "reached" }],
+      ["AN", { outcome: "Callback Requested", data: { backup_phone_number: "+12025550141" } }],
+    ]);
+
+    const result = await new FlowOrchestrator(agentNodeGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.last_node_id).toBe("CB");
+    expect(result.nodes_visited).toEqual(["S", "OS", "AN", "CB"]);
+  });
+
+  test("no executor and no pin falls back to the first-intent mock default", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "reached" }]]);
+
+    const result = await new FlowOrchestrator(agentNodeGraph(), worldState, 10, null).run();
+
+    expect(result.stop_reason).toBe("end_conversation");
+    expect(result.turn_count).toBe(0);
+    expect(result.last_node_id).toBe("E");
+  });
+
+  test("unknown exit intent stops with unknown_intent", async () => {
+    const worldState = new Map<string, WorldStateEntry>([["OS", { outcome: "reached" }]]);
+
+    const result = await new FlowOrchestrator(
+      agentNodeGraph(),
+      worldState,
+      10,
+      staticAIExecutor(aiResult("Not An Intent")),
+    ).run();
+
+    expect(result.stop_reason).toBe("unknown_intent");
+    expect(result.error_detail).toBe("Not An Intent");
+  });
+
+  test("exit intent returned as a UUID resolves directly", () => {
+    const graph = agentNodeGraph();
+    const resolver = new EdgeResolver(graph);
+    const resolved = resolver.resolveNextNode("AN", { outcome: "callback-uuid", variables: {}, message: "" });
+    expect(resolved.stopReason).toBe("");
+    expect(resolved.nextNodeId).toBe("CB");
+  });
+});

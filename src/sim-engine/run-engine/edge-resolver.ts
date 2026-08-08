@@ -57,8 +57,12 @@ export class EdgeResolver {
           sourceHandle = "completed";
         }
         break;
-      case "ai_agent_v2": {
-        // result.outcome is the intent name — resolve to intent UUID for edge matching.
+      case "ai_agent_v2":
+      case "agent_node": {
+        // result.outcome is the intent name — resolve to intent UUID for edge
+        // matching. agent_node (SER-6078) exits through the same node-level
+        // intents contract (walk-end pick / mid-walk exit_collection), so the
+        // resolution is identical.
         const [intentUuid, found] = resolveIntentSourceHandle(node, result.outcome);
         if (!found) {
           return { nextNodeId: "", stopReason: StopReasonUnknownIntent, errorDetail: result.outcome };
