@@ -29,7 +29,9 @@ import { runLlmJudge } from "./run-llm-judge.js";
 // ── criteria bodies ──────────────────────────────────────────────────────────
 const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
 
-Criteria:
+WHO IS JUDGED: this metric asks whether the COUNTERPARTY (the "User:" side — the party our agent is speaking with) is a voicemail system. The transcript labels our own AI under test as "Agent:", and Agent: lines are NEVER voicemail evidence — an agent whose configured persona is a receptionist, message-taker, or voicemail assistant ("no one is available right now, but I can take a message") is our agent doing its job, not a voicemail reached. Valid evidence: "User:" lines (a mailbox greeting or leave-a-message prompt transcribed as User speech) and "System_Note:" platform verdicts (machine-detection results — a silent voicemail may have no User: line at all). A human caller conversing with a message-taking agent means voicemail_detected=false.
+
+Criteria (applied to User: lines and System_Note: verdicts only):
 1. Direct voicemail greetings, mailbox prompts, or leave-a-message flows mean voicemail_detected=true.
 2. Call screening is NOT voicemail; classify screening separately even if it eventually asks for a message.
 3. Bot/IVR menus are NOT voicemail.
@@ -47,6 +49,8 @@ Criteria (all applied to User: lines only):
 5. A human asking OUR agent whether IT is a robot/real person is a suspicious human, not a bot — that is evidence the counterparty is human.`;
 
 const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
+
+WHO IS JUDGED: screening is something the COUNTERPARTY (the "User:" side) does to our agent. Our own Agent asking who is calling, for a name/company, or the reason for the call (a receptionist or intake persona) is NEVER screening evidence — judge ONLY "User:" lines and "System_Note:" platform verdicts.
 
 Criteria:
 1. iOS/Android/Google call screening asks for the caller's name, purpose, or reason for calling.
