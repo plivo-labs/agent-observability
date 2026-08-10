@@ -248,4 +248,38 @@ describe("conversation judge calibration (system prompts as sent to the LLM)", (
     expect(sentiment!).toContain("calm decline");
     expect(sentiment!).toContain("polite factual correction");
   });
+
+  test("voicemail/screening target the counterparty; a receptionist-persona agent is never evidence", async () => {
+    // Inbound flows deploy the agent AS a voicemail receptionist ("no one is
+    // available right now, but I can take a message"). Without a
+    // counterparty guard the voicemail judge reads that persona script as
+    // "the call reached voicemail" and marks a live human conversation
+    // machine-answered — which then suppresses adherence fan-out and the
+    // human-gated signal judges for the whole session.
+    const systems: string[] = [];
+    const llm = new MockLLM([
+      (args: { system?: string }) => {
+        const s = args.system ?? "";
+        systems.push(s);
+        if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "positive", reason: "r", technical_reason: "t" });
+        if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+        return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+      },
+    ]);
+    await evaluateConversationMetrics(ctx(), llm);
+
+    const vm = systems.find((s) => s.includes("reached voicemail"));
+    expect(vm).toBeDefined();
+    expect(vm!).toContain("COUNTERPARTY");
+    expect(vm!).toContain("NEVER voicemail evidence");
+    expect(vm!).toContain("receptionist");
+    // Platform AMD verdicts ride as System_Note lines and must stay valid
+    // evidence (a silent voicemail may have no User: line at all).
+    expect(vm!).toContain("System_Note");
+
+    const screening = systems.find((s) => s.includes("Detect automated call screening"));
+    expect(screening).toBeDefined();
+    expect(screening!).toContain("COUNTERPARTY");
+    expect(screening!).toContain("NEVER screening evidence");
+  });
 });
