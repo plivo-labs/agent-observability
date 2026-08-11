@@ -27,6 +27,10 @@ mock.module("../src/config.js", () => ({
 
 mock.module("../src/db.js", () => ({
   sql: mockSqlTag,
+  // bun shares one module registry per process: if another suite's module
+  // imports a db export this mock omits, newer bun fails the import with
+  // "Export named ... not found" instead of falling through to the real one.
+  drainStagedRawReportPatches: mock(() => Promise.resolve()),
 }));
 
 // Import after mocks are wired.
