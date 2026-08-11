@@ -59,6 +59,9 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     // visible consent exchange (often on a garbled STT turn).
     expect(INSTRUCTION_ADHERENCE).toContain("caller-requested human");
     expect(INSTRUCTION_ADHERENCE).toContain("immediate/silent handoff");
+    // Review pin (kishan): the last-turn parenthetical IS the silent-handoff
+    // coverage — trimming just it would silently re-open that FP class.
+    expect(INSTRUCTION_ADHERENCE).toContain("or even the agent's opening");
     expect(INSTRUCTION_ADHERENCE).toContain("UNREACHABLE, not missed, in both cases");
     // The rule must stay scoped: a visibly continuing conversation with no
     // transfer is still a real miss.
