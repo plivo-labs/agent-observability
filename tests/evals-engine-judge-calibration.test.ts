@@ -43,6 +43,31 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(INSTRUCTION_ADHERENCE).toContain("[system idle prompt]");
   });
 
+  test("adherence: terminal transfer cutoff — consent at transcript end is not a missed transfer", () => {
+    // A session-ending handoff tears the AI leg down the moment it fires; the
+    // export races that teardown, so the handoff tool call and any connecting
+    // line never reach the transcript. Judging the absence as a missed
+    // transfer step falsely fails every successfully transferred call.
+    expect(INSTRUCTION_ADHERENCE).toContain("TERMINAL TRANSFER CUTOFF");
+    expect(INSTRUCTION_ADHERENCE).toContain("ends the AI session the instant it fires");
+    expect(INSTRUCTION_ADHERENCE).toContain("cannot appear in the transcript");
+    // The exporter's transfer marker, when present, settles the question.
+    expect(INSTRUCTION_ADHERENCE).toContain("definitive evidence");
+    // Dev round 2026-08-11: the trigger must cover ALL terminal-transfer
+    // shapes, not just offer-then-consent — caller-requested humans and
+    // configured silent/immediate handoffs end the transcript without any
+    // visible consent exchange (often on a garbled STT turn).
+    expect(INSTRUCTION_ADHERENCE).toContain("caller-requested human");
+    expect(INSTRUCTION_ADHERENCE).toContain("immediate/silent handoff");
+    // Review pin (kishan): the last-turn parenthetical IS the silent-handoff
+    // coverage — trimming just it would silently re-open that FP class.
+    expect(INSTRUCTION_ADHERENCE).toContain("or even the agent's opening");
+    expect(INSTRUCTION_ADHERENCE).toContain("UNREACHABLE, not missed, in both cases");
+    // The rule must stay scoped: a visibly continuing conversation with no
+    // transfer is still a real miss.
+    expect(INSTRUCTION_ADHERENCE).toContain("visibly CONTINUES");
+  });
+
   test("hallucination: user echo is grounded; hint lines are aids not arbiters", () => {
     expect(HALLUCINATION).toContain("USER ECHO IS GROUNDED");
     expect(HALLUCINATION).toContain("HINT LINES ARE AIDS, NOT ARBITERS");
