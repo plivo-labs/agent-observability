@@ -21,6 +21,7 @@ mock.module("../src/db.js", () => ({
   upsertSessionOutcome: mock(() => Promise.resolve()),
   applySessionTagMetadata: mock(() => Promise.resolve()),
   mergeSessionRawReport: mock(() => Promise.resolve()),
+  drainStagedRawReportPatches: mock(() => Promise.resolve()),
   upsertSessionAgentConfig: mock(() => Promise.resolve()),
   tableExists: mock(() => Promise.resolve(true)),
   SESSION_SATELLITE_TABLES: [
