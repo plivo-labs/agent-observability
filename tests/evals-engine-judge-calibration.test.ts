@@ -51,6 +51,15 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(INSTRUCTION_ADHERENCE).toContain("TERMINAL TRANSFER CUTOFF");
     expect(INSTRUCTION_ADHERENCE).toContain("ends the AI session the instant it fires");
     expect(INSTRUCTION_ADHERENCE).toContain("cannot appear in the transcript");
+    // The exporter's transfer marker, when present, settles the question.
+    expect(INSTRUCTION_ADHERENCE).toContain("definitive evidence");
+    // Dev round 2026-08-11: the trigger must cover ALL terminal-transfer
+    // shapes, not just offer-then-consent — caller-requested humans and
+    // configured silent/immediate handoffs end the transcript without any
+    // visible consent exchange (often on a garbled STT turn).
+    expect(INSTRUCTION_ADHERENCE).toContain("caller-requested human");
+    expect(INSTRUCTION_ADHERENCE).toContain("immediate/silent handoff");
+    expect(INSTRUCTION_ADHERENCE).toContain("UNREACHABLE, not missed, in both cases");
     // The rule must stay scoped: a visibly continuing conversation with no
     // transfer is still a real miss.
     expect(INSTRUCTION_ADHERENCE).toContain("visibly CONTINUES");
