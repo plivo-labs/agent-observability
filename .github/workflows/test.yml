@@ -39,6 +39,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run server tests
+        env:
+          # tests/ mocks the db module, so no database exists here — the sim
+          # engine must run stateless or its import-time config check fails
+          # the whole suite demanding a DATABASE_URL.
+          SIM_PERSIST: "false"
         run: bun test ./tests/
 
       # Separate bun process on purpose: tests/ mocks ../src/db.js and bun
