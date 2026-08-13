@@ -39,6 +39,14 @@ import {
 // safety net (turnCount only bounds ai_agent_v2 turns). Far above any real flow.
 const MAX_NODE_TRANSITIONS = 1000;
 
+// The node types that ARE the flow's conversation. A world_state `outcome` never
+// bypasses these: pinning one would delete the very exchange the scenario exists to
+// exercise (zero turns, empty transcript, nothing to evaluate). SER-6070's pin-mock
+// is for screening, whose leg is a carrier result rather than the conversation —
+// pinning that legitimately skips it. agent_node (SER-6078) inherited the screening
+// rule when it was added to the same case block; it belongs here instead.
+const CONVERSATIONAL_NODE_TYPES: ReadonlySet<string> = new Set(["ai_agent_v2", "agent_node"]);
+
 export class FlowOrchestrator {
   private readonly graph: FlowGraph;
   private readonly edgeResolver: EdgeResolver;
@@ -154,19 +162,22 @@ export class FlowOrchestrator {
           continue;
         }
 
-        // One conversational AI turn (shared by ai_agent_v2 and unpinned
-        // screening): counts toward maxTurns; empty intent = "stay on this
-        // node" and re-enter; a thrown/nil executor result is the same
+        // One conversational AI turn (shared by ai_agent_v2, agent_node, and
+        // unpinned screening): counts toward maxTurns; empty intent = "stay on
+        // this node" and re-enter; a thrown/nil executor result is the same
         // contract violation the Go worker enforces.
         case "ai_agent_v2":
         case "contact_screening":
-        case "outbound_screening": {
-          // Screening (SER-6070): a scenario that PINS the disposition in
-          // world_state keeps today's deterministic mock (outcome = edge
-          // handle, node_vars via data); an unpinned screening node runs the
-          // real conversation through livekit's flow-session (the executor's
-          // AI turn contract is identical). No executor at all -> mock too.
-          if (node.type !== "ai_agent_v2" && (this.screeningPinned(node) || !this.aiExecutor)) {
+        case "outbound_screening":
+        case "agent_node": {
+          // A pinned world_state outcome mocks SCREENING only: its leg is a
+          // carrier result, so skipping it is the point (SER-6070 branch
+          // coverage). Conversational nodes always run live through livekit's
+          // flow-session — a pin there would erase the conversation itself.
+          // No executor at all -> mock, except ai_agent_v2 which enforces the
+          // Go nil-result contract violation below.
+          const pinnedMock = this.outcomePinned(node) && !CONVERSATIONAL_NODE_TYPES.has(node.type);
+          if (node.type !== "ai_agent_v2" && (pinnedMock || !this.aiExecutor)) {
             execResult = this.executeMockedNode(node);
             this.variableStore.set(node.configName, node.id, execResult.variables);
             break;
@@ -272,8 +283,9 @@ export class FlowOrchestrator {
   /** Read mock outcome + variables from world_state for a mocked non-AI node. */
   /** SER-6070: a scenario pins a screening disposition by giving the node a
    *  world_state entry with a non-empty outcome — that forces the mock path
-   *  (deterministic branch coverage). Entries carrying only data don't pin. */
-  private screeningPinned(node: FlowNode): boolean {
+   *  (deterministic branch coverage). Entries carrying only data don't pin,
+   *  and a pin on a CONVERSATIONAL_NODE_TYPES node is ignored outright. */
+  private outcomePinned(node: FlowNode): boolean {
     const entry = this.worldState?.get(node.id) ?? this.worldState?.get(node.configName);
     return !!entry && (entry.outcome ?? "") !== "";
   }
@@ -314,7 +326,8 @@ export function defaultMockedOutcome(node: { type: string; config?: Record<strin
     case "outbound_screening":
       // Happy-path disposition; parallels initiate_call's hardcoded "answered".
       return "reached";
-    case "ai_action": {
+    case "ai_action":
+    case "agent_node": {
       const intents = node.config?.["intents"];
       if (Array.isArray(intents) && intents.length > 0) {
         const first = intents[0];
