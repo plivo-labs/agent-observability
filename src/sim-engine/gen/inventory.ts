@@ -43,6 +43,11 @@ export interface VariableInventoryItem {
   node_name: string;
   variable_name: string;
   variable_instructions: string;
+  /** agent_node only: the collector type the field is asked with (text, name, phone, date,
+   *  choice, currency, boolean, and whatever the runtime registry gains next). Passed through
+   *  verbatim — AO never enumerates the set, so a new collector type needs no change here.
+   *  Empty for ai_agent_v2 extract_variables and for agent_tasks.extract_only (never asked). */
+  variable_type?: string;
 }
 
 export interface ActionInventoryItem {
@@ -127,7 +132,10 @@ export function containsOutOfScopeRouteTerm(...values: unknown[]): boolean {
   return OUT_OF_SCOPE_ROUTE_TERMS.some((term) => text.includes(term));
 }
 
-// ── embedded action extraction (ai_agent_v2 nodes) ─────────────────────────────
+// ── embedded action extraction (conversational nodes) ──────────────────────────
+
+/** Node types that carry embedded `actions[]` the scenario writer can mock. */
+const EMBEDDED_ACTION_NODE_TYPES: ReadonlySet<string> = new Set(["ai_agent_v2", "agent_node"]);
 
 function actionMockKey(action: Dict): string {
   switch (action.action_type) {
@@ -171,7 +179,9 @@ function actionSchema(action: Dict): unknown {
 export function extractEmbeddedActions(flow: Dict): EmbeddedActionsNode[] {
   const result: EmbeddedActionsNode[] = [];
   for (const node of (flow.nodes as Dict[]) || []) {
-    if (!isObj(node) || node.type !== "ai_agent_v2" || !node.id) continue;
+    // agent_node embeds actions exactly like ai_agent_v2 (SER-6078). Excluding it left every
+    // agent_node action without a mock_key, so no action_mocks were ever generated for it.
+    if (!isObj(node) || !EMBEDDED_ACTION_NODE_TYPES.has(String(node.type)) || !node.id) continue;
     const data = isObj(node.data) ? node.data : {};
     const config = isObj(data.config) ? data.config : {};
     const actions: EmbeddedActionItem[] = [];
@@ -284,6 +294,33 @@ function extractRouteInventory(flow: Dict): RouteInventoryItem[] {
   return routes;
 }
 
+/** An agent_node keeps its fields under `agent_tasks`, not `extract_variables`: `variables[]` are
+ *  ASKED one collector task at a time (each with a `type`), `extract_only[]` are lifted from the
+ *  transcript on exit. Both are things the caller has to be able to supply, so both belong in the
+ *  inventory — without them the writer sees a node that collects nothing and writes a persona with
+ *  no answers to give. Shape: {name, instructions, type?}. */
+function agentTasksVariables(config: Dict): Array<{ name: string; instructions: string; type: string }> {
+  const tasks = config.agent_tasks;
+  if (!isObj(tasks)) return [];
+  const rows: Array<{ name: string; instructions: string; type: string }> = [];
+  for (const [listKey, typed] of [
+    ["variables", true],
+    ["extract_only", false],
+  ] as const) {
+    for (const row of (tasks[listKey] as Dict[]) || []) {
+      if (!isObj(row)) continue;
+      const name = row.name || "";
+      if (!name) continue;
+      rows.push({
+        name,
+        instructions: row.instructions || "",
+        type: typed && typeof row.type === "string" ? row.type : "",
+      });
+    }
+  }
+  return rows;
+}
+
 function extractVariableInventory(flow: Dict): VariableInventoryItem[] {
   const variables: VariableInventoryItem[] = [];
   for (const node of (flow.nodes as Dict[]) || []) {
@@ -298,6 +335,15 @@ function extractVariableInventory(flow: Dict): VariableInventoryItem[] {
         node_name: nodeName(node),
         variable_name: name,
         variable_instructions: variable.variable_instructions || "",
+      });
+    }
+    for (const task of agentTasksVariables(config)) {
+      variables.push({
+        node_id: node.id || "",
+        node_name: nodeName(node),
+        variable_name: task.name,
+        variable_instructions: task.instructions,
+        variable_type: task.type,
       });
     }
   }
@@ -334,9 +380,12 @@ export function buildFlowInventory(flow: Dict): MechanicalInventory {
       intent_names: ((config.intents as Dict[]) || [])
         .filter(isObj)
         .map((i) => i.intent_name || i.name || i.id),
-      extract_variables: ((config.extract_variables as Dict[]) || [])
-        .filter((v) => isObj(v) && v.variable_name)
-        .map((v) => v.variable_name),
+      extract_variables: [
+        ...((config.extract_variables as Dict[]) || [])
+          .filter((v) => isObj(v) && v.variable_name)
+          .map((v) => v.variable_name),
+        ...agentTasksVariables(config).map((t) => t.name),
+      ],
     });
   }
   return {
