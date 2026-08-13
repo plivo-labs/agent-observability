@@ -57,6 +57,104 @@ describe("buildFlowInventory — variables / actions / languages / outbound / st
   });
 });
 
+// SER-6078: an agent_node keeps its fields under agent_tasks, not extract_variables, and
+// embeds actions the same way ai_agent_v2 does. Both were invisible to the generator, so a
+// writer building a scenario for an agent_node flow saw a node that collects nothing and had
+// no mock_key to mock its actions with.
+describe("buildFlowInventory — agent_node (agent_tasks)", () => {
+  const agentNodeFlow = {
+    nodes: [
+      { id: "s", type: "start", data: { config: { name: "Start" } } },
+      {
+        id: "an",
+        type: "agent_node",
+        data: {
+          config: {
+            name: "Collect Delivery Details",
+            agent_tasks: {
+              variables: [
+                { name: "order_number", instructions: "Ask for the order number.", type: "text" },
+                { name: "delivery_date", instructions: "Ask which day suits them.", type: "date" },
+              ],
+              extract_only: [{ name: "sentiment", instructions: "How the caller sounded." }],
+            },
+            actions: [
+              {
+                action_type: "HTTP",
+                http_tool_name: "lookup_order",
+                http_tool_description: "Look the order up.",
+                http_function_schema: { type: "object" },
+              },
+            ],
+          },
+        },
+      },
+    ],
+  };
+  const anInv = buildFlowInventory(agentNodeFlow as unknown as Record<string, any>);
+
+  test("agent_tasks variables land in the inventory, carrying their collector type", () => {
+    expect(anInv.variables).toEqual([
+      {
+        node_id: "an",
+        node_name: "Collect Delivery Details",
+        variable_name: "order_number",
+        variable_instructions: "Ask for the order number.",
+        variable_type: "text",
+      },
+      {
+        node_id: "an",
+        node_name: "Collect Delivery Details",
+        variable_name: "delivery_date",
+        variable_instructions: "Ask which day suits them.",
+        variable_type: "date",
+      },
+      {
+        node_id: "an",
+        node_name: "Collect Delivery Details",
+        variable_name: "sentiment",
+        variable_instructions: "How the caller sounded.",
+        variable_type: "",
+      },
+    ]);
+  });
+
+  test("the collector type is passed through, so a newly registered type needs no change here", () => {
+    const withNewType = {
+      nodes: [
+        { id: "s", type: "start" },
+        {
+          id: "an",
+          type: "agent_node",
+          data: { config: { name: "N", agent_tasks: { variables: [{ name: "amount_owed", type: "number" }] } } },
+        },
+      ],
+    };
+    const got = buildFlowInventory(withNewType as unknown as Record<string, any>);
+    expect(got.variables[0]!.variable_type).toBe("number");
+  });
+
+  test("the node summary lists agent_tasks fields alongside extract_variables", () => {
+    expect(anInv.nodes.find((n) => n.id === "an")!.extract_variables).toEqual([
+      "order_number",
+      "delivery_date",
+      "sentiment",
+    ]);
+  });
+
+  test("embedded actions on an agent_node get a mock_key", () => {
+    expect(anInv.actions).toEqual([
+      {
+        node_id: "an",
+        node_name: "Collect Delivery Details",
+        mock_key: "lookup_order",
+        action_type: "HTTP",
+        description: "Look the order up.",
+      },
+    ]);
+  });
+});
+
 describe("flowHasOutboundCall (SER-6070)", () => {
   test("composite-only screening flow counts as outbound", () => {
     const flow = {

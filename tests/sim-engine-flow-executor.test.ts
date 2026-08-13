@@ -643,7 +643,8 @@ describe("outbound_screening composite", () => {
 // --- agent_node (SER-6078): the agent_tasks walk runs as a livekit flow-session
 // (conversational, same executor contract as ai_agent_v2/unpinned screening).
 // Exits through node-level intents; edges use intent-UUID sourceHandles like
-// ai_agent_v2. A world_state outcome pins the deterministic mock instead.
+// ai_agent_v2. Like ai_agent_v2, a world_state outcome does NOT pin it — the
+// node IS the conversation, so it always runs live.
 describe("agent_node", () => {
   function agentNodeGraph(): FlowGraph {
     return parseGraph({
@@ -684,18 +685,27 @@ describe("agent_node", () => {
     expect(result.nodes_visited).toEqual(["S", "OS", "AN", "E"]);
   });
 
-  test("world_state pins the intent and skips the conversation", async () => {
+  test("a world_state outcome does NOT pin the node — the conversation still runs", async () => {
+    // The generator pins an exit intent on essentially every scenario (route_id is
+    // its coverage axis). Honouring that as a mock deleted the whole conversation:
+    // zero turns, empty transcript, nothing to evaluate — while the run still
+    // reported `completed`. The pin is ignored; the executor's intent decides the exit.
     const worldState = new Map<string, WorldStateEntry>([
       ["OS", { outcome: "reached" }],
       ["AN", { outcome: "Callback Requested", data: { backup_phone_number: "+12025550141" } }],
     ]);
 
-    const result = await new FlowOrchestrator(agentNodeGraph(), worldState, 10, null).run();
+    const result = await new FlowOrchestrator(
+      agentNodeGraph(),
+      worldState,
+      10,
+      staticAIExecutor(aiResult("Delivery Confirmed")),
+    ).run();
 
     expect(result.stop_reason).toBe("end_conversation");
-    expect(result.turn_count).toBe(0);
-    expect(result.last_node_id).toBe("CB");
-    expect(result.nodes_visited).toEqual(["S", "OS", "AN", "CB"]);
+    expect(result.turn_count).toBe(1);
+    expect(result.last_node_id).toBe("E");
+    expect(result.nodes_visited).toEqual(["S", "OS", "AN", "E"]);
   });
 
   test("no executor and no pin falls back to the first-intent mock default", async () => {
