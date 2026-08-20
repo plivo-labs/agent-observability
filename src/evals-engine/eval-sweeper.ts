@@ -13,6 +13,7 @@ import {
   type EvalClaim,
 } from "./db.js";
 import { classifyErrorDurability } from "../error-durability.js";
+import { createRunGate, withDeadline, type RegisterCleanup } from "../deadline.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
@@ -45,9 +46,15 @@ const MAX_CONCURRENT_SESSIONS = config.EVAL_MAX_CONCURRENT_SESSIONS ?? 3;
 // Re-assert claim ownership at least this often while judging, so a healthy
 // long-running judge is never stale-adopted (heartbeat interval << stale window).
 const CLAIM_HEARTBEAT_MS = 60_000;
+// Hang deadlines. The sweep and kick gates below bound how long any one run may
+// occupy its slot: a slot released only when work SETTLES is held forever by
+// work that HANGS, and judging then stops silently and permanently (see
+// src/deadline.ts for the us-east incident these came out of).
+const SESSION_TIMEOUT_MS = config.EVAL_SESSION_TIMEOUT_MS ?? 900_000;
+const SWEEP_TIMEOUT_MS = config.EVAL_SWEEP_TIMEOUT_MS ?? 3_600_000;
+const KICK_TIMEOUT_MS = config.EVAL_KICK_TIMEOUT_MS ?? 960_000;
 
 let handle: SweeperHandle | null = null;
-let sweeping = false;
 
 // Boot-time table probe, shared by every eval entry point (inline sweeper,
 // worker sweeper, ingest event-kick). A deploy whose DB lacks the eval tables
@@ -167,8 +174,38 @@ function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
     });
 }
 
-/** Judge one claimed session end-to-end. Returns false on a terminal failure. */
+/**
+ * Judge one claimed session end-to-end, under a hard deadline. Returns false on
+ * a terminal failure.
+ *
+ * The deadline is the whole point of this wrapper: `runJudge` awaits a DB read,
+ * ~12-13 provider calls, and several writes, none of which carry a timeout of
+ * their own. One that never settles used to hang the caller forever — latching
+ * the sweep guard and killing judging region-wide with no error to see it by.
+ */
 async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
+  try {
+    return await withDeadline(
+      `judge session=${sanitizeForLog(claim.sessionId)}`,
+      SESSION_TIMEOUT_MS,
+      (register) => runJudge(claim, register),
+    );
+  } catch (e) {
+    // runJudge handles judge failures itself, so this is the deadline (or a
+    // throw from that error handling). Leave the claim `running`: stale
+    // adoption retries it, and retireExpiredEvalClaims gives up on it after the
+    // 24h budget rather than re-hanging forever.
+    console.error(`[evals] ${(e as Error).message}`);
+    return false;
+  }
+}
+
+// `register` hands the claim heartbeat to withDeadline: on the deadline path
+// this function is abandoned mid-flight and its own `finally` never runs, and a
+// leaked 60s heartbeat would re-assert ownership forever — the claim never goes
+// stale, so no sweeper ever retries it. That is the state six us-east claims
+// were found frozen in.
+async function runJudge(claim: EvalClaim, register: RegisterCleanup): Promise<boolean> {
   const sessionId = claim.sessionId;
   // Poison isolation: a session whose stored JSON can't be read (e.g. the
   // 2026-07-13 bun-runtime jsonb corruption) must fail THAT session as a
@@ -219,6 +256,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
       .finally(() => { beatInFlight = null; });
   }, CLAIM_HEARTBEAT_MS);
   if (typeof (heartbeat as any).unref === "function") (heartbeat as any).unref();
+  register(() => clearInterval(heartbeat)); // cleared even when the deadline abandons this run
   const settleHeartbeat = async (): Promise<void> => {
     clearInterval(heartbeat);
     if (beatInFlight) await beatInFlight; // never rejects (catch above)
@@ -322,36 +360,40 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
   }
 }
 
+// One tick at a time (a slow sweep can't stack), deadline-bounded so a hung
+// await can't hold the slot forever. The guard and the deadline live together
+// in createRunGate precisely so they can't drift apart again — a guard released
+// only on settle is what killed us-east judging for three days.
+const sweepGate = createRunGate({ limit: 1, timeoutMs: SWEEP_TIMEOUT_MS });
+
 export async function runEvalSweepOnce(): Promise<void> {
-  if (sweeping) return; // re-entrancy guard: a slow sweep can't stack
-  sweeping = true;
-  try {
-    // Retire poison claims once per tick (hoisted out of claimNextEvalSession,
-    // which the workers below call up to MAX_PER_SWEEP times per tick).
-    await retireExpiredEvalClaims();
-    const pending = await countPendingEvalSessions();
-    if (pending > 0) {
-      console.log(`[evals] backlog=${pending} pending sessions`);
-    }
-    // N workers each loop claim->judge until the tick budget is spent or the
-    // backlog drains. Concurrency overlaps sessions' wall-clock (provider
-    // concurrency stays capped by the judge semaphore), so one slow session
-    // can't serialize the whole tick.
-    let remaining = MAX_PER_SWEEP;
-    const worker = async (): Promise<void> => {
-      while (remaining > 0) {
-        remaining--;
-        const claim = await claimNextEvalSession();
-        if (!claim) return; // backlog drained
-        await judgeClaimed(claim);
-      }
-    };
-    await Promise.all(Array.from({ length: MAX_CONCURRENT_SESSIONS }, () => worker()));
-  } catch (e) {
-    console.error(`[evals] sweep failed: ${(e as Error).message}`);
-  } finally {
-    sweeping = false;
+  await sweepGate("eval sweep", () => sweepTick(), (e) => {
+    console.error(`[evals] sweep failed: ${e.message}`);
+  });
+}
+
+async function sweepTick(): Promise<void> {
+  // Retire poison claims once per tick (hoisted out of claimNextEvalSession,
+  // which the workers below call up to MAX_PER_SWEEP times per tick).
+  await retireExpiredEvalClaims();
+  const pending = await countPendingEvalSessions();
+  if (pending > 0) {
+    console.log(`[evals] backlog=${pending} pending sessions`);
   }
+  // N workers each loop claim->judge until the tick budget is spent or the
+  // backlog drains. Concurrency overlaps sessions' wall-clock (provider
+  // concurrency stays capped by the judge semaphore), so one slow session
+  // can't serialize the whole tick.
+  let remaining = MAX_PER_SWEEP;
+  const worker = async (): Promise<void> => {
+    while (remaining > 0) {
+      remaining--;
+      const claim = await claimNextEvalSession();
+      if (!claim) return; // backlog drained
+      await judgeClaimed(claim);
+    }
+  };
+  await Promise.all(Array.from({ length: MAX_CONCURRENT_SESSIONS }, () => worker()));
 }
 
 // Event-kick concurrency: bound how many sessions a burst of call-endings can
@@ -360,7 +402,11 @@ export async function runEvalSweepOnce(): Promise<void> {
 // bounds how many full-session judges the ingest hot path spawns before it
 // defers the rest to the poller. Mirrors the sweep's MAX_CONCURRENT_SESSIONS.
 const MAX_CONCURRENT_KICKS = config.EVAL_MAX_CONCURRENT_KICKS ?? 3;
-let activeKicks = 0;
+// Deadline-bounded like the sweep: an un-bounded hang would consume a slot
+// permanently, and MAX_CONCURRENT_KICKS of them would disable the push path for
+// the life of the process — leaving only the poller, which the same class of
+// hang had already latched.
+const kickGate = createRunGate({ limit: MAX_CONCURRENT_KICKS, timeoutMs: KICK_TIMEOUT_MS });
 
 /**
  * Push, not poll: judge ONE session the instant its ingest completes, instead
@@ -379,17 +425,16 @@ export async function kickEvalForSession(sessionId: string): Promise<void> {
   // API ingests but the worker's poller judges, so an in-process kick here
   // would judge in the wrong process (or not at all). Poller covers it.
   if (config.EVAL_SWEEPER !== "inline") return;
-  if (activeKicks >= MAX_CONCURRENT_KICKS) return; // burst backpressure → poller covers it
-  activeKicks++;
-  try {
-    const claim = await claimEvalSessionNow(sessionId);
-    if (!claim) return; // already claimed/judged, or data not fully landed → poller covers it
-    await judgeClaimed(claim);
-  } catch (e) {
-    console.warn(`[evals] event-kick failed session=${sanitizeForLog(sessionId)} (poller will retry): ${(e as Error).message}`);
-  } finally {
-    activeKicks--;
-  }
+  // Over the cap the gate drops the call — burst backpressure, poller covers it.
+  await kickGate(`event-kick session=${sanitizeForLog(sessionId)}`, () => kickOnce(sessionId), (e) => {
+    console.warn(`[evals] event-kick failed session=${sanitizeForLog(sessionId)} (poller will retry): ${e.message}`);
+  });
+}
+
+async function kickOnce(sessionId: string): Promise<void> {
+  const claim = await claimEvalSessionNow(sessionId);
+  if (!claim) return; // already claimed/judged, or data not fully landed → poller covers it
+  await judgeClaimed(claim);
 }
 
 export function startEvalSweeper(): void {
