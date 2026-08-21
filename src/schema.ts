@@ -80,6 +80,28 @@ export const envSchema = z.object({
   EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().default(20),
   // Poll interval (ms) between eval sweeps.
   EVAL_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
+  // ── Hang deadlines ────────────────────────────────────────────────────────
+  // Each sweeper runs its work through a concurrency gate whose slot is
+  // released in a `finally` — which runs when work SETTLES, not when it HANGS.
+  // A single await that never settles holds the slot for the process's life and
+  // judging stops region-wide, silently (us-east, 2026-08-17). These deadlines
+  // force every await to settle so the loop always survives.
+  // Per-session judge deadline. Set to the 15-min claim stale window
+  // (EVAL_CLAIM_STALE_MINUTES): a session that outlives it is already
+  // adoptable by another sweeper, so abandoning our run costs nothing. Real
+  // sessions judge in seconds — this only ever fires on a hang.
+  EVAL_SESSION_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
+  // Whole-tick backstop, covering the parts outside the per-session deadline
+  // (claim retirement, backlog count, the claim query itself). Deliberately
+  // generous: its job is "bounded", not "tight". A pathological tick where
+  // every session runs long can trip it — safe, since claims stay `running`
+  // and the next tick resumes them.
+  EVAL_SWEEP_TIMEOUT_MS: z.coerce.number().int().positive().default(3_600_000),
+  // Same for the ingest event-kick's single session. Sized above
+  // EVAL_SESSION_TIMEOUT_MS so the inner judge deadline reports first (a
+  // precise "judge session=X" line beats a bare "event-kick"); this only
+  // catches a hang in the claim itself.
+  EVAL_KICK_TIMEOUT_MS: z.coerce.number().int().positive().default(960_000),
   // Per-session SPEND ceiling (the caps above bound the rate, not the bill):
   // judge at most this many nodes per session, keeping the busiest by turn
   // count. Each judged node costs ~5 LLM calls, so without this a max-size
