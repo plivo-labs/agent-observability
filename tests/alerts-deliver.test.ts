@@ -5,8 +5,25 @@ const realFetch = globalThis.fetch;
 
 const mockInsertWebhookAttempt = mock(() => Promise.resolve());
 
+// Full export surface, though only insertWebhookAttempt is exercised here.
+// bun shares ONE module registry across test files, so a partial mock makes
+// every module importing a name this one omits (src/alerts/routes.ts,
+// src/alerts/sweeper.ts) fail to link — "Export named 'deleteAlertRule' not
+// found" — for whichever files happen to load after this one.
 mock.module("../src/alerts/db.js", () => ({
   insertWebhookAttempt: mockInsertWebhookAttempt,
+  listAlertRules: mock(() => Promise.resolve({ rules: [], totalCount: 0 })),
+  getAlertRule: mock(() => Promise.resolve(null)),
+  insertAlertRule: mock((i: any) => Promise.resolve(i)),
+  updateAlertRule: mock(() => Promise.resolve(null)),
+  deleteAlertRule: mock(() => Promise.resolve(false)),
+  listFirings: mock(() => Promise.resolve({ firings: [], totalCount: 0 })),
+  listWebhookAttempts: mock(() => Promise.resolve({ attempts: [], totalCount: 0 })),
+  getWebhookStats: mock(() => Promise.resolve({})),
+  claimDueFirings: mock(() => Promise.resolve([] as any[])),
+  markDelivered: mock(() => Promise.resolve()),
+  markRetry: mock(() => Promise.resolve()),
+  markFailed: mock(() => Promise.resolve()),
 }));
 
 const { deliverFiring, deliverTest, buildFiringPayload, RETRY_BACKOFF_MS, MAX_ATTEMPTS } =
