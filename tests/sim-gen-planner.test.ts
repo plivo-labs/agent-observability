@@ -22,6 +22,29 @@ const realShape = (await import("./fixtures/flow-real-shape.json")).default;
 
 const canonical = normalizeFlow(realShape) as unknown as Record<string, any>;
 
+// The mechanical inventory is built by agent-runner now (SER-6447); planCapabilities consumes it.
+// This fixture mirrors what the walker returns for the real-shape flow: three executable routes,
+// the first landing on the branch node the anchor-merge + backfill assertions key on.
+const inventory = {
+  nodes: [],
+  routes: [
+    { route_id: "n-greet:wants_refund", source_node_id: "n-greet", source_node_name: "greet", source_node_type: "ai_agent_v2", intent_id: "wants_refund", intent_name: "wants_refund", intent_instructions: "", target_node_id: "n-check", target_node_name: "eligibility_check", target_node_type: "branch_v2", support: "fully_executable" as const },
+    { route_id: "n-greet:status", source_node_id: "n-greet", source_node_name: "greet", source_node_type: "ai_agent_v2", intent_id: "status", intent_name: "status", intent_instructions: "", target_node_id: "n-status", target_node_name: "status_node", target_node_type: "ai_agent_v2", support: "fully_executable" as const },
+    { route_id: "n-greet:done", source_node_id: "n-greet", source_node_name: "greet", source_node_type: "ai_agent_v2", intent_id: "done", intent_name: "done", intent_instructions: "", target_node_id: "n-end", target_node_name: "bye", target_node_type: "end_conversation", support: "supported_terminal" as const },
+  ],
+  variables: [],
+  actions: [],
+  languages: [],
+  start_node_param_keys: [],
+  is_outbound_call: false,
+  simulatable: true,
+  unsimulatable: [],
+  entry_node_uuid: "n-greet",
+  reachable_ai_nodes: ["n-greet"],
+  mockable_nodes: [],
+  terminals: ["n-end"],
+};
+
 describe("slug", () => {
   test("snake_cases + trims", () => {
     expect(slug("Handle Refund!")).toBe("handle_refund");
@@ -48,7 +71,7 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
 
   test("parses the planner output and attaches the mechanical inventory", async () => {
     const llm = new MockLLM([goodPlanner]);
-    const { planner } = await planCapabilities({ flowJson: canonical, phloUuid: "agent-1", model: "gpt-5.5-1", provider: llm });
+    const { planner } = await planCapabilities({ flowJson: canonical, inventory, phloUuid: "agent-1", model: "gpt-5.5-1", provider: llm });
     expect(planner.capabilities[0].capability_id).toBe("handle_refund");
     // G2: an anchor-less capability is backfilled from the first executable inventory
     // route (was []), so the allocator gets a real route to expand.
@@ -83,7 +106,7 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
       planner_rationale: "One core route.",
     });
     const llm = new MockLLM([plannerWithAnchor]);
-    const { planner } = await planCapabilities({ flowJson: canonical, phloUuid: "a", model: "m", provider: llm });
+    const { planner } = await planCapabilities({ flowJson: canonical, inventory, phloUuid: "a", model: "m", provider: llm });
     const anchor = (planner.capabilities[0].route_anchors as Array<Record<string, unknown>>)[0];
     expect(anchor.source_node_id).toBe("n-greet");
     expect(anchor.target_node_id).toBe("n-check"); // filled from inventory (was "")
@@ -92,7 +115,7 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
 
   test("the planner payload includes the simulation surface + pattern library", async () => {
     const llm = new MockLLM([goodPlanner]);
-    await planCapabilities({ flowJson: canonical, phloUuid: "agent-1", model: "gpt-5.5-1", provider: llm });
+    await planCapabilities({ flowJson: canonical, inventory, phloUuid: "agent-1", model: "gpt-5.5-1", provider: llm });
     const sent = JSON.parse(llm.calls[0].user);
     expect(sent.simulation_surface.executable_node_types).toContain("ai_agent_v2");
     expect(sent.conversation_pattern_library).toContain("clean_direct");
@@ -102,7 +125,7 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
 
   test("smoke mode: payload carries the REAL smoke_cap and the system prompt embeds it", async () => {
     const llm = new MockLLM([goodPlanner]);
-    await planCapabilities({ flowJson: canonical, phloUuid: "agent-1", model: "m", simulationMode: "smoke", smokeCap: 12, provider: llm });
+    await planCapabilities({ flowJson: canonical, inventory, phloUuid: "agent-1", model: "m", simulationMode: "smoke", smokeCap: 12, provider: llm });
     const sent = JSON.parse(llm.calls[0].user);
     expect(sent.simulation_mode).toBe("smoke");
     expect(sent.smoke_cap).toBe(12); // the pre-smoke wiring gap sent 0 here
@@ -113,7 +136,7 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
   test("throws after exhausting retries on invalid JSON", async () => {
     const llm = new MockLLM(["not json", "still not json"]);
     await expect(
-      planCapabilities({ flowJson: canonical, phloUuid: "a", model: "gpt-5.5-1", provider: llm }),
+      planCapabilities({ flowJson: canonical, inventory, phloUuid: "a", model: "gpt-5.5-1", provider: llm }),
     ).rejects.toThrow();
   });
 });

@@ -17,6 +17,7 @@ const { generateScenarios } = await import("../src/sim-engine/gen/generate.js");
 const { MockLLM } = await import("../src/llm/index.js");
 const { normalizeFlow } = await import("../src/simulation/flow/flow-normalize.js");
 const realShape = (await import("./fixtures/flow-real-shape.json")).default;
+const { realShapeInventory } = await import("./fixtures/flow-inventory.js");
 import type { GenEvent } from "../src/sim-engine/gen/generate.js";
 import type { ProviderCompleteArgs } from "../src/sim-engine/../llm/types.js";
 
@@ -87,7 +88,7 @@ describe("generateScenarios — timing + token accounting lines", () => {
     try {
       await collect(
         generateScenarios({
-          flowJson: canonical,
+          flowJson: canonical, inventory: realShapeInventory,
           phloUuid: "agent-1",
           maxScenarios,
           model: "gpt-5.5-1",
@@ -223,7 +224,7 @@ describe("generateScenarios — a replanned generation bills every planner call"
     try {
       await collect(
         generateScenarios({
-          flowJson: canonical, phloUuid: "agent-1", maxScenarios: 4, model: "m",
+          flowJson: canonical, inventory: realShapeInventory, phloUuid: "agent-1", maxScenarios: 4, model: "m",
           plannerProvider: badPlanner, writerProvider: new MockLLM([writerResponder]),
         }),
       );
@@ -256,7 +257,7 @@ describe("generateScenarios — a replanned generation bills every planner call"
     try {
       await collect(
         generateScenarios({
-          flowJson: canonical, phloUuid: "agent-1", maxScenarios: 2, model: "m",
+          flowJson: canonical, inventory: realShapeInventory, phloUuid: "agent-1", maxScenarios: 2, model: "m",
           plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: flakyWriter as any,
         }),
       );
@@ -280,7 +281,7 @@ describe("generateScenarios — a replanned generation bills every planner call"
     ]);
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "agent-1", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "agent-1", maxScenarios: 4, model: "m",
         plannerProvider: badPlanner, writerProvider: new MockLLM([writerResponder]),
       }),
     );
