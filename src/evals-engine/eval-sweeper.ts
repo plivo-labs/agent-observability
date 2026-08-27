@@ -256,9 +256,28 @@ export async function runEvalSweepOnce(): Promise<void> {
   sweeping = true;
   try {
     const pending = await countPendingEvalSessions();
-    if (pending > 0) {
-      console.log(`[evals] backlog=${pending} pending sessions`);
-    }
+    // Nothing claimable — stop here rather than spinning up the worker fan-out.
+    //
+    // This count draws on EXACTLY the two sources claimNextEvalSession draws
+    // on (configs past the settle window with no verdict row, plus stale
+    // 'running' claims), with the same predicates, so pending === 0 provably
+    // means every claim attempt would return null.
+    //
+    // Without this guard the drained case — which is the steady state whenever
+    // judging is keeping up — costs the most: all MAX_CONCURRENT_SESSIONS
+    // workers race in, each running the claim anti-join up to 3 times before
+    // concluding the same thing this count already established. At prod's
+    // concurrency of 15 that is 45 anti-joins over ao_session_agent_config
+    // every tick, forever, to discover there is no work. The scan is O(table),
+    // so it got heavier as the tables grew and put the us-east core writer at
+    // 85-92% CPU (the claim query alone measured ~6 average active sessions on
+    // a 2-vCPU box).
+    //
+    // A session landing between this count and the next tick is not delayed by
+    // it: the ingest event-kick claims those directly, and the poller is the
+    // 20s backstop it already was.
+    if (pending === 0) return;
+    console.log(`[evals] backlog=${pending} pending sessions`);
     // N workers each loop claim->judge until the tick budget is spent or the
     // backlog drains. Concurrency overlaps sessions' wall-clock (provider
     // concurrency stays capped by the judge semaphore), so one slow session
