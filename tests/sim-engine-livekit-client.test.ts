@@ -32,7 +32,7 @@ const TURN_RESPONSE = {
 };
 
 const INVENTORY_RESPONSE = {
-  nodes: [], routes: [], variables: [], actions: [], languages: [], start_node_param_keys: [],
+  nodes: [], routes: [], variables: [], actions: [], languages: [],
   is_outbound_call: false, simulatable: true, unsimulatable: [], entry_node_uuid: "n1",
   reachable_ai_nodes: ["n1"], mockable_nodes: [], terminals: [],
 };

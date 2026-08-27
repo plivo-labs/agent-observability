@@ -35,7 +35,6 @@ const inventory = {
   variables: [],
   actions: [],
   languages: [],
-  start_node_param_keys: [],
   is_outbound_call: false,
   simulatable: true,
   unsimulatable: [],
@@ -117,6 +116,8 @@ describe("planCapabilities (LLM 1, loose) with MockLLM", () => {
     const llm = new MockLLM([goodPlanner]);
     await planCapabilities({ flowJson: canonical, inventory, phloUuid: "agent-1", model: "gpt-5.5-1", provider: llm });
     const sent = JSON.parse(llm.calls[0].user);
+    // the fetched inventory is embedded whole for the planner LLM to ground on
+    expect(sent.mechanical_inventory.routes.length).toBe(3);
     expect(sent.simulation_surface.executable_node_types).toContain("ai_agent_v2");
     expect(sent.conversation_pattern_library).toContain("clean_direct");
     expect(sent.simulation_mode).toBe("stress");

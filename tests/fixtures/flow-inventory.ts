@@ -13,7 +13,6 @@ export const realShapeInventory: FlowInventory = {
   variables: [{ node_id: "n-greet", node_name: "greet", variable_name: "order_id", variable_instructions: "" }],
   actions: [],
   languages: ["en-US"],
-  start_node_param_keys: ["caller_name"],
   is_outbound_call: false,
   simulatable: true,
   unsimulatable: [],

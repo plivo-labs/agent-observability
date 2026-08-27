@@ -47,7 +47,6 @@ function makePlanner(caps: Capability[]): PlannerWithInventory {
       variables: [],
       actions: [],
       languages: ["en-US"],
-      start_node_param_keys: [],
       is_outbound_call: false,
       simulatable: true,
       unsimulatable: [],
