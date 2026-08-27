@@ -1,107 +1,107 @@
-// AO Simulation Engine — agent runtime /turn client.
+// AO Simulation Engine — agent-runner simulation client (SER-6447).
 //
-// Port of the reference worker `usecases/simulation_eval/livekit_client.go`. One synchronous HTTP
-// call per turn: the engine sends the simulated caller's message + the threaded conversation
-// state; livekit runs the CXAgent for a single turn and returns its reply, the detected intent,
-// updated variables, and the state to thread into the next turn.
+// The flow walk now lives in agent-runner: AO sends the canonical `flow` + `world_state`
+// per turn and agent-runner owns entry resolution, edge resolution, branch evaluation and
+// non-AI node execution. This one client wraps the four surfaces AO drives:
+//   - turn()                       POST /v1/simulation/session/turn        (stateless ai_agent_v2 turn)
+//   - flowSessionStart/Turn/End()  POST /v1/simulation/flow-session/{...}  (server-held task units)
+//   - inventory()                  POST /v1/simulation/flow/inventory      (generator dry-run, no LLM)
 //
-// The AO↔livekit hop is plain HTTP (no Redis). The agent runtime is unauthenticated on the
-// private network; optional Basic auth is supported via constructor opts to mirror the Go client.
+// Request bodies are byte-for-byte the agent-runner `SimTurnRequest` (extra="forbid", so every
+// key must exist there); the timeout covers the body read; and a per-session cookie jar keeps
+// task-unit turns pinned to the container holding their session (ALB stickiness parity).
 
 import { simEngineConfig } from "../config.js";
+import type { FlowInventory } from "../gen/inventory.js";
 
 const TURN_PATH = "/v1/simulation/session/turn";
-// SER-6070: stateful single-node sessions for task units (ScreeningUnit) — livekit holds the
-// session; continuity is keyed on simulation_session_id (plus the sticky cookie jar below).
 const FLOW_SESSION_START_PATH = "/v1/simulation/flow-session/start";
 const FLOW_SESSION_TURN_PATH = "/v1/simulation/flow-session/turn";
 const FLOW_SESSION_END_PATH = "/v1/simulation/flow-session/end";
-const DEFAULT_TIMEOUT_MS = 60_000; // matches the Go client's 60s http.Client timeout
-const MAX_ERROR_PREVIEW = 500; // matches the Go client's 500-char error body preview
+const INVENTORY_PATH = "/v1/simulation/flow/inventory";
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_ERROR_PREVIEW = 500;
 
-/** Request body for POST {base}{TURN_PATH} — mirrors livekit_client.go `LiveKitSimRequest`.
- *  Optional fields are omitted from the wire body when undefined (Go's `omitempty`); the
- *  always-present `is_interruption` mirrors the Go field's lack of omitempty. */
-export interface LiveKitSimRequest {
+/** Request body for the /session/turn and /flow-session/* endpoints — the agent-runner
+ *  `SimTurnRequest` (schema.py). `extra="forbid"` on the server, so no key outside this
+ *  set may ever be sent (the old `agent_config` / `output_state_config` / `is_interruption`
+ *  / `partial_assistant_message` fields are gone — agent-runner builds config from `flow`). */
+export interface SimTurnRequest {
   phlo_run_uuid: string;
-  /** Session id livekit uses for conversation continuity across turns; set to the flow_run_uuid
-   *  (mirrors the reference worker, which defaults it to phlo_run_uuid). */
-  simulation_session_id?: string;
-  node_uuid: string;
-  node_run_uuid: string;
   auth_id: string;
-  /** The simulated caller's utterance for this turn (omitted on the opening agent turn). */
+  /** Keys the server-held session on the flow-session endpoints (+ the cookie jar); unused by /session/turn. */
+  simulation_session_id?: string;
+  /** Canonical FLOW_JSON (Shape B). Resent every turn; agent-runner caches the parse by sha256. */
+  flow: Record<string, unknown>;
+  /** {node_id | config_name: {outcome?, data?, action_mocks?}} — pins mocked outcomes + seeds vars. */
+  world_state?: Record<string, unknown>;
+  /** Seeded under the trigger's prod namespace on the entry walk. */
+  start_node_params?: Record<string, unknown>;
+  max_turns: number;
+  /** "" on the first call ⇒ agent-runner resolves entry from Start. */
+  node_uuid?: string;
+  node_run_uuid?: string;
+  /** Round-tripped; agent-runner returns turn_count + 1 after a conversational turn. */
+  turn_count?: number;
+  /** "" = greeting turn (the node speaks first). */
   user_message?: string;
-  is_interruption: boolean;
-  partial_assistant_message?: string;
-  agent_config?: Record<string, unknown>;
+  /** Per-turn tool-mock override, merged over world_state[node].action_mocks. */
   action_mocks?: Record<string, unknown>;
   /** Opaque conversation context items, threaded back verbatim each turn. */
   context_items?: unknown[];
   variables_by_node?: Record<string, Record<string, unknown>>;
 }
 
-/** Response body — mirrors livekit_client.go `LiveKitSimResponse`. */
-export interface LiveKitSimResponse {
-  /** Session id echoed back by livekit (informational; continuity is keyed on the request value). */
-  simulation_session_id?: string;
-  /** "speech" | "transition" — whether the agent actually spoke this turn or silently transitioned nodes. */
-  turn_type?: string;
-  /** Convenience flag from livekit; AO derives its own via isSpokenTurn() to match the Go normalization. */
-  is_spoken?: boolean;
+/** One walk segment agent-runner traversed: from a node, out a handle, through mocked `via`
+ *  hops, to a landing node (`to_node_uuid` null on a terminal/abort). */
+export interface SimTransition {
+  from_node_uuid: string;
+  handle: string;
+  via: Array<{ node_uuid: string; type: string; outcome: string }>;
+  to_node_uuid: string | null;
+  to_type: string;
+}
+
+/** Response body — the agent-runner `SimResponse` (schema.py), stop_reason already mapped to
+ *  the public walker vocabulary by handler.py. */
+export interface SimResponse {
   message: string;
   intent: string;
   variables: Record<string, unknown>;
   tool_calls: unknown[];
   response_items: unknown[];
+  /** The node that spoke this turn and fired `intent` — the transcript/judge key. */
+  turn_node_uuid: string;
+  /** The node AFTER the walk; thread into the next request only. */
   node_uuid: string;
   node_run_uuid: string;
+  turn_count: number;
+  /** "speech" (a normal turn) | "transition" (an empty-user greeting turn). */
+  turn_type: string;
+  transitions: SimTransition[];
   ended: boolean;
+  /** "" | end_conversation | max_turns | unknown_intent | no_matching_edge | unsupported_node_type | error */
   stop_reason: string;
+  stop_detail: string;
   context_items: unknown[];
   variables_by_node: Record<string, Record<string, unknown>>;
 }
 
-// Turn-type constants + helpers — faithful port of livekit_client.go:20-101. A "transition" turn is a
-// silent node handoff (no spoken agent utterance); it must NOT be fed to the simulator or written to history,
-// otherwise the simulator sees a phantom/empty agent turn and the conversation diverges (turn count).
-export const LIVEKIT_TURN_TYPE_SPEECH = "speech";
-export const LIVEKIT_TURN_TYPE_TRANSITION = "transition";
-
-/** Port of Go `hasHandoffToolCall`: any tool call whose `name` starts with "handoff_". */
-export function hasHandoffToolCall(toolCalls: unknown[] | undefined): boolean {
-  if (!toolCalls) return false;
-  for (const raw of toolCalls) {
-    const name = (raw as { name?: unknown } | null)?.name;
-    if (typeof name === "string" && name.startsWith("handoff_")) return true;
-  }
-  return false;
-}
-
-/** Port of Go `NormalizedTurnType`: explicit turn_type wins; else speech if a message exists; else
- *  transition if a handoff tool call is present; else speech. */
-export function normalizedTurnType(resp: LiveKitSimResponse): string {
-  const tt = (resp.turn_type ?? "").trim();
-  if (tt !== "") return tt;
-  if ((resp.message ?? "").trim() !== "") return LIVEKIT_TURN_TYPE_SPEECH;
-  if (hasHandoffToolCall(resp.tool_calls)) return LIVEKIT_TURN_TYPE_TRANSITION;
-  return LIVEKIT_TURN_TYPE_SPEECH;
-}
-
-/** Port of Go `IsSpokenTurn`: a real agent utterance to record (speech + non-empty message). */
-export function isSpokenTurn(resp: LiveKitSimResponse): boolean {
-  return normalizedTurnType(resp) === LIVEKIT_TURN_TYPE_SPEECH && (resp.message ?? "").trim() !== "";
-}
-
-/** Port of Go `IsTransitionTurn`: a silent node transition (no spoken reply). */
-export function isTransitionTurn(resp: LiveKitSimResponse): boolean {
-  return normalizedTurnType(resp) === LIVEKIT_TURN_TYPE_TRANSITION;
-}
+/** Abort stop reasons — the ones that mean the scenario could not reach a judged outcome, so
+ *  their `stop_detail` is written to `ao_sim_run_scenario.error` (D5). `end_conversation` and
+ *  `max_turns` are NOT here: their rows keep `error = null` so they still count toward
+ *  passed/failed (extractGoalPassed stops counting a row once `error` is non-null). */
+export const ABORT_STOP_REASONS: ReadonlySet<string> = new Set([
+  "unknown_intent",
+  "no_matching_edge",
+  "unsupported_node_type",
+  "error",
+]);
 
 export interface LiveKitSimClientOptions {
   /** Base URL; defaults to simEngineConfig.livekitSimTurnUrl (LIVEKIT_SIM_TURN_URL). */
   url?: string;
-  /** Optional Basic-auth credentials (livekit is unauthenticated on the managed deployment's private network). */
+  /** Optional Basic-auth credentials (agent-runner is unauthenticated on the private network). */
   username?: string;
   password?: string;
   /** Per-request timeout in ms (default 60s). */
@@ -110,7 +110,7 @@ export interface LiveKitSimClientOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** Thrown on any /turn failure (unconfigured URL, timeout, non-200, or unparseable body). */
+/** Thrown on any request failure (unconfigured URL, timeout, non-200, or unparseable body). */
 export class LiveKitSimError extends Error {
   readonly status?: number;
   constructor(message: string, status?: number) {
@@ -126,9 +126,9 @@ export class LiveKitSimClient {
   private readonly password: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
-  /** Per-session cookie store (sessionId → "name=value; name2=value2"), mirroring the Go client's
-   *  per-session cookiejar (livekit_client.go:239-263) so all turns of a session carry the sticky
-   *  LB cookie. Bun's fetch has no auto cookie jar, so we persist + resend Set-Cookie pairs manually. */
+  /** Per-session cookie store (sessionId → "name=value; …"): task-unit flow-sessions are
+   *  server-held, so every turn must carry the sticky LB cookie to reach the same container.
+   *  Bun's fetch has no auto cookie jar, so Set-Cookie pairs are persisted + resent manually. */
   private readonly sessionCookies = new Map<string, string>();
 
   constructor(opts: LiveKitSimClientOptions = {}) {
@@ -139,35 +139,36 @@ export class LiveKitSimClient {
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
-  /** Run one simulation turn against livekit's /v1/simulation/session/turn endpoint. */
-  async executeTurn(req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
-    if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
-    return this.post(TURN_PATH, req);
+  /** One stateless agent turn (ai_agent_v2). `node_uuid: ""` on the first call resolves entry. */
+  async turn(req: SimTurnRequest): Promise<SimResponse> {
+    return this.postTurn(TURN_PATH, req);
   }
 
-  /** Open a server-held task-unit session (SER-6070); the response carries the unit's opener. */
-  async startFlowSession(req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
-    if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
-    return this.post(FLOW_SESSION_START_PATH, req);
+  /** Open a server-held task-unit session (screening / agent_node); the response carries the opener. */
+  async flowSessionStart(req: SimTurnRequest): Promise<SimResponse> {
+    return this.postTurn(FLOW_SESSION_START_PATH, req);
   }
 
-  /** Drive one turn of a held task-unit session; the terminal turn carries the disposition intent. */
-  async turnFlowSession(req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
-    if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
-    return this.post(FLOW_SESSION_TURN_PATH, req);
+  /** Drive one turn of a held task-unit session; the exit turn carries the disposition + landing node. */
+  async flowSessionTurn(req: SimTurnRequest): Promise<SimResponse> {
+    return this.postTurn(FLOW_SESSION_TURN_PATH, req);
   }
 
-  /** Best-effort cleanup of a held session (livekit also evicts on terminal turns and TTL). */
-  async endFlowSession(sessionId: string): Promise<void> {
+  /** Best-effort eviction of a held session (agent-runner also evicts on the exit turn + TTL). */
+  async flowSessionEnd(sessionId: string): Promise<void> {
     if (!this.url || !sessionId) return;
     try {
-      await this.post(FLOW_SESSION_END_PATH, {
-        phlo_run_uuid: sessionId,
-        simulation_session_id: sessionId,
-      } as LiveKitSimRequest);
+      await this.rawPost(FLOW_SESSION_END_PATH, { simulation_session_id: sessionId }, sessionId);
     } catch {
       // Cleanup is advisory; TTL eviction covers the failure.
     }
+  }
+
+  /** Generator dry-run: reachable AI nodes, mockable-outcome handles, terminals, and the
+   *  unsimulatable-node list AO refuses generation on. No LLM, same walker as the run path. */
+  async inventory(flow: Record<string, unknown>, worldState?: Record<string, unknown>): Promise<FlowInventory> {
+    const body = await this.rawPost(INVENTORY_PATH, { flow, world_state: worldState ?? {} }, "");
+    return body as unknown as FlowInventory;
   }
 
   private authHeader(): Record<string, string> {
@@ -176,7 +177,7 @@ export class LiveKitSimClient {
     return { Authorization: `Basic ${token}` };
   }
 
-  /** Merge the response's Set-Cookie pairs into the per-session jar (name-keyed, like Go's cookiejar). */
+  /** Merge the response's Set-Cookie pairs into the per-session jar (name-keyed). */
   private storeCookies(sessionId: string, resp: Response): void {
     const setCookies = resp.headers.getSetCookie?.() ?? [];
     if (setCookies.length === 0) return;
@@ -189,36 +190,34 @@ export class LiveKitSimClient {
       }
     }
     for (const sc of setCookies) {
-      const first = (sc.split(";")[0] ?? "").trim(); // drop attributes (Path/Expires/…), keep name=value
+      const first = (sc.split(";")[0] ?? "").trim();
       const eq = first.indexOf("=");
       if (eq > 0) jar.set(first.slice(0, eq).trim(), first.slice(eq + 1).trim());
     }
-    this.sessionCookies.set(
-      sessionId,
-      [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
-    );
+    this.sessionCookies.set(sessionId, [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
   }
 
-  /** Forget a session's cookie jar. Called when a scenario finishes (session ids are fresh
-   *  UUIDs per scenario, so without this the shared worker client's Map grows unbounded). */
+  /** Forget a session's cookie jar (session ids are fresh UUIDs per scenario). */
   forgetSession(sessionId: string): void {
     if (sessionId) this.sessionCookies.delete(sessionId);
   }
 
-  private async post(path: string, req: LiveKitSimRequest): Promise<LiveKitSimResponse> {
+  private async postTurn(path: string, req: SimTurnRequest): Promise<SimResponse> {
+    const body = await this.rawPost(path, req, req.simulation_session_id ?? "");
+    return body as unknown as SimResponse;
+  }
+
+  private async rawPost(path: string, req: object, sessionId: string): Promise<Record<string, unknown>> {
+    if (!this.url) throw new LiveKitSimError("livekit sim URL not configured");
     const url = `${this.url}${path}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    // Per-session cookie affinity: send the stored jar for this session (if any).
-    const sessionId = req.simulation_session_id ?? "";
     const cookieHeader = sessionId ? this.sessionCookies.get(sessionId) : undefined;
 
     // The timeout must cover the BODY read too, not just response headers: a server that sends
-    // headers then stalls mid-body would otherwise hang this turn forever (the abort timer used
-    // to be cleared right after fetch resolved) and permanently wedge one worker slot.
+    // headers then stalls mid-body would otherwise hang this turn forever and wedge a worker slot.
     let resp: Response;
-    let body: string;
+    let text: string;
     try {
       resp = await this.fetchImpl(url, {
         method: "POST",
@@ -227,11 +226,11 @@ export class LiveKitSimClient {
           ...this.authHeader(),
           ...(cookieHeader ? { Cookie: cookieHeader } : {}),
         },
-        // JSON.stringify drops undefined keys → matches the Go client's `omitempty` for optionals.
+        // JSON.stringify drops undefined keys — the request carries exactly the set fields.
         body: JSON.stringify(req),
         signal: controller.signal,
       });
-      body = await resp.text();
+      text = await resp.text();
     } catch (err) {
       if (controller.signal.aborted) {
         throw new LiveKitSimError(`livekit sim ${path} timed out after ${this.timeoutMs}ms`);
@@ -241,23 +240,21 @@ export class LiveKitSimClient {
       clearTimeout(timer);
     }
 
-    // Persist any Set-Cookie for this session so subsequent turns reuse it (sticky routing parity).
     if (sessionId) this.storeCookies(sessionId, resp);
 
     if (resp.status !== 200) {
-      const preview = body.length > MAX_ERROR_PREVIEW ? body.slice(0, MAX_ERROR_PREVIEW) : body;
+      const preview = text.length > MAX_ERROR_PREVIEW ? text.slice(0, MAX_ERROR_PREVIEW) : text;
       throw new LiveKitSimError(`livekit sim ${path} returned status ${resp.status}: ${preview}`, resp.status);
     }
-
     try {
-      return JSON.parse(body) as LiveKitSimResponse;
+      return JSON.parse(text) as Record<string, unknown>;
     } catch (err) {
       throw new LiveKitSimError(`failed to decode response: ${(err as Error).message}`);
     }
   }
 }
 
-/** Factory mirroring Go's NewLiveKitSimClient(): base URL from config, optional Basic creds via opts. */
+/** Factory: base URL from config, optional Basic creds via opts. */
 export function makeLiveKitSimClient(opts: LiveKitSimClientOptions = {}): LiveKitSimClient {
   return new LiveKitSimClient(opts);
 }

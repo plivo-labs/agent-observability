@@ -1,5 +1,11 @@
-import type { FlowGraph } from "../sim-engine/run-engine/flow-types.js";
 import type { ConversationInput, EvalTurn, GoalInput, NodeEvalInput } from "./types.js";
+
+/** Slim per-node config lookup the judges need, keyed by node_uuid — built from the flow JSON on
+ *  the run path (the flow walk moved to agent-runner, so there is no FlowGraph here anymore). */
+export type NodeConfigIndex = Map<
+  string,
+  { config: Record<string, unknown> | null; configName: string; metaName: string }
+>;
 
 // AO Eval Engine — build the eval input from a simulation run. Mirrors cx-sqs's transcript_builder.go:
 // group the turn log by node, and for each AI node collect the config (instructions / intents /
@@ -69,12 +75,12 @@ export function renderFullTranscript(turns: EvalTurn[]): string {
 
 export interface FromSimTranscriptArgs {
   turns: EvalTurn[];
-  graph: FlowGraph;
+  nodeIndex: NodeConfigIndex;
   flowObj: Record<string, unknown>;
   variablesByNode: Record<string, Record<string, unknown>>;
 }
 
-export function fromSimTranscript({ turns, graph, flowObj, variablesByNode }: FromSimTranscriptArgs): ConversationInput {
+export function fromSimTranscript({ turns, nodeIndex, flowObj, variablesByNode }: FromSimTranscriptArgs): ConversationInput {
   // Group turns by node, preserving first-seen order.
   const order: string[] = [];
   const byNode = new Map<string, EvalTurn[]>();
@@ -88,7 +94,7 @@ export function fromSimTranscript({ turns, graph, flowObj, variablesByNode }: Fr
 
   const nodes: NodeEvalInput[] = order.map((nodeUuid) => {
     const nodeTurns = byNode.get(nodeUuid)!;
-    const gnode = graph.nodes.get(nodeUuid);
+    const gnode = nodeIndex.get(nodeUuid);
     const config = gnode?.config ?? null;
     const chosen = [...nodeTurns].reverse().find((t) => t.intent)?.intent ?? "";
     return {

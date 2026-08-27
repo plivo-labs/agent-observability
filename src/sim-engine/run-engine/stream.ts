@@ -64,6 +64,9 @@ export interface ScenarioCompletedEvent {
   scenario_id: string;
   flow_run_uuid?: string;
   stop_reason: string;
+  /** Human-readable detail for a walker stop (SER-6447): the unsupported node, the branch with no
+   *  matching edge, etc. Present on abort reasons; empty otherwise. Console surfaces it. */
+  stop_detail?: string;
   turns?: number;
   nodes_visited?: number;
   error?: string;
