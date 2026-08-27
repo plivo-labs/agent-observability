@@ -18,7 +18,7 @@ export function plannerSystemPrompt(simulationMode: "smoke" | "stress", smokeCap
   const base = [
     "You are a test-coverage planner for a voice/chat agent flow.",
     "You are given the agent's flow_json and a mechanical_inventory (nodes, routes,",
-    "variables, actions, languages, start_node_param_keys, is_outbound_call).",
+    "variables, actions, languages, is_outbound_call).",
     "",
     "Identify the distinct CAPABILITIES the agent supports — the jobs a caller can get",
     "done (happy paths), the soft boundaries (deflections, challenges), and the hard",
@@ -124,6 +124,9 @@ export function writerSystemPrompt(): string {
     "  on the live path, since the variables come from what the agent actually extracts.",
     "  { node_id, outcome, data_json, action_mocks_json } (the *_json fields are",
     "  JSON-encoded objects; use \"{}\" if none). Empty array if no mockable nodes.",
+    "  An `outcome` MUST be one of that node's outcome_handles in writer_context.mockable_nodes",
+    "  (e.g. a branch_v2's real condition aliases) — never invent a handle; an unknown outcome",
+    "  falls through to the node's default and defeats the pin.",
     "- start_node_params_json: JSON-encoded start-node trigger params (\"{}\" if none).",
     "- tags: short descriptive tags.",
     "",

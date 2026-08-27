@@ -2,9 +2,9 @@ import type { LlmProvider } from "../../llm/index.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { fromSimTranscript, type NodeConfigIndex } from "../conversation-input.js";
 import type { EvalTurn, EvaluationResult, SimEvalOutcome } from "../types.js";
+import { zeroConversationMetrics } from "../judges/conversation-judges.js";
 
 export type { NodeConfigIndex };
-import { zeroConversationMetrics } from "../judges/conversation-judges.js";
 
 // AO Eval Engine — the run-path adapter (mirrors cx-sqs's EvaluatorAdapter, SkipConversationEval=true).
 // Builds the ConversationInput from the accumulated transcript, runs the node+goal evaluator, and NEVER

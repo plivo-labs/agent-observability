@@ -377,7 +377,8 @@ class ScenarioRunner {
       if (startResp.variables_by_node != null) this.variablesByNode = startResp.variables_by_node;
       if (startResp.node_run_uuid) this.nodeRunUuid = startResp.node_run_uuid;
 
-      while (!this.ended && this.turnIndex < this.hardCap) {
+      let iterations = 0;
+      while (!this.ended && iterations++ < this.hardCap) {
         const userMsg = await this.userSimTurn();
         const resp = await this.livekit.flowSessionTurn(
           this.buildReq({ node_uuid: node, simulation_session_id: sessionId, user_message: userMsg }),
@@ -396,13 +397,21 @@ class ScenarioRunner {
         }
         this.threadState(resp);
       }
+      // The cap tripped without the unit exiting — stop the run (a normal exit returns above).
+      this.ended = true;
+      this.stopReason = this.stopReason || "max_turns";
     } finally {
       this.livekit.forgetSession(sessionId);
+      // Evict the server-held session promptly (§3.2); best-effort, TTL covers a failure.
+      await this.livekit.flowSessionEnd(sessionId);
     }
   }
 
   async run(): Promise<RunResult> {
-    while (!this.ended && this.turnIndex < this.hardCap) {
+    // Bound on iterations, NOT turnIndex: a silent transition doesn't advance turnIndex, so a
+    // stream of empty responses would spin forever if the cap keyed on it.
+    let iterations = 0;
+    while (!this.ended && iterations++ < this.hardCap) {
       // A task-unit node is driven by the flow-session sub-loop (never a stateless turn).
       if (this.nodeUuid !== "" && this.isTaskUnit(this.nodeUuid)) {
         await this.driveTaskUnit();
@@ -410,6 +419,14 @@ class ScenarioRunner {
       }
 
       const isEntryCall = this.nodeUuid === "";
+      // Stop before spending a user-simulator call that agent-runner would immediately reject:
+      // max_turns is enforced by AR from the round-tripped turn_count, so a non-greeting turn at
+      // the cap is a wasted LLM call + a trailing empty agent turn.
+      if (!this.pendingGreeting && this.turnCount >= this.job.maxTurns) {
+        this.ended = true;
+        this.stopReason = "max_turns";
+        break;
+      }
       const userMsg = this.pendingGreeting ? "" : await this.userSimTurn();
       const resp = await this.livekit.turn(this.buildReq({ user_message: userMsg }));
       this.recordTransitions(resp.transitions);
@@ -420,7 +437,7 @@ class ScenarioRunner {
       // and drive the unit via the flow-session endpoints on the next iteration.
       if (isEntryCall && resp.node_uuid && this.isTaskUnit(resp.node_uuid)) {
         this.nodeUuid = resp.node_uuid;
-        this.nodeRunUuid = resp.node_run_uuid || crypto.randomUUID();
+        this.nodeRunUuid = resp.node_run_uuid; // agent-runner owns node identity; thread it as-is
         if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
         this.pendingGreeting = false;
         continue;
@@ -581,7 +598,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         transcript: [],
       }),
     );
-  } finally {
-    client.forgetSession(flowRunUuid);
   }
+  // No cookie-jar cleanup here: stateless turns store no cookies, and each task-unit flow-session
+  // forgets its own `:fs:` jar in driveTaskUnit.
 }

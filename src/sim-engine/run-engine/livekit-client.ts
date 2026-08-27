@@ -13,6 +13,7 @@
 
 import { simEngineConfig } from "../config.js";
 import type { FlowInventory } from "../gen/inventory.js";
+import type { StopReason } from "./flow-types.js";
 
 const TURN_PATH = "/v1/simulation/session/turn";
 const FLOW_SESSION_START_PATH = "/v1/simulation/flow-session/start";
@@ -80,8 +81,8 @@ export interface SimResponse {
   turn_type: string;
   transitions: SimTransition[];
   ended: boolean;
-  /** "" | end_conversation | max_turns | unknown_intent | no_matching_edge | unsupported_node_type | error */
-  stop_reason: string;
+  /** "" until the flow terminates, then the public walker vocabulary (StopReason). */
+  stop_reason: StopReason | "";
   stop_detail: string;
   context_items: unknown[];
   variables_by_node: Record<string, Record<string, unknown>>;
@@ -91,7 +92,7 @@ export interface SimResponse {
  *  their `stop_detail` is written to `ao_sim_run_scenario.error` (D5). `end_conversation` and
  *  `max_turns` are NOT here: their rows keep `error = null` so they still count toward
  *  passed/failed (extractGoalPassed stops counting a row once `error` is non-null). */
-export const ABORT_STOP_REASONS: ReadonlySet<string> = new Set([
+export const ABORT_STOP_REASONS: ReadonlySet<StopReason> = new Set<StopReason>([
   "unknown_intent",
   "no_matching_edge",
   "unsupported_node_type",
@@ -159,8 +160,9 @@ export class LiveKitSimClient {
     if (!this.url || !sessionId) return;
     try {
       await this.rawPost(FLOW_SESSION_END_PATH, { simulation_session_id: sessionId }, sessionId);
-    } catch {
-      // Cleanup is advisory; TTL eviction covers the failure.
+    } catch (err) {
+      // Cleanup is advisory (TTL eviction covers it); log so a leak is traceable.
+      console.warn(`[sim] flow-session end failed for ${sessionId}: ${(err as Error).message}`);
     }
   }
 

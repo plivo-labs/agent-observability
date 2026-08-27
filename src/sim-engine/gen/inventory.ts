@@ -80,7 +80,6 @@ export interface MechanicalInventory {
   variables: VariableInventoryItem[];
   actions: ActionInventoryItem[];
   languages: string[];
-  start_node_param_keys: string[];
   is_outbound_call: boolean;
 }
 
