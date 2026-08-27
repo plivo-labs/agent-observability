@@ -561,7 +561,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     // max_turns keep error=null so they still count toward passed/failed (extractGoalPassed
     // stops counting a row once error is non-null). status stays "completed": a walker abort is
     // not a runner exception.
-    const abortDetail = ABORT_STOP_REASONS.has(stopReason) ? result.stopDetail || stopReason : null;
+    const abortDetail = (ABORT_STOP_REASONS as ReadonlySet<string>).has(stopReason) ? result.stopDetail || stopReason : null;
     await persistSafe("completeRunScenario", () =>
       completeRunScenario({
         id: flowRunUuid,
