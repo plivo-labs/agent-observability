@@ -8,6 +8,7 @@ import { plannerCacheKey, plannerCacheGet, plannerCacheSet, plannerCacheDelete }
 import { writeScenarioChunk } from "./writer.js";
 import { WRITER_CHUNK_SIZE, WRITER_CHUNK_RETRIES, WRITER_SLOT_RETRIES, WRITER_FALLBACK_CONCURRENCY, SMOKE_CAP_FALLBACK, MAX_EXISTING_SCENARIO_SUMMARIES } from "./combos.js";
 import type { Slot, RuntimeScenario, PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
+import type { FlowInventory } from "./inventory.js";
 
 // AO Simulation Engine — generation orchestration (Phase 1.6).
 // Port of the orchestrator service `generate_scenarios_stream`: PLANNER (2 attempts) → deterministic
@@ -78,6 +79,9 @@ export interface GenMetadata {
 export interface GenerateInput {
   /** Canonical flow (the caller runs parseFlowJson/normalizeFlow first). */
   flowJson: Dict;
+  /** The agent-runner mechanical inventory (the route fetches it once, pre-stream, and refuses an
+   *  unsimulatable flow before this generator runs). Threaded into every planner call. */
+  inventory: FlowInventory;
   phloUuid: string;
   maxScenarios: number;
   model: string;
@@ -287,6 +291,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     try {
       const out = await planCapabilities({
         flowJson: input.flowJson,
+        inventory: input.inventory,
         phloUuid: input.phloUuid,
         model: input.model,
         reasoningEffort: input.plannerReasoningEffort,
@@ -346,6 +351,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
       instructions = `${instructions}\n\n${retryHint}`.trim();
       const out = await planCapabilities({
         flowJson: input.flowJson,
+        inventory: input.inventory,
         phloUuid: input.phloUuid,
         model: input.model,
         reasoningEffort: input.plannerReasoningEffort,

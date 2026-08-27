@@ -1,5 +1,5 @@
 import type { Capability, PlannerOutput } from "./schemas.js";
-import type { MechanicalInventory } from "./inventory.js";
+import type { MechanicalInventory, FlowInventory } from "./inventory.js";
 
 // AO Simulation Engine — shared pipeline types (Phase 1.3+).
 
@@ -96,7 +96,7 @@ export interface RuntimeScenario {
 }
 
 /** Planner output with the mechanical inventory attached (the allocator reads it). */
-export type PlannerWithInventory = PlannerOutput & { mechanical_inventory: MechanicalInventory };
+export type PlannerWithInventory = PlannerOutput & { mechanical_inventory: FlowInventory };
 
 /** A summarized existing scenario (input to the planner + the allocator's coverage). */
 export interface ExistingScenarioSummary {
@@ -114,4 +114,4 @@ export interface ExistingCoverage {
   capability_scenario_type: Record<string, number>;
 }
 
-export type { Capability, PlannerOutput, MechanicalInventory };
+export type { Capability, PlannerOutput, MechanicalInventory, FlowInventory };

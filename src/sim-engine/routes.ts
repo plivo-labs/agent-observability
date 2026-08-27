@@ -31,6 +31,8 @@ import {
   type SimScenarioRow,
 } from "./db.js";
 import { generateScenarios } from "./gen/generate.js";
+import type { FlowInventory } from "./gen/inventory.js";
+import { makeLiveKitSimClient } from "./run-engine/livekit-client.js";
 import { SSE, envelope } from "./events.js";
 import { newApiId, buildErrorResponse } from "../response.js";
 
@@ -148,6 +150,26 @@ export function registerSimulationRoutes(app: Hono): void {
       console.warn(`[sim-gen] 400 invalid_flow_json phlo_uuid=${body.phlo_uuid}: ${detail}`);
       return c.json(buildErrorResponse("invalid_flow_json", detail), 400);
     }
+    // Dry-run the flow through the agent-runner walker ONCE (no LLM), pre-stream and before the
+    // concurrency slot, mirroring the invalid_flow_json branch above: refuse an unsimulatable flow
+    // (no start node / no reachable AI node / every route blocked) with the offending nodes named,
+    // and thread the mechanical inventory into the planner so it is fetched exactly once.
+    let inventory: FlowInventory;
+    try {
+      inventory = await makeLiveKitSimClient().inventory(canonical);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error(`[sim-gen] flow inventory failed phlo_uuid=${body.phlo_uuid}: ${detail}`);
+      return c.json(buildErrorResponse("flow_inventory_failed", detail), 502);
+    }
+    if (!inventory.simulatable) {
+      const named = inventory.unsimulatable.map((u) => `${u.name} (${u.type}): ${u.reason}`);
+      const detail = named.length
+        ? `flow is not simulatable: ${named.join("; ")}`
+        : "flow is not simulatable (no start node, or no reachable AI node, or every route is blocked)";
+      console.warn(`[sim-gen] 400 flow_not_simulatable phlo_uuid=${body.phlo_uuid}: ${detail}`);
+      return c.json({ ...buildErrorResponse("flow_not_simulatable", detail), unsimulatable: inventory.unsimulatable }, 400);
+    }
     const tenantId = tenantIdOf(c);
     // `persist` (default true): standalone/OSS AO owns the scenario library, so it
     // writes each generated scenario to its own table. Behind the orchestrator service in the managed deployment, AO
@@ -176,6 +198,7 @@ export function registerSimulationRoutes(app: Hono): void {
       try {
         const iterator = generateScenarios({
           flowJson: canonical,
+          inventory,
           phloUuid: body.phlo_uuid,
           maxScenarios: body.max_scenarios,
           model: simEngineConfig.scenarioGenerationModel,
