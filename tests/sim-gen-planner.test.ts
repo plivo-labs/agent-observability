@@ -22,7 +22,7 @@ const realShape = (await import("./fixtures/flow-real-shape.json")).default;
 
 const canonical = normalizeFlow(realShape) as unknown as Record<string, any>;
 
-// The mechanical inventory is built by agent-runner now (SER-6447); planCapabilities consumes it.
+// The mechanical inventory is built by agent-runner; planCapabilities consumes it.
 // This fixture mirrors what the walker returns for the real-shape flow: three executable routes,
 // the first landing on the branch node the anchor-merge + backfill assertions key on.
 const inventory = {

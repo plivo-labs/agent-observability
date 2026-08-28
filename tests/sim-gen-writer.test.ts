@@ -139,7 +139,7 @@ describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
     expect(res.failedSlotIds).toEqual([]);
     expect(res.scenarios[0].eval_metadata!.slot_id).toBe("S001");
     expect(res.scenarios[0].world_state["n-check"].outcome).toBe("eligible");
-    // the branch's real outcome_handles reach the writer LLM (empty in the old registry)
+    // the branch's real outcome_handles reach the writer LLM
     const mn = JSON.parse(llm.calls[0].user).writer_context.mockable_nodes;
     expect(mn.find((n: any) => n.node_uuid === "n-check").outcome_handles).toEqual(["eligible", "no_match", "error"]);
   });

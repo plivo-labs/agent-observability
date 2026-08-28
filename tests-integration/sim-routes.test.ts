@@ -44,8 +44,8 @@ mock.module("../src/sim-engine/gen/generate.js", () => ({
   },
 }));
 
-// SER-6447: the generate route dry-runs the flow through agent-runner's inventory before
-// streaming. Stub it simulatable so these library/persist tests exercise generation, not the walk.
+// The generate route dry-runs the flow through agent-runner's inventory before streaming. Stub it
+// simulatable so these library/persist tests exercise generation, not the walk.
 spyOn(lkMod, "makeLiveKitSimClient").mockReturnValue({
   inventory: async () => ({
     simulatable: true, unsimulatable: [], nodes: [], routes: [], variables: [], actions: [],

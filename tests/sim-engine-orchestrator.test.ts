@@ -5,7 +5,7 @@ import * as adapterMod from "../src/evals-engine/integration/sim-adapter.js";
 import { MockLLM } from "../src/llm/index.js";
 import { runScenario } from "../src/sim-engine/run-engine/orchestrator.js";
 
-// SER-6447: the orchestrator turn loop against a scripted agent-runner client + user-simulator.
+// The orchestrator turn loop against a scripted agent-runner client + user-simulator.
 // Covers transcript attribution on turn_node_uuid, the empty-user greeting-turn rule, judges
 // skipped at zero turns, and stop_detail → the `error` column only on abort reasons.
 //

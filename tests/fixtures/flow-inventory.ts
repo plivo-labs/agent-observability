@@ -1,8 +1,8 @@
 import type { FlowInventory } from "../../src/sim-engine/gen/inventory.js";
 
-// The agent-runner mechanical inventory (SER-6447) for tests/fixtures/flow-real-shape.json.
-// AO no longer builds this locally — the generator consumes what the walker returns; this fixture
-// mirrors that response for the real-shape flow (n-greet ai → n-check branch / n-refund ai → n-bye).
+// The agent-runner mechanical inventory for tests/fixtures/flow-real-shape.json — mirrors the
+// inventory response the generator consumes for the real-shape flow (n-greet ai → n-check branch
+// / n-refund ai → n-bye).
 export const realShapeInventory: FlowInventory = {
   nodes: [],
   routes: [

@@ -11,7 +11,7 @@ const { evaluateSimulationForRun } = await import("../src/evals-engine/integrati
 type EvalTurn = import("../src/evals-engine/types.js").EvalTurn;
 
 // The judges' node lookup: nodeUuid → {config, configName, metaName}, built from the flow JSON on
-// the run path (the FlowGraph is gone — the walk moved to agent-runner, SER-6447).
+// the run path.
 function indexWith(nodes: Array<{ id: string; name: string; config: Record<string, unknown> }>): NodeConfigIndex {
   return new Map(nodes.map((n) => [n.id, { config: n.config, configName: n.name, metaName: n.name }]));
 }
