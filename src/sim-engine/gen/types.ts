@@ -1,5 +1,5 @@
-import type { Capability, PlannerOutput } from "./schemas.js";
-import type { MechanicalInventory, FlowInventory } from "./inventory.js";
+import type { PlannerOutput } from "./schemas.js";
+import type { FlowInventory } from "./inventory.js";
 
 // AO Simulation Engine — shared pipeline types (Phase 1.3+).
 
@@ -113,5 +113,3 @@ export interface ExistingCoverage {
   capability: Record<string, number>;
   capability_scenario_type: Record<string, number>;
 }
-
-export type { Capability, PlannerOutput, MechanicalInventory, FlowInventory };

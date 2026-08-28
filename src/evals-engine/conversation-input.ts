@@ -1,8 +1,8 @@
 import type { ConversationInput, EvalTurn, GoalInput, NodeEvalInput } from "./types.js";
 
 /** Slim per-node config lookup the judges need, keyed by node_uuid — built from the flow JSON on
- *  the run path (the flow walk moved to agent-runner, so there is no FlowGraph here anymore). */
-export type NodeConfigIndex = Map<
+ *  the run path. */
+export type NodeConfigIndex = ReadonlyMap<
   string,
   { config: Record<string, unknown> | null; configName: string; metaName: string }
 >;

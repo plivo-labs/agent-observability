@@ -1,10 +1,8 @@
 // AO Simulation Engine — turn-loop orchestrator (the ScenarioRunner).
 //
-// The flow walk moved to agent-runner (SER-6447): AO no longer parses the graph, resolves
-// edges, or mocks non-AI nodes. It sends the canonical `flow` + `world_state` per turn and
-// agent-runner owns entry resolution, edge resolution, branch evaluation, mocked-node
-// execution and the stop reasons. AO keeps the OUTER loop: the user-simulator (+ stress) and
-// the transcript/eval/DB bookkeeping.
+// agent-runner owns the flow walk: entry resolution, edge resolution, branch evaluation, mocked-
+// node execution and the stop reasons. AO sends the canonical `flow` + `world_state` per turn and
+// keeps the OUTER loop — the user-simulator (+ stress) and the transcript/eval/DB bookkeeping.
 //
 // Per turn agent-runner returns the speaker (`turn_node_uuid`, the transcript/judge key), the
 // node AFTER the walk (`node_uuid`, threaded into the next request), the transitions it took
@@ -37,7 +35,8 @@ import {
 import { emitScenarioStarted, emitScenarioDbReady, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
 import { insertRunScenario, completeRunScenario } from "../db.js";
-import { evaluateSimulationForRun, type NodeConfigIndex } from "../../evals-engine/integration/sim-adapter.js";
+import { evaluateSimulationForRun } from "../../evals-engine/integration/sim-adapter.js";
+import { flowHasOutboundCall } from "../gen/inventory.js";
 import type { EvalTurn } from "../../evals-engine/index.js";
 
 type Scenario = z.infer<typeof ScenarioSchema>;
@@ -173,7 +172,7 @@ class ScenarioRunner {
   private lastTurnWasInterruption = false;
   private lastTurnWasNonAnswer = false;
   /** Whether the next stateless call is a greeting (empty caller line so the new node speaks). The
-   *  first call is a greeting: agent-runner resolves entry and the landing node opens (D8/§9). */
+   *  first call is a greeting: agent-runner resolves entry and the landing node opens. */
   private pendingGreeting = true;
   /** The stress applied to the caller message the NEXT recorded turn carries. */
   private stress: StressState = NO_STRESS;
@@ -206,7 +205,7 @@ class ScenarioRunner {
     return TASK_UNIT_TYPES.has(this.nodeType(nodeUuid));
   }
 
-  /** Base request body — the exact SimTurnRequest fields (no dead agent_config / is_interruption).
+  /** Base request body — the exact SimTurnRequest fields.
    *  `action_mocks` is omitted: agent-runner reads world_state[node].action_mocks itself. */
   private buildReq(overrides: Partial<SimTurnRequest>): SimTurnRequest {
     return {
@@ -294,8 +293,7 @@ class ScenarioRunner {
   }
 
   /** Generate the simulated caller's next line, applying non-answer / interruption stress on the
-   *  simulator's side only (agent-runner no longer carries these on the wire). Stashes the stress
-   *  state so the resulting turn records it. */
+   *  simulator's side only. Stashes the stress state so the resulting turn records it. */
   private async userSimTurn(): Promise<string> {
     let isInterruption = false;
     let isNonAnswer = false;
@@ -402,7 +400,7 @@ class ScenarioRunner {
       this.stopReason = this.stopReason || "max_turns";
     } finally {
       this.livekit.forgetSession(sessionId);
-      // Evict the server-held session promptly (§3.2); best-effort, TTL covers a failure.
+      // Evict the server-held session promptly; best-effort, TTL covers a failure.
       await this.livekit.flowSessionEnd(sessionId);
     }
   }
@@ -521,23 +519,18 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     // AO keeps a slim flow parse on the run path: the node-type index (stateless vs flow-session
     // routing + the judge config index) and the outbound-call flag for the user-simulator.
     const nodeIndex = buildNodeIndex(flowObj);
-    const isOutboundCall = [...nodeIndex.values()].some(
-      (n) => n.type === "initiate_call" || n.type === "outbound_screening" || n.type === "contact_screening",
-    );
+    const isOutboundCall = flowHasOutboundCall(flowObj);
 
     const runner = new ScenarioRunner({ ...deps, livekit: client }, job, flowObj, nodeIndex, flowRunUuid, isOutboundCall);
     const result = await runner.run();
 
     // Skip judges on a 0-turn run (entry resolved straight to a terminal/abort — no conversation).
-    const configIndex: NodeConfigIndex = new Map(
-      [...nodeIndex].map(([id, n]) => [id, { config: n.config, configName: n.configName, metaName: n.metaName }]),
-    );
     const evalOutcome =
       result.turnCount === 0
         ? {}
         : await evaluateSimulationForRun({
             turns: result.evalTurns,
-            nodeIndex: configIndex,
+            nodeIndex,
             flowObj,
             variablesByNode: result.variablesByNode,
             scenarioId: job.scenarioId,

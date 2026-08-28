@@ -1,8 +1,8 @@
-// AO Simulation Engine — agent-runner simulation client (SER-6447).
+// AO Simulation Engine — agent-runner simulation client.
 //
-// The flow walk now lives in agent-runner: AO sends the canonical `flow` + `world_state`
-// per turn and agent-runner owns entry resolution, edge resolution, branch evaluation and
-// non-AI node execution. This one client wraps the four surfaces AO drives:
+// agent-runner owns the flow walk (entry resolution, edge resolution, branch evaluation, non-AI
+// node execution); AO sends the canonical `flow` + `world_state` per turn. This one client wraps
+// the four surfaces AO drives:
 //   - turn()                       POST /v1/simulation/session/turn        (stateless ai_agent_v2 turn)
 //   - flowSessionStart/Turn/End()  POST /v1/simulation/flow-session/{...}  (server-held task units)
 //   - inventory()                  POST /v1/simulation/flow/inventory      (generator dry-run, no LLM)
@@ -13,7 +13,6 @@
 
 import { simEngineConfig } from "../config.js";
 import type { FlowInventory } from "../gen/inventory.js";
-import type { StopReason } from "./flow-types.js";
 
 const TURN_PATH = "/v1/simulation/session/turn";
 const FLOW_SESSION_START_PATH = "/v1/simulation/flow-session/start";
@@ -24,9 +23,8 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_ERROR_PREVIEW = 500;
 
 /** Request body for the /session/turn and /flow-session/* endpoints — the agent-runner
- *  `SimTurnRequest` (schema.py). `extra="forbid"` on the server, so no key outside this
- *  set may ever be sent (the old `agent_config` / `output_state_config` / `is_interruption`
- *  / `partial_assistant_message` fields are gone — agent-runner builds config from `flow`). */
+ *  `SimTurnRequest` (schema.py). `extra="forbid"` on the server, so no key outside this set
+ *  may ever be sent; agent-runner builds config from `flow`. */
 export interface SimTurnRequest {
   phlo_run_uuid: string;
   auth_id: string;
@@ -88,8 +86,17 @@ export interface SimResponse {
   variables_by_node: Record<string, Record<string, unknown>>;
 }
 
+/** Wire values agent-runner emits and AO persists verbatim to `ao_sim_run_scenario.stop_reason`. */
+export type StopReason =
+  | "end_conversation"
+  | "max_turns"
+  | "unknown_intent"
+  | "no_matching_edge"
+  | "unsupported_node_type"
+  | "error";
+
 /** Abort stop reasons — the ones that mean the scenario could not reach a judged outcome, so
- *  their `stop_detail` is written to `ao_sim_run_scenario.error` (D5). `end_conversation` and
+ *  their `stop_detail` is written to `ao_sim_run_scenario.error`. `end_conversation` and
  *  `max_turns` are NOT here: their rows keep `error = null` so they still count toward
  *  passed/failed (extractGoalPassed stops counting a row once `error` is non-null). */
 export const ABORT_STOP_REASONS: ReadonlySet<StopReason> = new Set<StopReason>([
