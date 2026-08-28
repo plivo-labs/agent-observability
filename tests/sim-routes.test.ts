@@ -4,9 +4,9 @@ import * as genMod from "../src/sim-engine/gen/generate.js";
 import { Hono } from "hono";
 import { registerSimulationRoutes } from "../src/sim-engine/routes.js";
 
-// SER-6447: the generate route dry-runs the flow through agent-runner's inventory ONCE, pre-stream,
-// and refuses an unsimulatable flow. Spied so it needs neither agent-runner nor an LLM (restored
-// in afterAll so the stubs don't leak to sibling files).
+// The generate route dry-runs the flow through agent-runner's inventory ONCE, pre-stream, and
+// refuses an unsimulatable flow. Spied so it needs neither agent-runner nor an LLM (restored in
+// afterAll so the stubs don't leak to sibling files).
 const realShape = (await import("./fixtures/flow-real-shape.json")).default;
 
 const SIMULATABLE = {
@@ -18,6 +18,7 @@ const SIMULATABLE = {
 let inventory: any = SIMULATABLE;
 let inventoryCalls = 0;
 let inventoryThrows = false;
+let genArg: any;
 spyOn(lkMod, "makeLiveKitSimClient").mockReturnValue({
   inventory: async () => {
     inventoryCalls += 1;
@@ -25,7 +26,8 @@ spyOn(lkMod, "makeLiveKitSimClient").mockReturnValue({
     return inventory;
   },
 } as any);
-spyOn(genMod, "generateScenarios").mockImplementation(async function* () {
+spyOn(genMod, "generateScenarios").mockImplementation(async function* (opts: any) {
+  genArg = opts;
   yield { type: "metadata", metadata: { saved_count: 0, requested_count: 0, planned_count: 0, failed_count: 0, failed_slot_ids: [], partial_success: false, planner_usage: null, writer_usages: [] } } as any;
 });
 afterAll(() => mock.restore());
@@ -47,6 +49,7 @@ beforeEach(() => {
   inventory = SIMULATABLE;
   inventoryCalls = 0;
   inventoryThrows = false;
+  genArg = undefined;
 });
 
 describe("generate route — inventory gate (SER-6447)", () => {
@@ -72,5 +75,6 @@ describe("generate route — inventory gate (SER-6447)", () => {
     expect(res.status).toBe(200);
     await res.text(); // drain the SSE body
     expect(inventoryCalls).toBe(1);
+    expect(genArg.inventory).toBe(inventory);
   });
 });
