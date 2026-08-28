@@ -1,7 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
   flowHasOutboundCall,
-  extractAvailableLanguages,
   extractStartNodePayloadKeys,
   extractEmbeddedActions,
   containsOutOfScopeRouteTerm,
@@ -9,9 +8,9 @@ import {
   nodeConfig,
 } from "../src/sim-engine/gen/inventory.js";
 
-// SER-6447: the mechanical inventory (nodes / routes / variables / support) is built by the
-// agent-runner walker now and covered by its own tests. What stays in AO are the flow-shaping
-// helpers the writer + planner read directly off the flow JSON — exercised here.
+// The mechanical inventory (nodes / routes / variables / support) is built by the agent-runner
+// walker and covered by its own tests. What stays in AO are the flow-shaping helpers the writer +
+// planner read directly off the flow JSON — exercised here.
 
 describe("flowHasOutboundCall (SER-6070)", () => {
   test("composite-only screening flow counts as outbound", () => {
@@ -26,16 +25,6 @@ describe("flowHasOutboundCall (SER-6070)", () => {
   });
   test("chat-only flow stays inbound", () => {
     expect(flowHasOutboundCall({ nodes: [{ id: "a", type: "ai_agent_v2" }] })).toBe(false);
-  });
-});
-
-describe("extractAvailableLanguages", () => {
-  test("reads voice_ai_config.language (camel or snake settings key)", () => {
-    expect(extractAvailableLanguages({ agentSettings: { voice_ai_config: { language: "en-US" } } })).toEqual(["en-US"]);
-    expect(extractAvailableLanguages({ agent_settings: { voice_ai_config: { language: "es-ES" } } })).toEqual(["es-ES"]);
-  });
-  test("no language configured → empty", () => {
-    expect(extractAvailableLanguages({ agentSettings: {} })).toEqual([]);
   });
 });
 

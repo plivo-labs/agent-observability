@@ -3,12 +3,12 @@ import { isRecord } from "../json.js";
 
 // AO Simulation Engine — flow-shaping helpers + the agent-runner inventory contract.
 //
-// The mechanical inventory (reachable AI nodes, routes, mockable-outcome handles, terminals,
-// the simulatable verdict) is built by agent-runner's walker now (SER-6447) — AO fetches it
-// via LiveKitSimClient.inventory() and threads it through the planner/allocator/writer. What
-// stays here are the flow-shaping helpers the writer + planner still read directly off the
-// canonical flow JSON (embedded actions, languages, start-node params, outbound detection,
-// node name/config, the out-of-scope route-term filter), plus the shared inventory types.
+// agent-runner builds the mechanical inventory (reachable AI nodes, routes, mockable-outcome
+// handles, terminals, the simulatable verdict); AO fetches it via LiveKitSimClient.inventory()
+// and threads it through the planner/allocator/writer. This module also holds the flow-shaping
+// helpers the writer + planner read directly off the canonical flow JSON (embedded actions,
+// start-node params, outbound detection, node name/config, the out-of-scope route-term filter),
+// plus the shared inventory types.
 
 export interface FlowInventoryNode {
   id: string;
@@ -63,8 +63,7 @@ export interface EmbeddedActionsNode {
 }
 
 /** A mockable non-AI node with its real outcome handles (branch aliases, http states, screening
- *  dispositions, …) — the fix for the branch-pin gap (the old MOCKABLE_NODE_REGISTRY shipped
- *  branch_v2 with `fixed_outcomes: []`). Fed to the writer so it can pin a valid outcome per node. */
+ *  dispositions, …). Fed to the writer so it can pin a valid outcome per node. */
 export interface MockableNode {
   node_uuid: string;
   name: string;
@@ -206,13 +205,6 @@ const OUTBOUND_CALL_NODE_TYPES = new Set(["initiate_call", "outbound_screening",
 
 export function flowHasOutboundCall(flow: Dict): boolean {
   return ((flow.nodes as Dict[]) || []).some((n) => isObj(n) && OUTBOUND_CALL_NODE_TYPES.has(n.type as string));
-}
-
-export function extractAvailableLanguages(flow: Dict): string[] {
-  const agentSettings = (isObj(flow.agentSettings) && flow.agentSettings) || (isObj(flow.agent_settings) && flow.agent_settings) || {};
-  const vac = isObj(agentSettings.voice_ai_config) ? agentSettings.voice_ai_config : {};
-  const lang = vac.language || "";
-  return lang ? [lang] : [];
 }
 
 export function extractStartNodePayloadKeys(flow: Dict): string[] {

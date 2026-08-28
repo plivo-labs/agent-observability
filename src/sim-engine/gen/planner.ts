@@ -1,7 +1,7 @@
 import { completeJSON, type LlmProvider, type LlmUsage, type WireReasoningEffort } from "../../llm/index.js";
 import { PlannerOutputZ, PLANNER_SCHEMA_NAME, PLANNER_JSON_SCHEMA } from "./schemas.js";
 import { plannerSystemPrompt } from "./prompts.js";
-import { containsOutOfScopeRouteTerm, type FlowInventory, type MechanicalInventory } from "./inventory.js";
+import { containsOutOfScopeRouteTerm, type FlowInventory } from "./inventory.js";
 import { routeId } from "./allocator.js";
 import { EXECUTABLE_NODE_TYPES, SUPPORTED_TERMINAL_NODE_TYPES, BLOCKED_NODE_TYPES, CONVERSATION_PATTERNS, PLANNER_MAX_OUTPUT_TOKENS, MAX_EXISTING_SCENARIO_SUMMARIES } from "./combos.js";
 import type { PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -18,7 +18,7 @@ const sortedArr = (s: Iterable<string>) => [...s].sort();
 /** Build the user payload sent to the planner LLM (mirrors `_plan_capabilities`). */
 export function buildPlannerPayload(
   flowJson: Dict,
-  inventory: MechanicalInventory,
+  inventory: FlowInventory,
   phloUuid: string,
   existingSummaries: ExistingScenarioSummary[],
   userInstructions: string,

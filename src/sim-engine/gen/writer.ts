@@ -14,9 +14,7 @@ import {
 } from "./combos.js";
 import {
   extractEmbeddedActions,
-  extractAvailableLanguages,
   extractStartNodePayloadKeys,
-  flowHasOutboundCall,
   nodeName,
   nodeConfig,
 } from "./inventory.js";
@@ -410,12 +408,12 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
       nodes: writerContextNodes(flowJson, slots),
       embedded_actions: extractEmbeddedActions(flowJson),
       // Per-node mockable outcome handles from the agent-runner inventory — this is what carries
-      // real branch aliases (the old registry shipped branch_v2 with fixed_outcomes: []), so the
-      // writer can pin a valid outcome per node and stop defaulting branches to no_match.
-      mockable_nodes: planner.mechanical_inventory?.mockable_nodes ?? [],
-      available_languages: extractAvailableLanguages(flowJson),
+      // real branch aliases, so the writer can pin a valid outcome per node and stop defaulting
+      // branches to no_match.
+      mockable_nodes: planner.mechanical_inventory.mockable_nodes ?? [],
+      available_languages: planner.mechanical_inventory.languages,
       start_node_param_keys: startNodeParamKeys,
-      is_outbound_call: flowHasOutboundCall(flowJson),
+      is_outbound_call: planner.mechanical_inventory.is_outbound_call,
       planner_rationale: planner.planner_rationale,
     },
     slots,
