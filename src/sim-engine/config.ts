@@ -91,7 +91,7 @@ export const simEngineConfig = {
   writerReasoningEffort: config.SIM_EVAL_WRITER_REASONING_EFFORT,
   /** Redis key prefix (default SIM_EVAL = the orchestrator service in the managed deployment; override for OSS). */
   simRedisPrefix: config.SIM_REDIS_PREFIX,
-  /** agent runtime base URL; the engine POSTs /v1/simulation/session/turn here. */
+  /** agent runtime base URL; the engine POSTs /v1/simulation/turn here. */
   livekitSimTurnUrl: config.LIVEKIT_SIM_TURN_URL,
   /** Optional Basic-auth creds for the /turn endpoint (empty → unauthenticated). */
   livekitSimTurnUser: config.LIVEKIT_SIM_TURN_USER,
