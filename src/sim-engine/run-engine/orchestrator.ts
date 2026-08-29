@@ -1,16 +1,14 @@
 // AO Simulation Engine — turn-loop orchestrator (the ScenarioRunner).
 //
-// agent-runner owns the flow walk: entry resolution, edge resolution, branch evaluation, mocked-
-// node execution and the stop reasons. AO sends the canonical `flow` + `world_state` per turn and
-// keeps the OUTER loop — the user-simulator (+ stress) and the transcript/eval/DB bookkeeping.
+// agent-runner owns the run: the flow walk (entry resolution, edge resolution, branch evaluation,
+// mocked-node execution), node identity, span switching, turn counting and all conversation state.
+// AO holds one run per scenario (keyed by phlo_run_uuid) and keeps the OUTER loop — the
+// user-simulator (+ stress) and the transcript/eval/DB bookkeeping.
 //
 // Per turn agent-runner returns the speaker (`turn_node_uuid`, the transcript/judge key), the
-// node AFTER the walk (`node_uuid`, threaded into the next request), the transitions it took
-// (for nodes_visited), and — once the flow terminates — `ended` + `stop_reason` + `stop_detail`.
-//
-// Two surfaces: stateless `turn()` for ai_agent_v2, and the server-held flow-session endpoints
-// for task units (contact_screening / outbound_screening / agent_node), which run multi-turn
-// on one container and, on the unit's exit, return the landing node the walk resolved.
+// transitions it took (for nodes_visited), `next_speaker` (whether AO sends a caller line or an
+// empty greeting next), and — once the flow terminates — `ended` + `stop_reason` + `stop_detail`.
+// AO threads none of the walk state back; it only reads response fields.
 
 import type { z } from "zod";
 import type { RedisClient } from "../queue/redis.js";
@@ -18,6 +16,7 @@ import type { LlmProvider, WireReasoningEffort } from "../../llm/index.js";
 import { Scenario as ScenarioSchema } from "../schema.js";
 import {
   LiveKitSimClient,
+  LiveKitSimError,
   makeLiveKitSimClient,
   ABORT_STOP_REASONS,
   type SimTurnRequest,
@@ -40,9 +39,6 @@ import { flowHasOutboundCall } from "../gen/inventory.js";
 import type { EvalTurn } from "../../evals-engine/index.js";
 
 type Scenario = z.infer<typeof ScenarioSchema>;
-
-/** Task-unit node types: driven by the server-held flow-session endpoints, not stateless turns. */
-const TASK_UNIT_TYPES: ReadonlySet<string> = new Set(["contact_screening", "outbound_screening", "agent_node"]);
 
 /** Dependencies the runner needs; all injectable so the turn loop is testable without prod wiring. */
 export interface ScenarioRunnerDeps {
@@ -88,8 +84,8 @@ function deepCopy<T>(v: T): T {
   return JSON.parse(JSON.stringify(v ?? null)) as T;
 }
 
-/** Slim per-node view AO keeps from the flow JSON: node type (stateless vs flow-session routing)
- *  + the judge index fields. Node config lives under `data.config`, meta name under `data.meta`. */
+/** Slim per-node view AO keeps from the flow JSON: node type + the judge index fields. Node
+ *  config lives under `data.config`, meta name under `data.meta`. */
 interface NodeInfo {
   type: string;
   config: Record<string, unknown> | null;
@@ -138,10 +134,9 @@ interface StressState {
 const NO_STRESS: StressState = { isInterruption: false, isNonAnswer: false, nonAnswerType: "", partialAssistantMsg: "" };
 
 /**
- * One instance per scenario. Drives the user-simulator loop against agent-runner: it threads
- * the walk state agent-runner round-trips (node_uuid / node_run_uuid / turn_count /
- * variables_by_node / context_items), keys the transcript on the SPEAKING node, and stops when
- * agent-runner reports `ended`.
+ * One instance per scenario. Drives the user-simulator loop against agent-runner (which owns the
+ * run): it keys the transcript on the SPEAKING node, sends an empty caller line whenever
+ * agent-runner reports `next_speaker: "agent"`, and stops when agent-runner reports `ended`.
  */
 class ScenarioRunner {
   private readonly redis: RedisClient;
@@ -151,12 +146,10 @@ class ScenarioRunner {
   private readonly llmModel?: string;
   private readonly llmReasoningEffort?: WireReasoningEffort;
 
-  // Walk state threaded to agent-runner. node_uuid "" ⇒ the first call resolves entry from Start.
-  private nodeUuid = "";
-  private nodeRunUuid = "";
+  // Read (never threaded back) from each response: turn_count gates the pre-turn max_turns check
+  // and rides into the DB row; variables_by_node feeds the transcript snapshot + the judges.
   private turnCount = 0;
   private variablesByNode: Record<string, Record<string, unknown>> = {};
-  private contextItems: unknown[] = [];
 
   // Terminal state, set from the agent-runner response that reports `ended`.
   private ended = false;
@@ -171,8 +164,9 @@ class ScenarioRunner {
   private turnIndex = 0;
   private lastTurnWasInterruption = false;
   private lastTurnWasNonAnswer = false;
-  /** Whether the next stateless call is a greeting (empty caller line so the new node speaks). The
-   *  first call is a greeting: agent-runner resolves entry and the landing node opens. */
+  /** Whether the next call sends an empty caller line so the landed node speaks first. Initially
+   *  true: the first call is a greeting (agent-runner resolves entry and the landing node opens);
+   *  thereafter it tracks the response's `next_speaker`. */
   private pendingGreeting = true;
   /** The stress applied to the caller message the NEXT recorded turn carries. */
   private stress: StressState = NO_STRESS;
@@ -197,14 +191,6 @@ class ScenarioRunner {
     this.hardCap = Math.max(50, this.job.maxTurns * 3);
   }
 
-  private nodeType(nodeUuid: string): string {
-    return this.nodeIndex.get(nodeUuid)?.type ?? "";
-  }
-
-  private isTaskUnit(nodeUuid: string): boolean {
-    return TASK_UNIT_TYPES.has(this.nodeType(nodeUuid));
-  }
-
   /** Base request body — the exact SimTurnRequest fields.
    *  `action_mocks` is omitted: agent-runner reads world_state[node].action_mocks itself. */
   private buildReq(overrides: Partial<SimTurnRequest>): SimTurnRequest {
@@ -215,11 +201,6 @@ class ScenarioRunner {
       world_state: this.job.scenario.world_state as Record<string, unknown>,
       start_node_params: (this.job.scenario.start_node_params ?? {}) as Record<string, unknown>,
       max_turns: this.job.maxTurns,
-      node_uuid: this.nodeUuid,
-      node_run_uuid: this.nodeRunUuid,
-      turn_count: this.turnCount,
-      context_items: this.contextItems,
-      variables_by_node: this.variablesByNode,
       ...overrides,
     };
   }
@@ -231,16 +212,6 @@ class ScenarioRunner {
       for (const hop of tr.via ?? []) if (hop.node_uuid) this.nodesVisited.add(hop.node_uuid);
       if (tr.to_node_uuid) this.nodesVisited.add(tr.to_node_uuid);
     }
-  }
-
-  /** Thread the walk state agent-runner round-trips. Never zero contextItems on an empty
-   *  response (the flow-session opener returns none — the held session keeps its own context). */
-  private threadState(resp: SimResponse): void {
-    if (resp.node_uuid) this.nodeUuid = resp.node_uuid;
-    if (resp.node_run_uuid) this.nodeRunUuid = resp.node_run_uuid;
-    this.turnCount = resp.turn_count;
-    if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
-    if (Array.isArray(resp.context_items) && resp.context_items.length > 0) this.contextItems = resp.context_items;
   }
 
   private applyStop(resp: SimResponse): void {
@@ -358,68 +329,14 @@ class ScenarioRunner {
     return userMsg;
   }
 
-  /** Drive one server-held task unit start→turn*→exit. On exit the walk's landing node is threaded
-   *  and the outer loop resumes there (a stateless ai node, or another task unit). */
-  private async driveTaskUnit(): Promise<void> {
-    const node = this.nodeUuid;
-    const sessionId = `${this.flowRunUuid}:fs:${node}`;
-    try {
-      const startResp = await this.livekit.flowSessionStart(
-        this.buildReq({ node_uuid: node, simulation_session_id: sessionId }),
-      );
-      this.recordTransitions(startResp.transitions);
-      await this.recordTurn(startResp, ""); // the unit's opener (skipped if silent)
-      // The opener neither advances the walk nor counts as a turn: the held session owns node
-      // identity + context, and its turn_count on the start response is a placeholder default —
-      // capture only the seeded variables, NOT the count (threadState would reset it mid-flow).
-      if (startResp.variables_by_node != null) this.variablesByNode = startResp.variables_by_node;
-      if (startResp.node_run_uuid) this.nodeRunUuid = startResp.node_run_uuid;
-
-      let iterations = 0;
-      while (!this.ended && iterations++ < this.hardCap) {
-        const userMsg = await this.userSimTurn();
-        const resp = await this.livekit.flowSessionTurn(
-          this.buildReq({ node_uuid: node, simulation_session_id: sessionId, user_message: userMsg }),
-        );
-        await this.recordTurn(resp, userMsg);
-        this.recordTransitions(resp.transitions);
-        if (resp.ended) {
-          this.applyStop(resp);
-          return;
-        }
-        if (resp.node_uuid && resp.node_uuid !== node) {
-          // The unit exited to another node; agent-runner evicted the session.
-          this.threadState(resp);
-          this.pendingGreeting = !this.isTaskUnit(resp.node_uuid);
-          return;
-        }
-        this.threadState(resp);
-      }
-      // The cap tripped without the unit exiting — stop the run (a normal exit returns above).
-      this.ended = true;
-      this.stopReason = this.stopReason || "max_turns";
-    } finally {
-      this.livekit.forgetSession(sessionId);
-      // Evict the server-held session promptly; best-effort, TTL covers a failure.
-      await this.livekit.flowSessionEnd(sessionId);
-    }
-  }
-
   async run(): Promise<RunResult> {
     // Bound on iterations, NOT turnIndex: a silent transition doesn't advance turnIndex, so a
     // stream of empty responses would spin forever if the cap keyed on it.
     let iterations = 0;
     while (!this.ended && iterations++ < this.hardCap) {
-      // A task-unit node is driven by the flow-session sub-loop (never a stateless turn).
-      if (this.nodeUuid !== "" && this.isTaskUnit(this.nodeUuid)) {
-        await this.driveTaskUnit();
-        continue;
-      }
-
-      const isEntryCall = this.nodeUuid === "";
       // Stop before spending a user-simulator call that agent-runner would immediately reject:
-      // max_turns is enforced by AR from the round-tripped turn_count, so a non-greeting turn at
-      // the cap is a wasted LLM call + a trailing empty agent turn.
+      // max_turns is enforced by AR from turn_count, so a non-greeting turn at the cap is a
+      // wasted LLM call + a trailing empty agent turn.
       if (!this.pendingGreeting && this.turnCount >= this.job.maxTurns) {
         this.ended = true;
         this.stopReason = "max_turns";
@@ -428,29 +345,15 @@ class ScenarioRunner {
       const userMsg = this.pendingGreeting ? "" : await this.userSimTurn();
       const resp = await this.livekit.turn(this.buildReq({ user_message: userMsg }));
       this.recordTransitions(resp.transitions);
-
-      // Entry landed on a task unit: the stateless endpoint can't host a server-held unit, so
-      // agent-runner returns just the landing (no turn, no transitions — those are reported by
-      // the flow-session start, which re-resolves entry). Thread the seeded mocked-hop variables
-      // and drive the unit via the flow-session endpoints on the next iteration.
-      if (isEntryCall && resp.node_uuid && this.isTaskUnit(resp.node_uuid)) {
-        this.nodeUuid = resp.node_uuid;
-        this.nodeRunUuid = resp.node_run_uuid; // agent-runner owns node identity; thread it as-is
-        if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
-        this.pendingGreeting = false;
-        continue;
-      }
-
       await this.recordTurn(resp, userMsg);
-      this.threadState(resp);
+      this.turnCount = resp.turn_count;
+      if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
       if (resp.ended) {
         this.applyStop(resp);
         break;
       }
-      // The walk advanced to a new node this turn: a new ai node speaks first (greeting next); a
-      // task-unit landing is handled by the loop-top flow-session branch (its unit speaks first).
-      const advanced = resp.node_uuid !== resp.turn_node_uuid;
-      this.pendingGreeting = advanced && !this.isTaskUnit(resp.node_uuid);
+      // agent-runner tells AO who speaks next: "agent" ⇒ a landed node opens (empty caller line).
+      this.pendingGreeting = resp.next_speaker === "agent";
     }
 
     if (!this.ended) {
@@ -473,7 +376,7 @@ class ScenarioRunner {
 
 /**
  * Run one scenario end-to-end: emit scenario_started, drive the user-simulator loop against
- * agent-runner (which owns the walk), then emit scenario_completed. Never throws — a failure is
+ * agent-runner (which owns the run), then emit scenario_completed. Never throws — a failure is
  * surfaced as a scenario_completed(error) event + the error-shaped DB row.
  */
 export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<void> {
@@ -516,8 +419,8 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     } catch (err) {
       throw new Error(`invalid flow JSON: ${err instanceof Error ? err.message : String(err)}`);
     }
-    // AO keeps a slim flow parse on the run path: the node-type index (stateless vs flow-session
-    // routing + the judge config index) and the outbound-call flag for the user-simulator.
+    // AO keeps a slim flow parse on the run path: the node index (judge config lookup) and the
+    // outbound-call flag for the user-simulator.
     const nodeIndex = buildNodeIndex(flowObj);
     const isOutboundCall = flowHasOutboundCall(flowObj);
 
@@ -572,11 +475,16 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const runLost = err instanceof LiveKitSimError && err.runLost;
+    // Best-effort early teardown so a mid-run failure doesn't leave the run held on its owner
+    // until TTL (a run_lost owner is already gone — end() no-ops on the dead address).
+    await client.end(flowRunUuid);
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,
       flow_run_uuid: flowRunUuid,
       stop_reason: "error",
       error: message,
+      ...(runLost ? { stop_detail: "run_lost" } : {}),
     });
     await persistSafe("completeRunScenario(error)", () =>
       completeRunScenario({
@@ -592,6 +500,4 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
       }),
     );
   }
-  // No cookie-jar cleanup here: stateless turns store no cookies, and each task-unit flow-session
-  // forgets its own `:fs:` jar in driveTaskUnit.
 }
