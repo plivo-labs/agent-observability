@@ -378,8 +378,10 @@ class ScenarioRunner {
 
   /** Whole-run route assertion (no LLM): after the loop, if the scenario declares an
    *  expected_route_outcome, pass iff some observed turn fired the expected intent at the source
-   *  node and the walk landed on the target. A failure on an otherwise-normal completion becomes
-   *  route_mismatch; a walker abort is never masked. */
+   *  node and the walk passed through the target — as the landing (`to_node_uuid`) or as a mocked
+   *  hop in `via` (the expected target is the edge's DIRECT target, e.g. an http node the walk
+   *  continues through). A failure on an otherwise-normal completion becomes route_mismatch; a
+   *  walker abort is never masked. */
   private assertRoute(): void {
     const expected = readExpectedRoute(this.job.scenario);
     if (!expected) return;
@@ -387,7 +389,9 @@ class ScenarioRunner {
       (o) =>
         o.speaker === expected.source &&
         o.intent === expected.intent &&
-        o.transitions.some((t) => t.to_node_uuid === expected.target),
+        o.transitions.some(
+          (t) => t.to_node_uuid === expected.target || (t.via ?? []).some((v) => v.node_uuid === expected.target),
+        ),
     );
     if (passed || !ROUTE_ASSERTABLE_STOP_REASONS.has(this.stopReason)) return;
     this.stopReason = "route_mismatch";
@@ -400,7 +404,9 @@ class ScenarioRunner {
     if (atSource.length === 0) return "never reached";
     return atSource
       .map((o) => {
-        const targets = o.transitions.map((t) => t.to_node_uuid ?? "∅").join(",");
+        const targets = o.transitions
+          .map((t) => [...(t.via ?? []).map((v) => v.node_uuid), t.to_node_uuid ?? "∅"].join("→"))
+          .join(",");
         return `${o.intent || "(no intent)"} → ${targets || "(no transition)"}`;
       })
       .join("; ");

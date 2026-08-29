@@ -291,6 +291,21 @@ describe("whole-run route assertion", () => {
     expect(completeCalls[0].stopReason).toBe("route_mismatch");
   });
 
+  test("expected target reached as a mocked via hop counts as a match", async () => {
+    const client = new FakeClient([
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1", next_speaker: "caller" }),
+      resp({
+        turn_node_uuid: "A1", node_uuid: "END", turn_type: "speech", message: "", intent: "go_http", turn_count: 1,
+        ended: true, stop_reason: "end_conversation", next_speaker: "caller",
+        transitions: [{ from_node_uuid: "A1", handle: "h", via: [{ node_uuid: "HTTP", type: "http_request", outcome: "success" }], to_node_uuid: "END", to_type: "end_conversation" }],
+      }),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_http", target_node_id: "HTTP" }));
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("end_conversation");
+  });
+
   test("source never reached → route_mismatch with 'never reached'", async () => {
     const client = routeClient("go_a2", "A2");
     const events: Ev[] = [];
