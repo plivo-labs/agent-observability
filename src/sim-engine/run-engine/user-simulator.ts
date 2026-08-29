@@ -7,9 +7,7 @@
 // non-answer), language register, and STT-noise severity.
 //
 // The prompt is hand-rendered from the Go `.tmpl` structure (section order, headings,
-// conditional blocks). The old byte-for-byte parity pin against the dormant Go driver is
-// dropped — this file is the live surface, and the TARGET DETECTION / END CALL block below
-// has no Go counterpart.
+// conditional blocks); this file is the live surface and may diverge from the template.
 //
 // The LLM call REUSES AO's `completeJSON` (role "simulator"): one structured call returning
 // `{ message, target_achieved, end_call }` — the caller's next utterance plus the two turn
@@ -553,9 +551,8 @@ export function buildUserSimulatorPrompt(
 // LLM call (port of GenerateUserMessage)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Structured output — the caller's utterance plus the two turn decisions. `target_achieved`
- *  and `end_call` `.default(false)` so a bare `{ message }` reply (the older shape, and every
- *  bare-`{message}` test mock) still parses. */
+/** Structured output — the caller's utterance plus the two turn decisions. The flags default
+ *  to false so a bare `{ message }` reply still parses. */
 const UserMessageSchema = z.object({
   message: z.string(),
   target_achieved: z.boolean().default(false),
