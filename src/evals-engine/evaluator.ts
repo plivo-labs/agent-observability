@@ -28,6 +28,9 @@ export interface EvaluateSimulationOpts {
   acceptanceCriteria?: string[];
   /** Pass threshold for the criteria score (defaults to 0.7). */
   criteriaThreshold?: number;
+  /** Scenario simulation_mode: "smoke" (or absent) runs the goal judge leniently (today's
+   *  behaviour); "stress" runs it strictly. */
+  simulationMode?: string;
 }
 
 async function evaluateNode(
@@ -61,7 +64,9 @@ export async function evaluateSimulation(input: ConversationInput, opts: Evaluat
 
   const result: NodeGoalEvaluation = { node_evaluations };
   if (input.goals.length > 0) {
-    const { data } = await runGoalJudge(input.goals, input, opts.provider, true);
+    // smoke (or absent mode) → lenient (the SIMULATION CONTEXT rules); stress → strict.
+    const isSimulation = opts.simulationMode !== "stress";
+    const { data } = await runGoalJudge(input.goals, input, opts.provider, isSimulation);
     result.goal_evaluation = data;
   }
   if (opts.acceptanceCriteria && opts.acceptanceCriteria.length > 0) {

@@ -114,6 +114,15 @@ function readExpectedRoute(scenario: Scenario): ExpectedRoute | null {
   return { source, intent, target };
 }
 
+/** Read `eval_metadata.simulation_mode` off the passthrough scenario (gates goal-judge leniency:
+ *  smoke/missing → lenient, stress → strict). */
+function readSimulationMode(scenario: Scenario): string | undefined {
+  const em = (scenario as Record<string, unknown>).eval_metadata;
+  if (!em || typeof em !== "object") return undefined;
+  const mode = (em as Record<string, unknown>).simulation_mode;
+  return typeof mode === "string" ? mode : undefined;
+}
+
 /** Slim per-node view AO keeps from the flow JSON: node type + the judge index fields. Node
  *  config lives under `data.config`, meta name under `data.meta`. */
 interface NodeInfo {
@@ -531,6 +540,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
             provider: deps.llmProvider,
             acceptanceCriteria: job.scenario.acceptance_criteria,
             criteriaThreshold: job.scenario.criteria_threshold,
+            simulationMode: readSimulationMode(job.scenario),
           });
 
     const stopReason = result.stopReason || "end_conversation";

@@ -28,6 +28,8 @@ export interface EvaluateSimulationForRunArgs {
   acceptanceCriteria?: string[];
   /** Pass threshold for the criteria score (`scenario.criteria_threshold`). */
   criteriaThreshold?: number;
+  /** Scenario simulation_mode (`eval_metadata.simulation_mode`): gates goal-judge leniency. */
+  simulationMode?: string;
 }
 
 export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArgs): Promise<SimEvalOutcome> {
@@ -44,6 +46,7 @@ export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArg
       provider: args.provider,
       acceptanceCriteria: args.acceptanceCriteria,
       criteriaThreshold: args.criteriaThreshold,
+      simulationMode: args.simulationMode,
     });
     // Assemble in cx-sqs ConversationEvaluation key order: header → conversation_metrics → node →
     // goal → criteria (criteria_evaluation is AO-only, appended last).

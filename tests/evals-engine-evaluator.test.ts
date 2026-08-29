@@ -103,3 +103,26 @@ describe("evaluateSimulation", () => {
     await expect(evaluateSimulation(baseInput(), { provider: bad })).rejects.toThrow();
   });
 });
+
+describe("goal-judge leniency by simulation_mode", () => {
+  const withGoals = () => baseInput({ goals: [{ goal_name: "confirm", goal_instructions: "confirm the order", flow_goal_id: 3 }] });
+  const goalCallSystem = (llm: InstanceType<typeof MockLLM>) => llm.calls.find((c) => c.system.includes("configured goals were achieved"))!.system;
+
+  test("stress → strict goal judge (no SIMULATION CONTEXT block)", async () => {
+    const llm = new MockLLM([judgeResponder()]);
+    await evaluateSimulation(withGoals(), { provider: llm, simulationMode: "stress" });
+    expect(goalCallSystem(llm)).not.toContain("SIMULATION CONTEXT");
+  });
+
+  test("smoke → lenient goal judge (SIMULATION CONTEXT block present)", async () => {
+    const llm = new MockLLM([judgeResponder()]);
+    await evaluateSimulation(withGoals(), { provider: llm, simulationMode: "smoke" });
+    expect(goalCallSystem(llm)).toContain("SIMULATION CONTEXT");
+  });
+
+  test("missing mode → lenient (preserves today's behaviour)", async () => {
+    const llm = new MockLLM([judgeResponder()]);
+    await evaluateSimulation(withGoals(), { provider: llm });
+    expect(goalCallSystem(llm)).toContain("SIMULATION CONTEXT");
+  });
+});
