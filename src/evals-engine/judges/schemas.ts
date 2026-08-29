@@ -77,6 +77,20 @@ export const GOAL_JSON = strict(
   obj({ goals: arrayOf(obj({ goal_name: str, achieved: bool, reason: str, technical_reason: str })) }),
 );
 
+// ── criteria judge ─────────────────────────────────────────────────────────────────
+// `met` / `accuracy_score` are nullable (a conditional criterion whose precondition never
+// occurred returns applicable:false with both null). Strict mode requires every key + no extras.
+const boolOrNull = { type: ["boolean", "null"] } as const;
+const numOrNull = { type: ["number", "null"] } as const;
+export const CRITERIA_JSON = strict(
+  "eval_criteria",
+  obj({
+    criteria: arrayOf(
+      obj({ id: int, description: str, applicable: bool, met: boolOrNull, accuracy_score: numOrNull, evidence: str }),
+    ),
+  }),
+);
+
 // ── conversation-axis judges (detection / sentiment / stt) ──────────────────────
 // Sentiment is enum-constrained (strict JSON schema + Zod) so the model can't
 // emit an off-enum value that the producer's pass rule and the console's

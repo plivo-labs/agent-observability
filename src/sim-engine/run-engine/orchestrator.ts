@@ -529,6 +529,8 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
             flowUuid: [flowObj.flow_uuid, flowObj.uuid].find((v): v is string => typeof v === "string") ?? job.simRunUuid,
             runUuid: flowRunUuid,
             provider: deps.llmProvider,
+            acceptanceCriteria: job.scenario.acceptance_criteria,
+            criteriaThreshold: job.scenario.criteria_threshold,
           });
 
     const stopReason = result.stopReason || "end_conversation";

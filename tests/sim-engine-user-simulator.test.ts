@@ -49,6 +49,8 @@ function scenario(
     start_node_params: {},
     max_turns: 25,
     tags: [],
+    acceptance_criteria: [],
+    criteria_threshold: 0.7,
     ...rest,
     persona,
   } as Scenario;

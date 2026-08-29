@@ -194,6 +194,14 @@ export function validateAndFixScenario(
   if (scenario.start_node_params == null) scenario.start_node_params = {};
   if (scenario.tags == null) scenario.tags = [];
 
+  // Assertion inputs (carried onto the runtime scenario for the criteria judge): keep only
+  // non-blank strings, clamp the threshold into [0,1] and default a missing/garbage one to 0.7.
+  scenario.acceptance_criteria = Array.isArray(scenario.acceptance_criteria)
+    ? scenario.acceptance_criteria.filter((c: unknown) => typeof c === "string" && c.trim() !== "")
+    : [];
+  const threshold = Number(scenario.criteria_threshold);
+  scenario.criteria_threshold = Number.isFinite(threshold) ? Math.max(0, Math.min(1, threshold)) : 0.7;
+
   const persona: Dict = isObj(scenario.persona) ? scenario.persona : {};
   scenario.persona = persona;
   if (persona.details == null) persona.details = {};

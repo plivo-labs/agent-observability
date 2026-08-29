@@ -110,6 +110,10 @@ export const Scenario = z
     start_node_params: z.record(z.string(), z.unknown()).default({}),
     max_turns: z.number().int().min(1).max(200).default(25),
     tags: z.array(z.string()).default([]),
+    // AO-side assertion inputs (the worker ignores them): checkable statements about the AGENT's
+    // behaviour the criteria judge scores per-run, and the min()-aggregate pass threshold.
+    acceptance_criteria: z.array(z.string()).default([]),
+    criteria_threshold: z.number().min(0).max(1).default(0.7),
   })
   .passthrough();
 export type Scenario = z.infer<typeof Scenario>;

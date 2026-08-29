@@ -91,6 +91,9 @@ export interface RuntimeScenario {
   stt_noise: { enabled: boolean; severity: string };
   non_answer: { enabled: boolean; probability: number };
   tags: string[];
+  /** AO-side criteria-judge inputs (validate_and_fix carries them off the writer output). */
+  acceptance_criteria: string[];
+  criteria_threshold: number;
   eval_metadata?: EvalMetadata;
   agent_flow_description?: string;
 }

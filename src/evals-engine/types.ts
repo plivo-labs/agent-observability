@@ -213,6 +213,26 @@ export interface GoalEvaluation {
   goals: GoalResult[];
 }
 
+/** One scenario acceptance criterion scored by the criteria judge. `met`/`accuracy_score` are
+ *  null for a conditional criterion whose precondition never occurred (`applicable: false`),
+ *  which is excluded from the aggregate. */
+export interface CriterionResult {
+  id: number;
+  description: string;
+  applicable: boolean;
+  met: boolean | null;
+  accuracy_score: number | null;
+  evidence: string;
+}
+/** The per-scenario criteria verdict stored inside `evaluation.criteria_evaluation`: the
+ *  min()-aggregated score over applicable criteria and whether it clears the threshold. */
+export interface CriteriaEvaluationResult {
+  threshold: number;
+  score: number;
+  passed: boolean;
+  criteria: CriterionResult[];
+}
+
 // ── conversation-level metrics ────────────────────────────────────────────────
 // The node/goal path leaves these zero-valued; the conversation judges populate
 // the real values when scoring the whole-transcript axis.
@@ -262,12 +282,15 @@ export interface SimConversationMetrics {
   user_never_spoke: CmDetection;
 }
 
-/** What `evaluateSimulation` returns: the node + goal axes only.
+/** What `evaluateSimulation` returns: the node + goal (+ optional criteria) axes.
  *  The run-path adapter wraps this into the emitted `EvaluationResult`. */
 export interface NodeGoalEvaluation {
   node_evaluations: NodeEvaluation[];
   /** Omitted when no goals are configured (UI: "No goals configured"). */
   goal_evaluation?: GoalEvaluation;
+  /** Omitted when the scenario declares no acceptance_criteria. When present it is authoritative
+   *  for pass/fail (see extractGoalPassed) over the flow goals. */
+  criteria_evaluation?: CriteriaEvaluationResult;
 }
 
 /** The `evaluation` payload attached to `scenario_completed`: a wrapper header +

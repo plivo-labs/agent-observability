@@ -156,8 +156,29 @@ export const WRITER_JSON_SCHEMA: Record<string, unknown> = {
                   'JSON-encoded object of start_node trigger parameter values, keyed by parameter name. Use "{}" if no start node params are required.',
               },
               tags: { type: "array", items: { type: "string" } },
+              acceptance_criteria: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "3-6 checkable statements about the AGENT's behaviour, each with quotable transcript evidence. Conditional criteria are phrased 'If X, then Y'.",
+              },
+              criteria_threshold: {
+                type: "number",
+                description:
+                  "Pass threshold (0.6-0.9) for the min()-aggregated criteria score: higher for clean baselines, lower for boundary/recovery scenarios.",
+              },
             },
-            required: ["name", "persona", "goal", "language", "world_state", "start_node_params_json", "tags"],
+            required: [
+              "name",
+              "persona",
+              "goal",
+              "language",
+              "world_state",
+              "start_node_params_json",
+              "tags",
+              "acceptance_criteria",
+              "criteria_threshold",
+            ],
             additionalProperties: false,
           },
         },
@@ -245,6 +266,11 @@ export const WriterScenarioZ = z.object({
   world_state: z.array(WriterWorldStateEntryZ),
   start_node_params_json: z.string(),
   tags: z.array(z.string()),
+  // `.default(...)` (not required) so the strict WRITER_JSON_SCHEMA forces the real LLM to emit
+  // these, while a bare mock/incremental item that omits them still parses (validate_and_fix
+  // normalises either way) — same split as the user-simulator's decision fields.
+  acceptance_criteria: z.array(z.string()).default([]),
+  criteria_threshold: z.number().default(0.7),
 });
 
 export const WriterOutputZ = z.object({
