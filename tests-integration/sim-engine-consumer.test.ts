@@ -53,6 +53,29 @@ const FLOW = JSON.stringify({
   ],
 });
 
+/** The dumb-AO SimResponse for the FLOW: the flow's single AI node A1 fires `done` and the run
+ *  ends on the greeting turn. node_uuid is NOT read off the request (AO no longer sends it). */
+function simTurnResponse(): Record<string, unknown> {
+  const node = "A1";
+  return {
+    message: `reply from ${node}`,
+    intent: "done",
+    variables: {},
+    tool_calls: [],
+    response_items: [{ role: "assistant", content: `reply from ${node}` }],
+    turn_node_uuid: node,
+    node_uuid: node,
+    node_run_uuid: "nr",
+    turn_count: 1,
+    turn_type: "transition",
+    transitions: [{ from_node_uuid: node, handle: "done", via: [], to_node_uuid: null, to_type: "end_conversation" }],
+    ended: true,
+    stop_reason: "end_conversation",
+    variables_by_node: {},
+    next_speaker: "caller",
+  };
+}
+
 /** Build one scenario dict (the inline `payload.body.scenario`); distinct id per index. */
 function makeScenario(index: number): Record<string, unknown> {
   return {
@@ -150,25 +173,14 @@ let turnBase = "";
 let queueUrl = "";
 
 beforeAll(async () => {
-  // Fake /turn: A1 returns the `done` intent so the flow walks straight to end_conversation.
+  // Fake /turn (dumb-AO contract): AO no longer sends node_uuid, so the server keys on the turn
+  // sequence — the greeting turn (empty user_message) walks start→A1→done→end in one step and
+  // ends the run. It speaks as the flow's single AI node A1 and returns the full SimResponse shape.
   server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const body = (await req.json()) as Record<string, unknown>;
-      const node = body.node_uuid as string;
-      return Response.json({
-        message: `reply from ${node}`,
-        intent: node === "A1" ? "done" : "",
-        variables: {},
-        tool_calls: [],
-        response_items: [{ role: "assistant", content: `reply from ${node}` }],
-        node_uuid: node,
-        node_run_uuid: body.node_run_uuid,
-        ended: true,
-        stop_reason: "",
-        context_items: [],
-        variables_by_node: {},
-      });
+      await req.json();
+      return Response.json(simTurnResponse());
     },
   });
   turnBase = `http://127.0.0.1:${server.port}`;
@@ -404,25 +416,12 @@ suite("consumeSimulationQueue — drains the queue + runs the turn loop E2E", ()
     const slowServer = Bun.serve({
       port: 0,
       async fetch(req) {
-        const body = (await req.json()) as Record<string, unknown>;
+        await req.json();
         inFlight++;
         maxInFlight = Math.max(maxInFlight, inFlight);
         try {
           await Bun.sleep(300); // widen the window so concurrent scenarios overlap on /turn
-          const node = body.node_uuid as string;
-          return Response.json({
-            message: `reply from ${node}`,
-            intent: node === "A1" ? "done" : "",
-            variables: {},
-            tool_calls: [],
-            response_items: [{ role: "assistant", content: `reply from ${node}` }],
-            node_uuid: node,
-            node_run_uuid: body.node_run_uuid,
-            ended: true,
-            stop_reason: "",
-            context_items: [],
-            variables_by_node: {},
-          });
+          return Response.json(simTurnResponse());
         } finally {
           inFlight--;
         }
