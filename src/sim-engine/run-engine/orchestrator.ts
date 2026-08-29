@@ -22,7 +22,7 @@ import {
   type SimTurnRequest,
   type SimResponse,
 } from "./livekit-client.js";
-import { generateUserMessage, type ConversationTurn } from "./user-simulator.js";
+import { generateUserMessage, type ConversationTurn, type UserSimDecision } from "./user-simulator.js";
 import {
   interruptionRatio,
   pickNonAnswerType,
@@ -82,6 +82,36 @@ export interface RunScenarioJob {
 /** Deep copy via JSON round-trip (variablesByNode snapshots for the transcript). */
 function deepCopy<T>(v: T): T {
   return JSON.parse(JSON.stringify(v ?? null)) as T;
+}
+
+/** Stop reasons that mean the run finished a real conversation (not a walker abort). Only these
+ *  may be overridden by a failed route assertion — a walker abort is never masked as route_mismatch. */
+const ROUTE_ASSERTABLE_STOP_REASONS: ReadonlySet<string> = new Set([
+  "end_conversation",
+  "max_turns",
+  "caller_goal_met",
+  "caller_hung_up",
+]);
+
+interface ExpectedRoute {
+  source: string;
+  intent: string;
+  target: string;
+}
+
+/** Read `eval_metadata.expected_route_outcome` off the passthrough scenario. Returns null unless
+ *  all three ids are present (route assertion is skipped when any is empty). */
+function readExpectedRoute(scenario: Scenario): ExpectedRoute | null {
+  const em = (scenario as Record<string, unknown>).eval_metadata;
+  if (!em || typeof em !== "object") return null;
+  const ero = (em as Record<string, unknown>).expected_route_outcome;
+  if (!ero || typeof ero !== "object") return null;
+  const o = ero as Record<string, unknown>;
+  const source = typeof o.source_node_id === "string" ? o.source_node_id : "";
+  const intent = typeof o.expected_intent_name === "string" ? o.expected_intent_name : "";
+  const target = typeof o.target_node_id === "string" ? o.target_node_id : "";
+  if (!source || !intent || !target) return null;
+  return { source, intent, target };
 }
 
 /** Slim per-node view AO keeps from the flow JSON: node type + the judge index fields. Node
@@ -161,6 +191,12 @@ class ScenarioRunner {
   private readonly nodesVisited = new Set<string>();
   private readonly transcriptTurns: unknown[] = [];
   private readonly evalTurns: EvalTurn[] = [];
+  /** Per-response route trace (speaker + intent + transitions) for the whole-run route assertion.
+   *  Collected from every response, not just recorded turns, so a silent transition still counts. */
+  private readonly routeObservations: Array<{ speaker: string; intent: string; transitions: SimResponse["transitions"] }> = [];
+  /** The caller (not agent-runner) ended the run — triggers a best-effort livekit.end since the
+   *  run is still held on the owning replica. */
+  private callerEnded = false;
   private turnIndex = 0;
   private lastTurnWasInterruption = false;
   private lastTurnWasNonAnswer = false;
@@ -247,6 +283,7 @@ class ScenarioRunner {
       turn_type: resp.turn_type || (spoken ? "speech" : "transition"),
       is_spoken: spoken,
       intent: resp.intent ?? "",
+      transitions: resp.transitions ?? [],
       variables: resp.variables ?? {},
       variables_by_node: deepCopy(resp.variables_by_node ?? this.variablesByNode),
       tool_calls: resp.tool_calls ?? [],
@@ -263,9 +300,10 @@ class ScenarioRunner {
     this.stress = NO_STRESS;
   }
 
-  /** Generate the simulated caller's next line, applying non-answer / interruption stress on the
-   *  simulator's side only. Stashes the stress state so the resulting turn records it. */
-  private async userSimTurn(): Promise<string> {
+  /** Generate the simulated caller's next decision (utterance + target_achieved + end_call),
+   *  applying non-answer / interruption stress on the simulator's side only. Stashes the stress
+   *  state so the resulting turn records it. */
+  private async userSimTurn(): Promise<UserSimDecision> {
     let isInterruption = false;
     let isNonAnswer = false;
     let nonAnswerType = "";
@@ -310,7 +348,7 @@ class ScenarioRunner {
       simHistory[simHistory.length - 1] = { role: "assistant", content: partialAssistantMsg };
     }
 
-    const userMsg = await generateUserMessage({
+    const decision = await generateUserMessage({
       scenario: this.job.scenario,
       history: simHistory,
       agentFlowDescription: this.job.agentFlowDescription,
@@ -326,7 +364,37 @@ class ScenarioRunner {
     this.lastTurnWasNonAnswer = isNonAnswer;
     this.lastTurnWasInterruption = isInterruption;
     this.stress = { isInterruption, isNonAnswer, nonAnswerType, partialAssistantMsg };
-    return userMsg;
+    return decision;
+  }
+
+  /** Whole-run route assertion (no LLM): after the loop, if the scenario declares an
+   *  expected_route_outcome, pass iff some observed turn fired the expected intent at the source
+   *  node and the walk landed on the target. A failure on an otherwise-normal completion becomes
+   *  route_mismatch; a walker abort is never masked. */
+  private assertRoute(): void {
+    const expected = readExpectedRoute(this.job.scenario);
+    if (!expected) return;
+    const passed = this.routeObservations.some(
+      (o) =>
+        o.speaker === expected.source &&
+        o.intent === expected.intent &&
+        o.transitions.some((t) => t.to_node_uuid === expected.target),
+    );
+    if (passed || !ROUTE_ASSERTABLE_STOP_REASONS.has(this.stopReason)) return;
+    this.stopReason = "route_mismatch";
+    this.stopDetail = `expected ${expected.source}:${expected.intent} → ${expected.target}; took ${this.describeRouteAtSource(expected.source)}`;
+  }
+
+  /** Human-readable trace of what the source node actually did, for the route_mismatch detail. */
+  private describeRouteAtSource(source: string): string {
+    const atSource = this.routeObservations.filter((o) => o.speaker === source);
+    if (atSource.length === 0) return "never reached";
+    return atSource
+      .map((o) => {
+        const targets = o.transitions.map((t) => t.to_node_uuid ?? "∅").join(",");
+        return `${o.intent || "(no intent)"} → ${targets || "(no transition)"}`;
+      })
+      .join("; ");
   }
 
   async run(): Promise<RunResult> {
@@ -342,14 +410,30 @@ class ScenarioRunner {
         this.stopReason = "max_turns";
         break;
       }
-      const userMsg = this.pendingGreeting ? "" : await this.userSimTurn();
-      const resp = await this.livekit.turn(this.buildReq({ user_message: userMsg }));
+      const decision: UserSimDecision = this.pendingGreeting
+        ? { message: "", target_achieved: false, end_call: false }
+        : await this.userSimTurn();
+      const resp = await this.livekit.turn(this.buildReq({ user_message: decision.message }));
       this.recordTransitions(resp.transitions);
-      await this.recordTurn(resp, userMsg);
+      this.routeObservations.push({
+        speaker: resp.turn_node_uuid || resp.node_uuid,
+        intent: resp.intent ?? "",
+        transitions: resp.transitions ?? [],
+      });
+      await this.recordTurn(resp, decision.message);
       this.turnCount = resp.turn_count;
       if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
       if (resp.ended) {
+        // agent-runner terminal wins over a same-turn caller decision.
         this.applyStop(resp);
+        break;
+      }
+      if (decision.end_call) {
+        // The caller hung up this turn — its closing line was already sent + recorded above.
+        this.ended = true;
+        this.stopReason = decision.target_achieved ? "caller_goal_met" : "caller_hung_up";
+        this.stopDetail = "";
+        this.callerEnded = true;
         break;
       }
       // agent-runner tells AO who speaks next: "agent" ⇒ a landed node opens (empty caller line).
@@ -361,6 +445,11 @@ class ScenarioRunner {
       // row still completes with a sane reason instead of an empty stop_reason.
       this.stopReason = this.stopReason || "max_turns";
     }
+
+    // Whole-run route assertion may override a normal completion with route_mismatch.
+    this.assertRoute();
+    // The run is still held on agent-runner after a caller-decided end — release it best-effort.
+    if (this.callerEnded) await this.livekit.end(this.flowRunUuid);
 
     return {
       stopReason: this.stopReason,

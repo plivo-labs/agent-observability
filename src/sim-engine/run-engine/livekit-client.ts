@@ -75,14 +75,20 @@ export interface SimResponse {
   next_speaker: "agent" | "caller";
 }
 
-/** Wire values agent-runner emits and AO persists verbatim to `ao_sim_run_scenario.stop_reason`. */
+/** Stop reasons AO persists to `ao_sim_run_scenario.stop_reason`. The first six are the wire
+ *  vocabulary agent-runner emits; `caller_goal_met` / `caller_hung_up` / `route_mismatch` are
+ *  AO assertion-layer verdicts set locally (the caller decided to end, or the run took the wrong
+ *  route) — agent-runner never emits them, and they are deliberately NOT abort reasons. */
 export type StopReason =
   | "end_conversation"
   | "max_turns"
   | "unknown_intent"
   | "no_matching_edge"
   | "unsupported_node_type"
-  | "error";
+  | "error"
+  | "caller_goal_met"
+  | "caller_hung_up"
+  | "route_mismatch";
 
 /** Abort stop reasons — the ones that mean the scenario could not reach a judged outcome, so
  *  their `stop_detail` is written to `ao_sim_run_scenario.error`. `end_conversation` and

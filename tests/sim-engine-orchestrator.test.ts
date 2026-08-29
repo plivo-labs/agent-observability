@@ -89,6 +89,18 @@ function deps(client: FakeClient, events: Ev[], userLines: string[]) {
   };
 }
 
+/** Like `deps`, but the user-simulator returns full decision objects (message + target_achieved
+ *  + end_call) so the caller-hangup branches can be exercised. */
+function decisionDeps(client: FakeClient, events: Ev[], decisions: Array<Record<string, unknown>>) {
+  return {
+    redis: fakeRedis(events),
+    livekit: client as any,
+    rng: () => 0.5,
+    llmProvider: new MockLLM(decisions.map((d) => JSON.stringify(d))),
+    llmModel: "m",
+  };
+}
+
 beforeEach(() => {
   evalCalls = 0;
   completeCalls.length = 0;
@@ -199,5 +211,100 @@ describe("runScenario turn loop", () => {
     // best-effort teardown fired with the scenario's flow_run_uuid
     expect(client.ended).toEqual([started.flow_run_uuid]);
     expect(completeCalls[0].status).toBe("error");
+  });
+});
+
+describe("caller-decision loop exit", () => {
+  const greetThenAsk = () =>
+    new FakeClient([
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1", next_speaker: "caller" }),
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "speech", message: "Anything else?", intent: "chat", turn_count: 1, next_speaker: "caller" }),
+    ]);
+
+  test("end_call without target_achieved → caller_hung_up, closing line sent, end() called", async () => {
+    const client = greetThenAsk();
+    const events: Ev[] = [];
+    await runScenario(decisionDeps(client, events, [{ message: "no, bye", target_achieved: false, end_call: true }]), job());
+
+    const started = events.find((e) => e.type === "scenario_started")!.event_data;
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("caller_hung_up");
+    // the caller's closing line still reached agent-runner (transcript keeps it + any goodbye)
+    expect(client.requests.map((r) => r.req.user_message)).toEqual(["", "no, bye"]);
+    // the held run is released best-effort
+    expect(client.ended).toEqual([started.flow_run_uuid]);
+    // not an abort → error null so the row counts toward passed/failed
+    expect(completeCalls[0].error).toBeNull();
+    expect(completeCalls[0].stopReason).toBe("caller_hung_up");
+  });
+
+  test("end_call with target_achieved → caller_goal_met", async () => {
+    const client = greetThenAsk();
+    const events: Ev[] = [];
+    await runScenario(decisionDeps(client, events, [{ message: "great, thanks. bye", target_achieved: true, end_call: true }]), job());
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("caller_goal_met");
+  });
+
+  test("agent-runner terminal wins over a same-turn caller end_call", async () => {
+    const client = new FakeClient([
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi", next_speaker: "caller" }),
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "speech", message: "Goodbye", intent: "done", ended: true, stop_reason: "end_conversation", turn_count: 1 }),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(decisionDeps(client, events, [{ message: "ok bye", target_achieved: true, end_call: true }]), job());
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("end_conversation"); // agent terminal, not caller_goal_met
+    expect(client.ended).toEqual([]); // caller did not end → no best-effort end()
+  });
+});
+
+describe("whole-run route assertion", () => {
+  const routeJob = (ero: Record<string, unknown>) => job({ scenario: { ...SCENARIO, eval_metadata: { expected_route_outcome: ero } } });
+
+  // greeting on A1, then A1 fires `intent` and the walk lands on `to`, ending the run.
+  const routeClient = (intent: string, to: string | null) =>
+    new FakeClient([
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1", next_speaker: "caller", transitions: [{ from_node_uuid: "start", handle: "call", via: [], to_node_uuid: "A1", to_type: "ai_agent_v2" }] }),
+      resp({ turn_node_uuid: "A1", node_uuid: to ?? "A1", turn_type: "speech", message: "Routing", intent, turn_count: 1, ended: true, stop_reason: "end_conversation", transitions: [{ from_node_uuid: "A1", handle: intent, via: [], to_node_uuid: to, to_type: "ai_agent_v2" }] }),
+    ]);
+
+  test("match → no override; transitions ride the turn payload", async () => {
+    const client = routeClient("go_a2", "A2");
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "A2" }));
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("end_conversation");
+    const turns = events.filter((e) => e.type === "turn_completed").map((e) => e.event_data);
+    expect(turns.some((t) => Array.isArray(t.transitions) && t.transitions.some((tr: any) => tr.to_node_uuid === "A2"))).toBe(true);
+  });
+
+  test("wrong intent → route_mismatch (counts failed, describes what was taken)", async () => {
+    const client = routeClient("other", "A2");
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "A2" }));
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("route_mismatch");
+    expect(done.stop_detail).toContain("expected A1:go_a2 → A2");
+    expect(done.stop_detail).toContain("other → A2");
+    expect(completeCalls[0].error).toBeNull();
+    expect(completeCalls[0].stopReason).toBe("route_mismatch");
+  });
+
+  test("source never reached → route_mismatch with 'never reached'", async () => {
+    const client = routeClient("go_a2", "A2");
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "ZZZ", expected_intent_name: "go_a2", target_node_id: "A2" }));
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("route_mismatch");
+    expect(done.stop_detail).toContain("never reached");
+  });
+
+  test("incomplete expected route (empty target) → assertion skipped", async () => {
+    const client = routeClient("other", "A2");
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "" }));
+    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
+    expect(done.stop_reason).toBe("end_conversation"); // no override — expected route incomplete
   });
 });
