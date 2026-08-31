@@ -44,9 +44,8 @@ export function parseRetryAfter(raw: string | null | undefined, now = Date.now()
 /**
  * Is this the provider saying "you are over your quota"?
  *
- * Narrow on purpose. It gates the model fallback, and a 500 or a timeout is not a
- * capacity problem — switching model cannot fix it and the fallback is ~25x the
- * price. Only a genuine 429 should buy a call the more expensive model.
+ * Narrow on purpose: only a genuine 429 is a capacity problem. Server-side 5xx
+ * has its own gate (isServerError below); a timeout gates nothing.
  *
  * Same two shapes as the hint reader: `status` from the OpenAI SDK's error on the
  * Chat path, and a message beginning "429" from the raw-fetch Responses path
@@ -58,6 +57,22 @@ export function isRateLimitError(err: unknown): boolean {
   const e = err as { status?: unknown; message?: unknown };
   if (e.status === 429) return true;
   return typeof e.message === "string" && /^429\b/.test(e.message);
+}
+
+/**
+ * Provider-side failure (5xx). Same two shapes as isRateLimitError. Gates the
+ * model fallback alongside 429: a persistent 5xx is deployment-scoped in
+ * practice — the 2026-08-31 Azure Luna outage (SJYX-GLZ) returned 500
+ * "no healthy upstream" for hours while gpt-5.5 on the SAME resource served
+ * 200s — so the last attempt is better spent on the fallback deployment than
+ * on one more identical failure. Timeouts stay excluded: they carry no status
+ * and prove nothing about the deployment.
+ */
+export function isServerError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: unknown; message?: unknown };
+  if (typeof e.status === "number" && e.status >= 500 && e.status < 600) return true;
+  return typeof e.message === "string" && /^5\d\d\b/.test(e.message);
 }
 
 /**

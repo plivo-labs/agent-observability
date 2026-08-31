@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { costForTokens } from "../evals/pricing.js";
-import { isRateLimitError, retryAfterMsFromError } from "./retry-after.js";
+import { isRateLimitError, isServerError, retryAfterMsFromError } from "./retry-after.js";
 import { addUsage, emptyUsage } from "./usage.js";
 import type {
   CompleteJSONOptions,
@@ -89,7 +89,8 @@ function resolveModel(role: LlmRole | undefined, explicit: string | undefined, p
 }
 
 /**
- * The model to spend a call's LAST attempt on when 429s have exhausted the retries.
+ * The model to spend a call's LAST attempt on when 429s or server-side 5xx
+ * have exhausted the retries.
  * Undefined = the feature is off for this role, which is the default everywhere.
  *
  * Read from config by ROLE rather than passed in by the caller, deliberately: the
@@ -367,10 +368,11 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
           req.reasoningEffort = nextEffort;
         }
       }
-      // Rate-limit fallback. Retry-After above handles a TRANSIENT limit; this
-      // handles an EXHAUSTED one, where the minute's whole allowance is gone and
-      // waiting cannot help. Spend the LAST attempt on the fallback deployment
-      // rather than failing the call.
+      // Fallback on an exhausted rate limit OR a server-side 5xx. Retry-After
+      // above handles a TRANSIENT 429; this handles the cases where waiting
+      // cannot help — the minute's whole allowance is gone, or the deployment
+      // itself is down (isServerError: the 2026-08-31 Luna outage). Spend the
+      // LAST attempt on the fallback deployment rather than failing the call.
       //
       // `attempt === maxRetries` means "the next attempt is the final one", so the
       // primary keeps every retry it was going to get and the switch costs nothing
@@ -382,9 +384,9 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       // additional `req.model === model` guard was here and has been removed — it
       // could never fire, and a guard that cannot guard misleads the next reader
       // about what actually makes this safe.
-      if (fallbackModel && isRateLimitError(e) && attempt === maxRetries) {
+      if (fallbackModel && (isRateLimitError(e) || isServerError(e)) && attempt === maxRetries) {
         console.warn(
-          `[llm] rate-limited on ${model} — falling back to ${fallbackModel} ` +
+          `[llm] ${isRateLimitError(e) ? "rate-limited" : "server error"} on ${model} — falling back to ${fallbackModel} ` +
             `(label=${opts.label ?? opts.role ?? "-"} attempt=${attempt}/${maxRetries + 1})`,
         );
         if (opts.role === "judge") {

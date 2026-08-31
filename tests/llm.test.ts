@@ -530,12 +530,18 @@ describe("rate-limit model fallback", () => {
     }
   });
 
-  test("does NOT switch on a non-429 — a 500 is not a capacity problem", async () => {
+  test("switches on a 5xx — a dead deployment cannot heal by retrying (SJYX-GLZ)", async () => {
     // Fails TWICE, so the failure lands exactly on the attempt that would trigger a
-    // switch (attempt === maxRetries). Failing only once would leave the switch point
-    // untouched and the test would pass even with the 429 guard removed — which it
-    // did, on the first draft.
-    const { p, models } = provider(2, () => new Error("500 Internal Server Error"));
+    // switch (attempt === maxRetries).
+    const { p, models } = provider(2, () => new Error("500 Internal Server Error - no healthy upstream"));
+    await withFallback("SIMULATOR_MODEL_FALLBACK", () =>
+      completeJSON({ schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2 }),
+    );
+    expect(models).toEqual(["luna", "luna", "gpt-5.5-fallback"]);
+  });
+
+  test("does NOT switch on a 4xx or a timeout — those say nothing about the deployment", async () => {
+    const { p, models } = provider(2, () => new Error("404 Not Found - DeploymentNotFound"));
     await withFallback("SIMULATOR_MODEL_FALLBACK", () =>
       completeJSON({ schema: Ok, prompt: "x", provider: p, role: "simulator", model: "luna", maxRetries: 2 }),
     );
