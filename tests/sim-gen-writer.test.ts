@@ -37,6 +37,8 @@ const writerScenario = () => ({
   world_state: [{ node_id: "n-check", outcome: "eligible", data_json: '{"order_id":"A1"}', action_mocks_json: "{}" }],
   start_node_params_json: "{}",
   tags: [],
+  acceptance_criteria: ["Agent confirms the order is eligible", "Agent states the refund amount"],
+  criteria_threshold: 0.8,
 });
 
 describe("runtimeConfig", () => {
@@ -86,6 +88,32 @@ describe("validateAndFixScenario (with slot)", () => {
     expect(fixed.start_node_params.caller_name).toBe("Sam");
   });
 
+  test("acceptance_criteria + criteria_threshold carried onto the runtime scenario", () => {
+    expect(fixed.acceptance_criteria).toEqual(["Agent confirms the order is eligible", "Agent states the refund amount"]);
+    expect(fixed.criteria_threshold).toBe(0.8);
+  });
+
+  test("blank criteria dropped; out-of-range / garbage threshold clamped or defaulted", () => {
+    const overHigh = validateAndFixScenario(
+      { ...writerScenario(), acceptance_criteria: ["ok", "  ", ""], criteria_threshold: 1.5 },
+      slot,
+      "gen-1",
+      "",
+      [],
+    )!;
+    expect(overHigh.acceptance_criteria).toEqual(["ok"]);
+    expect(overHigh.criteria_threshold).toBe(1); // clamped into [0,1]
+
+    const garbage = validateAndFixScenario(
+      { ...writerScenario(), criteria_threshold: "nope" as unknown as number },
+      slot,
+      "gen-1",
+      "",
+      [],
+    )!;
+    expect(garbage.criteria_threshold).toBe(0.7); // non-finite → default
+  });
+
   test("rejects a scenario missing name/goal → null", () => {
     expect(validateAndFixScenario({ persona: {}, goal: "g", world_state: [], tags: [] }, slot, "g", "", [])).toBeNull();
     expect(validateAndFixScenario({ name: "x", world_state: [], tags: [] }, slot, "g", "", [])).toBeNull();
@@ -122,7 +150,15 @@ describe("validateAndFixScenario (with slot)", () => {
 
 describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
   const flow = { nodes: [{ id: "n-start", type: "start", data: { config: { name: "Start", payload_format: { caller_name: {} } } } }], edges: [] };
-  const planner = { agent_flow_description: "Refund agent.", planner_rationale: "r" } as any;
+  const planner = {
+    agent_flow_description: "Refund agent.",
+    planner_rationale: "r",
+    // The agent-runner inventory rides on the planner; the writer forwards its mockable_nodes so
+    // the LLM sees each branch's real outcome handles (the fix for branch pins -> no_match).
+    mechanical_inventory: {
+      mockable_nodes: [{ node_uuid: "n-check", name: "eligibility_check", type: "branch_v2", outcome_handles: ["eligible", "no_match", "error"], default_outcome: "no_match" }],
+    },
+  } as any;
 
   test("validates each scenario_item and stamps eval_metadata", async () => {
     const llm = new MockLLM([JSON.stringify({ agent_flow_description: "Refund agent.", scenario_items: [{ slot_id: "S001", scenario: writerScenario() }] })]);
@@ -131,6 +167,9 @@ describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
     expect(res.failedSlotIds).toEqual([]);
     expect(res.scenarios[0].eval_metadata!.slot_id).toBe("S001");
     expect(res.scenarios[0].world_state["n-check"].outcome).toBe("eligible");
+    // the branch's real outcome_handles reach the writer LLM
+    const mn = JSON.parse(llm.calls[0].user).writer_context.mockable_nodes;
+    expect(mn.find((n: any) => n.node_uuid === "n-check").outcome_handles).toEqual(["eligible", "no_match", "error"]);
   });
 
   test("a missing slot in the writer output is reported failed", async () => {

@@ -1,5 +1,6 @@
-import { describe, test, expect, afterAll, mock } from "bun:test";
+import { describe, test, expect, afterAll, mock, spyOn } from "bun:test";
 import { Redis } from "ioredis";
+import * as lkMod from "../src/sim-engine/run-engine/livekit-client.js";
 
 // Phase 4 scenario-library routes against real PG (migration 019) + real Redis, with the LLM
 // generator mocked (a canned generateScenarios — no LLM):
@@ -42,6 +43,16 @@ mock.module("../src/sim-engine/gen/generate.js", () => ({
     yield { type: "metadata", metadata: { requested_count: 2, planned_count: 2, saved_count: 2, failed_count: 0, failed_slot_ids: [], partial_success: false, planner_usage: null, writer_usages: [] } };
   },
 }));
+
+// The generate route dry-runs the flow through agent-runner's inventory before streaming. Stub it
+// simulatable so these library/persist tests exercise generation, not the walk.
+spyOn(lkMod, "makeLiveKitSimClient").mockReturnValue({
+  inventory: async () => ({
+    simulatable: true, unsimulatable: [], nodes: [], routes: [], variables: [], actions: [],
+    languages: [], is_outbound_call: false, entry_node_uuid: "n-greet", reachable_ai_nodes: ["n-greet"],
+    mockable_nodes: [], terminals: [],
+  }),
+} as any);
 
 const { Hono } = await import("hono");
 const { registerSimulationRoutes } = await import("../src/sim-engine/routes.js");

@@ -1,9 +1,10 @@
 import type { LlmProvider } from "../../llm/index.js";
-import type { FlowGraph } from "../../sim-engine/run-engine/flow-types.js";
 import { evaluateSimulation } from "../evaluator.js";
-import { fromSimTranscript } from "../conversation-input.js";
+import { fromSimTranscript, type NodeConfigIndex } from "../conversation-input.js";
 import type { EvalTurn, EvaluationResult, SimEvalOutcome } from "../types.js";
 import { zeroConversationMetrics } from "../judges/conversation-judges.js";
+
+export type { NodeConfigIndex };
 
 // AO Eval Engine — the run-path adapter (mirrors cx-sqs's EvaluatorAdapter, SkipConversationEval=true).
 // Builds the ConversationInput from the accumulated transcript, runs the node+goal evaluator, and NEVER
@@ -12,7 +13,7 @@ import { zeroConversationMetrics } from "../judges/conversation-judges.js";
 
 export interface EvaluateSimulationForRunArgs {
   turns: EvalTurn[];
-  graph: FlowGraph;
+  nodeIndex: NodeConfigIndex;
   flowObj: Record<string, unknown>;
   variablesByNode: Record<string, Record<string, unknown>>;
   scenarioId: string;
@@ -22,6 +23,13 @@ export interface EvaluateSimulationForRunArgs {
   runUuid: string;
   /** LLM provider (same one the simulator uses); prod resolves from env when undefined. */
   provider?: LlmProvider;
+  /** Scenario acceptance criteria (from `scenario.acceptance_criteria`); the criteria judge runs
+   *  only when this is non-empty. */
+  acceptanceCriteria?: string[];
+  /** Pass threshold for the criteria score (`scenario.criteria_threshold`). */
+  criteriaThreshold?: number;
+  /** Scenario simulation_mode (`eval_metadata.simulation_mode`): gates goal-judge leniency. */
+  simulationMode?: string;
 }
 
 export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArgs): Promise<SimEvalOutcome> {
@@ -29,13 +37,19 @@ export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArg
   try {
     const input = fromSimTranscript({
       turns: args.turns,
-      graph: args.graph,
+      nodeIndex: args.nodeIndex,
       flowObj: args.flowObj,
       variablesByNode: args.variablesByNode,
     });
     if (input.nodes.length === 0) return {};
-    const scored = await evaluateSimulation(input, { provider: args.provider });
-    // Assemble in cx-sqs ConversationEvaluation key order: header → conversation_metrics → node → goal.
+    const scored = await evaluateSimulation(input, {
+      provider: args.provider,
+      acceptanceCriteria: args.acceptanceCriteria,
+      criteriaThreshold: args.criteriaThreshold,
+      simulationMode: args.simulationMode,
+    });
+    // Assemble in cx-sqs ConversationEvaluation key order: header → conversation_metrics → node →
+    // goal → criteria (criteria_evaluation is AO-only, appended last).
     const evaluation: EvaluationResult = {
       flow_uuid: args.flowUuid,
       flow_name: input.flow_name,
@@ -43,6 +57,7 @@ export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArg
       conversation_metrics: zeroConversationMetrics(),
       node_evaluations: scored.node_evaluations,
       ...(scored.goal_evaluation ? { goal_evaluation: scored.goal_evaluation } : {}),
+      ...(scored.criteria_evaluation ? { criteria_evaluation: scored.criteria_evaluation } : {}),
     };
     return { evaluation };
   } catch (e) {

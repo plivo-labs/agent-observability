@@ -251,6 +251,30 @@ Evaluation rules for simulation:
 6. If evidence is genuinely insufficient, mark achieved=false and clearly state "insufficient simulation evidence" in technical_reason.
 7. When using the success proxy rule, explicitly mention the proxy basis in technical_reason.`;
 
+export const CRITERIA_EVALUATION = `Evaluate whether the agent met each acceptance criterion for this conversation. Judge ONLY the agent's behaviour; score each criterion INDEPENDENTLY, and identical evidence must always yield the same verdict.
+
+Acceptance criteria (numbered):
+{criteria}
+
+Conversation transcript / additional context:
+{flow_history}
+
+SCORING (accuracy_score per criterion, 0.0-1.0):
+- 1.0 — fully met, with complete evidence.
+- 0.5-0.9 — partially met (some required elements present, others missing).
+- 0.1-0.4 — mostly not met (only minor elements present).
+- 0.0 — not met, or no supporting evidence in the transcript.
+COUNTING RULE: when a criterion requires N items (e.g. "present 3 options"), accuracy = items_found / items_required (1 of 3 = 0.33).
+EVIDENCE RULE: quote the exact transcript text that supports your score. If you cannot quote evidence, accuracy_score = 0.0. An intention or promise the agent never carried out does NOT count as met.
+
+CONDITIONAL / NOT-APPLICABLE:
+- A criterion phrased conditionally ("If X, then Y") applies only when its precondition X actually occurred in the transcript.
+- If the precondition never occurred, set applicable=false, met=null, accuracy_score=null — the criterion is MOOT and excluded from scoring; do NOT score it 0.
+- Only mark applicable=false when the trigger genuinely never happened. If the agent SHOULD have done something and failed to, that is applicable=true with a LOW score, NOT not-applicable.
+- Every unconditional criterion is applicable=true with a real accuracy_score.
+
+The overall verdict is the MINIMUM accuracy over the applicable criteria — one clearly-failed criterion tanks it — so judge each one honestly rather than averaging. Set met=true when the criterion is satisfied, false otherwise; leave met null only for an applicable=false criterion.`;
+
 // ── output-format sections (authored to request the rich fields the console contract needs) ──────────
 
 const OUT_HALLUCINATION = `Return ONLY a JSON object (score bands: 1.0 every claim grounded | 0.75 minor details not fully traceable, core grounded | 0.5 mix of grounded/ungrounded | 0.25 significant ungrounded | 0.0 entirely ungrounded):
@@ -275,6 +299,9 @@ const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the cal
 
 const OUT_GOAL = `Return ONLY a JSON object with one entry per goal (use the exact goal_name given):
 {"goals": [{"goal_name": string, "achieved": boolean, "reason": string, "technical_reason": string}]}`;
+
+const OUT_CRITERIA = `Return ONLY a JSON object with one entry per numbered criterion (echo its number as id). An applicable=false criterion has met=null and accuracy_score=null:
+{"criteria": [{"id": 1, "description": "brief restatement", "applicable": true, "met": true, "accuracy_score": 1.0, "evidence": "quoted transcript text"}, {"id": 2, "description": "If X, then Y", "applicable": false, "met": null, "accuracy_score": null, "evidence": "precondition never occurred: ..."}]}`;
 
 // ── composed system prompts (criteria body + output section) ───────────────────────
 
@@ -304,3 +331,6 @@ export const systemForGoal = (goals: string, flowHistory: string, isSimulation =
     fill(GOAL_EVALUATION, { goals, flow_history: flowHistory, sim_rules: isSimulation ? GOAL_SIM_RULES : "" }),
     OUT_GOAL,
   );
+
+export const systemForCriteria = (criteria: string, flowHistory: string): string =>
+  compose(fill(CRITERIA_EVALUATION, { criteria, flow_history: flowHistory }), OUT_CRITERIA);

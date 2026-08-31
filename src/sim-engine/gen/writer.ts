@@ -11,13 +11,10 @@ import {
   TRAIT_TAGS,
   CANONICAL_TRAITS,
   OUT_OF_SCOPE_SCENARIO_TERMS,
-  MOCKABLE_NODE_REGISTRY,
 } from "./combos.js";
 import {
   extractEmbeddedActions,
-  extractAvailableLanguages,
   extractStartNodePayloadKeys,
-  flowHasOutboundCall,
   nodeName,
   nodeConfig,
 } from "./inventory.js";
@@ -197,6 +194,14 @@ export function validateAndFixScenario(
   if (scenario.start_node_params == null) scenario.start_node_params = {};
   if (scenario.tags == null) scenario.tags = [];
 
+  // Assertion inputs (carried onto the runtime scenario for the criteria judge): keep only
+  // non-blank strings, clamp the threshold into [0,1] and default a missing/garbage one to 0.7.
+  scenario.acceptance_criteria = Array.isArray(scenario.acceptance_criteria)
+    ? scenario.acceptance_criteria.filter((c: unknown) => typeof c === "string" && c.trim() !== "")
+    : [];
+  const threshold = Number(scenario.criteria_threshold);
+  scenario.criteria_threshold = Number.isFinite(threshold) ? Math.max(0, Math.min(1, threshold)) : 0.7;
+
   const persona: Dict = isObj(scenario.persona) ? scenario.persona : {};
   scenario.persona = persona;
   if (persona.details == null) persona.details = {};
@@ -297,19 +302,6 @@ export function comboContextForSlots(slots: Slot[]): Dict {
     mock_profiles: pick(slots.map((s) => s.mock_profile_id), MOCK_PROFILES),
     conversation_patterns: pick(slots.map((s) => s.conversation_pattern_id), CONVERSATION_PATTERNS),
   };
-}
-
-function findMockableTypesInFlow(flowJson: Dict): Dict[] {
-  const seen = new Set<string>();
-  const out: Dict[] = [];
-  for (const node of (flowJson.nodes as Dict[]) || []) {
-    const t = node?.type ?? "";
-    if (t in MOCKABLE_NODE_REGISTRY && !seen.has(t)) {
-      seen.add(t);
-      out.push(MOCKABLE_NODE_REGISTRY[t]);
-    }
-  }
-  return out;
 }
 
 /**
@@ -423,10 +415,13 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
       agent_flow_description: planner.agent_flow_description,
       nodes: writerContextNodes(flowJson, slots),
       embedded_actions: extractEmbeddedActions(flowJson),
-      mockable_types: findMockableTypesInFlow(flowJson),
-      available_languages: extractAvailableLanguages(flowJson),
+      // Per-node mockable outcome handles from the agent-runner inventory — this is what carries
+      // real branch aliases, so the writer can pin a valid outcome per node and stop defaulting
+      // branches to no_match.
+      mockable_nodes: planner.mechanical_inventory.mockable_nodes ?? [],
+      available_languages: planner.mechanical_inventory.languages,
       start_node_param_keys: startNodeParamKeys,
-      is_outbound_call: flowHasOutboundCall(flowJson),
+      is_outbound_call: planner.mechanical_inventory.is_outbound_call,
       planner_rationale: planner.planner_rationale,
     },
     slots,

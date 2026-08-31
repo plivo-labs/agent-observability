@@ -8,6 +8,7 @@ import {
 import { runVariableExtractionJudge } from "./judges/variable-extraction.js";
 import { runIntentJudge } from "./judges/intent-judge.js";
 import { runGoalJudge } from "./judges/goal-judge.js";
+import { runCriteriaJudge } from "./judges/criteria-judge.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "./aggregate.js";
 
 // AO Eval Engine — the orchestrator (port of cx-sqs ConversationEvaluator, node + goal axes only =
@@ -22,6 +23,14 @@ import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableE
 export interface EvaluateSimulationOpts {
   /** Test injection; prod resolves the provider from env inside completeJSON. */
   provider?: LlmProvider;
+  /** Scenario acceptance criteria — when non-empty the criteria judge runs and its verdict is
+   *  attached as `criteria_evaluation`. */
+  acceptanceCriteria?: string[];
+  /** Pass threshold for the criteria score (defaults to 0.7). */
+  criteriaThreshold?: number;
+  /** Scenario simulation_mode: "smoke" (or absent) runs the goal judge leniently (today's
+   *  behaviour); "stress" runs it strictly. */
+  simulationMode?: string;
 }
 
 async function evaluateNode(
@@ -55,8 +64,15 @@ export async function evaluateSimulation(input: ConversationInput, opts: Evaluat
 
   const result: NodeGoalEvaluation = { node_evaluations };
   if (input.goals.length > 0) {
-    const { data } = await runGoalJudge(input.goals, input, opts.provider, true);
+    // smoke (or absent mode) → lenient (the SIMULATION CONTEXT rules); stress → strict.
+    const isSimulation = opts.simulationMode !== "stress";
+    const { data } = await runGoalJudge(input.goals, input, opts.provider, isSimulation);
     result.goal_evaluation = data;
+  }
+  if (opts.acceptanceCriteria && opts.acceptanceCriteria.length > 0) {
+    const { data } = await runCriteriaJudge(opts.acceptanceCriteria, input, opts.provider);
+    const threshold = opts.criteriaThreshold ?? 0.7;
+    result.criteria_evaluation = { threshold, score: data.score, passed: data.score >= threshold, criteria: data.criteria };
   }
   return result;
 }

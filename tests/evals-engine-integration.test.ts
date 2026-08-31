@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from "bun:test";
 import type { ProviderCompleteArgs } from "../src/llm/types.js";
-import type { FlowGraph, FlowNode } from "../src/sim-engine/run-engine/flow-types.js";
+import type { NodeConfigIndex } from "../src/evals-engine/conversation-input.js";
 import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
@@ -10,23 +10,12 @@ const { fromSimTranscript } = await import("../src/evals-engine/conversation-inp
 const { evaluateSimulationForRun } = await import("../src/evals-engine/integration/sim-adapter.js");
 type EvalTurn = import("../src/evals-engine/types.js").EvalTurn;
 
-// Minimal FlowGraph: only `nodes.get()` is read by fromSimTranscript.
-function graphWith(nodes: FlowNode[]): FlowGraph {
-  return {
-    nodes: new Map(nodes.map((n) => [n.id, n])),
-    edges: [],
-    nodeEdges: new Map(),
-    startNodeId: nodes[0]?.id ?? "",
-  };
+// The judges' node lookup: nodeUuid → {config, configName, metaName}, built from the flow JSON on
+// the run path.
+function indexWith(nodes: Array<{ id: string; name: string; config: Record<string, unknown> }>): NodeConfigIndex {
+  return new Map(nodes.map((n) => [n.id, { config: n.config, configName: n.name, metaName: n.name }]));
 }
-const aiNode = (id: string, name: string, config: Record<string, unknown>): FlowNode => ({
-  id,
-  type: "ai_agent_v2",
-  configName: name,
-  metaName: name,
-  config,
-  data: null,
-});
+const aiNode = (id: string, name: string, config: Record<string, unknown>) => ({ id, name, config });
 
 const FLOW_OBJ = {
   flow_name: "orders",
@@ -40,7 +29,7 @@ const TURNS: EvalTurn[] = [
   { node_uuid: "A2", user: "", agent: "confirmed", intent: "done" },
 ];
 
-const GRAPH = graphWith([
+const INDEX = indexWith([
   aiNode("A1", "collect_order", { instructions: "Ask for order id", intents: [{ id: "e1", intent_name: "provide_order" }], extract_variables: [{ variable_name: "order_id" }] }),
   aiNode("A2", "confirm", { instructions: "Confirm the order" }),
 ]);
@@ -64,7 +53,7 @@ function judgeResponder(args: ProviderCompleteArgs): string {
 
 describe("fromSimTranscript", () => {
   test("groups turns by node, reads config + goals + global prompt", () => {
-    const input = fromSimTranscript({ turns: TURNS, graph: GRAPH, flowObj: FLOW_OBJ, variablesByNode: { A1: { order_id: "42" } } });
+    const input = fromSimTranscript({ turns: TURNS, nodeIndex: INDEX, flowObj: FLOW_OBJ, variablesByNode: { A1: { order_id: "42" } } });
     expect(input.flow_name).toBe("orders");
     expect(input.global_prompt).toBe("You are an orders agent.");
     expect(input.nodes).toHaveLength(2);
@@ -83,7 +72,7 @@ describe("fromSimTranscript", () => {
   });
 
   test("no goals when agent_settings has none", () => {
-    const input = fromSimTranscript({ turns: TURNS, graph: GRAPH, flowObj: { flow_name: "x" }, variablesByNode: {} });
+    const input = fromSimTranscript({ turns: TURNS, nodeIndex: INDEX, flowObj: { flow_name: "x" }, variablesByNode: {} });
     expect(input.goals).toEqual([]);
   });
 });
@@ -92,7 +81,7 @@ describe("evaluateSimulationForRun (adapter — never throws)", () => {
   test("success → { evaluation } with node_evaluations + goal_evaluation", async () => {
     const out = await evaluateSimulationForRun({
       turns: TURNS,
-      graph: GRAPH,
+      nodeIndex: INDEX,
       flowObj: FLOW_OBJ,
       variablesByNode: { A1: { order_id: "42" } },
       scenarioId: "s1",
@@ -123,7 +112,7 @@ describe("evaluateSimulationForRun (adapter — never throws)", () => {
   test("judge failure → { eval_error: true } (scenario still completes)", async () => {
     const out = await evaluateSimulationForRun({
       turns: TURNS,
-      graph: GRAPH,
+      nodeIndex: INDEX,
       flowObj: FLOW_OBJ,
       variablesByNode: {},
       scenarioId: "s1",
@@ -136,7 +125,7 @@ describe("evaluateSimulationForRun (adapter — never throws)", () => {
   });
 
   test("empty transcript → {} (no eval, no error)", async () => {
-    const out = await evaluateSimulationForRun({ turns: [], graph: GRAPH, flowObj: FLOW_OBJ, variablesByNode: {}, scenarioId: "s1", flowUuid: "flow-1", runUuid: "run-1", provider: new MockLLM([judgeResponder]) });
+    const out = await evaluateSimulationForRun({ turns: [], nodeIndex: INDEX, flowObj: FLOW_OBJ, variablesByNode: {}, scenarioId: "s1", flowUuid: "flow-1", runUuid: "run-1", provider: new MockLLM([judgeResponder]) });
     expect(out).toEqual({});
   });
 });

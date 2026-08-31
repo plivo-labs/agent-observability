@@ -7,6 +7,7 @@
 
 import { xaddEvent, type RedisClient } from "../queue/redis.js";
 import type { EvaluationResult } from "../../evals-engine/index.js";
+import type { SimTransition } from "./livekit-client.js";
 
 export const SIM_EVENT = {
   SCENARIO_STARTED: "scenario_started",
@@ -47,6 +48,9 @@ export interface TurnCompletedEvent {
   /** Whether this turn had a real spoken agent utterance (scenario_runner.go:495). */
   is_spoken: boolean;
   intent: string;
+  /** The walk segments agent-runner traversed this turn — persisted so the whole-run route
+   *  assertion is visible in the transcript, and the console can render the path taken. */
+  transitions: SimTransition[];
   variables: Record<string, unknown>;
   variables_by_node: Record<string, Record<string, unknown>>;
   tool_calls: unknown[];
@@ -64,6 +68,9 @@ export interface ScenarioCompletedEvent {
   scenario_id: string;
   flow_run_uuid?: string;
   stop_reason: string;
+  /** Human-readable detail for a walker stop: the unsupported node, the branch with no
+   *  matching edge, etc. Present on abort reasons; empty otherwise. Console surfaces it. */
+  stop_detail?: string;
   turns?: number;
   nodes_visited?: number;
   error?: string;

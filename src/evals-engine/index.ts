@@ -16,5 +16,7 @@ export type {
   NodeEvaluation,
   GoalEvaluation,
   GoalResult,
+  CriterionResult,
+  CriteriaEvaluationResult,
   SimEvalOutcome,
 } from "./types.js";

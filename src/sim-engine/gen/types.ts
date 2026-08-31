@@ -1,5 +1,5 @@
-import type { Capability, PlannerOutput } from "./schemas.js";
-import type { MechanicalInventory } from "./inventory.js";
+import type { PlannerOutput } from "./schemas.js";
+import type { FlowInventory } from "./inventory.js";
 
 // AO Simulation Engine — shared pipeline types (Phase 1.3+).
 
@@ -91,12 +91,15 @@ export interface RuntimeScenario {
   stt_noise: { enabled: boolean; severity: string };
   non_answer: { enabled: boolean; probability: number };
   tags: string[];
+  /** AO-side criteria-judge inputs (validate_and_fix carries them off the writer output). */
+  acceptance_criteria: string[];
+  criteria_threshold: number;
   eval_metadata?: EvalMetadata;
   agent_flow_description?: string;
 }
 
 /** Planner output with the mechanical inventory attached (the allocator reads it). */
-export type PlannerWithInventory = PlannerOutput & { mechanical_inventory: MechanicalInventory };
+export type PlannerWithInventory = PlannerOutput & { mechanical_inventory: FlowInventory };
 
 /** A summarized existing scenario (input to the planner + the allocator's coverage). */
 export interface ExistingScenarioSummary {
@@ -113,5 +116,3 @@ export interface ExistingCoverage {
   capability: Record<string, number>;
   capability_scenario_type: Record<string, number>;
 }
-
-export type { Capability, PlannerOutput, MechanicalInventory };

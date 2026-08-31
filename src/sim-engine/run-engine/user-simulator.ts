@@ -6,15 +6,13 @@
 // behavioral traits, conversation history, the active mode (normal / interruption /
 // non-answer), language register, and STT-noise severity.
 //
-// THE PROMPT TEMPLATE IS PINNED FOR PARITY. `buildUserSimulatorPrompt` reproduces the
-// `.tmpl` output byte-for-byte (a later parity test diffs AO's render against the
-// worker's). Go uses `text/template`; we hand-render here. The `{{- ... }}` / `{{ ... -}}`
-// trim markers in the source map to the join/blank-line rules in the section builders
-// below — read `tmplBlock` / `renderSection` for how that mapping works.
+// The prompt is hand-rendered from the Go `.tmpl` structure (section order, headings,
+// conditional blocks); this file is the live surface and may diverge from the template.
 //
-// The LLM call REUSES AO's `completeJSON` (role "simulator"): one structured call that
-// must return `{ message: string }`, with a single retry when the message is empty —
-// mirroring the Go `GenerateUserMessage` retry-on-empty.
+// The LLM call REUSES AO's `completeJSON` (role "simulator"): one structured call returning
+// `{ message, target_achieved, end_call }` — the caller's next utterance plus the two turn
+// decisions the orchestrator reads to end a run (goal met / caller hung up). A single retry
+// fires when the message is blank.
 
 import { z } from "zod";
 import { completeJSON, type LlmProvider, type WireReasoningEffort } from "../../llm/index.js";
@@ -529,8 +527,20 @@ export function buildUserSimulatorPrompt(
     lines.push("Within a corrupted turn, mix correct and garbled words. Do not mention transcription errors. Just output the text.");
   }
 
-  // Literal blank line, then the final instruction. The .tmpl ends with a trailing newline
-  // after this line (the file's last byte is "\n"), so we join with "\n" and append one.
+  // TARGET DETECTION + END CALL — the two decision flags the caller sets each turn (adapted
+  // from the reference harness's llm_handler). Both are judged against the agent's LATEST
+  // message only; the orchestrator reads them to stop the run.
+  lines.push("");
+  lines.push("TARGET DETECTION AND END CALL:");
+  lines.push("Alongside your utterance you set two flags, judged ONLY against the agent's latest message:");
+  lines.push(
+    "- target_achieved: true only when the agent's latest message ALONE satisfies your goal — it has confirmed, accepted, or completed what you called for. While the agent is still asking, offering, or pushing, it is false. When in doubt, set it false: one more turn costs nothing, a false positive cuts the call short.",
+  );
+  lines.push(
+    "- end_call: true ONLY when you are deliberately hanging up on THIS turn — your utterance is a short closing line and you will not speak again. Set it when your goal is met and the agent has wrapped up, or when you give up because the agent got the same value wrong twice after you already gave it correctly. Never set it on a turn where the agent just asked a question you can answer. When you set it, keep your utterance to a brief farewell and nothing else.",
+  );
+
+  // Literal blank line, then the final instruction.
   lines.push("");
   lines.push("Generate your next response as the customer.");
 
@@ -541,17 +551,37 @@ export function buildUserSimulatorPrompt(
 // LLM call (port of GenerateUserMessage)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Structured output schema — the LLM must return `{ message: string }`. Mirrors Go `userMessageSchema`. */
-const UserMessageSchema = z.object({ message: z.string() });
+/** Structured output — the caller's utterance plus the two turn decisions. The flags default
+ *  to false so a bare `{ message }` reply still parses. */
+const UserMessageSchema = z.object({
+  message: z.string(),
+  target_achieved: z.boolean().default(false),
+  end_call: z.boolean().default(false),
+});
 
-// JSON schema handed to providers that support strict structured output (OpenAI/Azure),
-// mirroring the Go `BuildJSONSchemaFormat("user_message", true, …)` strict object.
+/** The caller's decision for one turn: the utterance + whether the goal is met and whether the
+ *  caller is hanging up. */
+export type UserSimDecision = z.infer<typeof UserMessageSchema>;
+
+// Strict structured-output schema for providers that support it (OpenAI/Azure). All three
+// fields are `required` (strict object); the Zod defaults above only cover a non-strict
+// provider that omits a flag.
 const USER_MESSAGE_JSON_SCHEMA = {
   name: "user_message",
   schema: {
     type: "object",
-    properties: { message: { type: "string", description: "The customer's next message" } },
-    required: ["message"],
+    properties: {
+      message: { type: "string", description: "The customer's next message" },
+      target_achieved: {
+        type: "boolean",
+        description: "True only when the agent's latest message alone satisfies the caller's goal",
+      },
+      end_call: {
+        type: "boolean",
+        description: "True only when the caller is deliberately hanging up on this turn",
+      },
+    },
+    required: ["message", "target_achieved", "end_call"],
     additionalProperties: false,
   },
 };
@@ -587,18 +617,18 @@ export interface GenerateUserMessageInput {
 }
 
 /**
- * Generate the simulated customer's next message. Builds the (pinned) prompt, calls the LLM
- * for structured `{ message }`, and — mirroring the Go retry — makes ONE more attempt when
- * the first message is blank, throwing if it's still blank after the retry.
+ * Generate the simulated customer's next decision — utterance + `target_achieved` + `end_call`.
+ * Builds the prompt, calls the LLM for structured output, and makes ONE more attempt when the
+ * first message is blank, throwing if it's still blank after the retry.
  *
- * Byte-for-byte parity with the reference (cx-sqs) caller call:
- *  - Chat Completions API (`apiMode: "chat"`) — cx-sqs hardcodes APIFormatChatCompletions; AO's
- *    global OPENAI_API_MODE=responses (needed by the reasoning generation model) is overridden here.
- *  - The full template is the SYSTEM prompt with an EMPTY user turn (cx-sqs sends userPrompt ""),
- *    and `noJsonHint` keeps the system bare (strict json_schema alone forces the shape).
- *  - No `temperature`/`top_p`, no `max_tokens` cap, 180s client timeout — exactly as cx-sqs.
+ * Reference (cx-sqs) caller-call shape, kept:
+ *  - Chat Completions API (`apiMode: "chat"`) — AO's global OPENAI_API_MODE=responses (needed by
+ *    the reasoning generation model) is overridden here.
+ *  - The full template is the SYSTEM prompt with an EMPTY user turn, and `noJsonHint` keeps the
+ *    system bare (strict json_schema alone forces the shape).
+ *  - No `temperature`/`top_p`, no `max_tokens` cap, 180s client timeout.
  */
-export async function generateUserMessage(input: GenerateUserMessageInput): Promise<string> {
+export async function generateUserMessage(input: GenerateUserMessageInput): Promise<UserSimDecision> {
   const prompt = buildUserSimulatorPrompt(
     input.scenario,
     input.history,
@@ -636,14 +666,12 @@ export async function generateUserMessage(input: GenerateUserMessageInput): Prom
     });
 
   let result = await call();
-  let msg = result.data.message;
-  if (msg.trim() === "") {
+  if (result.data.message.trim() === "") {
     // Empty message — one retry, identical prompt (matches Go's retry-on-empty).
     result = await call();
-    msg = result.data.message;
-    if (msg.trim() === "") {
+    if (result.data.message.trim() === "") {
       throw new Error("user simulator returned empty message after retry");
     }
   }
-  return msg;
+  return result.data;
 }

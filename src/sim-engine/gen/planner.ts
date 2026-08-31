@@ -1,7 +1,7 @@
 import { completeJSON, type LlmProvider, type LlmUsage, type WireReasoningEffort } from "../../llm/index.js";
 import { PlannerOutputZ, PLANNER_SCHEMA_NAME, PLANNER_JSON_SCHEMA } from "./schemas.js";
 import { plannerSystemPrompt } from "./prompts.js";
-import { buildFlowInventory, containsOutOfScopeRouteTerm, type MechanicalInventory } from "./inventory.js";
+import { containsOutOfScopeRouteTerm, type FlowInventory } from "./inventory.js";
 import { routeId } from "./allocator.js";
 import { EXECUTABLE_NODE_TYPES, SUPPORTED_TERMINAL_NODE_TYPES, BLOCKED_NODE_TYPES, CONVERSATION_PATTERNS, PLANNER_MAX_OUTPUT_TOKENS, MAX_EXISTING_SCENARIO_SUMMARIES } from "./combos.js";
 import type { PlannerWithInventory, ExistingScenarioSummary, SimulationMode } from "./types.js";
@@ -18,7 +18,7 @@ const sortedArr = (s: Iterable<string>) => [...s].sort();
 /** Build the user payload sent to the planner LLM (mirrors `_plan_capabilities`). */
 export function buildPlannerPayload(
   flowJson: Dict,
-  inventory: MechanicalInventory,
+  inventory: FlowInventory,
   phloUuid: string,
   existingSummaries: ExistingScenarioSummary[],
   userInstructions: string,
@@ -47,6 +47,8 @@ export function buildPlannerPayload(
 export interface PlanCapabilitiesArgs {
   /** Canonical flow (output of normalizeFlow). */
   flowJson: Dict;
+  /** The agent-runner mechanical inventory (fetched once per generation, threaded in). */
+  inventory: FlowInventory;
   phloUuid: string;
   model: string;
   /** Reasoning effort for the planner call; `undefined` omits the parameter (the "inherit"
@@ -71,7 +73,7 @@ export async function planCapabilities(
   args: PlanCapabilitiesArgs,
 ): Promise<{ planner: PlannerWithInventory; usage: LlmUsage }> {
   const mode = args.simulationMode ?? "stress";
-  const inventory = buildFlowInventory(args.flowJson);
+  const inventory = args.inventory;
   const payload = buildPlannerPayload(
     args.flowJson,
     inventory,
@@ -110,7 +112,7 @@ export async function planCapabilities(
   // route-derived capabilities so generation degrades gracefully instead of hard-failing.
   let capabilities = capabilitiesWithRoutes(planner);
   if (capabilities.length === 0) {
-    capabilities = capabilitiesWithRoutes({ ...fallbackPlanner(args.flowJson), mechanical_inventory: inventory });
+    capabilities = capabilitiesWithRoutes({ ...fallbackPlanner(inventory), mechanical_inventory: inventory });
   }
   const finalPlanner = { ...planner, capabilities } as unknown as PlannerWithInventory;
   return { planner: finalPlanner, usage: res.usage };
@@ -172,8 +174,7 @@ export function capabilitiesWithRoutes(planner: PlannerWithInventory): Dict[] {
  * single general-conversation capability when the flow has no routes). Used when the LLM
  * planner yields no usable capabilities. Mirrors aiassist `_fallback_planner`.
  */
-export function fallbackPlanner(flowJson: Dict): PlannerWithInventory {
-  const inventory = buildFlowInventory(flowJson);
+export function fallbackPlanner(inventory: FlowInventory): PlannerWithInventory {
   const actionAnchors = inventory.actions.map((a) => a.mock_key).filter(Boolean);
   const variableAnchors = inventory.variables.map((v) => v.variable_name).filter(Boolean);
 

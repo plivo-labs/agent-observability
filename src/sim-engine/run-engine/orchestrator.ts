@@ -1,35 +1,28 @@
 // AO Simulation Engine — turn-loop orchestrator (the ScenarioRunner).
 //
-// Faithful port of the reference worker `usecases/simulation_eval/scenario_runner.go` (the
-// `ScenarioRunner` + `ExecuteAINode`), wiring together the pieces built in Stages 2–5:
-//   UserSimulator (LLM) → stress injection → /turn client → sm:{} history → :RESULTS emitters,
-// driven by the FlowOrchestrator (Stage 4) which calls back into `executeAINode` per ai_agent_v2 node.
+// agent-runner owns the run: the flow walk (entry resolution, edge resolution, branch evaluation,
+// mocked-node execution), node identity, span switching, turn counting and all conversation state.
+// AO holds one run per scenario (keyed by phlo_run_uuid) and keeps the OUTER loop — the
+// user-simulator (+ stress) and the transcript/eval/DB bookkeeping.
 //
-// `runScenario` owns the per-scenario emit envelope: scenario_started → turn_completed* →
-// scenario_completed. The run-level Lua gate + simulation_completed live in the SQS handler (Stage 7).
-//
-// V1 simplifications vs the Go worker (both deferred, neither touches the :RESULTS stream):
-//   - SaveLiveKitContext / SaveTranscriptTurn (Redis) are skipped — they back crash-resume + the
-//     inline evaluator, both deferred to V2. State is threaded in-memory across the turn loop.
-//   - On SQS redelivery a scenario re-runs from scratch (fresh flow_run_uuid), exactly like the
-//     worker (which also mints a fresh flow_run_uuid per message).
+// Per turn agent-runner returns the speaker (`turn_node_uuid`, the transcript/judge key), the
+// transitions it took (for nodes_visited), `next_speaker` (whether AO sends a caller line or an
+// empty greeting next), and — once the flow terminates — `ended` + `stop_reason` + `stop_detail`.
+// AO threads none of the walk state back; it only reads response fields.
 
 import type { z } from "zod";
 import type { RedisClient } from "../queue/redis.js";
 import type { LlmProvider, WireReasoningEffort } from "../../llm/index.js";
-import { Scenario as ScenarioSchema, type WorldStateEntry as SchemaWorldStateEntry } from "../schema.js";
-import { FlowOrchestrator, parseFlowGraph } from "./flow-executor.js";
-import type {
-  AINodeExecutor,
-  FlowNode,
-  NodeExecutionResult,
-  OrchestratorResult,
-  VariableStore,
-  WorldStateEntry,
-} from "./flow-types.js";
-import { buildAgentConfig, buildAgentTasksAgentConfig, buildScreeningAgentConfig } from "./agent-config.js";
-import { buildHandoffGraph, computeHandoffPlan, type HandoffGraph } from "./handoff-planner.js";
-import { generateUserMessage, type ConversationTurn } from "./user-simulator.js";
+import { Scenario as ScenarioSchema } from "../schema.js";
+import {
+  LiveKitSimClient,
+  LiveKitSimError,
+  makeLiveKitSimClient,
+  ABORT_STOP_REASONS,
+  type SimTurnRequest,
+  type SimResponse,
+} from "./livekit-client.js";
+import { generateUserMessage, type ConversationTurn, type UserSimDecision } from "./user-simulator.js";
 import {
   interruptionRatio,
   pickNonAnswerType,
@@ -38,31 +31,20 @@ import {
   truncateMidSpeech,
   type Rng,
 } from "./stress.js";
-import { patchAssistantResponse, setSessionTTL, writeAssistantTurn, writeUserTurn } from "./history.js";
-import {
-  LiveKitSimClient,
-  makeLiveKitSimClient,
-  isSpokenTurn,
-  isTransitionTurn,
-  normalizedTurnType,
-  type LiveKitSimRequest,
-  LIVEKIT_TURN_TYPE_SPEECH,
-} from "./livekit-client.js";
 import { emitScenarioStarted, emitScenarioDbReady, emitTurnCompleted, emitScenarioCompleted } from "./stream.js";
 import { simEngineConfig } from "../config.js";
 import { insertRunScenario, completeRunScenario } from "../db.js";
 import { evaluateSimulationForRun } from "../../evals-engine/integration/sim-adapter.js";
+import { flowHasOutboundCall } from "../gen/inventory.js";
 import type { EvalTurn } from "../../evals-engine/index.js";
 
 type Scenario = z.infer<typeof ScenarioSchema>;
 
-const SESSION_TTL_S = 3600; // matches the worker's HistoryWriter TTL
-
 /** Dependencies the runner needs; all injectable so the turn loop is testable without prod wiring. */
 export interface ScenarioRunnerDeps {
-  /** Redis client for the sm:{} conversation history the livekit /turn reads AND the :RESULTS emitters. */
+  /** Redis client for the :RESULTS emitters. */
   redis: RedisClient;
-  /** /turn client (defaults to one built from config). */
+  /** agent-runner sim client (defaults to one built from config). */
   livekit?: LiveKitSimClient;
   /** Stress RNG (defaults to Math.random). */
   rng?: Rng;
@@ -70,13 +52,11 @@ export interface ScenarioRunnerDeps {
   llmProvider?: LlmProvider;
   /** UserSimulator model override (defaults to USER_SIMULATOR_MODEL via config). */
   llmModel?: string;
-  /** UserSimulator reasoning-effort override (defaults to SIM_USER_REASONING_EFFORT via config).
-   *  `undefined` omits the parameter — the "inherit" default. */
+  /** UserSimulator reasoning-effort override; `undefined` omits the parameter. */
   llmReasoningEffort?: WireReasoningEffort;
 }
 
-/** Durable-persistence context (aodb-write.md): both ids are opaque caller-supplied strings.
- *  null/absent = do not write ao_sim_* rows for this scenario (stateless / legacy message). */
+/** Durable-persistence context: null/absent = do not write ao_sim_* rows for this scenario. */
 export interface DbPersistContext {
   tenantId: string;
   agentId: string;
@@ -90,38 +70,114 @@ export interface RunScenarioJob {
   scenario: Scenario;
   authId: string;
   agentFlowDescription: string;
-  /** Raw flow JSON (the FLOW_JSON the orchestrator service seeded; the engine reads it via getFlowJson). */
+  /** Raw flow JSON (the FLOW_JSON the orchestrator service seeded), canonical Shape B. */
   flowJson: string;
   maxTurns: number;
   /** When set, runScenario mirrors each Redis emit with an ao_sim_run_scenario write. */
   dbPersist?: DbPersistContext | null;
-  /** Durable scenario reference for the DB row (`scenario_ref`): the library row uuid when the
-   *  message carries one (`scenario_uuid`), else the scenario JSONB id. Events always echo
-   *  `scenarioId` (the JSONB id) — this field affects ONLY what the row stores. */
+  /** Durable scenario reference for the DB row (`scenario_ref`). */
   scenarioRef?: string | null;
 }
 
-/** schema.ts world_state (snake_case `action_mocks`) → the executor's Map (camelCase `actionMocks`). */
-function toWorldStateMap(worldState: Record<string, SchemaWorldStateEntry> | undefined): Map<string, WorldStateEntry> {
-  const map = new Map<string, WorldStateEntry>();
-  if (!worldState) return map;
-  for (const [k, v] of Object.entries(worldState)) {
-    map.set(k, { outcome: v.outcome, data: v.data ?? null, actionMocks: v.action_mocks ?? null });
-  }
-  return map;
-}
-
-/** Deep copy via JSON round-trip — matches the Go `deepCopyVariablesByNode` (json.Marshal/Unmarshal). */
+/** Deep copy via JSON round-trip (variablesByNode snapshots for the transcript). */
 function deepCopy<T>(v: T): T {
   return JSON.parse(JSON.stringify(v ?? null)) as T;
 }
 
+/** Stop reasons that mean the run finished a real conversation (not a walker abort). Only these
+ *  may be overridden by a failed route assertion — a walker abort is never masked as route_mismatch. */
+const ROUTE_ASSERTABLE_STOP_REASONS: ReadonlySet<string> = new Set([
+  "end_conversation",
+  "max_turns",
+  "caller_goal_met",
+  "caller_hung_up",
+]);
+
+interface ExpectedRoute {
+  source: string;
+  intent: string;
+  target: string;
+}
+
+/** Read `eval_metadata.expected_route_outcome` off the passthrough scenario. Returns null unless
+ *  all three ids are present (route assertion is skipped when any is empty). */
+function readExpectedRoute(scenario: Scenario): ExpectedRoute | null {
+  const em = (scenario as Record<string, unknown>).eval_metadata;
+  if (!em || typeof em !== "object") return null;
+  const ero = (em as Record<string, unknown>).expected_route_outcome;
+  if (!ero || typeof ero !== "object") return null;
+  const o = ero as Record<string, unknown>;
+  const source = typeof o.source_node_id === "string" ? o.source_node_id : "";
+  const intent = typeof o.expected_intent_name === "string" ? o.expected_intent_name : "";
+  const target = typeof o.target_node_id === "string" ? o.target_node_id : "";
+  if (!source || !intent || !target) return null;
+  return { source, intent, target };
+}
+
+/** Read `eval_metadata.simulation_mode` off the passthrough scenario (gates goal-judge leniency:
+ *  smoke/missing → lenient, stress → strict). */
+function readSimulationMode(scenario: Scenario): string | undefined {
+  const em = (scenario as Record<string, unknown>).eval_metadata;
+  if (!em || typeof em !== "object") return undefined;
+  const mode = (em as Record<string, unknown>).simulation_mode;
+  return typeof mode === "string" ? mode : undefined;
+}
+
+/** Slim per-node view AO keeps from the flow JSON: node type + the judge index fields. Node
+ *  config lives under `data.config`, meta name under `data.meta`. */
+interface NodeInfo {
+  type: string;
+  config: Record<string, unknown> | null;
+  configName: string;
+  metaName: string;
+}
+
+function buildNodeIndex(flowObj: Record<string, unknown>): Map<string, NodeInfo> {
+  const index = new Map<string, NodeInfo>();
+  const nodes = Array.isArray(flowObj.nodes) ? (flowObj.nodes as Record<string, unknown>[]) : [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const id = typeof node.id === "string" ? node.id : "";
+    if (!id) continue;
+    const data = (node.data && typeof node.data === "object" ? node.data : {}) as Record<string, unknown>;
+    const config = (data.config && typeof data.config === "object" ? data.config : null) as Record<string, unknown> | null;
+    const meta = (data.meta && typeof data.meta === "object" ? data.meta : {}) as Record<string, unknown>;
+    index.set(id, {
+      type: typeof node.type === "string" ? node.type : "",
+      config,
+      configName: typeof config?.name === "string" ? (config.name as string) : "",
+      metaName: typeof meta.name === "string" ? (meta.name as string) : "",
+    });
+  }
+  return index;
+}
+
+/** Result of one scenario run, consumed by runScenario for the terminal emit + DB row. */
+interface RunResult {
+  stopReason: string;
+  stopDetail: string;
+  turnCount: number;
+  nodesVisited: number;
+  transcript: unknown[];
+  evalTurns: EvalTurn[];
+  variablesByNode: Record<string, Record<string, unknown>>;
+}
+
+/** Stress state stamped onto the transcript turn the caller message drives. */
+interface StressState {
+  isInterruption: boolean;
+  isNonAnswer: boolean;
+  nonAnswerType: string;
+  partialAssistantMsg: string;
+}
+const NO_STRESS: StressState = { isInterruption: false, isNonAnswer: false, nonAnswerType: "", partialAssistantMsg: "" };
+
 /**
- * One instance per scenario. Implements AINodeExecutor: the FlowOrchestrator calls `executeAINode`
- * each time it reaches an ai_agent_v2 node, and uses the returned `outcome` (the detected intent)
- * to resolve the next edge.
+ * One instance per scenario. Drives the user-simulator loop against agent-runner (which owns the
+ * run): it keys the transcript on the SPEAKING node, sends an empty caller line whenever
+ * agent-runner reports `next_speaker: "agent"`, and stops when agent-runner reports `ended`.
  */
-class ScenarioRunner implements AINodeExecutor {
+class ScenarioRunner {
   private readonly redis: RedisClient;
   private readonly livekit: LiveKitSimClient;
   private readonly rng: Rng;
@@ -129,37 +185,45 @@ class ScenarioRunner implements AINodeExecutor {
   private readonly llmModel?: string;
   private readonly llmReasoningEffort?: WireReasoningEffort;
 
-  private readonly handoffGraph: HandoffGraph;
-  private readonly worldStateMap: Map<string, WorldStateEntry>;
-
-  // Mutable per-scenario state, threaded across turns (mirrors the Go ScenarioRunner fields).
-  private conversationHistory: ConversationTurn[] = [];
-  private sessionTtlSet = false;
-  /** SER-6070/6078: node ids with an open livekit flow-session (screening and
-   *  agent_node run conversationally as server-held sessions). */
-  private readonly openFlowSessions = new Set<string>();
-  private currentNodeId = "";
-  private currentNodeRunUuid = "";
-  private contextItems: unknown[] = [];
+  // Read (never threaded back) from each response: turn_count gates the pre-turn max_turns check
+  // and rides into the DB row; variables_by_node feeds the transcript snapshot + the judges.
+  private turnCount = 0;
   private variablesByNode: Record<string, Record<string, unknown>> = {};
+
+  // Terminal state, set from the agent-runner response that reports `ended`.
+  private ended = false;
+  private stopReason = "";
+  private stopDetail = "";
+
+  // Outer-loop bookkeeping.
+  private conversationHistory: ConversationTurn[] = [];
+  private readonly nodesVisited = new Set<string>();
+  private readonly transcriptTurns: unknown[] = [];
+  private readonly evalTurns: EvalTurn[] = [];
+  /** Per-response route trace (speaker + intent + transitions) for the whole-run route assertion.
+   *  Collected from every response, not just recorded turns, so a silent transition still counts. */
+  private readonly routeObservations: Array<{ speaker: string; intent: string; transitions: SimResponse["transitions"] }> = [];
+  /** The caller (not agent-runner) ended the run — triggers a best-effort livekit.end since the
+   *  run is still held on the owning replica. */
+  private callerEnded = false;
+  private turnIndex = 0;
   private lastTurnWasInterruption = false;
   private lastTurnWasNonAnswer = false;
-
-  // Eval transcript: the per-turn slice the eval engine consumes (node_uuid, user, agent, intent),
-  // accumulated across the loop so runScenario can score the scenario before emitting scenario_completed.
-  private readonly evalTurns: EvalTurn[] = [];
-  private readonly transcriptTurns: unknown[] = [];
-
-  // Per-turn latency samples (ms), mirroring the reference worker's userSimDurations / livekitDurations
-  // so we can log a scenario timing summary and compare against cx-sqs (scenario_runner.go:683-701).
-  private readonly userSimDurations: number[] = [];
-  private readonly livekitDurations: number[] = [];
+  /** Whether the next call sends an empty caller line so the landed node speaks first. Initially
+   *  true: the first call is a greeting (agent-runner resolves entry and the landing node opens);
+   *  thereafter it tracks the response's `next_speaker`. */
+  private pendingGreeting = true;
+  /** The stress applied to the caller message the NEXT recorded turn carries. */
+  private stress: StressState = NO_STRESS;
+  /** Defensive iteration bound: agent-runner enforces max_turns, but a buggy response that never
+   *  sets `ended` (or a greeting loop, which does not count toward turn_count) must not spin. */
+  private readonly hardCap: number;
 
   constructor(
     deps: ScenarioRunnerDeps,
     private readonly job: RunScenarioJob,
-    private readonly flowConfig: Record<string, unknown>,
-    handoffGraph: HandoffGraph,
+    private readonly flowObj: Record<string, unknown>,
+    private readonly nodeIndex: Map<string, NodeInfo>,
     private readonly flowRunUuid: string,
     private readonly isOutboundCall: boolean,
   ) {
@@ -169,409 +233,259 @@ class ScenarioRunner implements AINodeExecutor {
     this.llmProvider = deps.llmProvider;
     this.llmModel = deps.llmModel ?? simEngineConfig.userSimulatorModel;
     this.llmReasoningEffort = deps.llmReasoningEffort ?? simEngineConfig.userSimulatorReasoningEffort;
-    this.handoffGraph = handoffGraph;
-    this.worldStateMap = toWorldStateMap(job.scenario.world_state as Record<string, SchemaWorldStateEntry>);
+    this.hardCap = Math.max(50, this.job.maxTurns * 3);
   }
 
-  /** SER-6070/6078: open the server-held flow-session (screening or agent_node)
-   *  and surface its opener as a standalone transcript turn (user never spoke
-   *  yet — the task unit speaks first). */
-  private async openFlowSession(
-    node: FlowNode,
-    variableStore: VariableStore,
-    sessionId: string,
-    turnIndex: number,
-  ): Promise<string> {
-    const agentConfig = this.buildFlowSessionConfig(node, variableStore);
-    if (node.id !== this.currentNodeId) {
-      this.currentNodeRunUuid = crypto.randomUUID();
-      this.currentNodeId = node.id;
-    }
-    const startResp = await this.livekit.startFlowSession({
+  /** Base request body — the exact SimTurnRequest fields.
+   *  `action_mocks` is omitted: agent-runner reads world_state[node].action_mocks itself. */
+  private buildReq(overrides: Partial<SimTurnRequest>): SimTurnRequest {
+    return {
       phlo_run_uuid: this.flowRunUuid,
-      simulation_session_id: sessionId,
-      node_uuid: node.id,
-      node_run_uuid: this.currentNodeRunUuid,
       auth_id: this.job.authId,
-      is_interruption: false,
-      agent_config: agentConfig,
-      action_mocks: {},
-      context_items: [],
-      variables_by_node: this.variablesByNode,
-    });
-    this.openFlowSessions.add(node.id);
-    const opener = startResp.message ?? "";
-    if (opener !== "") {
-      await writeAssistantTurn(this.redis, this.flowRunUuid, node.id, "", {}, opener);
-      const openerPayload = {
-        scenario_id: this.job.scenarioId,
-        turn: turnIndex,
-        node_uuid: node.id,
-        user: "",
-        agent: opener,
-        turn_type: LIVEKIT_TURN_TYPE_SPEECH,
-        is_spoken: true,
-        intent: "",
-        variables: {},
-        variables_by_node: deepCopy(this.variablesByNode),
-        tool_calls: [],
-        response_items: [],
-        is_interruption: false,
-        is_non_answer: false,
-        non_answer_type: "",
-        partial_assistant_msg: "",
-      };
-      this.transcriptTurns.push(openerPayload);
-      await emitTurnCompleted(this.redis, this.job.simRunUuid, openerPayload);
-      this.conversationHistory.push({ role: "assistant", content: opener });
-      this.evalTurns.push({ node_uuid: node.id, user: "", agent: opener, intent: "" });
+      flow: this.flowObj,
+      world_state: this.job.scenario.world_state as Record<string, unknown>,
+      start_node_params: (this.job.scenario.start_node_params ?? {}) as Record<string, unknown>,
+      max_turns: this.job.maxTurns,
+      ...overrides,
+    };
+  }
+
+  /** Fold a response's transitions into nodes_visited (from node, mocked via hops, landing). */
+  private recordTransitions(transitions: SimResponse["transitions"]): void {
+    for (const tr of transitions ?? []) {
+      if (tr.from_node_uuid) this.nodesVisited.add(tr.from_node_uuid);
+      for (const hop of tr.via ?? []) if (hop.node_uuid) this.nodesVisited.add(hop.node_uuid);
+      if (tr.to_node_uuid) this.nodesVisited.add(tr.to_node_uuid);
     }
-    return opener;
   }
 
-  /** Node types that run as a server-held livekit flow-session instead of the
-   *  stateless /turn contract: screening (SER-6070) and the agent_tasks walk
-   *  (agent_node, SER-6078) — both hold walk state livekit-side. */
-  private runsAsFlowSession(node: FlowNode): boolean {
-    return (
-      node.type === "contact_screening" ||
-      node.type === "outbound_screening" ||
-      node.type === "agent_node"
-    );
+  private applyStop(resp: SimResponse): void {
+    this.ended = true;
+    this.stopReason = resp.stop_reason || "end_conversation";
+    this.stopDetail = resp.stop_detail || "";
+    this.turnCount = resp.turn_count;
   }
 
-  /** The per-type flow-session agent_config: screening synthesizes its wire
-   *  model; agent_node's saved config already is one (rendered + wait-zeroed
-   *  by buildAgentTasksAgentConfig). */
-  private buildFlowSessionConfig(node: FlowNode, variableStore: VariableStore): Record<string, unknown> {
-    const configNode = { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} };
-    return node.type === "agent_node"
-      ? buildAgentTasksAgentConfig(configNode, variableStore, this.flowConfig)
-      : buildScreeningAgentConfig(configNode, variableStore, this.flowConfig);
+  /** Record one turn: transcript (keyed on the SPEAKER, turn_node_uuid), sim history, eval turn.
+   *  A truly empty turn (no caller line and no agent line) is a silent transition — skip it. */
+  private async recordTurn(resp: SimResponse, userMsg: string): Promise<void> {
+    const agentMsg = resp.message ?? "";
+    const spoken = agentMsg.trim() !== "";
+    if (userMsg === "" && !spoken) {
+      this.stress = NO_STRESS;
+      return;
+    }
+    const nodeUuid = resp.turn_node_uuid || resp.node_uuid;
+
+    // Sim history: the caller's line (if any) and the agent's line (if any). A greeting turn
+    // has an empty caller line and a spoken opener — the opener still enters history so the
+    // caller answers it; a silent transition (returned above) adds nothing.
+    if (userMsg !== "") this.conversationHistory.push({ role: "user", content: userMsg });
+    if (spoken) this.conversationHistory.push({ role: "assistant", content: agentMsg });
+
+    const turnPayload = {
+      scenario_id: this.job.scenarioId,
+      turn: this.turnIndex,
+      node_uuid: nodeUuid,
+      user: userMsg,
+      agent: agentMsg,
+      turn_type: resp.turn_type || (spoken ? "speech" : "transition"),
+      is_spoken: spoken,
+      intent: resp.intent ?? "",
+      transitions: resp.transitions ?? [],
+      variables: resp.variables ?? {},
+      variables_by_node: deepCopy(resp.variables_by_node ?? this.variablesByNode),
+      tool_calls: resp.tool_calls ?? [],
+      response_items: resp.response_items ?? [],
+      is_interruption: this.stress.isInterruption,
+      is_non_answer: this.stress.isNonAnswer,
+      non_answer_type: this.stress.nonAnswerType,
+      partial_assistant_msg: this.stress.partialAssistantMsg,
+    };
+    this.transcriptTurns.push(turnPayload);
+    await emitTurnCompleted(this.redis, this.job.simRunUuid, turnPayload);
+    this.evalTurns.push({ node_uuid: nodeUuid, user: userMsg, agent: agentMsg, intent: resp.intent ?? "" });
+    this.turnIndex += 1;
+    this.stress = NO_STRESS;
   }
 
-  private resolveActionMocks(node: FlowNode): Record<string, unknown> | undefined {
-    const byId = this.worldStateMap.get(node.id);
-    if (byId?.actionMocks) return byId.actionMocks;
-    const byName = this.worldStateMap.get(node.configName);
-    if (byName?.actionMocks) return byName.actionMocks;
-    return undefined;
-  }
-
-  async executeAINode(
-    node: FlowNode,
-    turnIndex: number,
-    variableStore: VariableStore,
-  ): Promise<NodeExecutionResult | null> {
-    // 1. Determine the user message + interruption/non-answer state (mutually exclusive).
-    const turnStart = Date.now();
-    let isNodeSwitch = this.conversationHistory.length > 0 && node.id !== this.currentNodeId;
-
-    let userMsg = "";
+  /** Generate the simulated caller's next decision (utterance + target_achieved + end_call),
+   *  applying non-answer / interruption stress on the simulator's side only. Stashes the stress
+   *  state so the resulting turn records it. */
+  private async userSimTurn(): Promise<UserSimDecision> {
     let isInterruption = false;
     let isNonAnswer = false;
     let nonAnswerType = "";
     let partialAssistantMsg = "";
-    let userSimMs = 0;
 
-    if (this.conversationHistory.length === 0) {
-      userMsg = "Hello!";
-    } else if (isNodeSwitch) {
-      userMsg = "";
-    } else {
-      // Non-answer is checked FIRST; interruption only if not a non-answer (matches the Go).
-      isNonAnswer = shouldInjectNonAnswer(
+    // Non-answer is checked FIRST; interruption only if not a non-answer (mutually exclusive).
+    isNonAnswer = shouldInjectNonAnswer(
+      {
+        config: this.job.scenario.non_answer,
+        conversationHistory: this.conversationHistory,
+        isNodeSwitch: false,
+        turnIndex: this.turnIndex,
+        lastTurnWasNonAnswer: this.lastTurnWasNonAnswer,
+        lastTurnWasInterruption: this.lastTurnWasInterruption,
+      },
+      this.rng,
+    );
+    if (isNonAnswer) {
+      nonAnswerType = pickNonAnswerType(this.rng);
+    } else if (
+      shouldInterrupt(
         {
-          config: this.job.scenario.non_answer,
+          config: this.job.scenario.interruption,
           conversationHistory: this.conversationHistory,
-          isNodeSwitch,
-          turnIndex,
-          lastTurnWasNonAnswer: this.lastTurnWasNonAnswer,
+          isNodeSwitch: false,
+          turnIndex: this.turnIndex,
           lastTurnWasInterruption: this.lastTurnWasInterruption,
         },
         this.rng,
-      );
-      if (isNonAnswer) {
-        nonAnswerType = pickNonAnswerType(this.rng);
-      } else if (
-        shouldInterrupt(
-          {
-            config: this.job.scenario.interruption,
-            conversationHistory: this.conversationHistory,
-            isNodeSwitch,
-            turnIndex,
-            lastTurnWasInterruption: this.lastTurnWasInterruption,
-          },
-          this.rng,
-        )
-      ) {
-        isInterruption = true;
-        const lastAssistantMsg = this.conversationHistory[this.conversationHistory.length - 1]!.content;
-        partialAssistantMsg = truncateMidSpeech(lastAssistantMsg, interruptionRatio(this.rng), this.rng);
-      }
-
-      // On interruption the simulator only sees the partial (what the caller "heard").
-      let simHistory = this.conversationHistory;
-      if (isInterruption) {
-        simHistory = this.conversationHistory.slice();
-        simHistory[simHistory.length - 1] = { role: "assistant", content: partialAssistantMsg };
-      }
-
-      const userSimStart = Date.now();
-      userMsg = await generateUserMessage({
-        scenario: this.job.scenario,
-        history: simHistory,
-        agentFlowDescription: this.job.agentFlowDescription,
-        isOutboundCall: this.isOutboundCall,
-        partialAssistantMsg,
-        nonAnswerType,
-        provider: this.llmProvider,
-        model: this.llmModel,
-        reasoningEffort: this.llmReasoningEffort,
-        correlationId: this.job.scenarioId,
-      });
-      userSimMs = Date.now() - userSimStart;
-      this.userSimDurations.push(userSimMs);
+      )
+    ) {
+      isInterruption = true;
+      const lastAssistant = this.conversationHistory[this.conversationHistory.length - 1]?.content ?? "";
+      partialAssistantMsg = truncateMidSpeech(lastAssistant, interruptionRatio(this.rng), this.rng);
     }
+
+    // On interruption the simulator only sees the partial (what the caller "heard"); the agent's
+    // real context is NOT truncated (agent-runner never learns of the barge-in).
+    let simHistory = this.conversationHistory;
+    if (isInterruption && simHistory.length > 0) {
+      simHistory = this.conversationHistory.slice();
+      simHistory[simHistory.length - 1] = { role: "assistant", content: partialAssistantMsg };
+    }
+
+    const decision = await generateUserMessage({
+      scenario: this.job.scenario,
+      history: simHistory,
+      agentFlowDescription: this.job.agentFlowDescription,
+      isOutboundCall: this.isOutboundCall,
+      partialAssistantMsg,
+      nonAnswerType,
+      provider: this.llmProvider,
+      model: this.llmModel,
+      reasoningEffort: this.llmReasoningEffort,
+      correlationId: this.job.scenarioId,
+    });
 
     this.lastTurnWasNonAnswer = isNonAnswer;
     this.lastTurnWasInterruption = isInterruption;
+    this.stress = { isInterruption, isNonAnswer, nonAnswerType, partialAssistantMsg };
+    return decision;
+  }
 
-    // SER-6070/6078: screening and agent_node run as a server-held livekit
-    // flow-session. On the first visit, open the session BEFORE generating the
-    // caller's message: the task unit speaks first (screening's greeting, the
-    // walk's first collector question), so the opener must be in history for
-    // the simulator to answer. The opener is recorded as its own transcript
-    // turn; the visit then proceeds as a normal exchange.
-    const isFlowSession = this.runsAsFlowSession(node);
-    const flowSessionId = `${this.flowRunUuid}:fs:${node.id}`;
-    if (isFlowSession && !this.openFlowSessions.has(node.id)) {
-      const opener = await this.openFlowSession(node, variableStore, flowSessionId, turnIndex);
-      // Regenerate the caller message against the opener (the earlier block saw empty history
-      // and fabricated "Hello!" — the caller must answer the unit's question instead).
-      const userSimStart = Date.now();
-      userMsg = await generateUserMessage({
-        scenario: this.job.scenario,
-        history: this.conversationHistory,
-        agentFlowDescription: this.job.agentFlowDescription,
-        isOutboundCall: this.isOutboundCall,
-        partialAssistantMsg: "",
-        nonAnswerType: "",
-        provider: this.llmProvider,
-        model: this.llmModel,
-      });
-      userSimMs = Date.now() - userSimStart;
-      this.userSimDurations.push(userSimMs);
-      isInterruption = false;
-      isNonAnswer = false;
-      nonAnswerType = "";
-      partialAssistantMsg = "";
-      // A first visit reached via a node switch (screening/opener → agent_node)
-      // is now a NORMAL exchange: the opener is already recorded standalone and
-      // the caller's answer above must be pre-written and enter history —
-      // leaving isNodeSwitch true here would silently drop the user turn.
-      isNodeSwitch = false;
-      void opener;
-    }
+  /** Whole-run route assertion (no LLM): after the loop, if the scenario declares an
+   *  expected_route_outcome, pass iff some observed turn fired the expected intent at the source
+   *  node and the walk passed through the target — as the landing (`to_node_uuid`) or as a mocked
+   *  hop in `via` (the expected target is the edge's DIRECT target, e.g. an http node the walk
+   *  continues through). A failure on an otherwise-normal completion becomes route_mismatch; a
+   *  walker abort is never masked. */
+  private assertRoute(): void {
+    const expected = readExpectedRoute(this.job.scenario);
+    if (!expected) return;
+    const passed = this.routeObservations.some(
+      (o) =>
+        o.speaker === expected.source &&
+        o.intent === expected.intent &&
+        o.transitions.some(
+          (t) => t.to_node_uuid === expected.target || (t.via ?? []).some((v) => v.node_uuid === expected.target),
+        ),
+    );
+    if (passed || !ROUTE_ASSERTABLE_STOP_REASONS.has(this.stopReason)) return;
+    this.stopReason = "route_mismatch";
+    this.stopDetail = `expected ${expected.source}:${expected.intent} → ${expected.target}; took ${this.describeRouteAtSource(expected.source)}`;
+  }
 
-    // 2. Pre-write the user turn (skipped on a node switch — livekit's transfer path ignores it;
-    //    the assistant reply is written as a standalone turn after the response).
-    let convIndex = -1;
-    if (!isNodeSwitch) {
-      convIndex = await writeUserTurn(this.redis, this.flowRunUuid, node.id, userMsg);
-      if (!this.sessionTtlSet) {
-        await setSessionTTL(this.redis, this.flowRunUuid, SESSION_TTL_S);
-        this.sessionTtlSet = true;
+  /** Human-readable trace of what the source node actually did, for the route_mismatch detail. */
+  private describeRouteAtSource(source: string): string {
+    const atSource = this.routeObservations.filter((o) => o.speaker === source);
+    if (atSource.length === 0) return "never reached";
+    return atSource
+      .map((o) => {
+        const targets = o.transitions
+          .map((t) => [...(t.via ?? []).map((v) => v.node_uuid), t.to_node_uuid ?? "∅"].join("→"))
+          .join(",");
+        return `${o.intent || "(no intent)"} → ${targets || "(no transition)"}`;
+      })
+      .join("; ");
+  }
+
+  async run(): Promise<RunResult> {
+    // Bound on iterations, NOT turnIndex: a silent transition doesn't advance turnIndex, so a
+    // stream of empty responses would spin forever if the cap keyed on it.
+    let iterations = 0;
+    while (!this.ended && iterations++ < this.hardCap) {
+      // Stop before spending a user-simulator call that agent-runner would immediately reject:
+      // max_turns is enforced by AR from turn_count, so a non-greeting turn at the cap is a
+      // wasted LLM call + a trailing empty agent turn.
+      if (!this.pendingGreeting && this.turnCount >= this.job.maxTurns) {
+        this.ended = true;
+        this.stopReason = "max_turns";
+        break;
       }
+      const decision: UserSimDecision = this.pendingGreeting
+        ? { message: "", target_achieved: false, end_call: false }
+        : await this.userSimTurn();
+      const resp = await this.livekit.turn(this.buildReq({ user_message: decision.message }));
+      this.recordTransitions(resp.transitions);
+      this.routeObservations.push({
+        speaker: resp.turn_node_uuid || resp.node_uuid,
+        intent: resp.intent ?? "",
+        transitions: resp.transitions ?? [],
+      });
+      await this.recordTurn(resp, decision.message);
+      this.turnCount = resp.turn_count;
+      if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
+      if (resp.ended) {
+        // agent-runner terminal wins over a same-turn caller decision.
+        this.applyStop(resp);
+        break;
+      }
+      if (decision.end_call) {
+        // The caller hung up this turn — its closing line was already sent + recorded above.
+        this.ended = true;
+        this.stopReason = decision.target_achieved ? "caller_goal_met" : "caller_hung_up";
+        this.stopDetail = "";
+        this.callerEnded = true;
+        break;
+      }
+      // agent-runner tells AO who speaks next: "agent" ⇒ a landed node opens (empty caller line).
+      this.pendingGreeting = resp.next_speaker === "agent";
     }
 
-    // 3. Stable nodeRunUuid: rotate only when the node changes.
-    if (node.id !== this.currentNodeId) {
-      this.currentNodeRunUuid = crypto.randomUUID();
-      this.currentNodeId = node.id;
-    }
-    const nodeRunUuid = this.currentNodeRunUuid;
-
-    // 4. agent_config + the handoff plan livekit uses to route tool-based handoffs.
-    // Flow-session nodes get NO output_state_config: with an empty turn plan any
-    // unit exit terminates the session (continue_ai's no_matching_handoff path)
-    // and hands the intent back here for edge resolution — livekit must never
-    // model-swap out of a server-held session.
-    // FlowNode → AgentConfigNode: buildAgentConfig only reads `config`; coerce its nullable field.
-    const agentConfig = isFlowSession
-      ? this.buildFlowSessionConfig(node, variableStore)
-      : buildAgentConfig(
-          { id: node.id, type: node.type, configName: node.configName, config: node.config ?? {} },
-          variableStore,
-          this.flowConfig,
-        );
-    if (!isFlowSession) {
-      const handoffNode = this.handoffGraph.nodes.get(node.id) ?? null;
-      agentConfig["output_state_config"] = computeHandoffPlan(
-        handoffNode,
-        this.handoffGraph,
-        this.job.scenario.world_state as Record<string, SchemaWorldStateEntry>,
-        variableStore,
-      );
+    if (!this.ended) {
+      // The hard cap tripped without agent-runner reporting a terminal — treat as max_turns so the
+      // row still completes with a sane reason instead of an empty stop_reason.
+      this.stopReason = this.stopReason || "max_turns";
     }
 
-    // 5. Call /turn with the full stateless context.
-    const req: LiveKitSimRequest = {
-      phlo_run_uuid: this.flowRunUuid,
-      simulation_session_id: isFlowSession ? flowSessionId : this.flowRunUuid,
-      node_uuid: node.id,
-      node_run_uuid: nodeRunUuid,
-      auth_id: this.job.authId,
-      user_message: userMsg,
-      is_interruption: isInterruption,
-      agent_config: agentConfig,
-      action_mocks: this.resolveActionMocks(node),
-      context_items: this.contextItems,
-      variables_by_node: this.variablesByNode,
+    // Whole-run route assertion may override a normal completion with route_mismatch.
+    this.assertRoute();
+    // The run is still held on agent-runner after a caller-decided end — release it best-effort.
+    if (this.callerEnded) await this.livekit.end(this.flowRunUuid);
+
+    return {
+      stopReason: this.stopReason,
+      stopDetail: this.stopDetail,
+      turnCount: this.turnCount,
+      nodesVisited: this.nodesVisited.size,
+      transcript: this.transcriptTurns,
+      evalTurns: this.evalTurns,
+      variablesByNode: this.variablesByNode,
     };
-    if (isInterruption) {
-      req.partial_assistant_message = partialAssistantMsg;
-    }
-    const livekitStart = Date.now();
-    const resp = isFlowSession ? await this.livekit.turnFlowSession(req) : await this.livekit.executeTurn(req);
-    if (isFlowSession && resp.ended) {
-      this.openFlowSessions.delete(node.id);
-      this.livekit.forgetSession(flowSessionId);
-    }
-    const livekitMs = Date.now() - livekitStart;
-    this.livekitDurations.push(livekitMs);
-
-    // 6. Thread the returned state forward (in-memory; SaveLiveKitContext skipped in V1).
-    this.contextItems = resp.context_items ?? [];
-    if (resp.variables_by_node != null) {
-      this.variablesByNode = resp.variables_by_node;
-    }
-
-    const intent = resp.intent;
-    const agentMessage = resp.message;
-    const variables = resp.variables ?? {};
-
-    // Classify the turn (port of scenario_runner.go:442-444): a "transition" is a silent node handoff
-    // (no spoken agent utterance). Only spoken turns are recorded to history AND fed to the simulator,
-    // so a transition/empty/handoff turn never pollutes the simulator's view (the turn-count driver).
-    const turnType = normalizedTurnType(resp);
-    const spoken = isSpokenTurn(resp);
-    const transition = isTransitionTurn(resp);
-
-    // 7. Write the assistant reply: skip on a silent transition; standalone turn on a node switch;
-    //    else patch the pre-written user turn (mirrors scenario_runner.go:462-482).
-    if (transition) {
-      // non-spoken transition — no conversational history write (matches the Go skip)
-    } else if (isNodeSwitch) {
-      await writeAssistantTurn(this.redis, this.flowRunUuid, node.id, intent, variables, agentMessage);
-    } else {
-      await patchAssistantResponse(this.redis, this.flowRunUuid, convIndex, node.id, intent, variables, agentMessage);
-    }
-
-    const variablesByNodeSnapshot = deepCopy(this.variablesByNode);
-
-    // 8. Emit turn_completed (byte-identical payload to scenario_runner.go:486-505, incl. turn_type/is_spoken).
-    //    The same payload object is accumulated as the durable transcript — ao_sim_run_scenario.transcript
-    //    stores exactly what rode the stream (the orchestrator service buffers these events verbatim today).
-    const turnPayload = {
-      scenario_id: this.job.scenarioId,
-      turn: turnIndex,
-      node_uuid: node.id,
-      user: userMsg,
-      agent: agentMessage,
-      turn_type: turnType,
-      is_spoken: spoken,
-      intent,
-      variables,
-      variables_by_node: variablesByNodeSnapshot,
-      tool_calls: resp.tool_calls ?? [],
-      response_items: resp.response_items ?? [],
-      is_interruption: isInterruption,
-      is_non_answer: isNonAnswer,
-      non_answer_type: nonAnswerType,
-      partial_assistant_msg: partialAssistantMsg,
-    };
-    this.transcriptTurns.push(turnPayload);
-    await emitTurnCompleted(this.redis, this.job.simRunUuid, turnPayload);
-
-    // 9. (SaveTranscriptTurn skipped — V1 has no inline evaluator.)
-
-    // 10. Accumulate conversation history for the simulator (port of appendConversationTurns,
-    //     scenario_runner.go:564-580): node switch → assistant only IF spoken; normal turn → always the
-    //     user turn, assistant only IF spoken. A non-spoken transition adds nothing the simulator sees.
-    if (isNodeSwitch) {
-      if (spoken) this.conversationHistory.push({ role: "assistant", content: agentMessage });
-    } else {
-      this.conversationHistory.push({ role: "user", content: userMsg });
-      if (spoken) this.conversationHistory.push({ role: "assistant", content: agentMessage });
-    }
-
-    // 10b. Accumulate the eval transcript (node_uuid + user/agent text + chosen intent) for the
-    //      post-run evaluator. Every executed AI turn is recorded (including transitions) so the
-    //      grouped-by-node view the eval engine builds matches what actually ran.
-    this.evalTurns.push({ node_uuid: node.id, user: userMsg, agent: agentMessage, intent });
-
-    // 11. Per-turn timing (mirrors scenario_runner.go "Turn total") — split sim vs /turn latency
-    //     so a parity comparison against cx-sqs can pinpoint which call dominates.
-    console.log(
-      `[sim] turn total scenario_id=${this.job.scenarioId} turn=${turnIndex} node=${node.id} ` +
-        `total_ms=${Date.now() - turnStart} user_sim_ms=${userSimMs} livekit_ms=${livekitMs}`,
-    );
-
-    // 12. Return the result for edge resolution (intent → sourceHandle).
-    return { outcome: intent, variables, message: agentMessage };
-  }
-
-  /**
-   * Log the per-scenario latency summary (avg/p50/max for the user-simulator LLM and the /turn calls)
-   * plus the resolved simulator model + api mode. Mirrors the reference worker's LogTimingSummary
-   * (scenario_runner.go:683-701) and is the single place the live simulator model is logged on the
-   * success path (AO otherwise logs the model only on an LLM failure).
-   */
-  /** The accumulated eval transcript (for the post-run evaluator). */
-  getEvalTurns(): EvalTurn[] {
-    return this.evalTurns;
-  }
-
-  /** The turn_completed payloads exactly as emitted — the durable ao_sim_run_scenario.transcript. */
-  getTranscript(): unknown[] {
-    return this.transcriptTurns;
-  }
-
-  /** Latest per-node extracted variables (for the variable-extraction judge). */
-  getVariablesByNode(): Record<string, Record<string, unknown>> {
-    return this.variablesByNode;
-  }
-
-  logTimingSummary(): void {
-    const avg = (a: number[]) => (a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0);
-    const max = (a: number[]) => (a.length ? Math.max(...a) : 0);
-    const p50 = (a: number[]) => {
-      if (!a.length) return 0;
-      const sorted = [...a].sort((x, y) => x - y);
-      return sorted[Math.floor(sorted.length / 2)]!;
-    };
-    console.log(
-      `[sim] scenario summary scenario_id=${this.job.scenarioId} ` +
-        `model=${this.llmModel ?? "(unset)"} api=chat turns=${this.livekitDurations.length} ` +
-        `user_sim_avg_ms=${avg(this.userSimDurations)} user_sim_p50_ms=${p50(this.userSimDurations)} ` +
-        `user_sim_max_ms=${max(this.userSimDurations)} livekit_avg_ms=${avg(this.livekitDurations)} ` +
-        `livekit_p50_ms=${p50(this.livekitDurations)} livekit_max_ms=${max(this.livekitDurations)}`,
-    );
   }
 }
 
 /**
- * Run one scenario end-to-end: emit scenario_started, drive the FlowOrchestrator (which calls the
- * ScenarioRunner per ai_agent_v2 node), then emit scenario_completed. Returns the OrchestratorResult
- * so the SQS handler (Stage 7) can advance the Lua completion gate. Never throws — a failure is
- * surfaced as a scenario_completed(error) event + an error-shaped result.
+ * Run one scenario end-to-end: emit scenario_started, drive the user-simulator loop against
+ * agent-runner (which owns the run), then emit scenario_completed. Never throws — a failure is
+ * surfaced as a scenario_completed(error) event + the error-shaped DB row.
  */
-export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<OrchestratorResult> {
+export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<void> {
   const flowRunUuid = crypto.randomUUID();
 
-  // Durable-write helper: a DB failure downgrades to unpersisted (log) — persistence must
-  // never break the emit path, which stays the live source of truth for the SSE relay.
   const persistSafe = async (label: string, fn: () => Promise<void>): Promise<void> => {
     if (!job.dbPersist) return;
     try {
@@ -588,10 +502,6 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     goal: job.scenario.goal,
     flow_run_uuid: flowRunUuid,
   });
-  // Row id = flowRunUuid (the per-execution uuid the orchestrator service tracks). Insert next to
-  // the emit; completeRunScenario upserts anyway, so a lost insert cannot orphan the terminal write.
-  // scenario_db_ready follows the successful insert (same order as the orchestrator service's own
-  // persist path) so the console can map the live scenario to its durable row uuid.
   await persistSafe("insertRunScenario", async () => {
     await insertRunScenario({
       id: flowRunUuid,
@@ -605,65 +515,56 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     });
   });
 
-  let runnerRef: ScenarioRunner | null = null;
+  const client = deps.livekit ?? makeLiveKitSimClient();
   try {
-    // Parse the flow ONCE, then hand the object to both parseFlowGraph and buildHandoffGraph
-    // (parseFlowGraph now accepts an already-parsed object). The try wrapper keeps the exact
-    // "invalid flow JSON:" error prefix parseFlowGraph used, so the emitted error text is unchanged.
     let flowObj: Record<string, unknown>;
     try {
       flowObj = JSON.parse(job.flowJson) as Record<string, unknown>;
     } catch (err) {
       throw new Error(`invalid flow JSON: ${err instanceof Error ? err.message : String(err)}`);
     }
-    const graph = parseFlowGraph(flowObj);
-    const handoffGraph = buildHandoffGraph(flowObj);
-    const worldState = toWorldStateMap(job.scenario.world_state as Record<string, SchemaWorldStateEntry>);
-    // Outbound when the flow has an initiate_call node (worker simulation_eval_handler.go:163).
-    // Builder canvases carry outbound screening as a composite (no
-    // initiate_call until save expansion) — count both spellings so the
-    // user-simulator frames the caller as ANSWERING a call (SER-6070).
-    const isOutboundCall = Array.from(graph.nodes.values()).some(
-      (n) => n.type === "initiate_call" || n.type === "outbound_screening" || n.type === "contact_screening",
-    );
+    // AO keeps a slim flow parse on the run path: the node index (judge config lookup) and the
+    // outbound-call flag for the user-simulator.
+    const nodeIndex = buildNodeIndex(flowObj);
+    const isOutboundCall = flowHasOutboundCall(flowObj);
 
-    const runner = new ScenarioRunner(deps, job, flowObj, handoffGraph, flowRunUuid, isOutboundCall);
-    runnerRef = runner;
-    const orchestrator = new FlowOrchestrator(graph, worldState, job.maxTurns, runner);
-    orchestrator.seedStartNodeParams((job.scenario.start_node_params ?? {}) as Record<string, unknown>);
+    const runner = new ScenarioRunner({ ...deps, livekit: client }, job, flowObj, nodeIndex, flowRunUuid, isOutboundCall);
+    const result = await runner.run();
 
-    const result = await orchestrator.run();
-    runner.logTimingSummary();
+    // Skip judges on a 0-turn run (entry resolved straight to a terminal/abort — no conversation).
+    const evalOutcome =
+      result.turnCount === 0
+        ? {}
+        : await evaluateSimulationForRun({
+            turns: result.evalTurns,
+            nodeIndex,
+            flowObj,
+            variablesByNode: result.variablesByNode,
+            scenarioId: job.scenarioId,
+            flowUuid: [flowObj.flow_uuid, flowObj.uuid].find((v): v is string => typeof v === "string") ?? job.simRunUuid,
+            runUuid: flowRunUuid,
+            provider: deps.llmProvider,
+            acceptanceCriteria: job.scenario.acceptance_criteria,
+            criteriaThreshold: job.scenario.criteria_threshold,
+            simulationMode: readSimulationMode(job.scenario),
+          });
 
-    // Score the scenario (node + goal axes, cx-sqs SkipConversationEval). Never throws: a scoring failure
-    // returns { eval_error: true } so the scenario still completes. Uses the same LLM provider as the
-    // simulator; prod resolves from env when deps.llmProvider is undefined.
-    const evalOutcome = await evaluateSimulationForRun({
-      turns: runner.getEvalTurns(),
-      graph,
-      flowObj,
-      variablesByNode: runner.getVariablesByNode(),
-      scenarioId: job.scenarioId,
-      // cx-sqs ConversationEvaluation header (cosmetic raw-JSON parity). flow_uuid falls back to the sim-run
-      // uuid like cx-sqs buildFlowDefinition; run_uuid is this scenario's flow_run_uuid. flow_name is derived
-      // inside the adapter from the built eval input (single source of truth).
-      flowUuid: [flowObj.flow_uuid, flowObj.uuid].find((v): v is string => typeof v === "string") ?? job.simRunUuid,
-      runUuid: flowRunUuid,
-      provider: deps.llmProvider,
-    });
-
+    const stopReason = result.stopReason || "end_conversation";
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,
       flow_run_uuid: flowRunUuid,
-      stop_reason: result.stop_reason || "end_conversation",
-      turns: result.turn_count,
-      nodes_visited: result.nodes_visited.length,
+      stop_reason: stopReason,
+      stop_detail: result.stopDetail,
+      turns: result.turnCount,
+      nodes_visited: result.nodesVisited,
       ...(evalOutcome.evaluation ? { evaluation: evalOutcome.evaluation } : {}),
       ...(evalOutcome.eval_error ? { eval_error: true } : {}),
     });
-    // Terminal row write mirrors the emit exactly: status mapping matches the orchestrator
-    // service's persist (`error if event.error else completed`), counters use the tri-state
-    // any-goal rule inside completeRunScenario.
+    // stop_detail rides into the `error` column ONLY for abort reasons — end_conversation /
+    // max_turns keep error=null so they still count toward passed/failed (extractGoalPassed
+    // stops counting a row once error is non-null). status stays "completed": a walker abort is
+    // not a runner exception.
+    const abortDetail = (ABORT_STOP_REASONS as ReadonlySet<string>).has(stopReason) ? result.stopDetail || stopReason : null;
     await persistSafe("completeRunScenario", () =>
       completeRunScenario({
         id: flowRunUuid,
@@ -671,25 +572,26 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         scenarioRef: job.scenarioRef ?? job.scenarioId,
         scenarioIndex: job.scenarioIndex,
         status: "completed",
-        stopReason: result.stop_reason || "end_conversation",
-        turnCount: result.turn_count,
+        stopReason,
+        turnCount: result.turnCount,
         evaluation: evalOutcome.evaluation ?? null,
         evalError: evalOutcome.eval_error ?? false,
-        transcript: runner.getTranscript(),
+        error: abortDetail,
+        transcript: result.transcript,
       }),
     );
-
-    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    // Turns executed before the failure — each turn pushes exactly one transcript payload,
-    // so the durable row's turn_count agrees with its own transcript instead of reading 0.
-    const executedTurns = runnerRef?.getTranscript().length ?? 0;
+    const runLost = err instanceof LiveKitSimError && err.runLost;
+    // Best-effort early teardown so a mid-run failure doesn't leave the run held on its owner
+    // until TTL (a run_lost owner is already gone — end() no-ops on the dead address).
+    await client.end(flowRunUuid);
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,
       flow_run_uuid: flowRunUuid,
       stop_reason: "error",
       error: message,
+      ...(runLost ? { stop_detail: "run_lost" } : {}),
     });
     await persistSafe("completeRunScenario(error)", () =>
       completeRunScenario({
@@ -699,23 +601,10 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         scenarioIndex: job.scenarioIndex,
         status: "error",
         stopReason: "error",
-        turnCount: executedTurns,
+        turnCount: 0,
         error: message,
-        transcript: runnerRef?.getTranscript() ?? [],
+        transcript: [],
       }),
     );
-    return {
-      stop_reason: "error",
-      nodes_visited: [],
-      last_node_id: "",
-      last_node_type: "",
-      turn_count: executedTurns,
-      error_detail: message,
-    };
-  } finally {
-    // Release this scenario's sticky-cookie jar in the shared /turn client — session ids are
-    // fresh UUIDs per scenario, so without this the worker's Map grows one entry per scenario
-    // for the life of the process.
-    deps.livekit?.forgetSession?.(flowRunUuid);
   }
 }

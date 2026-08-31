@@ -293,7 +293,7 @@ export const envSchema = z.object({
   // the managed deployment's shared Redis; override for an OSS deploy with its own Redis.
   SIM_REDIS_PREFIX: z.string().default("SIM_EVAL"),
   // Base URL of the agent runtime. The engine POSTs each turn to
-  // {LIVEKIT_SIM_TURN_URL}/v1/simulation/session/turn. Required for the run engine
+  // {LIVEKIT_SIM_TURN_URL}/v1/simulation/turn. Required for the run engine
   // (Stage 2+); unset on a generation-only deploy.
   LIVEKIT_SIM_TURN_URL: z.string().optional(),
   // Optional Basic-auth credentials for the agent runtime /turn endpoint. Rendered from the
