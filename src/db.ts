@@ -92,6 +92,11 @@ interface LiveKitEvaluationInput {
    *  interfaces without index signatures, so Record<> here would force an
    *  erasing cast at every fan-out call site. */
   raw: object;
+  /** Row insert time override. Default (absent/null) = NOW(). A re-fan of an
+   *  already-judged session passes the rows' ORIGINAL created_at: alert rules
+   *  window on created_at, so rewriting months-old verdicts with NOW() would
+   *  stuff them into the current alert window. */
+  createdAt?: Date | null;
 }
 
 interface SessionOutcomeInput {
@@ -185,7 +190,7 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db:
   // migration that could fail on pre-existing duplicates).
   await db`
     INSERT INTO ao_session_external_evals (
-      session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw
+      session_id, source, judge_name, tag, verdict, reasoning, instructions, observed_at, raw, created_at
     )
     SELECT
       ${input.sessionId},
@@ -196,7 +201,8 @@ export async function insertLiveKitEvaluation(input: LiveKitEvaluationInput, db:
       ${input.reasoning},
       ${input.instructions},
       ${input.observedAt},
-      ${jsonbParam(input.raw)}::text::jsonb
+      ${jsonbParam(input.raw)}::text::jsonb,
+      COALESCE(${input.createdAt ?? null}::timestamptz, NOW())
     WHERE NOT EXISTS (
       SELECT 1 FROM ao_session_external_evals
       WHERE session_id = ${input.sessionId}
@@ -510,6 +516,25 @@ export async function applySessionTagMetadata(
       params,
     );
   });
+}
+
+/** Sessions carrying a tag with exactly this name. Used by the generic tag
+ *  importer to resolve a `match_tag` (e.g. a run-id tag a platform attached at
+ *  ingest) to the session it belongs to. */
+export async function findSessionIdsByTag(name: string): Promise<string[]> {
+  // The caller only needs to tell 0 / exactly 1 / several apart, so two rows
+  // is enough — a tag shared by thousands of sessions never floods the client.
+  const rows = await sql`
+    SELECT DISTINCT session_id FROM ao_session_tags WHERE name = ${name} LIMIT 2
+  `;
+  return rows.map((r: any) => String(r.session_id));
+}
+
+/** True when a session row exists — lets an importer refuse to attach a tag to
+ *  an id nothing will ever read (ao_session_tags has no FK to sessions). */
+export async function sessionExists(sessionId: string): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM ao_agent_transport_sessions WHERE session_id = ${sessionId} LIMIT 1`;
+  return rows.length > 0;
 }
 
 export async function applyStoredSessionTags(sessionId: string): Promise<void> {

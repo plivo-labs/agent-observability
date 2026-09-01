@@ -5,7 +5,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { evaluateConversationMetrics, resolveOutcomes, evaluateUserNeverSpoke } = await import("../src/evals-engine/judges/conversation-judges.js");
+const { evaluateConversationMetrics, resolveOutcomes, evaluateUserNeverSpoke, evaluateHumanTransfer } = await import("../src/evals-engine/judges/conversation-judges.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
 const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
@@ -286,5 +286,149 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
   test("do_not_disturb excludes customer engagement", () => {
     const cm = resolveOutcomes(raws({ doNotDisturb: detection(true) }), ctx());
     expect(cm.customer_engaged).toBe(false);
+  });
+});
+
+// ── transfer axis: the FACT (human_transfer) and the JUDGEMENT (transfer_consent) ──
+//
+// human_transfer is decided in CODE from the session tag `transfer:human` (the
+// platform's runtime confirmation that a transfer executed — never inferred from
+// prose). transfer_consent is an LLM judge that runs ONLY when a transfer executed,
+// and short-circuits to `no_caller` when the caller never spoke.
+
+// Shared fixtures for the transfer axis (both describes below).
+const TRANSFER = { name: "transfer:human", metadata: { intent: "Transfer Approved" } };
+const consentResponder = (consentGiven: boolean, reasonCode = consentGiven ? "ok" : "declined") =>
+  (args: { system?: string }) => {
+    const s = args.system ?? "";
+    if (s.includes("consent to the transfer")) {
+      return JSON.stringify({ consent_given: consentGiven, reason_code: reasonCode, reason: "r", technical_reason: "t" });
+    }
+    return responder({})(args);
+  };
+const consentCalls = (llm: InstanceType<typeof MockLLM>) =>
+  llm.calls.filter((c) => (c.system ?? "").includes("consent to the transfer"));
+
+describe("human_transfer — the transfer fact, from the session tag", () => {
+
+  test("fires when the session carries the transfer:human tag", async () => {
+    const llm = new MockLLM([consentResponder(true)]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.human_transfer.available).toBe(true);
+    expect(cm.human_transfer.detected).toBe(true);
+    expect(cm.human_transfer.reason).toContain("Transfer Approved");
+  });
+
+  test("no tag feed at all → unavailable, never a clean 'no transfer'", async () => {
+    const llm = new MockLLM([consentResponder(true)]);
+    const cm = await evaluateConversationMetrics(ctx(), llm);
+    expect(cm.human_transfer.available).toBe(false);
+    expect(cm.human_transfer.detected).toBe(false);
+    expect(cm.transfer_consent.available).toBe(false);
+  });
+
+  test("tags present but no transfer tag → STILL unavailable (absence is not evidence: senders that predate the tag never emit one), and the consent judge does not run", async () => {
+    const llm = new MockLLM([consentResponder(false)]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [{ name: "amd:voicemail", metadata: null }] }), llm);
+    expect(cm.human_transfer.available).toBe(false);
+    expect(cm.human_transfer.detected).toBe(false);
+    expect(cm.transfer_consent.available).toBe(false);
+    expect(consentCalls(llm).length).toBe(0);
+  });
+
+  test("evaluateHumanTransfer: asserts the fact only when the tag is present", () => {
+    expect(evaluateHumanTransfer(ctx({ tags: [TRANSFER] })).detected).toBe(true);
+    expect(evaluateHumanTransfer(ctx({ tags: [TRANSFER] })).available).toBe(true);
+    expect(evaluateHumanTransfer(ctx({ tags: [] })).available).toBe(false);
+    expect(evaluateHumanTransfer(ctx()).available).toBe(false);
+  });
+
+  test("the tag's next_node rides into the reason so an over-claiming handback is auditable", () => {
+    const r = evaluateHumanTransfer(ctx({ tags: [{ name: "transfer:human", metadata: { intent: "Transfer Approved", next_node: "call_forward_1" } }] }));
+    expect(r.detected).toBe(true);
+    expect(r.reason).toContain("call_forward_1");
+  });
+});
+
+describe("transfer_consent — did the caller consent before the transfer executed", () => {
+
+  test("consent given → not detected (pass), reason_code ok", async () => {
+    const llm = new MockLLM([consentResponder(true)]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.transfer_consent.available).toBe(true);
+    expect(cm.transfer_consent.detected).toBe(false);
+    expect(cm.transfer_consent.reason_code).toBe("ok");
+    expect(consentCalls(llm).length).toBe(1);
+  });
+
+  test("caller declined → detected (fail) with the judge's reason code", async () => {
+    const llm = new MockLLM([consentResponder(false, "declined")]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.transfer_consent.detected).toBe(true);
+    expect(cm.transfer_consent.reason_code).toBe("declined");
+  });
+
+  test("caller never spoke → short-circuit: no LLM call, detected with reason_code no_caller", async () => {
+    const llm = new MockLLM([consentResponder(true)]);
+    const cm = await evaluateConversationMetrics(
+      ctx({ tags: [TRANSFER], full_transcript: "Agent: Hi, is this Dana?\nAgent: I'll connect you to a mover now." }),
+      llm,
+    );
+    expect(cm.human_transfer.detected).toBe(true);
+    expect(cm.transfer_consent.available).toBe(true);
+    expect(cm.transfer_consent.detected).toBe(true);
+    expect(cm.transfer_consent.reason_code).toBe("no_caller");
+    expect(consentCalls(llm).length).toBe(0);
+  });
+
+  test("the judge sees the transfer intent and the transferring node's instructions", async () => {
+    const llm = new MockLLM([consentResponder(true)]);
+    await evaluateConversationMetrics(
+      ctx({
+        tags: [TRANSFER],
+        nodes: [
+          { node_uuid: "n0", node_name: "greet", node_prompt: "Greet the caller.", available_intents: [], chosen_intent: "", required_variables: [], extracted_variables: {}, turns: [], turn_count: 0 },
+          { node_uuid: "n1", node_name: "transfer", node_prompt: "Ask for a yes before transferring.", available_intents: [], chosen_intent: "", required_variables: [], extracted_variables: {}, turns: [], turn_count: 0 },
+        ],
+      }),
+      llm,
+    );
+    const call = consentCalls(llm)[0];
+    expect(call).toBeDefined();
+    expect(call!.user).toContain("Transfer Approved");
+    expect(call!.user).toContain("Ask for a yes before transferring.");
+  });
+
+  test("the judge reads the instructions of the node that owns the transfer intent, even when it is not the last node", async () => {
+    const llm = new MockLLM([consentResponder(true)]);
+    const node = (id: string, prompt: string, intents: string[]) => ({
+      node_uuid: id, node_name: id, node_prompt: prompt, available_intents: intents.map((intent_name) => ({ intent_name })),
+      chosen_intent: "", required_variables: [], extracted_variables: {}, turns: [], turn_count: 0,
+    });
+    await evaluateConversationMetrics(
+      ctx({
+        tags: [TRANSFER],
+        nodes: [node("n0", "Greet the caller.", []), node("n1", "Offer the transfer; require a clear yes.", ["Transfer Approved"]), node("n2", "Wrap-up node that ran after.", [])],
+      }),
+      llm,
+    );
+    const call = consentCalls(llm)[0];
+    expect(call!.user).toContain("Offer the transfer; require a clear yes.");
+    expect(call!.user).not.toContain("Wrap-up node that ran after.");
+  });
+
+  test("a fail that carries reason_code 'ok' is an invalid verdict → unavailable, never stored", async () => {
+    const llm = new MockLLM([consentResponder(false, "ok")]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.human_transfer.detected).toBe(true);
+    expect(cm.transfer_consent.available).toBe(false);
+    expect(cm.transfer_consent.reason_code).toBe("");
+  });
+
+  test("a deterministic judge failure leaves consent unavailable, never a fabricated pass", async () => {
+    const llm = new MockLLM([(args: { system?: string }) => ((args.system ?? "").includes("consent to the transfer") ? "not json" : responder({})(args))]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.human_transfer.detected).toBe(true);
+    expect(cm.transfer_consent.available).toBe(false);
   });
 });

@@ -29,7 +29,7 @@ import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
-import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON } from "./schemas.js";
+import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON, TRANSFER_CONSENT_JSON, TRANSFER_CONSENT_REASON_CODES, type TransferConsentReasonCode } from "./schemas.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
 const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
@@ -108,17 +108,40 @@ Rules: evaluate every user turn; at most one error per turn; recovered_count mus
 
 Default bias: CONSERVATIVE — when unsure whether a turn is an STT error or genuine user speech, do NOT flag it; when unsure about recovery, count it as not recovered.`;
 
+const TRANSFER_CONSENT = `Judge whether the caller gave clear, unambiguous consent to the transfer before the platform transferred them to a human. This judge runs ONLY on calls where a transfer was executed — a platform-confirmed fact, supplied as transfer_intent. Pass (consent_given=true) when the caller clearly agreed to be transferred. Fail (consent_given=false) when the transfer executed without that agreement.
+
+WHO IS JUDGED: "Agent:" lines are our AI; "User:" lines are the caller. Consent must come from a User: line. An Agent: line announcing or assuming the transfer is not consent.
+
+Criteria:
+1. Consent = an explicit affirmative reply from the caller to a transfer offer ("yes", "sure, go ahead", "okay, connect me"), or the caller's own unprompted request to be connected ("can I talk to someone?"). It must come AFTER the agent offered or explained the transfer, or be the caller's own request.
+2. reason_code "declined": the caller said no, not interested, stop calling, or otherwise refused the transfer — and the transfer executed anyway.
+3. reason_code "busy": the caller said they were busy, could not talk now, or asked to be called back — and the transfer executed anyway.
+4. reason_code "mid_sentence": the caller was still speaking, or had only started answering a different question, with no completed affirmative — when the transfer executed.
+5. reason_code "hold_music": the User: lines are only hold music, an IVR, ringing, or non-conversational audio artefacts — no real person answered — yet the transfer executed.
+6. reason_code "no_caller": the User: lines carry nothing substantive at all (empty, silence markers, background noise) — nobody was on the line.
+7. reason_code "ok": consent was given. reason_code MUST be "ok" whenever consent_given is true.
+8. transfer_node_instructions are the flow's own definition of when to transfer (e.g. a configured "Transfer Approved" intent). Read them for context, but the caller's actual words decide: an intent name or the agent's belief is NOT consent.
+9. Ambiguous fragments ("hmm", "uh", "hello?", "what?") are NOT consent. A clear affirmative is. Do not fail a transfer for brevity when the affirmative is unambiguous ("yes" is enough).`;
+
 const OUT_DETECTION =
   '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
 const OUT_SENTIMENT =
   '\n\nReturn ONLY a JSON object: {"sentiment": "positive"|"neutral"|"negative"|"confused"|"not_applicable", "reason": string, "technical_reason": string}.';
 const OUT_STT =
   '\n\nReturn ONLY a JSON object: {"error_count": integer (>=0), "recovered_count": integer (0..error_count), "reason": string, "technical_reason": string}.';
+const OUT_TRANSFER_CONSENT =
+  '\n\nReturn ONLY a JSON object: {"consent_given": boolean, "reason_code": "ok"|"declined"|"busy"|"mid_sentence"|"hold_music"|"no_caller", "reason": string, "technical_reason": string}. reason_code MUST be "ok" when consent_given is true.';
 
 // ── Zod validation (the strict JSON schemas live in schemas.ts with the node/goal ones) ──
 const DetectionRawZ = z.object({ detected: z.boolean(), reason: z.string(), technical_reason: z.string() });
 const SentimentRawZ = z.object({ sentiment: z.enum(SENTIMENT_VALUES), reason: z.string(), technical_reason: z.string() });
 const SttRawZ = z.object({ error_count: z.number(), recovered_count: z.number(), reason: z.string(), technical_reason: z.string() });
+const TransferConsentRawZ = z.object({
+  consent_given: z.boolean(),
+  reason_code: z.enum(TRANSFER_CONSENT_REASON_CODES),
+  reason: z.string(),
+  technical_reason: z.string(),
+});
 
 // ── judge execution ──────────────────────────────────────────────────────────
 const DETECTION_MAX_TOKENS = 1500;
@@ -164,6 +187,9 @@ async function safeJudge<T, R>(
   call: {
     system: string;
     ctx: ConversationInput;
+    /** Payload override for a judge that needs more than the transcript
+     *  (default: `payload(ctx)`). */
+    input?: unknown;
     schema: z.ZodType<T>;
     jsonSchema: RunLlmJudgeArgs<T>["jsonSchema"];
     maxTokens: number;
@@ -175,7 +201,7 @@ async function safeJudge<T, R>(
   try {
     const { data } = await runLlmJudge({
       system: call.system,
-      input: payload(call.ctx),
+      input: call.input ?? payload(call.ctx),
       schema: call.schema,
       jsonSchema: call.jsonSchema,
       maxTokens: call.maxTokens,
@@ -293,6 +319,168 @@ export function evaluateUserNeverSpoke(ctx: ConversationInput): DetectionResult 
   );
 }
 
+/** The session tag the platform attaches when a transfer to a human EXECUTED
+ *  (runtime-confirmed). Its `metadata.intent` is the handoff intent that fired. */
+export const TRANSFER_TAG = "transfer:human";
+
+export type TransferConsentResult = DetectionResult & { reason_code: TransferConsentReasonCode | "" };
+
+/**
+ * HUMAN TRANSFER — the transfer FACT, decided in CODE from the session tags.
+ *
+ * `detected` means a transfer to a human executed, as asserted by the ingest
+ * client through the `transfer:human` tag. AO cannot verify the assertion; the
+ * trust boundary is the same one the whole transcript crosses (an authenticated
+ * ingest client), and the platform runtime emits the tag only from its own
+ * confirmed transfer branch. Nothing is inferred from the transcript: a "let me
+ * transfer you" line is not a transfer.
+ *
+ * ABSENCE IS NOT EVIDENCE. Without the tag the axis is unavailable — never a
+ * "not transferred" pass: senders that predate the tag (older runtime builds,
+ * other SDKs, the sim path) emit nothing, and a pass row there would be a
+ * confident falsehood written permanently into a done session. So this judge
+ * only ever asserts the fact; "not transferred" is the judged sessions that
+ * carry no row, and consumers count transfers as its fail rows.
+ */
+export function evaluateHumanTransfer(ctx: ConversationInput): DetectionResult {
+  const intent = transferIntent(ctx);
+  if (intent === null) {
+    return skippedDetection("no transfer:human tag on the session — absence is not evidence of no transfer");
+  }
+  const nextNode = transferNextNode(ctx);
+  const where = nextNode ? ` → ${nextNode}` : "";
+  return derivedDetection(
+    intent ? `A transfer to a human was executed (intent: ${intent}${where}).` : `A transfer to a human was executed${where ? ` (${where.trim()})` : ""}.`,
+    "derived in code: session tag transfer:human (the ingest client's transfer confirmation)",
+  );
+}
+
+/** The flow node the platform handed the call to, when the tag carries it —
+ *  lets a handback that was NOT to a human be audited downstream. */
+function transferNextNode(ctx: ConversationInput): string {
+  const tag = ctx.tags?.find((t) => t && t.name === TRANSFER_TAG);
+  const next = tag?.metadata?.next_node;
+  return typeof next === "string" ? next.trim().slice(0, 200) : "";
+}
+
+/** The handoff intent carried by the transfer tag: `null` when the session has
+ *  no `transfer:human` tag, `""` when the tag carries no usable intent. */
+function transferIntent(ctx: ConversationInput): string | null {
+  const tag = ctx.tags?.find((t) => t && t.name === TRANSFER_TAG);
+  if (!tag) return null;
+  const intent = tag.metadata?.intent;
+  return typeof intent === "string" ? intent.trim().slice(0, 200) : "";
+}
+
+/** The node whose instructions define the transfer: the one that OWNS the
+ *  handoff intent (matched by intent name in its available_intents), else the
+ *  last node visited — the transfer is terminal by construction, so on the
+ *  live path that is the transferring node; the intent match protects the
+ *  case where a later node still ran (a revisit, a wrap-up hop). */
+function transferringNode(ctx: ConversationInput, intent: string): ConversationInput["nodes"][number] | undefined {
+  if (intent) {
+    const owner = ctx.nodes.find((n) =>
+      (n.available_intents ?? []).some((i) => {
+        const name = (i as { intent_name?: unknown } | null)?.intent_name;
+        return typeof name === "string" && name === intent;
+      }),
+    );
+    if (owner) return owner;
+  }
+  return ctx.nodes[ctx.nodes.length - 1];
+}
+
+/** The consent judge reads the speech transcript plus two facts the plain
+ *  detection payload lacks: WHICH intent transferred, and the transferring
+ *  node's own instructions. */
+function transferPayload(ctx: ConversationInput): Record<string, unknown> {
+  const intent = transferIntent(ctx) ?? "";
+  return {
+    ...payload(ctx),
+    transfer_intent: intent,
+    transfer_node_instructions: transferringNode(ctx, intent)?.node_prompt ?? "",
+  };
+}
+
+/**
+ * TRANSFER CONSENT — the transfer JUDGEMENT. Gated on the fact: no transfer ⇒
+ * not applicable (unavailable, fans out nothing). A transferred call where the
+ * caller never spoke needs no LLM to grade — nobody consented because nobody
+ * was there — so it short-circuits in code to `no_caller`. Everything else is
+ * the LLM judge over the transcript up to the transfer.
+ */
+async function resolveTransferConsent(
+  ctx: ConversationInput,
+  humanTransfer: DetectionResult,
+  userNeverSpoke: DetectionResult,
+  provider?: LlmProvider,
+): Promise<TransferConsentResult> {
+  if (!humanTransfer.available || !humanTransfer.detected) {
+    return { ...skippedDetection("no human transfer on this session — consent not applicable"), reason_code: "" };
+  }
+  if (userNeverSpoke.available && userNeverSpoke.detected) {
+    return {
+      detected: true,
+      reason: "The caller never spoke — the transfer executed with nobody on the line.",
+      technical_reason: "derived in code: user_never_spoke fired on a transferred session (no LLM call)",
+      available: true,
+      reason_code: "no_caller",
+    };
+  }
+  return safeJudge(
+    {
+      system: TRANSFER_CONSENT + OUT_TRANSFER_CONSENT,
+      ctx,
+      input: transferPayload(ctx),
+      schema: TransferConsentRawZ,
+      jsonSchema: TRANSFER_CONSENT_JSON,
+      maxTokens: DETECTION_MAX_TOKENS,
+      provider,
+    },
+    (data): TransferConsentResult => {
+      // The prompt pins the code to the verdict both ways: consent ⇒ "ok", and
+      // a fail must name a defect. A fail carrying "ok" is a contradictory
+      // verdict — stored, it would corrupt every reason-code rollup — so it is
+      // treated like any other invalid output: unavailable, never fabricated.
+      if (!data.consent_given && data.reason_code === "ok") {
+        return { ...skippedDetection("consent judge returned fail with reason_code ok — invalid verdict"), reason_code: "" };
+      }
+      return {
+        detected: !data.consent_given,
+        reason: data.reason,
+        technical_reason: data.technical_reason,
+        available: true,
+        reason_code: data.consent_given ? "ok" : data.reason_code,
+      };
+    },
+    { ...skippedDetection("transfer consent judge unavailable"), reason_code: "" },
+  );
+}
+
+/** The FACT alone, in the stored CmDetection shape — for the path where no
+ *  transcript exists to judge (the fact needs none) and consent must stay
+ *  unavailable rather than be fabricated from nothing. */
+export function evaluateHumanTransferMetric(ctx: ConversationInput): SimConversationMetrics["human_transfer"] {
+  return det(evaluateHumanTransfer(ctx));
+}
+
+/** The whole transfer axis in one call: the code-derived FACT plus the gated
+ *  consent JUDGEMENT, emitted in the stored CmDetection shape. Shared by the
+ *  live evaluation (evaluateConversationMetrics) and the backfill re-judge
+ *  (transfer-rejudge.ts), so both paths can never disagree on the rule. */
+export async function evaluateTransferAxis(
+  ctx: ConversationInput,
+  userNeverSpoke: DetectionResult,
+  provider?: LlmProvider,
+): Promise<Pick<SimConversationMetrics, "human_transfer" | "transfer_consent">> {
+  const humanTransfer = evaluateHumanTransfer(ctx);
+  const transferConsent = await resolveTransferConsent(ctx, humanTransfer, userNeverSpoke, provider);
+  return {
+    human_transfer: det(humanTransfer),
+    transfer_consent: { ...det(transferConsent), reason_code: transferConsent.reason_code },
+  };
+}
+
 /** All-zero conversation metrics with every axis marked unavailable — the
  *  placeholder for an empty transcript (ingest) or a skipped conversation eval
  *  (sim). `available:false` is how consumers tell "the judge did not run" from
@@ -311,6 +499,8 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     is_agent_runner: false,
     stt: skippedStt(),
     user_never_spoke: d(),
+    human_transfer: d(),
+    transfer_consent: { ...d(), reason_code: "" },
   };
 }
 
@@ -481,9 +671,14 @@ export async function evaluateConversationMetrics(
       )
     : evaluateUserNeverSpoke(ctx);
 
+  // Transfer axis: the fact is code-derived (free); the consent judge is the
+  // one extra LLM call, and only on transferred sessions.
+  const transferAxis = await evaluateTransferAxis(ctx, userNeverSpoke, provider);
+
   return {
     ...outcomes,
     user_never_spoke: det(userNeverSpoke),
+    ...transferAxis,
     user_sentiment: {
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,

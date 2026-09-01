@@ -101,3 +101,11 @@ export const SENTIMENT_VALUES = ["positive", "neutral", "negative", "confused", 
 export const DETECTION_JSON = strict("eval_detection", obj({ detected: bool, reason: str, technical_reason: str }));
 export const SENTIMENT_JSON = strict("eval_sentiment", obj({ sentiment: { type: "string", enum: SENTIMENT_VALUES }, reason: str, technical_reason: str }));
 export const STT_JSON = strict("eval_stt", obj({ error_count: int, recovered_count: int, reason: str, technical_reason: str }));
+/** Why a transfer executed without consent — common call-review categories,
+ *  so verdicts roll up the way a QA team already buckets bad transfers. */
+export const TRANSFER_CONSENT_REASON_CODES = ["ok", "declined", "busy", "mid_sentence", "hold_music", "no_caller"] as const;
+export type TransferConsentReasonCode = (typeof TRANSFER_CONSENT_REASON_CODES)[number];
+export const TRANSFER_CONSENT_JSON = strict(
+  "eval_transfer_consent",
+  obj({ consent_given: bool, reason_code: { type: "string", enum: TRANSFER_CONSENT_REASON_CODES }, reason: str, technical_reason: str }),
+);

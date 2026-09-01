@@ -16,7 +16,7 @@ import { config as envConfig } from "../../config.js";
 import type { LlmProvider } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
-import { evaluateConversationMetrics, zeroConversationMetrics } from "../judges/conversation-judges.js";
+import { evaluateConversationMetrics, evaluateHumanTransferMetric, zeroConversationMetrics } from "../judges/conversation-judges.js";
 import { IDLE_TAG } from "../types.js";
 import type {
   ConversationInput,
@@ -26,6 +26,7 @@ import type {
   NodeEvaluation,
   NodeGoalEvaluation,
   SimConversationMetrics,
+  SessionTag,
 } from "../types.js";
 
 // ── the public ingest "agent config" shape (what a client sends) ─────────────
@@ -530,14 +531,23 @@ export async function evaluateIngestedSession(
    *  for its judgeability gate — avoids re-grouping the whole transcript and
    *  re-rendering both transcript strings a second time per session. */
   prebuilt?: ReturnType<typeof buildSessionEvalInput>,
+  /** The session's stored tags (ao_session_tags). The transfer axis reads the
+   *  platform's `transfer:human` fact from them; absent ⇒ that axis is
+   *  undecidable (unavailable), never a clean "no transfer". */
+  tags?: SessionTag[],
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
+  if (tags) input.tags = tags;
 
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
-      : Promise.resolve(zeroConversationMetrics()),
+      // No transcript: nothing for the LLM axis to judge — but the transfer
+      // FACT is a tag, not a transcript, and "a transfer executed with zero
+      // conversation" is the worst case the axis exists to record. Keep it;
+      // consent stays unavailable (nothing to judge, never fabricated).
+      : Promise.resolve({ ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }),
     input.nodes.length
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),

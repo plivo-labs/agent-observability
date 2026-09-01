@@ -406,3 +406,71 @@ describe("buildSessionEvalInput", () => {
     for (const n of input.nodes) for (const t of n.turns) expect(t.idle).toBeUndefined();
   });
 });
+
+// ── session tags reach the conversation judges ──────────────────────────────
+// The sweeper loads a session's tags (ao_session_tags) and hands them to the
+// engine; the transfer axis is decided from them. Without a tag feed the axis
+// must be undecidable, never a clean "no transfer".
+describe("evaluateIngestedSession — session tags", () => {
+  const judgeResponder = (consentGiven: boolean) => (args: { system?: string }) => {
+    const s = args.system ?? "";
+    if (s.includes("consent to the transfer"))
+      return JSON.stringify({ consent_given: consentGiven, reason_code: consentGiven ? "ok" : "declined", reason: "r", technical_reason: "t" });
+    if (s.includes("fabricated information")) return JSON.stringify({ hallucinated: false, score: 1, reason: "", technical_reason: "" });
+    if (s.includes("Variables expected to be extracted")) return JSON.stringify({ extraction_successful: true, score: 1, reason: "", technical_reason: "", missing_variables: [], incorrect_variables: [] });
+    if (s.includes("repeat its own previous messages")) return JSON.stringify({ loop_detected: false, score: 1, reason: "", technical_reason: "" });
+    if (s.includes("correct intent for the conversation segment")) return JSON.stringify({ intent_not_found: false, intent_wrongly_identified: false, reason: "", technical_reason: "" });
+    if (s.includes("four-part rubric"))
+      return JSON.stringify({
+        objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+        procedure_compliance: { score: 1, missed_steps: [], reason_code: "", reason: "", technical_reason: "" },
+        interaction_quality: { score: 1, issues: [], reason_code: "", reason: "", technical_reason: "" },
+        policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+      });
+    if (s.includes("configured goals were achieved")) return JSON.stringify({ goals: [{ goal_name: "Resolved", achieved: true, reason: "", technical_reason: "" }] });
+    if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
+    if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+    return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+  };
+  const events = () => [
+    ev("node-A", "assistant", "Hi, can I connect you to a mover now?"),
+    ev("node-A", "user", "no, not now"),
+  ];
+
+  test("a transfer:human tag reaches the transfer axis (fact fires, consent judged)", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder(false)]);
+    const verdicts = await evaluateIngestedSession(cfg(), events(), llm, "livekit", undefined, [
+      { name: "transfer:human", metadata: { intent: "Transfer Approved" } },
+    ]);
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(true);
+    expect(verdicts.conversation_metrics.human_transfer.detected).toBe(true);
+    expect(verdicts.conversation_metrics.transfer_consent.detected).toBe(true);
+    expect(verdicts.conversation_metrics.transfer_consent.reason_code).toBe("declined");
+  });
+
+  test("an empty transcript still yields the transfer FACT (it needs no transcript) with consent unavailable", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder(true)]);
+    // No conversation items at all → full_transcript is empty → the LLM axis is skipped.
+    const verdicts = await evaluateIngestedSession(cfg(), [], llm, "livekit", undefined, [
+      { name: "transfer:human", metadata: { intent: "Transfer Approved" } },
+    ]);
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(true);
+    expect(verdicts.conversation_metrics.human_transfer.detected).toBe(true);
+    // Nobody spoke and nothing was judged: consent is not fabricated.
+    expect(verdicts.conversation_metrics.transfer_consent.available).toBe(false);
+    expect(llm.calls.length).toBe(0);
+  });
+
+  test("no tag feed ⇒ the transfer axis is unavailable (undecidable)", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder(true)]);
+    const verdicts = await evaluateIngestedSession(cfg(), events(), llm, "livekit");
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(false);
+    expect(verdicts.conversation_metrics.transfer_consent.available).toBe(false);
+  });
+});
