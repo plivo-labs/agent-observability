@@ -340,6 +340,9 @@ export interface WriteScenarioChunkArgs {
   phloUuid: string;
   chunkIndex: number;
   attempt: number;
+  /** Operator steering ("Additional Information" in the console) — overrides slot persona
+   *  combos where they conflict; see writerSystemPrompt. Empty/absent = no steering. */
+  instructions?: string;
   provider?: LlmProvider;
   /** Caller abort (SSE client disconnect) — stops the LLM call + its retries. */
   signal?: AbortSignal;
@@ -428,6 +431,7 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
     expected_scenario_count: slots.length,
     expected_slot_ids: slots.map((s) => s.slot_id),
     combo_definitions: comboContextForSlots(slots),
+    ...(args.instructions ? { user_instructions: args.instructions } : {}),
   };
 
   const res = await completeJSON({

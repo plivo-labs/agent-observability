@@ -154,7 +154,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
  *  an attempt that emits scenarios and THEN throws mid-stream still can't get
  *  those slots re-requested or marked failed. */
 async function runChunkWithRetry(
-  base: { flowJson: Dict; planner: PlannerWithInventory; model: string; reasoningEffort?: WireReasoningEffort; generationId: string; phloUuid: string; chunkIndex: number; provider?: LlmProvider; signal?: AbortSignal },
+  base: { flowJson: Dict; planner: PlannerWithInventory; model: string; reasoningEffort?: WireReasoningEffort; generationId: string; phloUuid: string; chunkIndex: number; instructions?: string; provider?: LlmProvider; signal?: AbortSignal },
   slots: Slot[],
   onScenario?: (s: RuntimeScenario) => void,
 ): Promise<{ scenarios: RuntimeScenario[]; failedSlotIds: string[]; usages: LlmUsage[]; incrementalDisabled: boolean }> {
@@ -413,7 +413,7 @@ export async function* generateScenarios(input: GenerateInput): AsyncGenerator<G
     const c = chunks[i];
     chunkStartedAt.set(i, Date.now());
     runChunkWithRetry(
-      { flowJson: input.flowJson, planner: planner!, model: input.model, reasoningEffort: input.writerReasoningEffort, generationId, phloUuid: input.phloUuid, chunkIndex: i, provider: input.writerProvider, signal: input.signal },
+      { flowJson: input.flowJson, planner: planner!, model: input.model, reasoningEffort: input.writerReasoningEffort, generationId, phloUuid: input.phloUuid, chunkIndex: i, instructions, provider: input.writerProvider, signal: input.signal },
       c,
       incremental ? (scenario) => queue.push({ kind: "scenario", chunkIndex: i, scenario }) : undefined,
     ).then(
