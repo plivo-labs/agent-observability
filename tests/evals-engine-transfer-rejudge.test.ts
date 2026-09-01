@@ -73,10 +73,10 @@ describe("rejudgeTransferAxis — judge ONLY the transfer axis on an already-jud
     expect(llm.calls.length).toBe(0);
   });
 
-  test("a session without the tag re-judges to a clean 'not transferred' and no consent call", async () => {
+  test("a session without the tag re-judges to an UNAVAILABLE transfer axis (no pass row, no consent call)", async () => {
     const llm = consentLlm(false);
     const after = await rejudgeTransferAxis(ctx({ tags: [] }), stored(), llm);
-    expect(after.conversation_metrics.human_transfer.available).toBe(true);
+    expect(after.conversation_metrics.human_transfer.available).toBe(false);
     expect(after.conversation_metrics.human_transfer.detected).toBe(false);
     expect(after.conversation_metrics.transfer_consent.available).toBe(false);
     expect(llm.calls.length).toBe(0);

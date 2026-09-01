@@ -13,6 +13,7 @@ import {
   type EvalClaim,
 } from "./db.js";
 import { classifyErrorDurability } from "../error-durability.js";
+import { jsonbParam } from "../jsonb-param.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
@@ -110,32 +111,51 @@ export async function fanOutExternalEvals(
       FOR UPDATE
     `;
     if (owned.length === 0) return false; // session deleted, or claim adopted by another sweeper
-    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
-    for (const row of rows) {
-      await insertLiveKitEvaluation({
-        sessionId,
-        source: "eval_sweeper",
-        judgeName: row.judgeName,
-        tag: row.tag,
-        verdict: row.passed ? "pass" : "fail",
-        reasoning: row.reasoning || null,
-        instructions: null,
-        observedAt,
-        raw: row.raw,
-      }, tx);
-    }
+    await rewriteFanOutRows(tx, sessionId, rows, observedAt, null);
     return true;
   });
 }
 
-/** Re-fan a DONE session's verdicts after an in-place axis re-judge
- *  (scripts/rejudge-transfer-axis.ts). Same identity-idempotent clear+rewrite
- *  as fanOutExternalEvals, fenced on the verdict row being terminal 'done'
- *  (never a running claim, which belongs to a sweeper). Returns false when the
- *  session has no done verdict row. */
-export async function refanExternalEvalsForDone(
+/** The one place eval_sweeper rows are (re)written: clear this session's set
+ *  and insert the current one, inside the caller's transaction. Shared by the
+ *  live fan-out and the backfill commit so the two can never drift. */
+async function rewriteFanOutRows(
+  tx: typeof sql,
+  sessionId: string,
+  rows: ReturnType<typeof buildExternalEvalRows>,
+  observedAt: Date,
+  createdAt: Date | null,
+): Promise<void> {
+  await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
+  for (const row of rows) {
+    await insertLiveKitEvaluation({
+      sessionId,
+      source: "eval_sweeper",
+      judgeName: row.judgeName,
+      tag: row.tag,
+      verdict: row.passed ? "pass" : "fail",
+      reasoning: row.reasoning || null,
+      instructions: null,
+      observedAt,
+      raw: row.raw,
+      createdAt,
+    }, tx);
+  }
+}
+
+/** Commit an in-place axis re-judge of a DONE session
+ *  (scripts/rejudge-transfer-axis.ts): the verdict blob and the per-judge rows
+ *  are written in ONE transaction, fenced on the verdict row being terminal
+ *  'done' (a running claim belongs to a sweeper and is never touched). Both
+ *  halves land or neither does — the stored verdicts can never disagree with
+ *  the rows consumers read. The re-fanned rows keep the session's ORIGINAL
+ *  created_at (the earliest existing eval_sweeper row, else the call time):
+ *  alert rules window on created_at, so re-inserting months-old verdicts with
+ *  NOW() would page on history. Returns false when there is no done row. */
+export async function commitRejudgedVerdicts(
   sessionId: string,
   verdicts: SessionEvalVerdicts,
+  /** Call-end time — the observed_at stamp, same as the live fan-out. */
   observedAt: Date,
 ): Promise<boolean> {
   const rows = buildExternalEvalRows(verdicts);
@@ -146,20 +166,18 @@ export async function refanExternalEvalsForDone(
       FOR UPDATE
     `;
     if (done.length === 0) return false;
-    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
-    for (const row of rows) {
-      await insertLiveKitEvaluation({
-        sessionId,
-        source: "eval_sweeper",
-        judgeName: row.judgeName,
-        tag: row.tag,
-        verdict: row.passed ? "pass" : "fail",
-        reasoning: row.reasoning || null,
-        instructions: null,
-        observedAt,
-        raw: row.raw,
-      }, tx);
-    }
+    const prior = await tx`
+      SELECT MIN(created_at) AS first_created_at
+      FROM ao_session_external_evals
+      WHERE session_id = ${sessionId} AND source = 'eval_sweeper'
+    `;
+    const firstCreatedAt = prior[0]?.first_created_at ? new Date(prior[0].first_created_at) : observedAt;
+    await tx`
+      UPDATE ao_session_eval_verdicts
+      SET verdicts = ${jsonbParam(verdicts)}::text::jsonb, updated_at = NOW()
+      WHERE session_id = ${sessionId} AND status = 'done'
+    `;
+    await rewriteFanOutRows(tx, sessionId, rows, observedAt, firstCreatedAt);
     return true;
   });
 }

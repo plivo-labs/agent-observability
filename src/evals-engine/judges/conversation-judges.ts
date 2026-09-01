@@ -29,7 +29,7 @@ import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
-import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON, TRANSFER_CONSENT_JSON, TRANSFER_CONSENT_REASON_CODES } from "./schemas.js";
+import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON, TRANSFER_CONSENT_JSON, TRANSFER_CONSENT_REASON_CODES, type TransferConsentReasonCode } from "./schemas.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
 const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
@@ -323,48 +323,82 @@ export function evaluateUserNeverSpoke(ctx: ConversationInput): DetectionResult 
  *  (runtime-confirmed). Its `metadata.intent` is the handoff intent that fired. */
 export const TRANSFER_TAG = "transfer:human";
 
-export type TransferConsentResult = DetectionResult & { reason_code: string };
+export type TransferConsentResult = DetectionResult & { reason_code: TransferConsentReasonCode | "" };
 
 /**
  * HUMAN TRANSFER — the transfer FACT, decided in CODE from the session tags.
  *
- * `detected` means a transfer to a human executed — the platform said so via the
- * `transfer:human` tag, which it emits only from its own confirmed transfer
- * branch. Nothing is inferred from the transcript: a "let me transfer you" line
- * is not a transfer. No tag feed at all (`ctx.tags` absent — the sim path, or a
- * sender that never tags) is undecidable, so it is unavailable rather than a
- * clean "not transferred"; an empty tag list IS decidable (the sender tags, and
- * did not tag this one).
+ * `detected` means a transfer to a human executed, as asserted by the ingest
+ * client through the `transfer:human` tag. AO cannot verify the assertion; the
+ * trust boundary is the same one the whole transcript crosses (an authenticated
+ * ingest client), and the platform runtime emits the tag only from its own
+ * confirmed transfer branch. Nothing is inferred from the transcript: a "let me
+ * transfer you" line is not a transfer.
+ *
+ * ABSENCE IS NOT EVIDENCE. Without the tag the axis is unavailable — never a
+ * "not transferred" pass: senders that predate the tag (older runtime builds,
+ * other SDKs, the sim path) emit nothing, and a pass row there would be a
+ * confident falsehood written permanently into a done session. So this judge
+ * only ever asserts the fact; "not transferred" is the judged sessions that
+ * carry no row, and consumers count transfers as its fail rows.
  */
 export function evaluateHumanTransfer(ctx: ConversationInput): DetectionResult {
-  const tags = ctx.tags;
-  if (!tags) return skippedDetection("no session tags supplied — human_transfer undecidable");
-  const tag = tags.find((t) => t && t.name === TRANSFER_TAG);
-  if (!tag) {
-    return { detected: false, reason: "", technical_reason: "no transfer:human tag on the session", available: true };
+  const intent = transferIntent(ctx);
+  if (intent === null) {
+    return skippedDetection("no transfer:human tag on the session — absence is not evidence of no transfer");
   }
-  const intent = typeof tag.metadata?.intent === "string" ? (tag.metadata.intent as string) : "";
+  const nextNode = transferNextNode(ctx);
+  const where = nextNode ? ` → ${nextNode}` : "";
   return derivedDetection(
-    intent ? `A transfer to a human was executed (intent: ${intent}).` : "A transfer to a human was executed.",
-    "derived in code: session tag transfer:human (platform-confirmed transfer execution)",
+    intent ? `A transfer to a human was executed (intent: ${intent}${where}).` : `A transfer to a human was executed${where ? ` (${where.trim()})` : ""}.`,
+    "derived in code: session tag transfer:human (the ingest client's transfer confirmation)",
   );
 }
 
-const transferIntent = (ctx: ConversationInput): string => {
+/** The flow node the platform handed the call to, when the tag carries it —
+ *  lets a handback that was NOT to a human be audited downstream. */
+function transferNextNode(ctx: ConversationInput): string {
   const tag = ctx.tags?.find((t) => t && t.name === TRANSFER_TAG);
-  return typeof tag?.metadata?.intent === "string" ? (tag.metadata.intent as string) : "";
-};
+  const next = tag?.metadata?.next_node;
+  return typeof next === "string" ? next.trim().slice(0, 200) : "";
+}
+
+/** The handoff intent carried by the transfer tag: `null` when the session has
+ *  no `transfer:human` tag, `""` when the tag carries no usable intent. */
+function transferIntent(ctx: ConversationInput): string | null {
+  const tag = ctx.tags?.find((t) => t && t.name === TRANSFER_TAG);
+  if (!tag) return null;
+  const intent = tag.metadata?.intent;
+  return typeof intent === "string" ? intent.trim().slice(0, 200) : "";
+}
+
+/** The node whose instructions define the transfer: the one that OWNS the
+ *  handoff intent (matched by intent name in its available_intents), else the
+ *  last node visited — the transfer is terminal by construction, so on the
+ *  live path that is the transferring node; the intent match protects the
+ *  case where a later node still ran (a revisit, a wrap-up hop). */
+function transferringNode(ctx: ConversationInput, intent: string): ConversationInput["nodes"][number] | undefined {
+  if (intent) {
+    const owner = ctx.nodes.find((n) =>
+      (n.available_intents ?? []).some((i) => {
+        const name = (i as { intent_name?: unknown } | null)?.intent_name;
+        return typeof name === "string" && name === intent;
+      }),
+    );
+    if (owner) return owner;
+  }
+  return ctx.nodes[ctx.nodes.length - 1];
+}
 
 /** The consent judge reads the speech transcript plus two facts the plain
  *  detection payload lacks: WHICH intent transferred, and the transferring
- *  node's own instructions (the last node visited — the transfer is terminal
- *  by construction, the AI leg ends when it fires). */
+ *  node's own instructions. */
 function transferPayload(ctx: ConversationInput): Record<string, unknown> {
-  const lastNode = ctx.nodes[ctx.nodes.length - 1];
+  const intent = transferIntent(ctx) ?? "";
   return {
     ...payload(ctx),
-    transfer_intent: transferIntent(ctx),
-    transfer_node_instructions: lastNode?.node_prompt ?? "",
+    transfer_intent: intent,
+    transfer_node_instructions: transferringNode(ctx, intent)?.node_prompt ?? "",
   };
 }
 
