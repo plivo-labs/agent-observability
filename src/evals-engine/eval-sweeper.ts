@@ -128,6 +128,42 @@ export async function fanOutExternalEvals(
   });
 }
 
+/** Re-fan a DONE session's verdicts after an in-place axis re-judge
+ *  (scripts/rejudge-transfer-axis.ts). Same identity-idempotent clear+rewrite
+ *  as fanOutExternalEvals, fenced on the verdict row being terminal 'done'
+ *  (never a running claim, which belongs to a sweeper). Returns false when the
+ *  session has no done verdict row. */
+export async function refanExternalEvalsForDone(
+  sessionId: string,
+  verdicts: SessionEvalVerdicts,
+  observedAt: Date,
+): Promise<boolean> {
+  const rows = buildExternalEvalRows(verdicts);
+  return await sql.begin(async (tx: typeof sql) => {
+    const done = await tx`
+      SELECT 1 FROM ao_session_eval_verdicts
+      WHERE session_id = ${sessionId} AND status = 'done'
+      FOR UPDATE
+    `;
+    if (done.length === 0) return false;
+    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
+    for (const row of rows) {
+      await insertLiveKitEvaluation({
+        sessionId,
+        source: "eval_sweeper",
+        judgeName: row.judgeName,
+        tag: row.tag,
+        verdict: row.passed ? "pass" : "fail",
+        reasoning: row.reasoning || null,
+        instructions: null,
+        observedAt,
+        raw: row.raw,
+      }, tx);
+    }
+    return true;
+  });
+}
+
 /** True when the error would fail identically on retry (schema/content
  *  policy). Transient provider trouble (timeouts, 429s, 5xx, network) must
  *  NOT terminally poison a session — leaving the claim `running` lets the
@@ -142,7 +178,7 @@ function isTerminalEvalError(e: unknown): boolean {
 /** Synthesize builder events from stored chat_history items when the OTLP
  *  event channel was lost — judging the recording's transcript beats marking
  *  a fully transcribed call "done" with phantom empty-input verdicts. */
-function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
+export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
   // Parse lazily: getSessionEvalSource returns the column raw so the common
   // path (raw_report.events present) never pays for parsing the large blob.
   if (typeof chatHistory === "string") {
@@ -258,7 +294,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
 
     // `built` is threaded through so the (pure but heavy) input build from the
     // judgeability gate above isn't recomputed inside the evaluation.
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined, built);
+    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined, built, source.tags);
     // Judging is done — no more provider spend to protect. Stop the heartbeat
     // and drain any in-flight beat so the fan-out + completion below read a
     // token no concurrent beat can invalidate.

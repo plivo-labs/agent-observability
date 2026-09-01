@@ -11,6 +11,7 @@
 // statements without sql.unsafe, which the repo's bun:sql guidance cautions
 // against. They are kept inline and adjacent here so the one file is the
 // single place they are maintained.
+import type { SessionTag } from "./types.js";
 import { sql } from "../db.js";
 import { jsonbParam } from "../jsonb-param.js";
 
@@ -218,6 +219,11 @@ export interface SessionEvalSource {
   /** Session transport/channel (e.g. "livekit", "twilio", "chat"). Passed to
    *  the conversation judges to gate the voice-only detections on text calls. */
   transport: string | null;
+  /** The session's stored tags (name + metadata). The transfer axis reads the
+   *  platform's `transfer:human` fact from here. Always an array for an
+   *  ingested session — an empty list means "the sender tagged nothing", which
+   *  is a decidable "no transfer" (unlike the sim path, which supplies none). */
+  tags: SessionTag[];
 }
 
 /** Backdate a running claim so stale adoption re-picks it after roughly
@@ -246,8 +252,16 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
   }
   const row = rows[0];
   const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
+  const tagRows = await sql`
+    SELECT name, metadata FROM ao_session_tags WHERE session_id = ${sessionId}
+  `;
+  const tags: SessionTag[] = tagRows.map((t: any) => ({
+    name: String(t.name),
+    metadata: t.metadata == null ? null : (parse(t.metadata) as Record<string, unknown>),
+  }));
   return {
     sessionId,
+    tags,
     config: parse(row.config) as Record<string, unknown>,
     // Returned RAW (possibly a JSON string): it's only consumed by the
     // fallback path when raw_report.events is empty, so the common path
@@ -259,4 +273,66 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     sessionEndedAt: row.session_ended_at ? new Date(row.session_ended_at) : null,
     transport: typeof row.transport === "string" ? row.transport : null,
   };
+}
+
+// ── Backfill re-judge helpers (scripts/rejudge-transfer-axis.ts) ─────────────
+//
+// A session judged before an axis existed can have ONE axis re-judged in place
+// once the fact it depends on (a tag) is imported later. These operate only on
+// sessions whose verdict row is terminal 'done' — a running claim belongs to a
+// sweeper and must not be touched underneath it.
+
+export interface StoredSessionEvalVerdicts {
+  status: string;
+  verdicts: Record<string, unknown> | null;
+  completedAt: Date | null;
+}
+
+export async function getStoredSessionEvalVerdicts(sessionId: string): Promise<StoredSessionEvalVerdicts | null> {
+  const rows = await sql`
+    SELECT status, verdicts, completed_at FROM ao_session_eval_verdicts WHERE session_id = ${sessionId}
+  `;
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  const v = row.verdicts;
+  return {
+    status: String(row.status),
+    verdicts: v == null ? null : ((typeof v === "string" ? JSON.parse(v) : v) as Record<string, unknown>),
+    completedAt: row.completed_at ? new Date(row.completed_at) : null,
+  };
+}
+
+/** Replace the stored verdicts of a DONE session. Returns false when the row
+ *  is missing or not done (a running claim is never overwritten). */
+export async function overwriteDoneSessionVerdicts(sessionId: string, verdicts: object): Promise<boolean> {
+  const rows = await sql`
+    UPDATE ao_session_eval_verdicts
+    SET verdicts = ${jsonbParam(verdicts)}::text::jsonb, updated_at = NOW()
+    WHERE session_id = ${sessionId} AND status = 'done'
+    RETURNING session_id
+  `;
+  return rows.length > 0;
+}
+
+/** Done sessions carrying a tag with this name (optionally from one tag
+ *  source, e.g. 'legacy_backfill', and/or judged since a time). Newest first. */
+export async function listDoneSessionIdsWithTag(opts: {
+  name: string;
+  tagSource?: string;
+  since?: Date;
+  limit?: number;
+}): Promise<string[]> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 10_000, 100_000));
+  const rows = await sql`
+    SELECT DISTINCT v.session_id, v.completed_at
+    FROM ao_session_eval_verdicts v
+    JOIN ao_session_tags t ON t.session_id = v.session_id
+    WHERE v.status = 'done'
+      AND t.name = ${opts.name}
+      ${opts.tagSource ? sql`AND t.source = ${opts.tagSource}` : sql``}
+      ${opts.since ? sql`AND v.completed_at >= ${opts.since}` : sql``}
+    ORDER BY v.completed_at DESC NULLS LAST
+    LIMIT ${limit}
+  `;
+  return rows.map((r: any) => String(r.session_id));
 }
