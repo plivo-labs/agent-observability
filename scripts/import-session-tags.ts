@@ -16,7 +16,7 @@
  *   DATABASE_URL=… bun run scripts/import-session-tags.ts --file tags.jsonl --source legacy_backfill [--dry-run]
  */
 import { readFileSync } from "node:fs";
-import { findSessionIdsByTag, sql, upsertSessionTag } from "../src/db.js";
+import { findSessionIdsByTag, sessionExists, sql, upsertSessionTag } from "../src/db.js";
 import { parseTagImportRows } from "../src/tag-import.js";
 
 function arg(name: string): string | undefined {
@@ -32,21 +32,30 @@ if (!file) {
 }
 
 const rows = parseTagImportRows(readFileSync(file, "utf8"));
-let written = 0;
-let unresolved = 0;
-let ambiguous = 0;
-for (const row of rows) {
-  let sessionId = row.session_id ?? null;
-  if (!sessionId && row.match_tag) {
-    const ids = await findSessionIdsByTag(row.match_tag);
-    if (ids.length === 1) sessionId = ids[0]!;
-    else if (ids.length === 0) { unresolved++; console.warn(`unresolved: no session carries tag ${row.match_tag}`); continue; }
-    else { ambiguous++; console.warn(`ambiguous: ${ids.length} sessions carry tag ${row.match_tag} — skipped`); continue; }
+const counts = { written: 0, unresolved: 0, ambiguous: 0, unknownSession: 0, failed: 0 };
+for (const [i, row] of rows.entries()) {
+  try {
+    let sessionId = row.session_id ?? null;
+    if (!sessionId && row.match_tag) {
+      const ids = await findSessionIdsByTag(row.match_tag);
+      if (ids.length === 1) sessionId = ids[0]!;
+      else if (ids.length === 0) { counts.unresolved++; console.warn(`row ${i + 1}: unresolved — no session carries tag ${row.match_tag}`); continue; }
+      else { counts.ambiguous++; console.warn(`row ${i + 1}: ambiguous — several sessions carry tag ${row.match_tag}, skipped`); continue; }
+    }
+    if (!sessionId) { counts.unresolved++; continue; }
+    // ao_session_tags has no FK to sessions: refuse to write a tag nothing will
+    // ever read rather than silently counting an orphan as imported.
+    if (!(await sessionExists(sessionId))) { counts.unknownSession++; console.warn(`row ${i + 1}: unknown session_id, skipped`); continue; }
+    if (dryRun) { counts.written++; continue; }
+    await upsertSessionTag({ sessionId, name: row.name, metadata: row.metadata, source, observedAt: row.observed_at });
+    counts.written++;
+  } catch (e) {
+    // One bad row must not abort a long backfill; it is reported and the run
+    // exits non-zero so the operator re-runs after fixing it (upsert is idempotent).
+    counts.failed++;
+    console.error(`row ${i + 1}: failed — ${(e as Error).message}`);
   }
-  if (!sessionId) { unresolved++; continue; }
-  if (dryRun) { written++; continue; }
-  await upsertSessionTag({ sessionId, name: row.name, metadata: row.metadata, source, observedAt: row.observed_at });
-  written++;
 }
-console.log(`${dryRun ? "[dry-run] would write" : "wrote"} ${written} tag(s) (source=${source}); unresolved=${unresolved} ambiguous=${ambiguous} of ${rows.length} rows`);
+console.log(`${dryRun ? "[dry-run] would write" : "wrote"} ${counts.written} tag(s) (source=${source}); unresolved=${counts.unresolved} ambiguous=${counts.ambiguous} unknown_session=${counts.unknownSession} failed=${counts.failed} of ${rows.length} rows`);
 await sql.end();
+if (counts.failed > 0) process.exit(1);

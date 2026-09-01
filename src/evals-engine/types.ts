@@ -1,3 +1,4 @@
+import type { TransferConsentReasonCode } from "./judges/schemas.js";
 // AO Eval Engine — public types.
 //
 // Two contracts live here:
@@ -296,9 +297,11 @@ export interface SimConversationMetrics {
    *  transcript is undecidable, never a clean "user spoke"). */
   user_never_spoke: CmDetection;
   /** The transfer FACT: a transfer to a human was executed. Decided in CODE
-   *  from the platform's `transfer:human` session tag (runtime-confirmed),
-   *  never inferred from the transcript. `detected:true` ⇒ transferred.
-   *  `available:false` when no tag feed was supplied (undecidable). */
+   *  from the platform's `transfer:human` session tag, never inferred from the
+   *  transcript. `detected:true` ⇒ transferred. Without the tag the axis is
+   *  `available:false` — absence is not evidence (senders that predate the tag
+   *  emit nothing), so this judge only ever asserts the fact and never fans
+   *  out a "not transferred" pass. */
   human_transfer: CmDetection;
   /** The transfer JUDGEMENT: did the caller consent before the transfer
    *  executed? Runs only when human_transfer fired. `detected:true` ⇒ the
@@ -306,7 +309,7 @@ export interface SimConversationMetrics {
    *  "busy", "mid_sentence", "hold_music", "no_caller"; "ok" when consent was
    *  given; "" when unavailable). Short-circuits in code to `no_caller` when
    *  the caller never spoke — no LLM call. */
-  transfer_consent: CmDetection & { reason_code: string };
+  transfer_consent: CmDetection & { reason_code: TransferConsentReasonCode | "" };
 }
 
 /** What `evaluateSimulation` returns: the node + goal (+ optional criteria) axes.

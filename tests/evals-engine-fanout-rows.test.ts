@@ -86,8 +86,10 @@ describe("buildExternalEvalRows — transfer axis (human_transfer fact + transfe
     expect(r!.passed).toBe(false);
   });
 
-  test("a non-transferred session fans out human_transfer as pass", () => {
-    expect(row(withTransfer({ transferred: false }), "human_transfer")!.passed).toBe(true);
+  test("a session with no transfer fact fans out NO human_transfer row (the judge is unavailable, not a pass)", () => {
+    const v = withTransfer({ transferred: false });
+    v.conversation_metrics.human_transfer = det(false, false); // what evaluateHumanTransfer emits without the tag
+    expect(row(v, "human_transfer")).toBeUndefined();
   });
 
   test("transfer without consent fans out transfer_consent as fail with the reason code in raw", () => {

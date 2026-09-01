@@ -1,7 +1,7 @@
 // Ingest-eval claim lifecycle — the sweeper's work-claim + verdict state.
 //
 // Lives in its own feature module (repo convention: alerts/db.ts, evals/db.ts,
-// …) since it is consumed only by the eval sweeper. The agent-config INGEST
+// …) since it is consumed by the eval sweeper and the backfill scripts (scripts/rejudge-transfer-axis.ts). The agent-config INGEST
 // write (upsertSessionAgentConfig) stays in the shared db.ts with the other
 // ingest writers.
 //
@@ -117,6 +117,10 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
  * Returns null when the session is already claimed/judged, or when its config
  * or transport row hasn't landed yet (the poller will pick it up on settle).
  */
+/** NOTE (tags): the judges read session tags (getSessionEvalSource); the
+ *  event-kick bypasses the settle window, so a tag must land in the SAME
+ *  OTLP batch as the agent config to be seen. A sender that splits config
+ *  and tags into separate batches will be judged before its tags arrive. */
 export async function claimEvalSessionNow(sessionId: string): Promise<EvalClaim | null> {
   const rows = await sql`
     INSERT INTO ao_session_eval_verdicts (session_id)
@@ -241,8 +245,12 @@ export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: numb
 
 /** Everything the eval sweeper needs to judge one session. */
 export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
+  // Tags ride the same round trip as a JSON array (one row per claimed
+  // session on the hot path — a second query per session was measurable).
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at
+    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at,
+      (SELECT COALESCE(json_agg(json_build_object('name', t.name, 'metadata', t.metadata)), '[]'::json)
+         FROM ao_session_tags t WHERE t.session_id = c.session_id) AS tags
     FROM ao_session_agent_config c
     JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
@@ -252,13 +260,15 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
   }
   const row = rows[0];
   const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
-  const tagRows = await sql`
-    SELECT name, metadata FROM ao_session_tags WHERE session_id = ${sessionId}
-  `;
-  const tags: SessionTag[] = tagRows.map((t: any) => ({
-    name: String(t.name),
-    metadata: t.metadata == null ? null : (parse(t.metadata) as Record<string, unknown>),
-  }));
+  const rawTags = parse(row.tags);
+  const tags: SessionTag[] = Array.isArray(rawTags)
+    ? rawTags
+        .filter((t: any) => t && typeof t.name === "string")
+        .map((t: any) => ({
+          name: String(t.name),
+          metadata: t.metadata == null ? null : (parse(t.metadata) as Record<string, unknown>),
+        }))
+    : [];
   return {
     sessionId,
     tags,
@@ -302,18 +312,6 @@ export async function getStoredSessionEvalVerdicts(sessionId: string): Promise<S
   };
 }
 
-/** Replace the stored verdicts of a DONE session. Returns false when the row
- *  is missing or not done (a running claim is never overwritten). */
-export async function overwriteDoneSessionVerdicts(sessionId: string, verdicts: object): Promise<boolean> {
-  const rows = await sql`
-    UPDATE ao_session_eval_verdicts
-    SET verdicts = ${jsonbParam(verdicts)}::text::jsonb, updated_at = NOW()
-    WHERE session_id = ${sessionId} AND status = 'done'
-    RETURNING session_id
-  `;
-  return rows.length > 0;
-}
-
 /** Done sessions carrying a tag with this name (optionally from one tag
  *  source, e.g. 'legacy_backfill', and/or judged since a time). Newest first. */
 export async function listDoneSessionIdsWithTag(opts: {
@@ -322,7 +320,8 @@ export async function listDoneSessionIdsWithTag(opts: {
   since?: Date;
   limit?: number;
 }): Promise<string[]> {
-  const limit = Math.max(1, Math.min(opts.limit ?? 10_000, 100_000));
+  const requested = Number.isFinite(opts.limit) ? Math.trunc(opts.limit as number) : 10_000;
+  const limit = Math.max(1, Math.min(requested, 100_000));
   const rows = await sql`
     SELECT DISTINCT v.session_id, v.completed_at
     FROM ao_session_eval_verdicts v

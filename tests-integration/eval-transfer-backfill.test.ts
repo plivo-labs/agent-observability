@@ -10,9 +10,8 @@ import {
   getSessionEvalSource,
   getStoredSessionEvalVerdicts,
   listDoneSessionIdsWithTag,
-  overwriteDoneSessionVerdicts,
 } from "../src/evals-engine/db.js";
-import { refanExternalEvalsForDone } from "../src/evals-engine/eval-sweeper.js";
+import { commitRejudgedVerdicts } from "../src/evals-engine/eval-sweeper.js";
 import { describeDb, testRun } from "./helpers.js";
 
 const t = testRun("transferbf");
@@ -60,28 +59,45 @@ describeDb("transfer-axis backfill seams", () => {
     expect(await listDoneSessionIdsWithTag({ name: "transfer:human", tagSource: "some_other_source" })).not.toContain(sid);
   });
 
-  test("a done session's verdicts can be overwritten in place and re-fanned", async () => {
+  test("listDoneSessionIdsWithTag: the name-only and since branches run too", async () => {
+    expect(await listDoneSessionIdsWithTag({ name: "transfer:human" })).toContain(sid);
+    expect(await listDoneSessionIdsWithTag({ name: "transfer:human", since: new Date("2000-01-01T00:00:00Z") })).toContain(sid);
+    expect(await listDoneSessionIdsWithTag({ name: "transfer:human", since: new Date("2999-01-01T00:00:00Z") })).not.toContain(sid);
+  });
+
+  test("commitRejudgedVerdicts writes verdicts + rows in one transaction and keeps the rows' original created_at", async () => {
+    // Seed a prior fan-out row dated a month ago — the alert engine windows on
+    // created_at, so a backfill re-fan must NOT stamp old sessions into today.
+    const monthAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    await sql`
+      INSERT INTO ao_session_external_evals (session_id, source, judge_name, tag, verdict, reasoning, observed_at, raw, created_at)
+      VALUES (${sid}, 'eval_sweeper', 'user_never_spoke', NULL, 'pass', 'r', ${monthAgo}, '{}'::jsonb, ${monthAgo})
+    `;
     const before = await getStoredSessionEvalVerdicts(sid);
     expect(before?.status).toBe("done");
     const next = {
       ...(before!.verdicts as any),
       conversation_metrics: { ...(before!.verdicts as any).conversation_metrics, human_transfer: det(true), transfer_consent: { ...det(true), reason_code: "declined" } },
     };
-    expect(await overwriteDoneSessionVerdicts(sid, next)).toBe(true);
-    expect((await getStoredSessionEvalVerdicts(sid))!.verdicts).toMatchObject({ conversation_metrics: { human_transfer: { detected: true } } });
+    expect(await commitRejudgedVerdicts(sid, next as any, monthAgo)).toBe(true);
 
-    expect(await refanExternalEvalsForDone(sid, next as any, new Date())).toBe(true);
-    const rows = await sql`SELECT judge_name, verdict FROM ao_session_external_evals WHERE session_id = ${sid} AND source = 'eval_sweeper' ORDER BY judge_name`;
+    expect((await getStoredSessionEvalVerdicts(sid))!.verdicts).toMatchObject({ conversation_metrics: { human_transfer: { detected: true } } });
+    const rows = await sql`SELECT judge_name, verdict, created_at FROM ao_session_external_evals WHERE session_id = ${sid} AND source = 'eval_sweeper' ORDER BY judge_name`;
     const byJudge = Object.fromEntries(rows.map((r: any) => [r.judge_name, r.verdict]));
     expect(byJudge.human_transfer).toBe("fail");
     expect(byJudge.transfer_consent).toBe("fail");
     expect(byJudge.user_never_spoke).toBe("pass");
+    // Every re-fanned row carries the ORIGINAL created_at, not NOW().
+    for (const r of rows) {
+      expect(Math.abs(new Date(r.created_at).getTime() - monthAgo.getTime())).toBeLessThan(2000);
+    }
   });
 
-  test("overwrite refuses a session that is not done", async () => {
+  test("commitRejudgedVerdicts refuses a session that is not done (nothing written)", async () => {
     await sql`UPDATE ao_session_eval_verdicts SET status = 'running' WHERE session_id = ${sid}`;
-    expect(await overwriteDoneSessionVerdicts(sid, { node_evaluations: [] })).toBe(false);
-    expect(await refanExternalEvalsForDone(sid, { node_evaluations: [], conversation_metrics: {} as any }, new Date())).toBe(false);
+    const snapshot = (await getStoredSessionEvalVerdicts(sid))!.verdicts;
+    expect(await commitRejudgedVerdicts(sid, { node_evaluations: [], conversation_metrics: {} as any }, new Date())).toBe(false);
+    expect((await getStoredSessionEvalVerdicts(sid))!.verdicts).toEqual(snapshot);
     await sql`UPDATE ao_session_eval_verdicts SET status = 'done' WHERE session_id = ${sid}`;
   });
 });
