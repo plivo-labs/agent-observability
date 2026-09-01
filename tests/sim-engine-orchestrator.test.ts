@@ -124,10 +124,29 @@ describe("silent webhook evidence", () => {
     const evidence = turns.filter((t: any) => t.evidence);
     expect(evidence).toHaveLength(1);
     expect(evidence[0].agent).toContain("H_DNC");
-    expect(evidence[0].agent).toContain("success");
+    expect(evidence[0].agent).toContain("successfully");
+    expect(evidence[0].agent).toContain("recorded");
     expect(evidence[0].node_uuid).toBe("A1");
     // spoken rows are untouched
     expect(turns.filter((t: any) => !t.evidence).some((t: any) => t.agent === "Goodbye")).toBe(true);
+  });
+
+  test("a FAILED webhook is surfaced as not-recorded, never credited", async () => {
+    const client = new FakeClient([
+      resp({
+        turn_node_uuid: "A1", node_uuid: "A1", message: "Goodbye", turn_type: "speech",
+        ended: true, stop_reason: "end_conversation", turn_count: 1,
+        transitions: [{ from_node_uuid: "A1", handle: "do_not_call", via: [{ node_uuid: "H_DNC", type: "http_request", outcome: "failed" }], to_node_uuid: "END", to_type: "end_conversation" }],
+      }),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
+
+    const evidence = evalArgs[0].turns.filter((t: any) => t.evidence);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].agent).toContain("did NOT succeed");
+    expect(evidence[0].agent).toContain("NOT recorded");
+    expect(evidence[0].agent).not.toContain("successfully");
   });
 });
 
