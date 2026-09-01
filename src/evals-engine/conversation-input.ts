@@ -4,7 +4,7 @@ import type { ConversationInput, EvalTurn, GoalInput, NodeEvalInput } from "./ty
  *  the run path. */
 export type NodeConfigIndex = ReadonlyMap<
   string,
-  { config: Record<string, unknown> | null; configName: string; metaName: string }
+  { config: Record<string, unknown> | null; configName: string; metaName: string; type?: string }
 >;
 
 // AO Eval Engine — build the eval input from a simulation run. Mirrors cx-sqs's transcript_builder.go:
@@ -44,11 +44,41 @@ function readGoals(flowObj: Record<string, unknown>): GoalInput[] {
 }
 
 function requiredVariables(config: Record<string, unknown> | null): string[] {
-  const ev = config?.extract_variables;
-  if (!Array.isArray(ev)) return [];
-  return ev
-    .map((v) => (v && typeof v === "object" ? (v as Record<string, unknown>).variable_name : undefined))
-    .filter((n): n is string => typeof n === "string" && n.length > 0);
+  const names = (list: unknown, key: string): string[] =>
+    Array.isArray(list)
+      ? list
+          .map((v) => (v && typeof v === "object" ? (v as Record<string, unknown>)[key] : undefined))
+          .filter((n): n is string => typeof n === "string" && n.length > 0)
+      : [];
+  // ai_agent_v2 declares collectibles as extract_variables; agent_node as
+  // agent_tasks.variables / agent_tasks.extract_only. Read all three so a
+  // collector's genuine captures are judged instead of counting as "extra".
+  const tasks = (config?.agent_tasks ?? {}) as Record<string, unknown>;
+  return [
+    ...names(config?.extract_variables, "variable_name"),
+    ...names(tasks.variables, "name"),
+    ...names(tasks.extract_only, "name"),
+  ];
+}
+
+/** The dial half of a screening node is deterministic telephony — its handles are
+ *  not LLM choices and must never appear in the judged intent surface. */
+const SCREENING_NODE_TYPES = new Set(["outbound_screening", "contact_screening"]);
+const DIAL_HANDLES = new Set(["answered", "no_answer", "busy_rejected", "failed", "voicemail_detected"]);
+
+/** A screening node's LLM-driven intent surface: the dispositions actually wired
+ *  as outgoing edges (minus the deterministic dial handles). The raw flow config
+ *  has no intents[] — agent-runner synthesises them at runtime — so the wired
+ *  edges are the eval side's source of truth. */
+function screeningIntentsFromEdges(flowObj: Record<string, unknown>, nodeUuid: string): unknown[] {
+  const edges = Array.isArray(flowObj.edges) ? (flowObj.edges as Record<string, unknown>[]) : [];
+  const handles = new Set<string>();
+  for (const e of edges) {
+    if (!e || typeof e !== "object" || e.source !== nodeUuid) continue;
+    const h = e.sourceHandle;
+    if (typeof h === "string" && h && !DIAL_HANDLES.has(h)) handles.add(h);
+  }
+  return [...handles].map((h) => ({ intent_name: h }));
 }
 
 function availableIntents(config: Record<string, unknown> | null): unknown[] {
@@ -96,15 +126,27 @@ export function fromSimTranscript({ turns, nodeIndex, flowObj, variablesByNode }
     const nodeTurns = byNode.get(nodeUuid)!;
     const gnode = nodeIndex.get(nodeUuid);
     const config = gnode?.config ?? null;
-    const chosen = [...nodeTurns].reverse().find((t) => t.intent)?.intent ?? "";
+    const screening = SCREENING_NODE_TYPES.has(gnode?.type ?? "");
+    const chosen =
+      [...nodeTurns].reverse().find((t) => t.intent)?.intent ??
+      [...nodeTurns].reverse().find((t) => t.exit_handle && !DIAL_HANDLES.has(t.exit_handle))?.exit_handle ??
+      "";
+    const configIntents = availableIntents(config);
+    const extracted = variablesByNode[nodeUuid] ?? {};
     return {
       node_uuid: nodeUuid,
       node_name: gnode?.configName || gnode?.metaName || nodeUuid,
       node_prompt: typeof config?.instructions === "string" ? config.instructions : "",
-      available_intents: availableIntents(config),
+      available_intents:
+        configIntents.length === 0 && screening ? screeningIntentsFromEdges(flowObj, nodeUuid) : configIntents,
       chosen_intent: chosen,
       required_variables: requiredVariables(config),
-      extracted_variables: variablesByNode[nodeUuid] ?? {},
+      // Screening workflow outputs (screening_disposition/status/…) are emitted
+      // by the node itself, not extracted from the caller — grading them as
+      // extractions produced phantom score-0 verdicts on every screening run.
+      extracted_variables: screening
+        ? Object.fromEntries(Object.entries(extracted).filter(([k]) => !k.startsWith("screening_")))
+        : extracted,
       turns: nodeTurns,
       turn_count: nodeTurns.length,
     };

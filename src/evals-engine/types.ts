@@ -26,6 +26,10 @@ export interface EvalTurn {
   agent: string;
   /** Intent the agent/framework selected on this turn ("" when none). */
   intent: string;
+  /** Edge sourceHandle the flow exited this node through on this turn ("" / absent
+   *  when the turn did not leave the node). Screening nodes surface their chosen
+   *  disposition here rather than in `intent`. */
+  exit_handle?: string;
   /** True for synthetic evidence lines (tool calls, handoffs, system notes)
    *  that are NOT spoken words. The speech-only transcript filters on this
    *  flag instead of re-matching the rendered label strings. */
