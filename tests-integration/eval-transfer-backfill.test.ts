@@ -69,9 +69,10 @@ describeDb("transfer-axis backfill seams", () => {
     // Seed a prior fan-out row dated a month ago — the alert engine windows on
     // created_at, so a backfill re-fan must NOT stamp old sessions into today.
     const monthAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-    await sql`
+    const [{ id: priorRowId }] = await sql`
       INSERT INTO ao_session_external_evals (session_id, source, judge_name, tag, verdict, reasoning, observed_at, raw, created_at)
       VALUES (${sid}, 'eval_sweeper', 'user_never_spoke', NULL, 'pass', 'r', ${monthAgo}, '{}'::jsonb, ${monthAgo})
+      RETURNING id
     `;
     const before = await getStoredSessionEvalVerdicts(sid);
     expect(before?.status).toBe("done");
@@ -82,15 +83,18 @@ describeDb("transfer-axis backfill seams", () => {
     expect(await commitRejudgedVerdicts(sid, next as any, monthAgo)).toBe(true);
 
     expect((await getStoredSessionEvalVerdicts(sid))!.verdicts).toMatchObject({ conversation_metrics: { human_transfer: { detected: true } } });
-    const rows = await sql`SELECT judge_name, verdict, created_at FROM ao_session_external_evals WHERE session_id = ${sid} AND source = 'eval_sweeper' ORDER BY judge_name`;
+    const rows = await sql`SELECT id, judge_name, verdict, created_at FROM ao_session_external_evals WHERE session_id = ${sid} AND source = 'eval_sweeper' ORDER BY judge_name`;
     const byJudge = Object.fromEntries(rows.map((r: any) => [r.judge_name, r.verdict]));
     expect(byJudge.human_transfer).toBe("fail");
     expect(byJudge.transfer_consent).toBe("fail");
     expect(byJudge.user_never_spoke).toBe("pass");
-    // Every re-fanned row carries the ORIGINAL created_at, not NOW().
+    // Every row carries the ORIGINAL created_at, not NOW().
     for (const r of rows) {
       expect(Math.abs(new Date(r.created_at).getTime() - monthAgo.getTime())).toBeLessThan(2000);
     }
+    // Rows outside the transfer axis are untouched — same physical row (same id), not a rewrite.
+    const untouched = rows.find((r: any) => r.judge_name === "user_never_spoke");
+    expect(untouched!.id).toBe(priorRowId);
   });
 
   test("commitRejudgedVerdicts refuses a session that is not done (nothing written)", async () => {

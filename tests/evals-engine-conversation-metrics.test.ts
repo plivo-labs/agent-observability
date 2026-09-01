@@ -417,6 +417,14 @@ describe("transfer_consent — did the caller consent before the transfer execut
     expect(call!.user).not.toContain("Wrap-up node that ran after.");
   });
 
+  test("a fail that carries reason_code 'ok' is an invalid verdict → unavailable, never stored", async () => {
+    const llm = new MockLLM([consentResponder(false, "ok")]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.human_transfer.detected).toBe(true);
+    expect(cm.transfer_consent.available).toBe(false);
+    expect(cm.transfer_consent.reason_code).toBe("");
+  });
+
   test("a deterministic judge failure leaves consent unavailable, never a fabricated pass", async () => {
     const llm = new MockLLM([(args: { system?: string }) => ((args.system ?? "").includes("consent to the transfer") ? "not json" : responder({})(args))]);
     const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);

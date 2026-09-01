@@ -94,7 +94,12 @@ The dashboard (`frontend/`) and the published registry (`packages/ui/`) share ru
 4. Optionally uploads audio to S3 (when `S3_BUCKET` and credentials are set).
 5. Saves to `ao_agent_transport_sessions` table.
 
-Native LiveKit observability also accepts OTLP log records at `POST /observability/logs/otlp/v0` (JSON or protobuf, gzip optional). `persistLiveKitOtlpLogs` branches on each record's `body` field — `"session report"` merges into raw_report patches, `"chat item"` appends events, `"tag"` upserts `ao_session_tags`, `"evaluation"` inserts `ao_session_external_evals`, `"outcome"` upserts `ao_session_outcomes`, `"agent config"` upserts `ao_session_agent_config` (the eval opt-in). The `traces` and `metrics` OTLP routes return 200 without persisting (per-turn agent metrics ride on the recording's `chat_history` payload, not OTLP metrics).
+Native LiveKit observability also accepts OTLP log records at `POST /observability/logs/otlp/v0` (JSON or protobuf, gzip optional). `persistLiveKitOtlpLogs` branches on each record's `body` field — `"session report"` merges into raw_report patches, `"chat item"` appends events, `"tag"` upserts `ao_session_tags`, `"evaluation"` inserts `ao_session_external_evals`, `"outcome"` upserts `ao_session_outcomes`, `"agent config"` upserts `ao_session_agent_config` (the eval opt-in). Session tags are stored verbatim (`ao_session_tags`: `name`, jsonb `metadata`, `source`); two tag names carry facts the eval judges read, so they are a **wire contract** for any sender:
+
+- `amd:voicemail` / `amd:screening` — the sender's own machine-detection verdict (metadata: `{"amd_decision": …}`).
+- `transfer:human` — the sender confirms a transfer to a human executed (metadata: `{"intent": "<handoff intent>", "next_node": "<where the call went, optional>"}`). Drives the `human_transfer` (fact) and `transfer_consent` (LLM) judges. Absence is not evidence: a session without the tag gets no `human_transfer` row at all — never a "not transferred" pass — so senders that don't emit it lose nothing. Tags must ride the **same OTLP batch** as the agent config: the ingest event-kick judges as soon as that batch lands.
+
+The `traces` and `metrics` OTLP routes return 200 without persisting (per-turn agent metrics ride on the recording's `chat_history` payload, not OTLP metrics).
 
 ## Dashboard API
 

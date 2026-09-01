@@ -125,8 +125,19 @@ async function rewriteFanOutRows(
   rows: ReturnType<typeof buildExternalEvalRows>,
   observedAt: Date,
   createdAt: Date | null,
+  /** Restrict the rewrite to these judges (the backfill re-judges one axis and
+   *  must leave every other row physically untouched). Absent = all rows. */
+  onlyJudges?: readonly string[],
 ): Promise<void> {
-  await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
+  if (onlyJudges) {
+    // bun:sql binds a JS array as a comma-joined STRING, not a Postgres array
+    // ("malformed array literal"), so hand it a real text[] literal.
+    const literal = `{${onlyJudges.map((j) => `"${j.replace(/["\\]/g, "")}"`).join(",")}}`;
+    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper' AND judge_name = ANY(${literal}::text[])`;
+    rows = rows.filter((r) => onlyJudges.includes(r.judgeName));
+  } else {
+    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
+  }
   for (const row of rows) {
     await insertLiveKitEvaluation({
       sessionId,
@@ -148,10 +159,16 @@ async function rewriteFanOutRows(
  *  are written in ONE transaction, fenced on the verdict row being terminal
  *  'done' (a running claim belongs to a sweeper and is never touched). Both
  *  halves land or neither does — the stored verdicts can never disagree with
- *  the rows consumers read. The re-fanned rows keep the session's ORIGINAL
- *  created_at (the earliest existing eval_sweeper row, else the call time):
- *  alert rules window on created_at, so re-inserting months-old verdicts with
- *  NOW() would page on history. Returns false when there is no done row. */
+ *  the rows consumers read. Only the transfer-axis rows are rewritten; every
+ *  other row stays the same physical row (same id, same created_at), so the
+ *  "everything else is byte-identical" promise holds for the rows too, and
+ *  the replication churn is two rows per session, not ~ten. The rewritten rows take
+ *  the session's ORIGINAL created_at (the earliest existing eval_sweeper row,
+ *  else the call time): alert rules window on created_at, so re-inserting
+ *  months-old verdicts with NOW() would page on history. Returns false when
+ *  there is no done row. */
+export const TRANSFER_AXIS_JUDGES = ["human_transfer", "transfer_consent"] as const;
+
 export async function commitRejudgedVerdicts(
   sessionId: string,
   verdicts: SessionEvalVerdicts,
@@ -177,7 +194,7 @@ export async function commitRejudgedVerdicts(
       SET verdicts = ${jsonbParam(verdicts)}::text::jsonb, updated_at = NOW()
       WHERE session_id = ${sessionId} AND status = 'done'
     `;
-    await rewriteFanOutRows(tx, sessionId, rows, observedAt, firstCreatedAt);
+    await rewriteFanOutRows(tx, sessionId, rows, observedAt, firstCreatedAt, TRANSFER_AXIS_JUDGES);
     return true;
   });
 }

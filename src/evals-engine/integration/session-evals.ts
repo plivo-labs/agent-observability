@@ -16,7 +16,7 @@ import { config as envConfig } from "../../config.js";
 import type { LlmProvider } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
-import { evaluateConversationMetrics, zeroConversationMetrics } from "../judges/conversation-judges.js";
+import { evaluateConversationMetrics, evaluateHumanTransferMetric, zeroConversationMetrics } from "../judges/conversation-judges.js";
 import { IDLE_TAG } from "../types.js";
 import type {
   ConversationInput,
@@ -543,7 +543,11 @@ export async function evaluateIngestedSession(
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
-      : Promise.resolve(zeroConversationMetrics()),
+      // No transcript: nothing for the LLM axis to judge — but the transfer
+      // FACT is a tag, not a transcript, and "a transfer executed with zero
+      // conversation" is the worst case the axis exists to record. Keep it;
+      // consent stays unavailable (nothing to judge, never fabricated).
+      : Promise.resolve({ ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }),
     input.nodes.length
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),

@@ -437,17 +437,31 @@ async function resolveTransferConsent(
       maxTokens: DETECTION_MAX_TOKENS,
       provider,
     },
-    (data): TransferConsentResult => ({
-      detected: !data.consent_given,
-      reason: data.reason,
-      technical_reason: data.technical_reason,
-      available: true,
-      // The prompt requires "ok" on consent; enforce it so a stray code can't
-      // label a consented transfer as a defect category.
-      reason_code: data.consent_given ? "ok" : data.reason_code,
-    }),
+    (data): TransferConsentResult => {
+      // The prompt pins the code to the verdict both ways: consent ⇒ "ok", and
+      // a fail must name a defect. A fail carrying "ok" is a contradictory
+      // verdict — stored, it would corrupt every reason-code rollup — so it is
+      // treated like any other invalid output: unavailable, never fabricated.
+      if (!data.consent_given && data.reason_code === "ok") {
+        return { ...skippedDetection("consent judge returned fail with reason_code ok — invalid verdict"), reason_code: "" };
+      }
+      return {
+        detected: !data.consent_given,
+        reason: data.reason,
+        technical_reason: data.technical_reason,
+        available: true,
+        reason_code: data.consent_given ? "ok" : data.reason_code,
+      };
+    },
     { ...skippedDetection("transfer consent judge unavailable"), reason_code: "" },
   );
+}
+
+/** The FACT alone, in the stored CmDetection shape — for the path where no
+ *  transcript exists to judge (the fact needs none) and consent must stay
+ *  unavailable rather than be fabricated from nothing. */
+export function evaluateHumanTransferMetric(ctx: ConversationInput): SimConversationMetrics["human_transfer"] {
+  return det(evaluateHumanTransfer(ctx));
 }
 
 /** The whole transfer axis in one call: the code-derived FACT plus the gated

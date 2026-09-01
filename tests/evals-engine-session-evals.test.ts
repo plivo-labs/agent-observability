@@ -450,6 +450,21 @@ describe("evaluateIngestedSession — session tags", () => {
     expect(verdicts.conversation_metrics.transfer_consent.reason_code).toBe("declined");
   });
 
+  test("an empty transcript still yields the transfer FACT (it needs no transcript) with consent unavailable", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder(true)]);
+    // No conversation items at all → full_transcript is empty → the LLM axis is skipped.
+    const verdicts = await evaluateIngestedSession(cfg(), [], llm, "livekit", undefined, [
+      { name: "transfer:human", metadata: { intent: "Transfer Approved" } },
+    ]);
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(true);
+    expect(verdicts.conversation_metrics.human_transfer.detected).toBe(true);
+    // Nobody spoke and nothing was judged: consent is not fabricated.
+    expect(verdicts.conversation_metrics.transfer_consent.available).toBe(false);
+    expect(llm.calls.length).toBe(0);
+  });
+
   test("no tag feed ⇒ the transfer axis is unavailable (undecidable)", async () => {
     const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
     const { MockLLM } = await import("../src/llm/index.js");
