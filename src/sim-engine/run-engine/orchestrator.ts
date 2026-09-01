@@ -304,7 +304,16 @@ class ScenarioRunner {
     };
     this.transcriptTurns.push(turnPayload);
     await emitTurnCompleted(this.redis, this.job.simRunUuid, turnPayload);
-    this.evalTurns.push({ node_uuid: nodeUuid, user: userMsg, agent: agentMsg, intent: resp.intent ?? "" });
+    const exitHandle = [...(resp.transitions ?? [])]
+      .reverse()
+      .find((t) => t.from_node_uuid === nodeUuid && typeof t.handle === "string" && t.handle)?.handle;
+    this.evalTurns.push({
+      node_uuid: nodeUuid,
+      user: userMsg,
+      agent: agentMsg,
+      intent: resp.intent ?? "",
+      ...(exitHandle ? { exit_handle: exitHandle } : {}),
+    });
     this.turnIndex += 1;
     this.stress = NO_STRESS;
   }
