@@ -76,6 +76,8 @@ describe("fromSimTranscript screening surface", () => {
     const names = input.nodes[0].available_intents.map((i) => (i as { intent_name: string }).intent_name).sort();
     expect(names).toEqual(["reached", "unavailable", "wrong_contact"]);
     expect(input.nodes[0].chosen_intent).toBe("unavailable");
+    // screening keeps its prompt in `context` — the judges must see it as node_prompt
+    expect(input.nodes[0].node_prompt).toBe("reach the lead");
   });
 
   test("screening workflow outputs are not judged as extractions", () => {
