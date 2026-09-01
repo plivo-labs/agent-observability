@@ -325,13 +325,13 @@ class ScenarioRunner {
         firedHttp.add(hop.node_uuid);
         const info = this.nodeIndex.get(hop.node_uuid);
         const name = info?.configName || info?.metaName || hop.node_uuid;
-        this.evalTurns.push({
-          node_uuid: nodeUuid,
-          user: "",
-          agent: `[flow action] HTTP request node "${name}" executed (${hop.outcome || "success"}) — the flow recorded this outcome via its webhook.`,
-          intent: "",
-          evidence: true,
-        });
+        // The claim must follow the mocked outcome: a failed webhook did NOT
+        // record anything, and the judge must not credit it.
+        const line =
+          hop.outcome === "success"
+            ? `[flow action] HTTP request node "${name}" fired its webhook successfully — the flow recorded this outcome.`
+            : `[flow action] HTTP request node "${name}" webhook call did NOT succeed (outcome: ${hop.outcome || "unknown"}) — this outcome was NOT recorded.`;
+        this.evalTurns.push({ node_uuid: nodeUuid, user: "", agent: line, intent: "", evidence: true });
       }
     }
     this.turnIndex += 1;
