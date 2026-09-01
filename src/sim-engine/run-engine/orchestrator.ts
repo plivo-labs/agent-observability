@@ -314,6 +314,26 @@ class ScenarioRunner {
       intent: resp.intent ?? "",
       ...(exitHandle ? { exit_handle: exitHandle } : {}),
     });
+    // Silent http_request hops (CRM/webhook disposition nodes) never speak, so the
+    // criteria judge could not verify "recorded the outcome" checks — every such
+    // criterion scored 0 and, with min() aggregation, failed the scenario. Surface
+    // each fired webhook as a non-spoken evidence line the judges can quote.
+    const firedHttp = new Set<string>();
+    for (const t of resp.transitions ?? []) {
+      for (const hop of t.via ?? []) {
+        if (hop.type !== "http_request" || firedHttp.has(hop.node_uuid)) continue;
+        firedHttp.add(hop.node_uuid);
+        const info = this.nodeIndex.get(hop.node_uuid);
+        const name = info?.configName || info?.metaName || hop.node_uuid;
+        this.evalTurns.push({
+          node_uuid: nodeUuid,
+          user: "",
+          agent: `[flow action] HTTP request node "${name}" executed (${hop.outcome || "success"}) — the flow recorded this outcome via its webhook.`,
+          intent: "",
+          evidence: true,
+        });
+      }
+    }
     this.turnIndex += 1;
     this.stress = NO_STRESS;
   }

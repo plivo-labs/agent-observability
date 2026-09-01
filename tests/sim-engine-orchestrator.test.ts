@@ -14,10 +14,11 @@ import { runScenario } from "../src/sim-engine/run-engine/orchestrator.js";
 // files): completeRunScenario captured for the error-column assertion, evaluateSimulationForRun
 // stubbed + counted for the zero-turn skip. The turn loop is what's under test.
 let evalCalls = 0;
+const evalArgs: any[] = [];
 const completeCalls: any[] = [];
 spyOn(dbMod, "insertRunScenario").mockImplementation(async () => {});
 spyOn(dbMod, "completeRunScenario").mockImplementation(async (input: any) => { completeCalls.push(input); });
-spyOn(adapterMod, "evaluateSimulationForRun").mockImplementation(async () => { evalCalls += 1; return {}; });
+spyOn(adapterMod, "evaluateSimulationForRun").mockImplementation(async (args: any) => { evalCalls += 1; evalArgs.push(args); return {}; });
 afterAll(() => mock.restore());
 
 type Ev = { type: string; event_data: any };
@@ -104,6 +105,30 @@ function decisionDeps(client: FakeClient, events: Ev[], decisions: Array<Record<
 beforeEach(() => {
   evalCalls = 0;
   completeCalls.length = 0;
+  evalArgs.length = 0;
+});
+
+describe("silent webhook evidence", () => {
+  test("an http_request via hop becomes a non-spoken evidence turn the judges can quote", async () => {
+    const client = new FakeClient([
+      resp({
+        turn_node_uuid: "A1", node_uuid: "A1", message: "Goodbye", turn_type: "speech",
+        ended: true, stop_reason: "end_conversation", turn_count: 1,
+        transitions: [{ from_node_uuid: "A1", handle: "do_not_call", via: [{ node_uuid: "H_DNC", type: "http_request", outcome: "success" }], to_node_uuid: "END", to_type: "end_conversation" }],
+      }),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
+
+    const turns = evalArgs[0].turns;
+    const evidence = turns.filter((t: any) => t.evidence);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].agent).toContain("H_DNC");
+    expect(evidence[0].agent).toContain("success");
+    expect(evidence[0].node_uuid).toBe("A1");
+    // spoken rows are untouched
+    expect(turns.filter((t: any) => !t.evidence).some((t: any) => t.agent === "Goodbye")).toBe(true);
+  });
 });
 
 describe("runScenario turn loop", () => {

@@ -136,7 +136,15 @@ export function fromSimTranscript({ turns, nodeIndex, flowObj, variablesByNode }
     return {
       node_uuid: nodeUuid,
       node_name: gnode?.configName || gnode?.metaName || nodeUuid,
-      node_prompt: typeof config?.instructions === "string" ? config.instructions : "",
+      // Screening nodes keep their prompt in `context`, not `instructions` — an
+      // empty node_prompt left the hallucination judge grounding against nothing
+      // and false-flagging the node's own scripted opener.
+      node_prompt:
+        typeof config?.instructions === "string" && config.instructions
+          ? config.instructions
+          : typeof config?.context === "string"
+            ? config.context
+            : "",
       available_intents:
         configIntents.length === 0 && screening ? screeningIntentsFromEdges(flowObj, nodeUuid) : configIntents,
       chosen_intent: chosen,
