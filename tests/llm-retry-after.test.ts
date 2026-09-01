@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   RETRY_AFTER_CAP_MS,
   isRateLimitError,
+  isServerError,
   parseRetryAfter,
   retryAfterMsFromError,
 } from "../src/llm/retry-after.js";
@@ -111,6 +112,29 @@ describe("isRateLimitError", () => {
   it("is anchored, so a 429 quoted inside a body preview can't false-positive", () => {
     // The provider appends up to 500 chars of response body to the message.
     expect(isRateLimitError(new Error('500 Server Error - {"detail":"upstream returned 429"}'))).toBe(false);
+  });
+});
+
+describe("isServerError", () => {
+  // Gates the model fallback alongside 429: a persistent 5xx is deployment-scoped
+  // (the 2026-08-31 Luna outage), so the last attempt goes to the fallback.
+  it("matches a 5xx status — the OpenAI SDK's shape on the Chat path", () => {
+    expect(isServerError(Object.assign(new Error("boom"), { status: 500 }))).toBe(true);
+    expect(isServerError(Object.assign(new Error("boom"), { status: 503 }))).toBe(true);
+  });
+
+  it("matches a message beginning 5xx — our raw-fetch shape on the Responses path", () => {
+    expect(isServerError(new Error("500 Internal Server Error - no healthy upstream"))).toBe(true);
+  });
+
+  it("does NOT match 429s, 4xx, or timeouts", () => {
+    expect(isServerError(Object.assign(new Error("rate limited"), { status: 429 }))).toBe(false);
+    expect(isServerError(new Error("404 Not Found - DeploymentNotFound"))).toBe(false);
+    expect(isServerError(new Error("The operation timed out"))).toBe(false);
+  });
+
+  it("is anchored, so a 5xx quoted inside a body preview can't false-positive", () => {
+    expect(isServerError(new Error('429 Too Many Requests - {"detail":"upstream 500"}'))).toBe(false);
   });
 
   it("does not match non-objects", () => {
