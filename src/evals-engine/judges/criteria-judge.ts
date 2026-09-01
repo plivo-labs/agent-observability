@@ -7,7 +7,7 @@ import { CRITERIA_JSON } from "./schemas.js";
 
 // AO Eval Engine — scenario acceptance-criteria judge (one LLM call for all criteria). Modelled on
 // goal-judge.ts and run through runLlmJudge so it shares the global judge semaphore. Ported from the
-// Hunter harness criteria evaluator: each criterion scored independently 0-1, evidence-or-zero, a
+// Reference-harness criteria evaluator: each criterion scored independently 0-1, evidence-or-zero, a
 // conditional criterion whose precondition never fired is applicable:false and excluded, and the
 // verdict is the min() over applicable criteria. A parse failure throws (→ eval_error upstream),
 // exactly like the other judges.
@@ -15,7 +15,7 @@ import { CRITERIA_JSON } from "./schemas.js";
 const clamp01 = (n: number): number => Math.max(0, Math.min(1, n));
 
 /**
- * min()-aggregate over the applicable criteria (Hunter `_compute_criteria_score`):
+ * min()-aggregate over the applicable criteria (reference harness `_compute_criteria_score`):
  *   - some applicable → the minimum accuracy (one bad criterion tanks it),
  *   - criteria existed but every one is N/A → 1.0 (nothing applicable was violated),
  *   - empty verdict → 0.0 (the model returned no criteria — a fail, not a pass).

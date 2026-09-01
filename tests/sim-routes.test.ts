@@ -63,6 +63,20 @@ describe("generate route — inventory gate (SER-6447)", () => {
     expect(inventoryCalls).toBe(1);
   });
 
+  test("walker's unsimulatable_reason leads the 400 detail", async () => {
+    inventory = {
+      ...SIMULATABLE,
+      simulatable: false,
+      unsimulatable: [],
+      unsimulatable_reason: 'AI node(s) "Name Capture Agent" have no outgoing route — wire at least one intent or edge to a next node (e.g. an End conversation node)',
+    };
+    const res = await generate();
+    expect(res.status).toBe(400);
+    const j = (await res.json()) as any;
+    expect(j.error.message).toContain('"Name Capture Agent" have no outgoing route');
+    expect(j.error.message).not.toContain("no start node, or no reachable");
+  });
+
   test("agent-runner unreachable → 502 flow_inventory_failed", async () => {
     inventoryThrows = true;
     const res = await generate();
