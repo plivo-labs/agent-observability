@@ -44,20 +44,8 @@ describe("extractGoalPassed (tri-state, ANY-goal)", () => {
   });
 });
 
-describe("extractGoalPassed precedence (route + criteria)", () => {
+describe("extractGoalPassed precedence (criteria over flow goals)", () => {
   const criteria = (passed: boolean) => ({ criteria_evaluation: { threshold: 0.7, score: passed ? 1 : 0, passed, criteria: [] } });
-
-  test("error still wins over route_mismatch → null", () => {
-    expect(extractGoalPassed({ error: "boom", stopReason: "route_mismatch", evaluation: goals(true) })).toBeNull();
-  });
-
-  test("route_mismatch → false, even with a goal achieved", () => {
-    expect(extractGoalPassed({ stopReason: "route_mismatch", evaluation: goals(true) })).toBe(false);
-  });
-
-  test("route_mismatch → false, even with criteria passed", () => {
-    expect(extractGoalPassed({ stopReason: "route_mismatch", evaluation: { ...criteria(true), ...goals(true) } })).toBe(false);
-  });
 
   test("criteria_evaluation is authoritative over flow goals", () => {
     expect(extractGoalPassed({ evaluation: { ...criteria(false), ...goals(true) } })).toBe(false);
@@ -65,11 +53,11 @@ describe("extractGoalPassed precedence (route + criteria)", () => {
   });
 
   test("no criteria → falls back to the ANY-goal rule", () => {
-    expect(extractGoalPassed({ stopReason: "end_conversation", evaluation: goals(false, true) })).toBe(true);
+    expect(extractGoalPassed({ evaluation: goals(false, true) })).toBe(true);
   });
 
   test("caller_goal_met / caller_hung_up are not special-cased — judged by criteria/goals", () => {
-    expect(extractGoalPassed({ stopReason: "caller_goal_met", evaluation: criteria(false) })).toBe(false);
-    expect(extractGoalPassed({ stopReason: "caller_hung_up", evaluation: goals(true) })).toBe(true);
+    expect(extractGoalPassed({ evaluation: criteria(false) })).toBe(false);
+    expect(extractGoalPassed({ evaluation: goals(true) })).toBe(true);
   });
 });

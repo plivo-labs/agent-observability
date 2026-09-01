@@ -303,67 +303,24 @@ describe("caller-decision loop exit", () => {
   });
 });
 
-describe("whole-run route assertion", () => {
-  const routeJob = (ero: Record<string, unknown>) => job({ scenario: { ...SCENARIO, eval_metadata: { expected_route_outcome: ero } } });
-
-  // greeting on A1, then A1 fires `intent` and the walk lands on `to`, ending the run.
-  const routeClient = (intent: string, to: string | null) =>
-    new FakeClient([
-      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1", next_speaker: "caller", transitions: [{ from_node_uuid: "start", handle: "call", via: [], to_node_uuid: "A1", to_type: "ai_agent_v2" }] }),
-      resp({ turn_node_uuid: "A1", node_uuid: to ?? "A1", turn_type: "speech", message: "Routing", intent, turn_count: 1, ended: true, stop_reason: "end_conversation", transitions: [{ from_node_uuid: "A1", handle: intent, via: [], to_node_uuid: to, to_type: "ai_agent_v2" }] }),
-    ]);
-
-  test("match → no override; transitions ride the turn payload", async () => {
-    const client = routeClient("go_a2", "A2");
-    const events: Ev[] = [];
-    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "A2" }));
-    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
-    expect(done.stop_reason).toBe("end_conversation");
-    const turns = events.filter((e) => e.type === "turn_completed").map((e) => e.event_data);
-    expect(turns.some((t) => Array.isArray(t.transitions) && t.transitions.some((tr: any) => tr.to_node_uuid === "A2"))).toBe(true);
-  });
-
-  test("wrong intent → route_mismatch (counts failed, describes what was taken)", async () => {
-    const client = routeClient("other", "A2");
-    const events: Ev[] = [];
-    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "A2" }));
-    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
-    expect(done.stop_reason).toBe("route_mismatch");
-    expect(done.stop_detail).toContain("expected A1:go_a2 → A2");
-    expect(done.stop_detail).toContain("other → A2");
-    expect(completeCalls[0].error).toBeNull();
-    expect(completeCalls[0].stopReason).toBe("route_mismatch");
-  });
-
-  test("expected target reached as a mocked via hop counts as a match", async () => {
+describe("expected_route_outcome is generation metadata only", () => {
+  test("a run that diverges from the scenario's expected route keeps its real stop reason", async () => {
+    // The route assertion was removed (owner call, 2026-09-01): expected_route_outcome
+    // still steers GENERATION but never overrides a run's outcome.
     const client = new FakeClient([
-      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1", next_speaker: "caller" }),
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi", next_speaker: "caller" }),
       resp({
-        turn_node_uuid: "A1", node_uuid: "END", turn_type: "speech", message: "", intent: "go_http", turn_count: 1,
-        ended: true, stop_reason: "end_conversation", next_speaker: "caller",
-        transitions: [{ from_node_uuid: "A1", handle: "h", via: [{ node_uuid: "HTTP", type: "http_request", outcome: "success" }], to_node_uuid: "END", to_type: "end_conversation" }],
+        turn_node_uuid: "A1", node_uuid: "A1", turn_type: "speech", message: "Bye", intent: "other",
+        ended: true, stop_reason: "end_conversation", turn_count: 1,
+        transitions: [{ from_node_uuid: "A1", handle: "other", via: [], to_node_uuid: "B2", to_type: "end_conversation" }],
       }),
     ]);
     const events: Ev[] = [];
-    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_http", target_node_id: "HTTP" }));
+    await runScenario(
+      deps(client, events, ["caller line"]),
+      job({ scenario: { ...SCENARIO, eval_metadata: { expected_route_outcome: { source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "A2" } } } }),
+    );
     const done = events.find((e) => e.type === "scenario_completed")!.event_data;
     expect(done.stop_reason).toBe("end_conversation");
-  });
-
-  test("source never reached → route_mismatch with 'never reached'", async () => {
-    const client = routeClient("go_a2", "A2");
-    const events: Ev[] = [];
-    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "ZZZ", expected_intent_name: "go_a2", target_node_id: "A2" }));
-    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
-    expect(done.stop_reason).toBe("route_mismatch");
-    expect(done.stop_detail).toContain("never reached");
-  });
-
-  test("incomplete expected route (empty target) → assertion skipped", async () => {
-    const client = routeClient("other", "A2");
-    const events: Ev[] = [];
-    await runScenario(deps(client, events, ["caller line"]), routeJob({ source_node_id: "A1", expected_intent_name: "go_a2", target_node_id: "" }));
-    const done = events.find((e) => e.type === "scenario_completed")!.event_data;
-    expect(done.stop_reason).toBe("end_conversation"); // no override — expected route incomplete
   });
 });
