@@ -67,3 +67,42 @@ describe("buildExternalEvalRows — SER-6035 #3: skip adherence on machine-answe
     expect(names(v)).toContain("instructions_adherence");
   });
 });
+
+describe("buildExternalEvalRows — transfer axis (human_transfer fact + transfer_consent judgement)", () => {
+  const withTransfer = (over: { transferred?: boolean; consentDetected?: boolean; consentAvailable?: boolean } = {}) => {
+    const v = verdicts();
+    v.conversation_metrics.human_transfer = det(!!over.transferred);
+    v.conversation_metrics.transfer_consent = {
+      ...det(!!over.consentDetected, over.consentAvailable ?? true),
+      reason_code: over.consentDetected ? "declined" : "ok",
+    };
+    return v;
+  };
+  const row = (v: any, name: string) => buildExternalEvalRows(v).find((r) => r.judgeName === name);
+
+  test("a transferred session fans out human_transfer as fail (detection convention: fail = it happened)", () => {
+    const r = row(withTransfer({ transferred: true }), "human_transfer");
+    expect(r).toBeDefined();
+    expect(r!.passed).toBe(false);
+  });
+
+  test("a non-transferred session fans out human_transfer as pass", () => {
+    expect(row(withTransfer({ transferred: false }), "human_transfer")!.passed).toBe(true);
+  });
+
+  test("transfer without consent fans out transfer_consent as fail with the reason code in raw", () => {
+    const r = row(withTransfer({ transferred: true, consentDetected: true }), "transfer_consent");
+    expect(r!.passed).toBe(false);
+    expect((r!.raw as any).reason_code).toBe("declined");
+  });
+
+  test("an unavailable consent verdict (no transfer / judge failed) fans out nothing", () => {
+    expect(row(withTransfer({ transferred: false, consentAvailable: false }), "transfer_consent")).toBeUndefined();
+  });
+
+  test("verdicts that predate the transfer axis fan out no transfer rows", () => {
+    const n = names(verdicts());
+    expect(n).not.toContain("human_transfer");
+    expect(n).not.toContain("transfer_consent");
+  });
+});

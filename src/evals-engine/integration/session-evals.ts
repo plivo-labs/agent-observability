@@ -26,6 +26,7 @@ import type {
   NodeEvaluation,
   NodeGoalEvaluation,
   SimConversationMetrics,
+  SessionTag,
 } from "../types.js";
 
 // ── the public ingest "agent config" shape (what a client sends) ─────────────
@@ -530,9 +531,14 @@ export async function evaluateIngestedSession(
    *  for its judgeability gate — avoids re-grouping the whole transcript and
    *  re-rendering both transcript strings a second time per session. */
   prebuilt?: ReturnType<typeof buildSessionEvalInput>,
+  /** The session's stored tags (ao_session_tags). The transfer axis reads the
+   *  platform's `transfer:human` fact from them; absent ⇒ that axis is
+   *  undecidable (unavailable), never a clean "no transfer". */
+  tags?: SessionTag[],
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
+  if (tags) input.tags = tags;
 
   const [conversation_metrics, scored] = await Promise.all([
     input.full_transcript.trim()

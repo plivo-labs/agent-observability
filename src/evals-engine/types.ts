@@ -105,6 +105,17 @@ export interface ConversationInput {
    *  bot / call-screening) so they don't fire on text transcripts. Absent ⇒
    *  treated as voice (the historical default). */
   transport?: string;
+  /** Session tags the platform attached at ingest (name + metadata), e.g. the
+   *  runtime's `transfer:human` transfer confirmation. The code-derived
+   *  human_transfer axis reads this. Absent ⇒ that axis is undecidable (the
+   *  sim path, or a sender that never tags) — never a clean "no transfer". */
+  tags?: SessionTag[];
+}
+
+/** One session tag as stored: an opaque name plus optional JSON metadata. */
+export interface SessionTag {
+  name: string;
+  metadata: Record<string, unknown> | null;
 }
 
 // ── OUTPUT (the stable verdict contract a consumer renders/persists) ─────────
@@ -284,6 +295,18 @@ export interface SimConversationMetrics {
    *  measure. `available:false` when there was no transcript to judge (an empty
    *  transcript is undecidable, never a clean "user spoke"). */
   user_never_spoke: CmDetection;
+  /** The transfer FACT: a transfer to a human was executed. Decided in CODE
+   *  from the platform's `transfer:human` session tag (runtime-confirmed),
+   *  never inferred from the transcript. `detected:true` ⇒ transferred.
+   *  `available:false` when no tag feed was supplied (undecidable). */
+  human_transfer: CmDetection;
+  /** The transfer JUDGEMENT: did the caller consent before the transfer
+   *  executed? Runs only when human_transfer fired. `detected:true` ⇒ the
+   *  transfer happened WITHOUT consent; `reason_code` says why ("declined",
+   *  "busy", "mid_sentence", "hold_music", "no_caller"; "ok" when consent was
+   *  given; "" when unavailable). Short-circuits in code to `no_caller` when
+   *  the caller never spoke — no LLM call. */
+  transfer_consent: CmDetection & { reason_code: string };
 }
 
 /** What `evaluateSimulation` returns: the node + goal (+ optional criteria) axes.

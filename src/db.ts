@@ -512,6 +512,16 @@ export async function applySessionTagMetadata(
   });
 }
 
+/** Sessions carrying a tag with exactly this name. Used by the generic tag
+ *  importer to resolve a `match_tag` (e.g. a run-id tag a platform attached at
+ *  ingest) to the session it belongs to. */
+export async function findSessionIdsByTag(name: string): Promise<string[]> {
+  const rows = await sql`
+    SELECT DISTINCT session_id FROM ao_session_tags WHERE name = ${name}
+  `;
+  return rows.map((r: any) => String(r.session_id));
+}
+
 export async function applyStoredSessionTags(sessionId: string): Promise<void> {
   const rows = await sql`
     SELECT name, metadata
