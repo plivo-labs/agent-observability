@@ -29,7 +29,7 @@ const ctx = (): ConversationInput => ({
   full_transcript: "User: hi\nAgent: hello there",
 });
 
-describe("aggregateCriteriaScore (min over applicable, Hunter parity)", () => {
+describe("aggregateCriteriaScore (min over applicable)", () => {
   test("min over applicable criteria", () => {
     expect(aggregateCriteriaScore([crit({ accuracy_score: 0.8 }), crit({ id: 2, accuracy_score: 0.4 })])).toBe(0.4);
   });
