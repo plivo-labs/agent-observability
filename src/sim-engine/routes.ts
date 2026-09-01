@@ -164,8 +164,12 @@ export function registerSimulationRoutes(app: Hono): void {
     }
     if (!inventory.simulatable) {
       const named = inventory.unsimulatable.map((u) => `${u.name} (${u.type}): ${u.reason}`);
-      const detail = named.length
-        ? `flow is not simulatable: ${named.join("; ")}`
+      const parts = [
+        inventory.unsimulatable_reason || "",
+        named.length ? named.join("; ") : "",
+      ].filter(Boolean);
+      const detail = parts.length
+        ? `flow is not simulatable: ${parts.join(" — ")}`
         : "flow is not simulatable (no start node, or no reachable AI node, or every route is blocked)";
       console.warn(`[sim-gen] 400 flow_not_simulatable phlo_uuid=${body.phlo_uuid}: ${detail}`);
       return c.json({ ...buildErrorResponse("flow_not_simulatable", detail), unsimulatable: inventory.unsimulatable }, 400);
