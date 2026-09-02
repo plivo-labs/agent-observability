@@ -225,8 +225,12 @@ export interface SessionEvalSource {
   transport: string | null;
   /** The session's stored tags (name + metadata). The transfer axis reads the
    *  platform's `transfer:human` fact from here. Always an array for an
-   *  ingested session — an empty list means "the sender tagged nothing", which
-   *  is a decidable "no transfer" (unlike the sim path, which supplies none). */
+   *  ingested session, but an empty list is NOT a decidable "no transfer":
+   *  absent, empty and "tagged, but not this tag" are treated identically —
+   *  the judge is unavailable and writes no row. A sender that never emits the
+   *  tag is indistinguishable from one whose call had no transfer, so a
+   *  consumer must count transfers as `human_transfer='fail'` rows and never
+   *  infer the negative from a missing row. */
   tags: SessionTag[];
 }
 

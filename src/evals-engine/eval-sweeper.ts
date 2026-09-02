@@ -132,7 +132,17 @@ async function rewriteFanOutRows(
   if (onlyJudges) {
     // bun:sql binds a JS array as a comma-joined STRING, not a Postgres array
     // ("malformed array literal"), so hand it a real text[] literal.
-    const literal = `{${onlyJudges.map((j) => `"${j.replace(/["\\]/g, "")}"`).join(",")}}`;
+    //
+    // CONSTANTS ONLY. This builds array syntax by hand, so a judge name is not
+    // a bound parameter. Callers pass compile-time constants (TRANSFER_AXIS_JUDGES);
+    // reject anything else loudly rather than silently mangling it — stripping
+    // the quoting characters would change WHICH rows the DELETE matches.
+    for (const j of onlyJudges) {
+      if (!/^[a-z0-9_:]+$/.test(j)) {
+        throw new Error(`rewriteFanOutRows: judge name is not a safe literal: ${JSON.stringify(j)}`);
+      }
+    }
+    const literal = `{${onlyJudges.map((j) => `"${j}"`).join(",")}}`;
     await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper' AND judge_name = ANY(${literal}::text[])`;
     rows = rows.filter((r) => onlyJudges.includes(r.judgeName));
   } else {
