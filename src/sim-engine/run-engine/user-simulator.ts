@@ -561,7 +561,7 @@ export function buildUserSimulatorPrompt(
     "- target_achieved: true only when the agent's latest message ALONE satisfies your goal — it has confirmed, accepted, or completed what you called for. While the agent is still asking, offering, or pushing, it is false. When in doubt, set it false: one more turn costs nothing, a false positive cuts the call short.",
   );
   lines.push(
-    "- end_call: true ONLY when you are deliberately hanging up on THIS turn — your utterance is a short closing line and you will not speak again. Set it when your goal is met and the agent has wrapped up, or when you give up because the agent got the same value wrong twice after you already gave it correctly. Never set it on a turn where the agent just asked a question you can answer. When you set it, keep your utterance to a brief farewell and nothing else.",
+    "- end_call: true ONLY when you are deliberately hanging up on THIS turn — your utterance is a short closing line and you will not speak again. Set it when your goal is met and the agent has wrapped up, or when you give up because the agent got the same value wrong on the third attempt after you already gave it correctly. Never set it on a turn where the agent just asked a question you can answer. When you set it, keep your utterance to a brief farewell and nothing else.",
   );
 
 

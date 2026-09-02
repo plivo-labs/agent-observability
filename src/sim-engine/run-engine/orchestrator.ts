@@ -170,8 +170,6 @@ class ScenarioRunner {
   private readonly nodesVisited = new Set<string>();
   private readonly transcriptTurns: unknown[] = [];
   private readonly evalTurns: EvalTurn[] = [];
-  /** Per-response route trace (speaker + intent + transitions) for the whole-run route assertion.
-   *  Collected from every response, not just recorded turns, so a silent transition still counts. */
   /** The caller (not agent-runner) ended the run — triggers a best-effort livekit.end since the
    *  run is still held on the owning replica. */
   private callerEnded = false;
@@ -207,6 +205,10 @@ class ScenarioRunner {
 
   /** Base request body — the exact SimTurnRequest fields.
    *  `action_mocks` is omitted: agent-runner reads world_state[node].action_mocks itself. */
+  get transcript(): unknown[] {
+    return this.transcriptTurns;
+  }
+
   private buildReq(overrides: Partial<SimTurnRequest>): SimTurnRequest {
     return {
       phlo_run_uuid: this.flowRunUuid,
@@ -374,8 +376,6 @@ class ScenarioRunner {
     return decision;
   }
 
-  /** Whole-run route assertion (no LLM): after the loop, if the scenario declares an
-   */
   async run(): Promise<RunResult> {
     // Bound on iterations, NOT turnIndex: a silent transition doesn't advance turnIndex, so a
     // stream of empty responses would spin forever if the cap keyed on it.
@@ -442,6 +442,7 @@ class ScenarioRunner {
  */
 export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<void> {
   const flowRunUuid = crypto.randomUUID();
+  let runnerRef: ScenarioRunner | null = null;
 
   const persistSafe = async (label: string, fn: () => Promise<void>): Promise<void> => {
     if (!job.dbPersist) return;
@@ -486,6 +487,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const isOutboundCall = flowHasOutboundCall(flowObj);
 
     const runner = new ScenarioRunner({ ...deps, livekit: client }, job, flowObj, nodeIndex, flowRunUuid, isOutboundCall);
+    runnerRef = runner;
     const result = await runner.run();
 
     // Skip judges on a 0-turn run (entry resolved straight to a terminal/abort — no conversation).
@@ -558,9 +560,9 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         scenarioIndex: job.scenarioIndex,
         status: "error",
         stopReason: "error",
-        turnCount: 0,
+        turnCount: runnerRef?.transcript.length ?? 0,
         error: message,
-        transcript: [],
+        transcript: runnerRef?.transcript ?? [],
       }),
     );
   }
