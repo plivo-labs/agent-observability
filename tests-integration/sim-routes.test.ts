@@ -73,6 +73,7 @@ const H = { "content-type": "application/json", "auth-id": "acct-routes" };
 
 afterAll(async () => {
   if (client) await client.quit();
+  mock.restore();
   // Do NOT close the shared `sql` pool — sibling integration suites still use it.
 });
 
