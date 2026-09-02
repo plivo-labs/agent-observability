@@ -34,10 +34,11 @@ function fakeRedis(events: Ev[]) {
 class FakeClient {
   requests: Array<{ method: string; req: any }> = [];
   private i = 0;
-  constructor(private script: SimResponse[]) {}
+  constructor(private script: Array<SimResponse | Error>) {}
   private next(): SimResponse {
     const r = this.script[this.i++];
     if (!r) throw new Error(`FakeClient: no scripted response for call #${this.i}`);
+    if (r instanceof Error) throw r;
     return r;
   }
   forgotten: string[] = [];
@@ -224,5 +225,20 @@ describe("runScenario turn loop", () => {
     const done = events.find((e) => e.type === "scenario_completed")!.event_data;
     expect(done.nodes_visited).toBe(3); // start + S1 + A2
     expect(done.stop_reason).toBe("end_conversation");
+  });
+});
+
+describe("mid-run failure", () => {
+  test("keeps the turns recorded before the failure in the error row", async () => {
+    const client = new FakeClient([
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1" }),
+      new Error("boom"),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["hi there"]), job());
+
+    expect(completeCalls[0].status).toBe("error");
+    expect(completeCalls[0].turnCount).toBe(1);
+    expect(completeCalls[0].transcript).toHaveLength(1);
   });
 });

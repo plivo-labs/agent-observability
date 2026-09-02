@@ -207,6 +207,10 @@ class ScenarioRunner {
 
   /** Base request body — the exact SimTurnRequest fields.
    *  `action_mocks` is omitted: agent-runner reads world_state[node].action_mocks itself. */
+  get transcript(): unknown[] {
+    return this.transcriptTurns;
+  }
+
   private buildReq(overrides: Partial<SimTurnRequest>): SimTurnRequest {
     return {
       phlo_run_uuid: this.flowRunUuid,
@@ -478,6 +482,7 @@ class ScenarioRunner {
  */
 export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<void> {
   const flowRunUuid = crypto.randomUUID();
+  let runnerRef: ScenarioRunner | null = null;
 
   const persistSafe = async (label: string, fn: () => Promise<void>): Promise<void> => {
     if (!job.dbPersist) return;
@@ -522,6 +527,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const isOutboundCall = flowHasOutboundCall(flowObj);
 
     const runner = new ScenarioRunner({ ...deps, livekit: client }, job, flowObj, nodeIndex, flowRunUuid, isOutboundCall);
+    runnerRef = runner;
     const result = await runner.run();
 
     // Skip judges on a 0-turn run (entry resolved straight to a terminal/abort — no conversation).
@@ -586,9 +592,9 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         scenarioIndex: job.scenarioIndex,
         status: "error",
         stopReason: "error",
-        turnCount: 0,
+        turnCount: runnerRef?.transcript.length ?? 0,
         error: message,
-        transcript: [],
+        transcript: runnerRef?.transcript ?? [],
       }),
     );
   }
