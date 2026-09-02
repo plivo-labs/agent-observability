@@ -170,8 +170,6 @@ class ScenarioRunner {
   private readonly nodesVisited = new Set<string>();
   private readonly transcriptTurns: unknown[] = [];
   private readonly evalTurns: EvalTurn[] = [];
-  /** Per-response route trace (speaker + intent + transitions) for the whole-run route assertion.
-   *  Collected from every response, not just recorded turns, so a silent transition still counts. */
   /** The caller (not agent-runner) ended the run — triggers a best-effort livekit.end since the
    *  run is still held on the owning replica. */
   private callerEnded = false;
@@ -374,8 +372,6 @@ class ScenarioRunner {
     return decision;
   }
 
-  /** Whole-run route assertion (no LLM): after the loop, if the scenario declares an
-   */
   async run(): Promise<RunResult> {
     // Bound on iterations, NOT turnIndex: a silent transition doesn't advance turnIndex, so a
     // stream of empty responses would spin forever if the cap keyed on it.
