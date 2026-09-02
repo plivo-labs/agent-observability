@@ -324,3 +324,18 @@ describe("expected_route_outcome is generation metadata only", () => {
     expect(done.stop_reason).toBe("end_conversation");
   });
 });
+
+describe("mid-run failure", () => {
+  test("keeps the turns recorded before the failure in the error row", async () => {
+    const client = new FakeClient([
+      resp({ turn_node_uuid: "A1", node_uuid: "A1", turn_type: "transition", message: "Hi from A1", next_speaker: "caller" }),
+      new Error("boom"),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(deps(client, events, ["hi there"]), job());
+
+    expect(completeCalls[0].status).toBe("error");
+    expect(completeCalls[0].turnCount).toBe(1);
+    expect(completeCalls[0].transcript).toHaveLength(1);
+  });
+});
