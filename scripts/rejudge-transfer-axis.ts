@@ -1,18 +1,19 @@
 /**
- * Re-judge ONLY the transfer axis (human_transfer + transfer_consent) on
- * already-judged sessions — the follow-up to importing `transfer:human` tags
- * for calls judged before the axis existed. Every other stored verdict stays
- * byte-identical (see src/evals-engine/transfer-rejudge.ts); the per-judge rows
- * are re-fanned so consumers read the new axis.
+ * Re-derive ONLY the transfer axis (human_transfer) on already-judged sessions
+ * — the follow-up to importing `transfer:human` tags for calls judged before
+ * the axis existed. Every other stored verdict stays byte-identical (see
+ * src/evals-engine/transfer-rejudge.ts); the per-judge row is re-fanned so
+ * consumers read the new axis. The axis is decided in code from the tag, so
+ * this makes NO LLM calls and costs nothing to run.
  *
  * Select sessions either explicitly or by tag:
  *   --session-ids-file ids.txt            one session_id per line
  *   --tag transfer:human [--tag-source legacy_backfill] [--since 2026-08-01T00:00:00Z] [--limit N]
- * Options: --dry-run (runs the judges — real LLM calls — prints each verdict, writes nothing)
+ * Options: --dry-run (prints each verdict, writes nothing)
  *          --concurrency N (default 3)
  * Exit code 1 when any session failed, so a cron/CI wrapper notices.
  *
- *   DATABASE_URL=… <judge provider env> bun run scripts/rejudge-transfer-axis.ts --tag transfer:human --tag-source legacy_backfill
+ *   DATABASE_URL=… bun run scripts/rejudge-transfer-axis.ts --tag transfer:human --tag-source legacy_backfill
  */
 import { readFileSync } from "node:fs";
 import { sql } from "../src/db.js";
@@ -65,7 +66,7 @@ if (idsFile) {
 }
 console.log(`${sessionIds.length} session(s) selected${dryRun ? " [dry-run]" : ""}`);
 
-const counts = { rejudged: 0, skipped: 0, failed: 0, transferred: 0, withoutConsent: 0 };
+const counts = { rejudged: 0, skipped: 0, failed: 0, transferred: 0 };
 
 async function one(sessionId: string): Promise<void> {
   const stored = await getStoredSessionEvalVerdicts(sessionId);
@@ -78,11 +79,10 @@ async function one(sessionId: string): Promise<void> {
   const { input } = buildSessionEvalInput(source.config as AgentConfig, events);
   if (source.transport) input.transport = source.transport;
   input.tags = source.tags;
-  const next = await rejudgeTransferAxis(input, stored.verdicts as unknown as SessionEvalVerdicts);
+  const next = rejudgeTransferAxis(input, stored.verdicts as unknown as SessionEvalVerdicts);
   const cm = next.conversation_metrics;
   if (cm.human_transfer.detected) counts.transferred++;
-  if (cm.transfer_consent.available && cm.transfer_consent.detected) counts.withoutConsent++;
-  console.log(`${sanitizeForLog(sessionId)} transfer=${cm.human_transfer.detected} consent=${cm.transfer_consent.available ? (cm.transfer_consent.detected ? `NO (${cm.transfer_consent.reason_code})` : "yes") : "n/a"}`);
+  console.log(`${sanitizeForLog(sessionId)} transfer=${cm.human_transfer.available ? cm.human_transfer.detected : "n/a"}`);
   if (dryRun) { counts.rejudged++; return; }
   const committed = await commitRejudgedVerdicts(sessionId, next, source.sessionEndedAt ?? stored.completedAt ?? new Date());
   if (!committed) { counts.skipped++; return; }
