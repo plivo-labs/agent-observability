@@ -88,6 +88,8 @@ export interface MechanicalInventory {
 export interface FlowInventory extends MechanicalInventory {
   simulatable: boolean;
   unsimulatable: Array<{ node_uuid: string; name: string; type: string; reason: string }>;
+  /** Walker's specific refusal reason when simulatable=false (absent on older agent-runner images). */
+  unsimulatable_reason?: string | null;
   entry_node_uuid: string | null;
   reachable_ai_nodes: string[];
   mockable_nodes: MockableNode[];

@@ -33,6 +33,11 @@ export function plannerSystemPrompt(simulationMode: "smoke" | "stress", smokeCap
     "Respond with ONLY a JSON object matching the capability_planner_output schema",
     "(agent_flow_description, capabilities[], blocked_or_deferred_outcomes[],",
     "planner_rationale).",
+    "",
+    "The input may include user_instructions — the operator's steering for THIS",
+    "generation. When non-empty it takes precedence over default coverage balance:",
+    "bias capability emphasis, routes, and risk weighting toward what it asks,",
+    "while keeping every capability grounded in the inventory.",
   ].join("\n");
 
   if (simulationMode !== "smoke") return base;
@@ -94,6 +99,13 @@ export function writerSystemPrompt(): string {
     "conversation pattern, persona/entity/stress/mock combo ids, route, and expected",
     "outcomes) plus the RESOLVED combo definitions. Write exactly ONE scenario per",
     "slot_id; never merge, drop, or invent slots.",
+    "",
+    "The payload may include user_instructions — the operator's steering for THIS",
+    "generation. When non-empty it OVERRIDES a slot's resolved persona combo where",
+    "they conflict: personality, emotional_state, behavioral_traits (still only from",
+    "the canonical vocabulary), language, and the persona side of the goal follow the",
+    "instructions. It never changes the slot count, the route, the world_state, or",
+    "the expected outcome.",
     "",
     "Per scenario:",
     "- name: a 3-5 word title.",

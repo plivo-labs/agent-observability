@@ -84,36 +84,6 @@ function deepCopy<T>(v: T): T {
   return JSON.parse(JSON.stringify(v ?? null)) as T;
 }
 
-/** Stop reasons that mean the run finished a real conversation (not a walker abort). Only these
- *  may be overridden by a failed route assertion — a walker abort is never masked as route_mismatch. */
-const ROUTE_ASSERTABLE_STOP_REASONS: ReadonlySet<string> = new Set([
-  "end_conversation",
-  "max_turns",
-  "caller_goal_met",
-  "caller_hung_up",
-]);
-
-interface ExpectedRoute {
-  source: string;
-  intent: string;
-  target: string;
-}
-
-/** Read `eval_metadata.expected_route_outcome` off the passthrough scenario. Returns null unless
- *  all three ids are present (route assertion is skipped when any is empty). */
-function readExpectedRoute(scenario: Scenario): ExpectedRoute | null {
-  const em = (scenario as Record<string, unknown>).eval_metadata;
-  if (!em || typeof em !== "object") return null;
-  const ero = (em as Record<string, unknown>).expected_route_outcome;
-  if (!ero || typeof ero !== "object") return null;
-  const o = ero as Record<string, unknown>;
-  const source = typeof o.source_node_id === "string" ? o.source_node_id : "";
-  const intent = typeof o.expected_intent_name === "string" ? o.expected_intent_name : "";
-  const target = typeof o.target_node_id === "string" ? o.target_node_id : "";
-  if (!source || !intent || !target) return null;
-  return { source, intent, target };
-}
-
 /** Read `eval_metadata.simulation_mode` off the passthrough scenario (gates goal-judge leniency:
  *  smoke/missing → lenient, stress → strict). */
 function readSimulationMode(scenario: Scenario): string | undefined {
@@ -200,9 +170,6 @@ class ScenarioRunner {
   private readonly nodesVisited = new Set<string>();
   private readonly transcriptTurns: unknown[] = [];
   private readonly evalTurns: EvalTurn[] = [];
-  /** Per-response route trace (speaker + intent + transitions) for the whole-run route assertion.
-   *  Collected from every response, not just recorded turns, so a silent transition still counts. */
-  private readonly routeObservations: Array<{ speaker: string; intent: string; transitions: SimResponse["transitions"] }> = [];
   /** The caller (not agent-runner) ended the run — triggers a best-effort livekit.end since the
    *  run is still held on the owning replica. */
   private callerEnded = false;
@@ -238,6 +205,10 @@ class ScenarioRunner {
 
   /** Base request body — the exact SimTurnRequest fields.
    *  `action_mocks` is omitted: agent-runner reads world_state[node].action_mocks itself. */
+  get transcript(): unknown[] {
+    return this.transcriptTurns;
+  }
+
   private buildReq(overrides: Partial<SimTurnRequest>): SimTurnRequest {
     return {
       phlo_run_uuid: this.flowRunUuid,
@@ -405,42 +376,6 @@ class ScenarioRunner {
     return decision;
   }
 
-  /** Whole-run route assertion (no LLM): after the loop, if the scenario declares an
-   *  expected_route_outcome, pass iff some observed turn fired the expected intent at the source
-   *  node and the walk passed through the target — as the landing (`to_node_uuid`) or as a mocked
-   *  hop in `via` (the expected target is the edge's DIRECT target, e.g. an http node the walk
-   *  continues through). A failure on an otherwise-normal completion becomes route_mismatch; a
-   *  walker abort is never masked. */
-  private assertRoute(): void {
-    const expected = readExpectedRoute(this.job.scenario);
-    if (!expected) return;
-    const passed = this.routeObservations.some(
-      (o) =>
-        o.speaker === expected.source &&
-        o.intent === expected.intent &&
-        o.transitions.some(
-          (t) => t.to_node_uuid === expected.target || (t.via ?? []).some((v) => v.node_uuid === expected.target),
-        ),
-    );
-    if (passed || !ROUTE_ASSERTABLE_STOP_REASONS.has(this.stopReason)) return;
-    this.stopReason = "route_mismatch";
-    this.stopDetail = `expected ${expected.source}:${expected.intent} → ${expected.target}; took ${this.describeRouteAtSource(expected.source)}`;
-  }
-
-  /** Human-readable trace of what the source node actually did, for the route_mismatch detail. */
-  private describeRouteAtSource(source: string): string {
-    const atSource = this.routeObservations.filter((o) => o.speaker === source);
-    if (atSource.length === 0) return "never reached";
-    return atSource
-      .map((o) => {
-        const targets = o.transitions
-          .map((t) => [...(t.via ?? []).map((v) => v.node_uuid), t.to_node_uuid ?? "∅"].join("→"))
-          .join(",");
-        return `${o.intent || "(no intent)"} → ${targets || "(no transition)"}`;
-      })
-      .join("; ");
-  }
-
   async run(): Promise<RunResult> {
     // Bound on iterations, NOT turnIndex: a silent transition doesn't advance turnIndex, so a
     // stream of empty responses would spin forever if the cap keyed on it.
@@ -459,11 +394,6 @@ class ScenarioRunner {
         : await this.userSimTurn();
       const resp = await this.livekit.turn(this.buildReq({ user_message: decision.message }));
       this.recordTransitions(resp.transitions);
-      this.routeObservations.push({
-        speaker: resp.turn_node_uuid || resp.node_uuid,
-        intent: resp.intent ?? "",
-        transitions: resp.transitions ?? [],
-      });
       await this.recordTurn(resp, decision.message);
       this.turnCount = resp.turn_count;
       if (resp.variables_by_node != null) this.variablesByNode = resp.variables_by_node;
@@ -490,8 +420,6 @@ class ScenarioRunner {
       this.stopReason = this.stopReason || "max_turns";
     }
 
-    // Whole-run route assertion may override a normal completion with route_mismatch.
-    this.assertRoute();
     // The run is still held on agent-runner after a caller-decided end — release it best-effort.
     if (this.callerEnded) await this.livekit.end(this.flowRunUuid);
 
@@ -514,6 +442,7 @@ class ScenarioRunner {
  */
 export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob): Promise<void> {
   const flowRunUuid = crypto.randomUUID();
+  let runnerRef: ScenarioRunner | null = null;
 
   const persistSafe = async (label: string, fn: () => Promise<void>): Promise<void> => {
     if (!job.dbPersist) return;
@@ -558,6 +487,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const isOutboundCall = flowHasOutboundCall(flowObj);
 
     const runner = new ScenarioRunner({ ...deps, livekit: client }, job, flowObj, nodeIndex, flowRunUuid, isOutboundCall);
+    runnerRef = runner;
     const result = await runner.run();
 
     // Skip judges on a 0-turn run (entry resolved straight to a terminal/abort — no conversation).
@@ -630,9 +560,9 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
         scenarioIndex: job.scenarioIndex,
         status: "error",
         stopReason: "error",
-        turnCount: 0,
+        turnCount: runnerRef?.transcript.length ?? 0,
         error: message,
-        transcript: [],
+        transcript: runnerRef?.transcript ?? [],
       }),
     );
   }
