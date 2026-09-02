@@ -406,3 +406,64 @@ describe("buildSessionEvalInput", () => {
     for (const n of input.nodes) for (const t of n.turns) expect(t.idle).toBeUndefined();
   });
 });
+
+// ── session tags reach the conversation judges ──────────────────────────────
+// The sweeper loads a session's tags (ao_session_tags) and hands them to the
+// engine; the transfer axis is decided from them. Without a tag feed the axis
+// must be undecidable, never a clean "no transfer".
+describe("evaluateIngestedSession — session tags", () => {
+  const judgeResponder = () => (args: { system?: string }) => {
+    const s = args.system ?? "";
+    if (s.includes("fabricated information")) return JSON.stringify({ hallucinated: false, score: 1, reason: "", technical_reason: "" });
+    if (s.includes("Variables expected to be extracted")) return JSON.stringify({ extraction_successful: true, score: 1, reason: "", technical_reason: "", missing_variables: [], incorrect_variables: [] });
+    if (s.includes("repeat its own previous messages")) return JSON.stringify({ loop_detected: false, score: 1, reason: "", technical_reason: "" });
+    if (s.includes("correct intent for the conversation segment")) return JSON.stringify({ intent_not_found: false, intent_wrongly_identified: false, reason: "", technical_reason: "" });
+    if (s.includes("four-part rubric"))
+      return JSON.stringify({
+        objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+        procedure_compliance: { score: 1, missed_steps: [], reason_code: "", reason: "", technical_reason: "" },
+        interaction_quality: { score: 1, issues: [], reason_code: "", reason: "", technical_reason: "" },
+        policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+      });
+    if (s.includes("configured goals were achieved")) return JSON.stringify({ goals: [{ goal_name: "Resolved", achieved: true, reason: "", technical_reason: "" }] });
+    if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
+    if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+    return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+  };
+  const events = () => [
+    ev("node-A", "assistant", "Hi, can I connect you to a mover now?"),
+    ev("node-A", "user", "no, not now"),
+  ];
+
+  test("a transfer:human tag reaches the transfer axis (the fact fires)", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder()]);
+    const verdicts = await evaluateIngestedSession(cfg(), events(), llm, "livekit", undefined, [
+      { name: "transfer:human", metadata: { intent: "Transfer Approved" } },
+    ]);
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(true);
+    expect(verdicts.conversation_metrics.human_transfer.detected).toBe(true);
+  });
+
+  test("an empty transcript still yields the transfer FACT — it is a tag, not a transcript, and costs no LLM call", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder()]);
+    // No conversation items at all → full_transcript is empty → the LLM axes are skipped.
+    const verdicts = await evaluateIngestedSession(cfg(), [], llm, "livekit", undefined, [
+      { name: "transfer:human", metadata: { intent: "Transfer Approved" } },
+    ]);
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(true);
+    expect(verdicts.conversation_metrics.human_transfer.detected).toBe(true);
+    expect(llm.calls.length).toBe(0);
+  });
+
+  test("no tag feed ⇒ the transfer axis is unavailable (undecidable)", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { MockLLM } = await import("../src/llm/index.js");
+    const llm = new MockLLM([judgeResponder()]);
+    const verdicts = await evaluateIngestedSession(cfg(), events(), llm, "livekit");
+    expect(verdicts.conversation_metrics.human_transfer.available).toBe(false);
+  });
+});

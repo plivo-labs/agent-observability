@@ -60,6 +60,10 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
       // Code-derived signal judge: rides the same array so it reuses the
       // `available === false` skip below (an undecidable axis fans out nothing).
       ["user_never_spoke", cm.user_never_spoke],
+      // The transfer FACT (fail = a transfer executed, same detection
+      // convention as every row above). Unavailable on sessions with no
+      // transfer tag, so it fans out nothing there — never a phantom pass.
+      ["human_transfer", cm.human_transfer],
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;

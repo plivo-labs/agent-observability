@@ -198,6 +198,8 @@ In production, the Vite-built frontend is served as static files from the same s
 
 ### LiveKit OTLP-derived tables
 
+Two tag names are a wire contract read by the eval judges: `amd:voicemail` / `amd:screening` (the sender's machine-detection verdict) and `transfer:human` (the sender confirms a transfer to a human executed; metadata `{"intent": "<handoff intent>", "next_node": "<optional target>"}`, which drives the code-derived `human_transfer` judge). A session without `transfer:human` gets no `human_transfer` row — absence is never treated as "not transferred". Send tags in the same OTLP batch as the agent config.
+
 Populated by the OTLP logs ingest path; joined to a session via `session_id`.
 
 | Table | Purpose |

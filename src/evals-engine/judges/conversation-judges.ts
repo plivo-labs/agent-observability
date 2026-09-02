@@ -293,6 +293,73 @@ export function evaluateUserNeverSpoke(ctx: ConversationInput): DetectionResult 
   );
 }
 
+/** The session tag the platform attaches when a transfer to a human EXECUTED
+ *  (runtime-confirmed). Its `metadata.intent` is the handoff intent that fired. */
+export const TRANSFER_TAG = "transfer:human";
+
+/**
+ * HUMAN TRANSFER — the transfer FACT, decided in CODE from the session tags.
+ *
+ * `detected` means a transfer to a human executed, as asserted by the ingest
+ * client through the `transfer:human` tag. AO cannot verify the assertion; the
+ * trust boundary is the same one the whole transcript crosses (an authenticated
+ * ingest client), and the platform runtime emits the tag only from its own
+ * confirmed transfer branch. Nothing is inferred from the transcript: a "let me
+ * transfer you" line is not a transfer.
+ *
+ * ABSENCE IS NOT EVIDENCE. Without the tag the axis is unavailable — never a
+ * "not transferred" pass: senders that predate the tag (older runtime builds,
+ * other SDKs, the sim path) emit nothing, and a pass row there would be a
+ * confident falsehood written permanently into a done session. So this judge
+ * only ever asserts the fact; "not transferred" is the judged sessions that
+ * carry no row, and consumers count transfers as its fail rows.
+ */
+export function evaluateHumanTransfer(ctx: ConversationInput): DetectionResult {
+  const intent = transferIntent(ctx);
+  if (intent === null) {
+    return skippedDetection("no transfer:human tag on the session — absence is not evidence of no transfer");
+  }
+  const nextNode = transferNextNode(ctx);
+  const where = nextNode ? ` → ${nextNode}` : "";
+  return derivedDetection(
+    intent ? `A transfer to a human was executed (intent: ${intent}${where}).` : `A transfer to a human was executed${where ? ` (${where.trim()})` : ""}.`,
+    "derived in code: session tag transfer:human (the ingest client's transfer confirmation)",
+  );
+}
+
+/** The flow node the platform handed the call to, when the tag carries it —
+ *  lets a handback that was NOT to a human be audited downstream. */
+function transferNextNode(ctx: ConversationInput): string {
+  const tag = ctx.tags?.find((t) => t && t.name === TRANSFER_TAG);
+  const next = tag?.metadata?.next_node;
+  return typeof next === "string" ? next.trim().slice(0, 200) : "";
+}
+
+/** The handoff intent carried by the transfer tag: `null` when the session has
+ *  no `transfer:human` tag, `""` when the tag carries no usable intent. */
+function transferIntent(ctx: ConversationInput): string | null {
+  const tag = ctx.tags?.find((t) => t && t.name === TRANSFER_TAG);
+  if (!tag) return null;
+  const intent = tag.metadata?.intent;
+  return typeof intent === "string" ? intent.trim().slice(0, 200) : "";
+}
+
+/** The FACT in the stored CmDetection shape — for the path where no
+ *  transcript exists to judge (the fact is a tag, so it needs none). */
+export function evaluateHumanTransferMetric(ctx: ConversationInput): SimConversationMetrics["human_transfer"] {
+  return det(evaluateHumanTransfer(ctx));
+}
+
+/** The transfer axis in the stored CmDetection shape. Entirely code-derived
+ *  from the session tag — no LLM call, no provider. Shared by the live
+ *  evaluation (evaluateConversationMetrics) and the backfill re-judge
+ *  (transfer-rejudge.ts), so both paths can never disagree on the rule. */
+export function evaluateTransferAxis(
+  ctx: ConversationInput,
+): Pick<SimConversationMetrics, "human_transfer"> {
+  return { human_transfer: det(evaluateHumanTransfer(ctx)) };
+}
+
 /** All-zero conversation metrics with every axis marked unavailable — the
  *  placeholder for an empty transcript (ingest) or a skipped conversation eval
  *  (sim). `available:false` is how consumers tell "the judge did not run" from
@@ -311,6 +378,7 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     is_agent_runner: false,
     stt: skippedStt(),
     user_never_spoke: d(),
+    human_transfer: d(),
   };
 }
 
@@ -481,9 +549,14 @@ export async function evaluateConversationMetrics(
       )
     : evaluateUserNeverSpoke(ctx);
 
+  // Transfer axis: the fact is code-derived from the session tag — free, no
+  // LLM call.
+  const transferAxis = evaluateTransferAxis(ctx);
+
   return {
     ...outcomes,
     user_never_spoke: det(userNeverSpoke),
+    ...transferAxis,
     user_sentiment: {
       sentiment: sentiment.sentiment || "unknown",
       reason: sentiment.reason,

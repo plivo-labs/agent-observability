@@ -5,7 +5,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { evaluateConversationMetrics, resolveOutcomes, evaluateUserNeverSpoke } = await import("../src/evals-engine/judges/conversation-judges.js");
+const { evaluateConversationMetrics, resolveOutcomes, evaluateUserNeverSpoke, evaluateHumanTransfer } = await import("../src/evals-engine/judges/conversation-judges.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
 const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
@@ -288,3 +288,50 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.customer_engaged).toBe(false);
   });
 });
+
+// ── the transfer FACT (human_transfer) ───────────────────────────────────────
+//
+// Decided in CODE from the session tag `transfer:human` (the platform's runtime
+// confirmation that a transfer executed — never inferred from prose), so it
+// costs no LLM call.
+
+const TRANSFER = { name: "transfer:human", metadata: { intent: "Transfer Approved" } };
+
+describe("human_transfer — the transfer fact, from the session tag", () => {
+
+  test("fires when the session carries the transfer:human tag", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [TRANSFER] }), llm);
+    expect(cm.human_transfer.available).toBe(true);
+    expect(cm.human_transfer.detected).toBe(true);
+    expect(cm.human_transfer.reason).toContain("Transfer Approved");
+  });
+
+  test("no tag feed at all → unavailable, never a clean 'no transfer'", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx(), llm);
+    expect(cm.human_transfer.available).toBe(false);
+    expect(cm.human_transfer.detected).toBe(false);
+  });
+
+  test("tags present but no transfer tag → STILL unavailable (absence is not evidence: senders that predate the tag never emit one)", async () => {
+    const llm = new MockLLM([responder({})]);
+    const cm = await evaluateConversationMetrics(ctx({ tags: [{ name: "amd:voicemail", metadata: null }] }), llm);
+    expect(cm.human_transfer.available).toBe(false);
+    expect(cm.human_transfer.detected).toBe(false);
+  });
+
+  test("evaluateHumanTransfer: asserts the fact only when the tag is present", () => {
+    expect(evaluateHumanTransfer(ctx({ tags: [TRANSFER] })).detected).toBe(true);
+    expect(evaluateHumanTransfer(ctx({ tags: [TRANSFER] })).available).toBe(true);
+    expect(evaluateHumanTransfer(ctx({ tags: [] })).available).toBe(false);
+    expect(evaluateHumanTransfer(ctx()).available).toBe(false);
+  });
+
+  test("the tag's next_node rides into the reason so an over-claiming handback is auditable", () => {
+    const r = evaluateHumanTransfer(ctx({ tags: [{ name: "transfer:human", metadata: { intent: "Transfer Approved", next_node: "call_forward_1" } }] }));
+    expect(r.detected).toBe(true);
+    expect(r.reason).toContain("call_forward_1");
+  });
+});
+

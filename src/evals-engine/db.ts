@@ -1,7 +1,7 @@
 // Ingest-eval claim lifecycle — the sweeper's work-claim + verdict state.
 //
 // Lives in its own feature module (repo convention: alerts/db.ts, evals/db.ts,
-// …) since it is consumed only by the eval sweeper. The agent-config INGEST
+// …) since it is consumed by the eval sweeper and the backfill scripts (scripts/rejudge-transfer-axis.ts). The agent-config INGEST
 // write (upsertSessionAgentConfig) stays in the shared db.ts with the other
 // ingest writers.
 //
@@ -11,6 +11,7 @@
 // statements without sql.unsafe, which the repo's bun:sql guidance cautions
 // against. They are kept inline and adjacent here so the one file is the
 // single place they are maintained.
+import type { SessionTag } from "./types.js";
 import { sql } from "../db.js";
 import { jsonbParam } from "../jsonb-param.js";
 
@@ -116,6 +117,10 @@ export async function claimNextEvalSession(): Promise<EvalClaim | null> {
  * Returns null when the session is already claimed/judged, or when its config
  * or transport row hasn't landed yet (the poller will pick it up on settle).
  */
+/** NOTE (tags): the judges read session tags (getSessionEvalSource); the
+ *  event-kick bypasses the settle window, so a tag must land in the SAME
+ *  OTLP batch as the agent config to be seen. A sender that splits config
+ *  and tags into separate batches will be judged before its tags arrive. */
 export async function claimEvalSessionNow(sessionId: string): Promise<EvalClaim | null> {
   const rows = await sql`
     INSERT INTO ao_session_eval_verdicts (session_id)
@@ -218,6 +223,15 @@ export interface SessionEvalSource {
   /** Session transport/channel (e.g. "livekit", "twilio", "chat"). Passed to
    *  the conversation judges to gate the voice-only detections on text calls. */
   transport: string | null;
+  /** The session's stored tags (name + metadata). The transfer axis reads the
+   *  platform's `transfer:human` fact from here. Always an array for an
+   *  ingested session, but an empty list is NOT a decidable "no transfer":
+   *  absent, empty and "tagged, but not this tag" are treated identically —
+   *  the judge is unavailable and writes no row. A sender that never emits the
+   *  tag is indistinguishable from one whose call had no transfer, so a
+   *  consumer must count transfers as `human_transfer='fail'` rows and never
+   *  infer the negative from a missing row. */
+  tags: SessionTag[];
 }
 
 /** Backdate a running claim so stale adoption re-picks it after roughly
@@ -235,8 +249,12 @@ export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: numb
 
 /** Everything the eval sweeper needs to judge one session. */
 export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
+  // Tags ride the same round trip as a JSON array (one row per claimed
+  // session on the hot path — a second query per session was measurable).
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at
+    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at,
+      (SELECT COALESCE(json_agg(json_build_object('name', t.name, 'metadata', t.metadata)), '[]'::json)
+         FROM ao_session_tags t WHERE t.session_id = c.session_id) AS tags
     FROM ao_session_agent_config c
     JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
@@ -246,8 +264,18 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
   }
   const row = rows[0];
   const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
+  const rawTags = parse(row.tags);
+  const tags: SessionTag[] = Array.isArray(rawTags)
+    ? rawTags
+        .filter((t: any) => t && typeof t.name === "string")
+        .map((t: any) => ({
+          name: String(t.name),
+          metadata: t.metadata == null ? null : (parse(t.metadata) as Record<string, unknown>),
+        }))
+    : [];
   return {
     sessionId,
+    tags,
     config: parse(row.config) as Record<string, unknown>,
     // Returned RAW (possibly a JSON string): it's only consumed by the
     // fallback path when raw_report.events is empty, so the common path
@@ -259,4 +287,55 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     sessionEndedAt: row.session_ended_at ? new Date(row.session_ended_at) : null,
     transport: typeof row.transport === "string" ? row.transport : null,
   };
+}
+
+// ── Backfill re-judge helpers (scripts/rejudge-transfer-axis.ts) ─────────────
+//
+// A session judged before an axis existed can have ONE axis re-judged in place
+// once the fact it depends on (a tag) is imported later. These operate only on
+// sessions whose verdict row is terminal 'done' — a running claim belongs to a
+// sweeper and must not be touched underneath it.
+
+export interface StoredSessionEvalVerdicts {
+  status: string;
+  verdicts: Record<string, unknown> | null;
+  completedAt: Date | null;
+}
+
+export async function getStoredSessionEvalVerdicts(sessionId: string): Promise<StoredSessionEvalVerdicts | null> {
+  const rows = await sql`
+    SELECT status, verdicts, completed_at FROM ao_session_eval_verdicts WHERE session_id = ${sessionId}
+  `;
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  const v = row.verdicts;
+  return {
+    status: String(row.status),
+    verdicts: v == null ? null : ((typeof v === "string" ? JSON.parse(v) : v) as Record<string, unknown>),
+    completedAt: row.completed_at ? new Date(row.completed_at) : null,
+  };
+}
+
+/** Done sessions carrying a tag with this name (optionally from one tag
+ *  source, e.g. 'legacy_backfill', and/or judged since a time). Newest first. */
+export async function listDoneSessionIdsWithTag(opts: {
+  name: string;
+  tagSource?: string;
+  since?: Date;
+  limit?: number;
+}): Promise<string[]> {
+  const requested = Number.isFinite(opts.limit) ? Math.trunc(opts.limit as number) : 10_000;
+  const limit = Math.max(1, Math.min(requested, 100_000));
+  const rows = await sql`
+    SELECT DISTINCT v.session_id, v.completed_at
+    FROM ao_session_eval_verdicts v
+    JOIN ao_session_tags t ON t.session_id = v.session_id
+    WHERE v.status = 'done'
+      AND t.name = ${opts.name}
+      ${opts.tagSource ? sql`AND t.source = ${opts.tagSource}` : sql``}
+      ${opts.since ? sql`AND v.completed_at >= ${opts.since}` : sql``}
+    ORDER BY v.completed_at DESC NULLS LAST
+    LIMIT ${limit}
+  `;
+  return rows.map((r: any) => String(r.session_id));
 }
