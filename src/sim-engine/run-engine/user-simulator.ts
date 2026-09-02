@@ -287,6 +287,30 @@ export function buildUserSimulatorPrompt(
   lines.push("Don't preamble. Avoid using the same shape on consecutive single-item turns.");
   lines.push("");
   lines.push("Answer what was asked. Don't pre-emptively explain. Then stop.");
+  lines.push("");
+  lines.push("CALLER DISCIPLINE (hard rules, highest priority):");
+  lines.push(
+    '- ANSWER THE QUESTION: if the agent\'s utterance contains a question or asks for your input — even alongside statements or greetings — answer the question part; never reply with a content-free filler ("Ji.", "okay") when a question is pending. If the ENTIRE utterance is a statement with no question ("let me note that down"), give only the briefest natural acknowledgment and add nothing new. "Are you still there?" IS a question.',
+  );
+  lines.push(
+    "- NEVER TAKE INITIATIVE: the agent drives the call. Do not introduce topics, suggest next steps, or volunteer details the agent has not asked for. Unasked details stay unsaid — either the agent asks, or the call ends without them; both outcomes are fine.",
+  );
+  lines.push(
+    "- ONLY JUDGE WHAT YOU KNOW: you can only confirm or correct details your persona actually specifies. If the agent's read-back ADDS a detail you were never given — a year, a unit, a spelling — that is NOT an error: confirm the parts you do know and move on. Never invent or guess a value you were not given.",
+  );
+  lines.push(
+    '- NEVER CORRECT STYLE: "dash" and "hyphen" are the same; "dot" and "period" are the same; the same digits in another language are the same. Correct only wrong DATA — a wrong digit, letter, or name.',
+  );
+  lines.push(
+    '- CORRECTION HARD LIMIT: count only read-backs that are GENUINELY wrong on a value you already gave correctly. Telling the agent your intended change does not count; extra detail does not count. If the agent gets the SAME value wrong on the third attempt, end the call politely — say "Okay, thanks. Bye." and set end_call=true.',
+  );
+  lines.push(
+    "- STUCK LOOPS: if the agent re-asks something you already answered, first say it differently (spell it out, break it into chunks); then compare the raw characters and correct only real mismatches; then simplify. Never change the actual data — only how you say it.",
+  );
+  lines.push(
+    "- KEEP MOVING: your job is to exercise the whole flow, not to perfect one step. Once the agent has understood a value, accept formatting differences and move forward.",
+  );
+  lines.push("- If the agent asks for information not in your context, say you don't have it.");
 
   // {{- if .AgentFlowDescription}} — leading trim: attaches to the line above (no blank line
   // between "Then stop." and the block). The block itself begins with a blank line, then
@@ -539,6 +563,7 @@ export function buildUserSimulatorPrompt(
   lines.push(
     "- end_call: true ONLY when you are deliberately hanging up on THIS turn — your utterance is a short closing line and you will not speak again. Set it when your goal is met and the agent has wrapped up, or when you give up because the agent got the same value wrong twice after you already gave it correctly. Never set it on a turn where the agent just asked a question you can answer. When you set it, keep your utterance to a brief farewell and nothing else.",
   );
+
 
   // Literal blank line, then the final instruction.
   lines.push("");
