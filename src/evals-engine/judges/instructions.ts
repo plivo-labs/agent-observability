@@ -19,6 +19,8 @@
 // exactly the raw-schema fields (validated by the judge's Zod). `{slot}` placeholders
 // are filled with `fill()`.
 
+import { promptBody, promptOutput } from "./judge-prompts.js";
+
 /** Replace `{key}` placeholders. Mirrors Python `.format(**vars)` for our slotted prompts. */
 export function fill(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k]! : m));
@@ -307,23 +309,35 @@ const OUT_CRITERIA = `Return ONLY a JSON object with one entry per numbered crit
 
 const compose = (body: string, output: string) => `${body}\n\n${output}`;
 
-export const systemForHallucination = (): string => compose(HALLUCINATION, OUT_HALLUCINATION);
-export const systemForLoop = (): string => compose(LOOP_DETECTION, OUT_LOOP);
+// Registry overrides: each builder resolves its body/output through the
+// override store at call time, falling back to the shipped constants. With the
+// seeded registry the two are byte-identical (proven by the parity test).
+
+export const systemForHallucination = (): string =>
+  compose(promptBody("hallucination", HALLUCINATION), promptOutput("hallucination", OUT_HALLUCINATION));
+export const systemForLoop = (): string =>
+  compose(promptBody("node_loop", LOOP_DETECTION), promptOutput("node_loop", OUT_LOOP));
 
 export const systemForVariableExtraction = (expectedVariables: string, actualVariables: string): string =>
-  compose(fill(VARIABLE_EXTRACTION, { expected_variables: expectedVariables, actual_variables: actualVariables }), OUT_VARIABLE);
+  compose(
+    fill(promptBody("variable_extraction", VARIABLE_EXTRACTION), {
+      expected_variables: expectedVariables,
+      actual_variables: actualVariables,
+    }),
+    promptOutput("variable_extraction", OUT_VARIABLE),
+  );
 
 export const systemForInstructionAdherence = (instructions: string, objective: string): string =>
-  compose(fill(INSTRUCTION_ADHERENCE, { instructions, objective }), OUT_INSTRUCTION);
+  compose(fill(promptBody("instructions_adherence", INSTRUCTION_ADHERENCE), { instructions, objective }), promptOutput("instructions_adherence", OUT_INSTRUCTION));
 
 export const systemForIntent = (availableIntents: string, chosenIntent: string): string =>
   compose(
-    fill(INTENT_IDENTIFICATION, {
+    fill(promptBody("intent_identification", INTENT_IDENTIFICATION), {
       available_intents: availableIntents,
       chosen_intent: chosenIntent,
       system_intents: SYSTEM_INTENTS.join(", "),
     }),
-    OUT_INTENT,
+    promptOutput("intent_identification", OUT_INTENT),
   );
 
 export const systemForGoal = (goals: string, flowHistory: string, isSimulation = false): string =>

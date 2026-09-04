@@ -17,6 +17,7 @@ import { jsonbParam } from "../jsonb-param.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
+import { ensureJudgePromptOverrides } from "./judge-registry.js";
 import { buildExternalEvalRows } from "./fan-out-rows.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
@@ -241,6 +242,9 @@ export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
 async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
   const sessionId = claim.sessionId;
+  // Registry prompts (TTL-cached, never throws): defaults resolve through the
+  // ao_judges rows from here on; a load failure keeps the shipped constants.
+  await ensureJudgePromptOverrides();
   // Poison isolation: a session whose stored JSON can't be read (e.g. the
   // 2026-07-13 bun-runtime jsonb corruption) must fail THAT session as a
   // terminal eval_error — an uncaught throw here killed every sweep tick and

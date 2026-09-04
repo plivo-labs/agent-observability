@@ -200,6 +200,15 @@ export const envSchema = z.object({
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
   JUDGE_REASONING_EFFORT: reasoningEffort("none"),
 
+  // Judge prompts come from the ao_judges registry (seeded byte-identical to
+  // the shipped constants). "false"/"0" reverts to the in-code prompts — the
+  // instant rollback lever for the registry cutover; behaviour is identical
+  // while the seed matches source (enforced by the parity test).
+  JUDGES_FROM_DB: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
+
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).default(1),

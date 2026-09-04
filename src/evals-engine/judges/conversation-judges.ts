@@ -28,6 +28,7 @@ import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
 import { classifyErrorDurability } from "../../error-durability.js";
+import { promptBody, promptOutput } from "./judge-prompts.js";
 import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
 import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON, TRANSFER_CONSENT_JSON, TRANSFER_CONSENT_REASON_CODES, type TransferConsentReasonCode } from "./schemas.js";
 
@@ -215,9 +216,9 @@ async function safeJudge<T, R>(
 }
 
 /** Run one boolean detection judge; default to `detected:false` on any failure. */
-function runDetection(criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
+function runDetection(judge: string, criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
   return safeJudge(
-    { system: criteria + OUT_DETECTION, ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
+    { system: promptBody(judge, criteria) + promptOutput(judge, OUT_DETECTION), ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): DetectionResult => ({ ...data, available: true }),
     { detected: false, reason: "", technical_reason: "conversation judge unavailable", available: false },
   );
@@ -227,7 +228,7 @@ type SentimentResult = { sentiment: string; reason: string; technical_reason: st
 
 function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
   return safeJudge(
-    { system: USER_SENTIMENT + OUT_SENTIMENT, ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
+    { system: promptBody("user_sentiment", USER_SENTIMENT) + promptOutput("user_sentiment", OUT_SENTIMENT), ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): SentimentResult => ({ ...data, available: true }),
     { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable", available: false },
   );
@@ -237,7 +238,7 @@ function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<S
  *  text channels. Fault-tolerant: any failure → unavailable (never a fabricated 0). */
 function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<SttResult> {
   return safeJudge(
-    { system: STT + OUT_STT, ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
+    { system: promptBody("stt", STT) + promptOutput("stt", OUT_STT), ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
     (data): SttResult => {
       const errors = Math.max(0, Math.round(data.error_count));
       // Clamp recovered into [0, errors] — the constraint the prompt states, enforced.
@@ -429,7 +430,7 @@ async function resolveTransferConsent(
   }
   return safeJudge(
     {
-      system: TRANSFER_CONSENT + OUT_TRANSFER_CONSENT,
+      system: promptBody("transfer_consent", TRANSFER_CONSENT) + promptOutput("transfer_consent", OUT_TRANSFER_CONSENT),
       ctx,
       input: transferPayload(ctx),
       schema: TransferConsentRawZ,
@@ -635,12 +636,12 @@ export async function evaluateConversationMetrics(
   const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
 
   const [voicemail, bot, screening, lowEng, wrong, dnd, sentiment, stt] = await Promise.all([
-    voice ? runDetection(VOICEMAIL, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection(BOT, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection(CALL_SCREENING, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    runDetection(LOW_ENGAGEMENT, ctx, provider),
-    runDetection(WRONG_NUMBER, ctx, provider),
-    runDetection(DO_NOT_DISTURB, ctx, provider),
+    voice ? runDetection("voicemail_detection", VOICEMAIL, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection("bot_detection", BOT, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection("call_screening", CALL_SCREENING, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    runDetection("low_engagement", LOW_ENGAGEMENT, ctx, provider),
+    runDetection("wrong_number", WRONG_NUMBER, ctx, provider),
+    runDetection("do_not_disturb", DO_NOT_DISTURB, ctx, provider),
     runSentiment(ctx, provider),
     voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);

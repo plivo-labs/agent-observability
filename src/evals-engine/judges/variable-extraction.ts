@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { systemForVariableExtraction } from "./instructions.js";
 import { nodePayload, renderNodeTranscript } from "./node-judge-payload.js";
+import { promptSub } from "./judge-prompts.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { VARIABLE_EXTRACTION_JSON } from "./schemas.js";
 import { VariableExtractionRawZ, type VariableExtractionRaw } from "./types.js";
@@ -363,7 +364,7 @@ export async function runVariableExtractionJudge(
   const [defaultReview, focusedReview] = await Promise.all([
     defaultCandidates.length
       ? runGuardedReview(
-          CONFIG_DEFAULT_REVIEW_SYSTEM,
+          promptSub("variable_extraction", "review_config_default", CONFIG_DEFAULT_REVIEW_SYSTEM),
           defaultCandidates,
           { node_transcript: renderNodeTranscript(node) },
           600,
@@ -372,7 +373,7 @@ export async function runVariableExtractionJudge(
       : undefined,
     focusedCandidates.length
       ? runGuardedReview(
-          FOCUSED_DEFECT_REVIEW_SYSTEM,
+          promptSub("variable_extraction", "review_focused_defect", FOCUSED_DEFECT_REVIEW_SYSTEM),
           focusedCandidates,
           {
             node_transcript: renderNodeTranscript(node),
