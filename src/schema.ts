@@ -100,7 +100,6 @@ export const envSchema = z.object({
   // judged, only HOW SOON).
   EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
 
-
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In
   // production the dashboard is served same-origin so CORS isn't needed;
@@ -194,14 +193,18 @@ export const envSchema = z.object({
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
   JUDGE_REASONING_EFFORT: reasoningEffort("none"),
 
+  // Per-session ceiling on custom-judge LLM calls (a node-scope judge costs one
+  // call per judged node). EVAL_MAX_JUDGED_NODES bounds the DEFAULT judges'
+  // per-session bill; without this cap, N custom judges × 30 nodes would make
+  // one session's bill unbounded — and re-spent on every retry. Judges are
+  // budgeted in name order, so the same set runs on a retried session.
+  EVAL_MAX_CUSTOM_JUDGE_CALLS: z.coerce.number().int().positive().default(200),
+
   // Judge prompts come from the ao_judges registry (seeded byte-identical to
   // the shipped constants). "false"/"0" reverts to the in-code prompts — the
   // instant rollback lever for the registry cutover; behaviour is identical
   // while the seed matches source (enforced by the parity test).
-  JUDGES_FROM_DB: z
-    .string()
-    .default("true")
-    .transform((v) => v !== "false" && v !== "0"),
+  JUDGES_FROM_DB: z.enum(["on", "off"]).default("on"),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
