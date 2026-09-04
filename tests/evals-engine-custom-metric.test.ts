@@ -10,6 +10,7 @@ const { runCustomMetricJudges, rollUpNodeVerdicts, CUSTOM_METRIC_OUT, customJudg
 );
 const { buildExternalEvalRows } = await import("../src/evals-engine/fan-out-rows.js");
 const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+const { defaultJudgeResponder } = await import("./fixtures/default-judge-responder.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 type CustomJudgeSpec = import("../src/evals-engine/judges/custom-metric.js").CustomJudgeSpec;
 type SessionEvalVerdicts = import("../src/evals-engine/integration/session-evals.js").SessionEvalVerdicts;
@@ -57,7 +58,7 @@ describe("custom metric judge", () => {
     const llm = new MockLLM([verdictJson("fail", "slots before member id")]);
     const s = spec();
     const input = ctx({ speech_transcript: "User: BlueCross" });
-    const [v] = await runCustomMetricJudges([s], input, llm);
+    const [v] = await runCustomMetricJudges([s], input, (u) => u, llm);
     expect(v!.verdict).toBe("fail");
     expect(v!.available).toBe(true);
     expect(v!.judge_name).toBe("metric:insurance_verified");
@@ -70,9 +71,10 @@ describe("custom metric judge", () => {
     const llm = new MockLLM([
       (args: any) => verdictJson(JSON.parse(args.user).node_name === "collect_insurance" ? "fail" : "pass"),
     ]);
-    const [v] = await runCustomMetricJudges([spec({ scope: "node" })], ctx(), llm);
+    const [v] = await runCustomMetricJudges([spec({ scope: "node" })], ctx(), (u) => "ref-" + u, llm);
     expect(llm.calls.length).toBe(2);
     expect(v!.verdict).toBe("fail");
+    expect(v!.per_node!.map((n) => n.ref)).toEqual(["ref-n1", "ref-n2"]);
     expect(v!.per_node!.map((n) => [n.node_name, n.verdict])).toEqual([
       ["collect_insurance", "fail"],
       ["offer_slots", "pass"],
@@ -89,7 +91,7 @@ describe("custom metric judge", () => {
 
   test("deterministic judge failure → unavailable verdict, never a throw", async () => {
     const llm = new MockLLM(["not json at all", "not json at all", "not json at all"]);
-    const [v] = await runCustomMetricJudges([spec()], ctx(), llm);
+    const [v] = await runCustomMetricJudges([spec()], ctx(), (u) => u, llm);
     expect(v!.available).toBe(false);
     expect(v!.verdict).toBe("unknown");
   });
@@ -124,20 +126,7 @@ describe("custom metric judge", () => {
     const responder = (args: any) => {
       const s = args.system as string;
       if (s.includes("Fail if slots are offered")) return verdictJson("fail");
-      if (s.includes("fabricated information")) return JSON.stringify({ hallucinated: false, score: 1, reason: "", technical_reason: "" });
-      if (s.includes("Variables expected to be extracted")) return JSON.stringify({ extraction_successful: true, score: 1, reason: "", technical_reason: "", missing_variables: [], incorrect_variables: [] });
-      if (s.includes("repeat its own previous messages")) return JSON.stringify({ loop_detected: false, score: 1, reason: "", technical_reason: "" });
-      if (s.includes("correct intent for the conversation segment")) return JSON.stringify({ intent_not_found: false, intent_wrongly_identified: false, reason: "", technical_reason: "" });
-      if (s.includes("four-part rubric"))
-        return JSON.stringify({
-          objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
-          procedure_compliance: { score: 1, missed_steps: [], reason_code: "", reason: "", technical_reason: "" },
-          interaction_quality: { score: 1, issues: [], reason_code: "", reason: "", technical_reason: "" },
-          policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
-        });
-      if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
-      if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
-      return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+      return defaultJudgeResponder(s) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
     };
     const cfg = {
       flow_name: "medibook",
@@ -163,5 +152,31 @@ describe("custom metric judge", () => {
     // default judge inputs are untouched by the custom judge riding along
     expect(withCustom.calls.filter((c) => !c.system.includes("Fail if slots are offered")).map((c) => c.system).toSorted())
       .toEqual(withoutCustom.calls.map((c) => c.system).toSorted());
+  });
+});
+
+describe("custom metric budget", () => {
+  test("node-scope judges are budgeted by nodes×judges in name order", async () => {
+    // fixture config declares EVAL_MAX_CUSTOM_JUDGE_CALLS? no — default 200; shrink via many judges
+    const llm = new MockLLM([(args: any) => {
+      const s = args.system as string;
+      if (s.includes("Fail if slots are offered")) return verdictJson("pass");
+      return defaultJudgeResponder(s) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+    }]);
+    const cfg = {
+      flow_name: "medibook", global_prompt: "g",
+      nodes: [{ ref: "node-A", name: "n", instructions: "i", intents: [], variables: [] }],
+    };
+    const events = [
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "hi" } },
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "user", content: "yo" } },
+    ];
+    // 250 conversation-scope judges at 1 call each — the default 200 cap must
+    // admit exactly 200, chosen deterministically (input order = name order).
+    const many = Array.from({ length: 250 }, (_, i) => spec({ name: `metric:m${String(i).padStart(3, "0")}`, display_name: `m${i}` }));
+    const verdicts = await evaluateIngestedSession(cfg, events, llm, "livekit", undefined, [], many);
+    expect(verdicts.custom_metrics!.length).toBe(200);
+    expect(verdicts.custom_metrics![0]!.judge_name).toBe("metric:m000");
+    expect(verdicts.custom_metrics![199]!.judge_name).toBe("metric:m199");
   });
 });

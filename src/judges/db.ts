@@ -56,9 +56,9 @@ export async function createCustomJudge(input: {
   const prompt = { body: input.description, output: CUSTOM_METRIC_OUT, slots: [] };
   try {
     const rows = await sql`
-      INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config)
+      INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config, enabled)
       VALUES (${input.name}, ${input.display_name}, ${input.description}, 'custom', ${input.scope},
-              'llm', ${jsonbParam(prompt)}::text::jsonb, '{}'::jsonb)
+              'llm', ${jsonbParam(prompt)}::text::jsonb, '{}'::jsonb, ${input.enabled})
       RETURNING ${COLS}
     `;
     return rows[0] as unknown as JudgeRecord;

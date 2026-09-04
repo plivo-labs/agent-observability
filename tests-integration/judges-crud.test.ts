@@ -45,6 +45,7 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
     expect(j.type).toBe("custom");
     expect(j.kind).toBe("llm");
     expect(j.name).toBe(customJudgeName(displayName("insurance verified")));
+    expect(j.enabled).toBe(false); // the create body said so — column default must not win
     const raw = await sql`SELECT prompt FROM ao_judges WHERE id = ${j.id}`;
     expect(raw[0].prompt.body).toBe("Fail if slots are offered before the member ID is confirmed.");
     expect(raw[0].prompt.output).toBe(CUSTOM_METRIC_OUT);

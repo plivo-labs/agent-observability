@@ -25,6 +25,7 @@
 import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, probeEvalTables } from "./evals-engine/eval-sweeper.js";
+import { syncDefaultJudges } from "./evals-engine/judge-registry.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
@@ -120,6 +121,7 @@ if (dbConfigured) {
     // Same boot probe as the API's inline gate: a DB without the eval tables
     // must go quiet with one line, not error-log every sweep tick.
     if (await probeEvalTables()) {
+      await syncDefaultJudges().catch((e) => console.error("[worker] default judge sync failed:", e));
       startEvalSweeper();
     } else {
       console.log("[worker] eval tables absent — eval sweeper disabled (apply migrations 021–023 to enable)");

@@ -534,6 +534,24 @@ export async function evaluateIngestedSession(
   if (transport) input.transport = transport;
   if (tags) input.tags = tags;
 
+  // Per-session custom-judge spend ceiling: a node-scope judge costs one call
+  // per judged node. Specs arrive in name order (getAgentCustomJudges), so the
+  // budget admits the SAME judges on a retried session — no verdict churn.
+  const maxCustomCalls = envConfig.EVAL_MAX_CUSTOM_JUDGE_CALLS ?? 200;
+  const budgeted: CustomJudgeSpec[] = [];
+  let plannedCalls = 0;
+  for (const spec of customJudges) {
+    const cost = spec.scope === "node" ? Math.max(1, input.nodes.length) : 1;
+    if (plannedCalls + cost > maxCustomCalls) continue;
+    plannedCalls += cost;
+    budgeted.push(spec);
+  }
+  if (budgeted.length < customJudges.length) {
+    console.warn(
+      `[evals] custom-judge budget: running ${budgeted.length}/${customJudges.length} judges (cap ${maxCustomCalls} calls/session)`,
+    );
+  }
+
   const [conversation_metrics, scored, custom_metrics] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
@@ -545,8 +563,18 @@ export async function evaluateIngestedSession(
     input.nodes.length
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
-    customJudges.length && input.full_transcript.trim()
-      ? runCustomMetricJudges(customJudges, input, provider)
+    budgeted.length && input.full_transcript.trim()
+      ? runCustomMetricJudges(
+          budgeted,
+          input,
+          // input.nodes[i] ↔ nodeRefs[i]: resolve the engine uuid back to the
+          // sender's opaque ref so custom per-node rows tag like default rows.
+          (nodeUuid) => {
+            const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
+            return nodeRefs[i]?.ref ?? "";
+          },
+          provider,
+        )
       : Promise.resolve([] as CustomMetricVerdict[]),
   ]);
 

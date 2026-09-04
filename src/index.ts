@@ -24,6 +24,7 @@ import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
 import { registerJudgeRoutes } from "./judges/routes.js";
+import { syncDefaultJudges } from "./evals-engine/judge-registry.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, kickEvalForSession, probeEvalTables } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
@@ -61,12 +62,16 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 // Eval sweeper: judges ingested sessions that carry an agent config. Same
 // inline-by-default posture as the alert sweeper (set EVAL_SWEEPER=off on the
 // API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
-// Table-probed like the alert/goal loops: a DB without the eval tables
+// Table-probed like the alert loop: a DB without the eval tables
 // (sim-only deploy, or prod before the core-db eval migration) must not
 // error-log every sweep tick + every ingest kick forever. The probe outcome
 // also disarms the ingest event-kick, which writes to the same tables.
 if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
   if (await probeEvalTables()) {
+    // Defaults are code-owned: reconcile ao_judges' default rows with the
+    // shipped catalogue before judging starts (migration 024 is only the
+    // initial seed — see syncDefaultJudges).
+    await syncDefaultJudges().catch((e) => console.error("[evals] default judge sync failed:", e));
     startEvalSweeper();
   } else {
     console.log("[evals] eval tables absent — inline sweeper + ingest event-kick disabled (apply migrations 021–023 to enable)");
@@ -660,15 +665,13 @@ app.delete("/api/sessions", async (c) => {
       sessionIds,
     );
     // Cascade to the session's satellite rows. Verdicts embed transcript quotes
-    // and extracted variable values, the agent config embeds the flow's prompts,
-    // and the goal-analysis claim (no FK, keyed by session_id) must go too — a
-    // surviving 'done' row makes claimGoalSessions skip a re-ingested session
-    // with the same id forever. These tables have no FKs (the session row can
-    // arrive after them), so the cascade is explicit here.
+    // and extracted variable values, and the agent config embeds the flow's
+    // prompts. These tables have no FKs (the session row can arrive after
+    // them), so the cascade is explicit here.
     //
     // Delete only from the satellites that EXIST in this deployment: a
     // feature-scoped core DB (e.g. the eval-only schema) omits the
-    // goal-analyzer / alert / CI-eval tables, and a hardcoded DELETE against a
+    // alert / CI-eval tables, and a hardcoded DELETE against a
     // missing table would abort the whole erasure transaction. The names come
     // from the SESSION_SATELLITE_TABLES registry (db.ts) resolved against
     // pg_tables, so the interpolation below is never user-controlled.

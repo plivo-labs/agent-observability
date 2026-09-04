@@ -335,10 +335,13 @@ async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider })
 
     // `built` is threaded through so the (pure but heavy) input build from the
     // judgeability gate above isn't recomputed inside the evaluation.
-    // The agent's mapped custom judges ride the same evaluation call. A DB
-    // failure here degrades to defaults-only judging rather than blocking.
+    // The agent's mapped custom judges ride the same evaluation call. A
+    // TRANSIENT lookup failure rethrows so the session retries with its full
+    // judge set (silently judging defaults-only would permanently drop the
+    // custom verdicts); only a deterministic failure degrades to defaults.
     const customJudges = await getAgentCustomJudges(source.agentId).catch((e) => {
-      console.error(`[evals] custom-judge lookup failed session=${sanitizeForLog(sessionId)}:`, e);
+      if (classifyErrorDurability(e) === "transient") throw e;
+      console.error(`[evals] custom-judge lookup failed session=${sanitizeForLog(sessionId)} — judging defaults only:`, e);
       return [];
     });
     const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges);
@@ -474,7 +477,7 @@ let activeKicks = 0;
  * MUST NOT be awaited on the ingest hot path — call as `void
  * kickEvalForSession(id)` so a slow judge run never delays the ingest 200.
  */
-export async function kickEvalForSession(sessionId: string): Promise<void> {
+export async function kickEvalForSession(sessionId: string, opts?: { provider?: LlmProvider }): Promise<void> {
   if (config.EVAL_EVENT_KICK === "off") return;
   if (evalTablesPresent === false) return; // boot probe found no eval tables — nothing to judge into
   // Only the inline-sweeper process both ingests AND judges; in worker mode the
@@ -486,7 +489,7 @@ export async function kickEvalForSession(sessionId: string): Promise<void> {
   try {
     const claim = await claimEvalSessionNow(sessionId);
     if (!claim) return; // already claimed/judged, or data not fully landed → poller covers it
-    await judgeClaimed(claim);
+    await judgeClaimed(claim, opts);
   } catch (e) {
     console.warn(`[evals] event-kick failed session=${sanitizeForLog(sessionId)} (poller will retry): ${(e as Error).message}`);
   } finally {

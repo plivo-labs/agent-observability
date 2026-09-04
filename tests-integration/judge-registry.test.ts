@@ -57,3 +57,19 @@ describeDb("judge registry (real PG)", () => {
     }
   });
 });
+
+describeDb("default-judge boot sync (real PG)", () => {
+  test("a drifted default row is reconciled to the catalogue; custom rows untouched", async () => {
+    const { syncDefaultJudges } = await import("../src/evals-engine/judge-registry.js");
+    await migrate(sql);
+    // no drift → no writes
+    expect(await syncDefaultJudges()).toBe(0);
+    // tamper a default row the way a stale frozen seed (or psql edit) would
+    await sql`UPDATE ao_judges SET prompt = jsonb_set(prompt, '{body}', '"OLD PROMPT"'::jsonb) WHERE name = 'hallucination'`;
+    expect(await syncDefaultJudges()).toBe(1);
+    const row = await sql`SELECT prompt FROM ao_judges WHERE name = 'hallucination'`;
+    expect(row[0].prompt.body).toBe(DEFAULT_JUDGE_ROWS.find((r) => r.name === "hallucination")!.prompt!.body);
+    // idempotent again
+    expect(await syncDefaultJudges()).toBe(0);
+  });
+});

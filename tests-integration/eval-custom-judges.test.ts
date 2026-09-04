@@ -1,15 +1,17 @@
-// End-to-end sweep with a custom judge, against real Postgres and through the
-// REAL sweep loop (runEvalSweepOnce with an injected provider): seed an agent,
-// a mapped custom judge, a claimable session — then prove default verdicts
-// land unchanged AND the metric:* row appears, and that a re-sweep is a no-op.
+// End-to-end judging with a custom judge, against real Postgres and through
+// the REAL event-kick path (kickEvalForSession claims exactly the seeded
+// session — a DB-wide sweep here would judge unrelated pending rows on a
+// shared dev database with the MockLLM): prove default verdicts land
+// unchanged AND the metric:* row appears, and that a re-kick is a no-op.
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { describeDb, testRun } from "./helpers.js";
 import { sql } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { MockLLM } from "../src/llm/index.js";
-import { runEvalSweepOnce } from "../src/evals-engine/eval-sweeper.js";
+import { kickEvalForSession, probeEvalTables } from "../src/evals-engine/eval-sweeper.js";
 import { createCustomJudge, setAgentJudges } from "../src/judges/db.js";
 import { customJudgeName } from "../src/evals-engine/judges/custom-metric.js";
+import { defaultJudgeResponder } from "../tests/fixtures/default-judge-responder.js";
 
 const t = testRun("custom-sweep");
 const agentId = t.uid("agent");
@@ -20,20 +22,8 @@ const sessionId = t.uid("sess");
 const responder = (args: any) => {
   const s = args.system as string;
   if (s.includes("Fail if the caller was put on hold")) return JSON.stringify({ verdict: "fail", reason: "hold without warning", technical_reason: "t" });
-  if (s.includes("fabricated information")) return JSON.stringify({ hallucinated: false, score: 1, reason: "", technical_reason: "" });
-  if (s.includes("Variables expected to be extracted")) return JSON.stringify({ extraction_successful: true, score: 1, reason: "", technical_reason: "", missing_variables: [], incorrect_variables: [] });
-  if (s.includes("repeat its own previous messages")) return JSON.stringify({ loop_detected: false, score: 1, reason: "", technical_reason: "" });
-  if (s.includes("correct intent for the conversation segment")) return JSON.stringify({ intent_not_found: false, intent_wrongly_identified: false, reason: "", technical_reason: "" });
-  if (s.includes("four-part rubric"))
-    return JSON.stringify({
-      objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
-      procedure_compliance: { score: 1, missed_steps: [], reason_code: "", reason: "", technical_reason: "" },
-      interaction_quality: { score: 1, issues: [], reason_code: "", reason: "", technical_reason: "" },
-      policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
-    });
-  if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
-  if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
-  return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+  if (s.includes("Fail if a discount")) return JSON.stringify({ verdict: "unknown", reason: "discounts never came up", technical_reason: "t" });
+  return defaultJudgeResponder(s) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
 };
 
 describeDb("custom judges through the real sweep (real PG)", () => {
@@ -48,7 +38,17 @@ describeDb("custom judges through the real sweep (real PG)", () => {
       scope: "conversation",
       enabled: true,
     });
-    await setAgentJudges(agentId, [{ judge_id: judge.id, enabled: true }]);
+    const unknownJudge = await createCustomJudge({
+      name: customJudgeName(`${t.run} discount policy`),
+      display_name: `${t.run} discount policy`,
+      description: "Fail if a discount was promised outside the approved list.",
+      scope: "conversation",
+      enabled: true,
+    });
+    await setAgentJudges(agentId, [
+      { judge_id: judge.id, enabled: true },
+      { judge_id: unknownJudge.id, enabled: true },
+    ]);
 
     const config = {
       flow_name: "medibook",
@@ -87,16 +87,18 @@ describeDb("custom judges through the real sweep (real PG)", () => {
     await sql`DELETE FROM ao_agents WHERE agent_id = ${agentId}`;
   });
 
-  test("defaults + the mapped custom judge land; re-sweep is a no-op; no goal rows", async () => {
+  test("defaults + the mapped custom judge land; re-kick is a no-op; no goal rows", async () => {
     const provider = new MockLLM([responder]);
-    await runEvalSweepOnce({ provider });
+    await probeEvalTables(); // arm the kick's boot gate
+    await kickEvalForSession(sessionId, { provider });
 
     const verdictRow = await sql`SELECT status, verdicts FROM ao_session_eval_verdicts WHERE session_id = ${sessionId}`;
     expect(verdictRow[0]?.status).toBe("done");
     const verdicts = typeof verdictRow[0].verdicts === "string" ? JSON.parse(verdictRow[0].verdicts) : verdictRow[0].verdicts;
     expect(verdicts.node_evaluations.length).toBe(1);
-    expect(verdicts.custom_metrics.length).toBe(1);
-    expect(verdicts.custom_metrics[0].verdict).toBe("fail");
+    expect(verdicts.custom_metrics.length).toBe(2);
+    const byJudge = new Map(verdicts.custom_metrics.map((m: any) => [m.judge_name, m.verdict]));
+    expect(byJudge.get(customJudgeName(`${t.run} hold warning`))).toBe("fail");
     expect("goal_evaluation" in verdicts).toBe(false);
 
     const rows = await sql`
@@ -110,12 +112,15 @@ describeDb("custom judges through the real sweep (real PG)", () => {
     // the custom judge fanned out under its metric:* name
     const metricName = customJudgeName(`${t.run} hold warning`);
     expect(byName.get(metricName)).toBe("fail");
+    // the non-decision lands as verdict 'unknown' — neither pass nor fail,
+    // and excluded from every rate (alerts + fleet stats filter it out)
+    expect(byName.get(customJudgeName(`${t.run} discount policy`))).toBe("unknown");
     // goal judging is gone
     expect([...byName.keys()].some((k) => k.startsWith("goal"))).toBe(false);
 
-    // idempotency: a second sweep must not re-judge the done session
+    // idempotency: a second kick must not re-judge the done session
     const before = provider.calls.length;
-    await runEvalSweepOnce({ provider });
+    await kickEvalForSession(sessionId, { provider });
     expect(provider.calls.length).toBe(before);
   });
 });

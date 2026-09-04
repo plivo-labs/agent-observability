@@ -127,6 +127,7 @@ export function rollUpNodeVerdicts(nodes: CustomMetricNodeVerdict[]): "pass" | "
 async function runCustomMetricJudge(
   spec: CustomJudgeSpec,
   ctx: ConversationInput,
+  refOf: (nodeUuid: string) => string,
   provider?: LlmProvider,
 ): Promise<CustomMetricVerdict> {
   try {
@@ -157,7 +158,9 @@ async function runCustomMetricJudge(
           },
           provider,
         );
-        return { ref: node.node_uuid, node_name: node.node_name, ...data };
+        // The SENDER's opaque ref, not the engine uuid — consumers map custom
+        // per-node rows back to their nodes exactly like the default node rows.
+        return { ref: refOf(node.node_uuid), node_name: node.node_name, ...data };
       }),
     );
     const verdict = rollUpNodeVerdicts(per_node);
@@ -183,7 +186,8 @@ async function runCustomMetricJudge(
 export function runCustomMetricJudges(
   specs: readonly CustomJudgeSpec[],
   ctx: ConversationInput,
+  refOf: (nodeUuid: string) => string,
   provider?: LlmProvider,
 ): Promise<CustomMetricVerdict[]> {
-  return Promise.all(specs.map((s) => runCustomMetricJudge(s, ctx, provider)));
+  return Promise.all(specs.map((s) => runCustomMetricJudge(s, ctx, refOf, provider)));
 }

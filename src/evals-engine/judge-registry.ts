@@ -47,7 +47,7 @@ let cached: JudgeRegistryRow[] = [];
 
 /** Refresh the override store from the registry (TTL-cached). Never throws. */
 export async function ensureJudgePromptOverrides(db = sql): Promise<void> {
-  if (!config.JUDGES_FROM_DB) return;
+  if (config.JUDGES_FROM_DB === "off") return;
   const now = Date.now();
   if (now - lastLoadedAt < REGISTRY_TTL_MS) return;
   try {
@@ -86,4 +86,50 @@ export function cachedJudgeRegistry(): readonly JudgeRegistryRow[] {
 export function __resetJudgeRegistryCacheForTest(): void {
   lastLoadedAt = 0;
   cached = [];
+}
+
+// ── boot-time default sync ───────────────────────────────────────────────────
+//
+// The CODE is the source of truth for type='default' rows, forever. Migration
+// 024 is only the initial seed: it is filename-tracked and ON CONFLICT DO
+// NOTHING, so on an already-migrated deployment a shipped prompt change would
+// otherwise freeze at whatever the first deploy wrote — silently judging prod
+// with old prompts while code, unit tests, and fresh installs use the new
+// ones. This sync runs at every boot and upserts any default row whose
+// content differs from the catalogue; it also reverts hand-edited default
+// rows, which is the same lock the API's 403 enforces.
+import { DEFAULT_JUDGE_ROWS } from "./judge-catalogue.js";
+import { jsonbParam } from "../jsonb-param.js";
+
+export async function syncDefaultJudges(db = sql): Promise<number> {
+  let updated = 0;
+  for (const row of DEFAULT_JUDGE_ROWS) {
+    const res = await db`
+      INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config)
+      VALUES (${row.name}, ${row.display_name}, ${row.description}, 'default', ${row.scope}, ${row.kind},
+              ${jsonbParam(row.prompt)}::text::jsonb, ${jsonbParam(row.config)}::text::jsonb)
+      ON CONFLICT (name) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        description = EXCLUDED.description,
+        scope = EXCLUDED.scope,
+        kind = EXCLUDED.kind,
+        prompt = EXCLUDED.prompt,
+        config = EXCLUDED.config,
+        updated_at = NOW()
+      WHERE ao_judges.type = 'default'
+        AND (ao_judges.prompt IS DISTINCT FROM EXCLUDED.prompt
+          OR ao_judges.config IS DISTINCT FROM EXCLUDED.config
+          OR ao_judges.display_name IS DISTINCT FROM EXCLUDED.display_name
+          OR ao_judges.description IS DISTINCT FROM EXCLUDED.description
+          OR ao_judges.scope IS DISTINCT FROM EXCLUDED.scope
+          OR ao_judges.kind IS DISTINCT FROM EXCLUDED.kind)
+      RETURNING name
+    `;
+    updated += res.length;
+  }
+  if (updated > 0) {
+    console.log(`[evals] judge registry: synced ${updated} default judge row(s) to the shipped catalogue`);
+    lastLoadedAt = 0; // force the next override load to pick up the new content
+  }
+  return updated;
 }

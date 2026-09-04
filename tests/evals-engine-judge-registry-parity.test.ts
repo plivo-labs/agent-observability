@@ -123,3 +123,47 @@ describe("judge registry parity", () => {
     }
   });
 });
+
+describe("override liveness — every judge name maps to its real call site", () => {
+  test("distinct per-judge override bodies reach the provider for all 9 conversation judges", async () => {
+    // A transposed name (e.g. voicemail row feeding the bot judge) is invisible
+    // to byte-parity because all seeded rows equal their constants. Distinct
+    // markers per name prove the store's name → call-site mapping is right.
+    const { evaluateConversationMetrics } = await import("../src/evals-engine/judges/conversation-judges.js");
+    const NAMES = [
+      "voicemail_detection", "bot_detection", "call_screening", "low_engagement",
+      "wrong_number", "do_not_disturb", "user_sentiment", "stt", "transfer_consent",
+    ];
+    const markers = new Map(NAMES.map((n) => [n, { body: `MARKER[${n}]`, output: SHIPPED[n]![1] }]));
+    const reply = (args: any) => {
+      const s = args.system as string;
+      if (s.includes("MARKER[user_sentiment]")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
+      if (s.includes("MARKER[stt]")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
+      if (s.includes("MARKER[transfer_consent]")) return JSON.stringify({ consent_given: true, reason_code: "ok", reason: "r", technical_reason: "t" });
+      return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+    };
+    prompts.clearJudgePromptOverrides();
+    try {
+      prompts.setJudgePromptOverrides(markers);
+      const llm = new MockLLM([reply]);
+      const input = {
+        flow_name: "f", global_prompt: "g", nodes: [], goals: [],
+        full_transcript: "User: hi\nAgent: hello",
+        transport: "livekit",
+        tags: [{ name: "transfer:human", metadata: { intent: "Transfer Approved" } }],
+      } as any;
+      await evaluateConversationMetrics(input, llm);
+      const systems = llm.calls.map((c) => c.system);
+      // every judge that ran must have used ITS OWN marker...
+      for (const n of ["voicemail_detection", "bot_detection", "call_screening", "low_engagement", "wrong_number", "do_not_disturb", "user_sentiment", "stt", "transfer_consent"]) {
+        expect(systems.some((s) => s.startsWith(`MARKER[${n}]`))).toBe(true);
+      }
+      // ...and no call may mix markers (a transposition would surface here)
+      for (const s of systems) {
+        expect((s.match(/MARKER\[/g) ?? []).length).toBe(1);
+      }
+    } finally {
+      prompts.clearJudgePromptOverrides();
+    }
+  });
+});
