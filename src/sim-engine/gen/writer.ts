@@ -11,13 +11,10 @@ import {
   TRAIT_TAGS,
   CANONICAL_TRAITS,
   OUT_OF_SCOPE_SCENARIO_TERMS,
-  MOCKABLE_NODE_REGISTRY,
 } from "./combos.js";
 import {
   extractEmbeddedActions,
-  extractAvailableLanguages,
   extractStartNodePayloadKeys,
-  flowHasOutboundCall,
   nodeName,
   nodeConfig,
 } from "./inventory.js";
@@ -299,19 +296,6 @@ export function comboContextForSlots(slots: Slot[]): Dict {
   };
 }
 
-function findMockableTypesInFlow(flowJson: Dict): Dict[] {
-  const seen = new Set<string>();
-  const out: Dict[] = [];
-  for (const node of (flowJson.nodes as Dict[]) || []) {
-    const t = node?.type ?? "";
-    if (t in MOCKABLE_NODE_REGISTRY && !seen.has(t)) {
-      seen.add(t);
-      out.push(MOCKABLE_NODE_REGISTRY[t]);
-    }
-  }
-  return out;
-}
-
 /**
  * Nodes for the writer's context: the ones this chunk's slots actually route through
  * (source + target of each slot's expected_route_outcome), plus the start node, each
@@ -423,10 +407,13 @@ export async function writeScenarioChunk(args: WriteScenarioChunkArgs): Promise<
       agent_flow_description: planner.agent_flow_description,
       nodes: writerContextNodes(flowJson, slots),
       embedded_actions: extractEmbeddedActions(flowJson),
-      mockable_types: findMockableTypesInFlow(flowJson),
-      available_languages: extractAvailableLanguages(flowJson),
+      // Per-node mockable outcome handles from the agent-runner inventory — this is what carries
+      // real branch aliases, so the writer can pin a valid outcome per node and stop defaulting
+      // branches to no_match.
+      mockable_nodes: planner.mechanical_inventory.mockable_nodes ?? [],
+      available_languages: planner.mechanical_inventory.languages,
       start_node_param_keys: startNodeParamKeys,
-      is_outbound_call: flowHasOutboundCall(flowJson),
+      is_outbound_call: planner.mechanical_inventory.is_outbound_call,
       planner_rationale: planner.planner_rationale,
     },
     slots,

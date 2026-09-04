@@ -1,9 +1,10 @@
 import type { LlmProvider } from "../../llm/index.js";
-import type { FlowGraph } from "../../sim-engine/run-engine/flow-types.js";
 import { evaluateSimulation } from "../evaluator.js";
-import { fromSimTranscript } from "../conversation-input.js";
+import { fromSimTranscript, type NodeConfigIndex } from "../conversation-input.js";
 import type { EvalTurn, EvaluationResult, SimEvalOutcome } from "../types.js";
 import { zeroConversationMetrics } from "../judges/conversation-judges.js";
+
+export type { NodeConfigIndex };
 
 // AO Eval Engine — the run-path adapter (mirrors cx-sqs's EvaluatorAdapter, SkipConversationEval=true).
 // Builds the ConversationInput from the accumulated transcript, runs the node+goal evaluator, and NEVER
@@ -12,7 +13,7 @@ import { zeroConversationMetrics } from "../judges/conversation-judges.js";
 
 export interface EvaluateSimulationForRunArgs {
   turns: EvalTurn[];
-  graph: FlowGraph;
+  nodeIndex: NodeConfigIndex;
   flowObj: Record<string, unknown>;
   variablesByNode: Record<string, Record<string, unknown>>;
   scenarioId: string;
@@ -29,7 +30,7 @@ export async function evaluateSimulationForRun(args: EvaluateSimulationForRunArg
   try {
     const input = fromSimTranscript({
       turns: args.turns,
-      graph: args.graph,
+      nodeIndex: args.nodeIndex,
       flowObj: args.flowObj,
       variablesByNode: args.variablesByNode,
     });

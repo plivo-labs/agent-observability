@@ -10,6 +10,7 @@ const { generateScenarios } = await import("../src/sim-engine/gen/generate.js");
 const { MockLLM } = await import("../src/llm/index.js");
 const { normalizeFlow } = await import("../src/simulation/flow/flow-normalize.js");
 const realShape = (await import("./fixtures/flow-real-shape.json")).default;
+const { realShapeInventory } = await import("./fixtures/flow-inventory.js");
 import type { GenEvent } from "../src/sim-engine/gen/generate.js";
 import type { ProviderCompleteArgs } from "../src/sim-engine/../llm/types.js";
 
@@ -44,7 +45,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
   test("emits ordered progress events + N scenarios with eval_metadata; coverage_keys unique", async () => {
     const events = await collect(
       generateScenarios({
-        flowJson: canonical,
+        flowJson: canonical, inventory: realShapeInventory,
         phloUuid: "agent-1",
         maxScenarios: 4,
         model: "gpt-5.5-1",
@@ -92,7 +93,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical,
+        flowJson: canonical, inventory: realShapeInventory,
         phloUuid: "agent-1",
         maxScenarios: 12,
         model: "m",
@@ -119,7 +120,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical,
+        flowJson: canonical, inventory: realShapeInventory,
         phloUuid: "agent-1",
         maxScenarios: 12,
         model: "m",
@@ -146,7 +147,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     // scenario surfaces from the token stream before its chunk's terminal event.
     const on = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 12, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 12, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
       }),
     );
@@ -160,7 +161,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     // Kill-switch: identical ledger + identical scenario set, chunk-granular timing.
     const off = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 12, model: "m", incrementalEmit: false,
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 12, model: "m", incrementalEmit: false,
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
       }),
     );
@@ -191,7 +192,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([flakyWriter]),
       }),
     );
@@ -222,7 +223,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([emitOneThenDie]),
       }),
     );
@@ -247,7 +248,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     const writerLlm = new MockLLM([omitLast]);
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: writerLlm,
       }),
     );
@@ -276,7 +277,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([degraded]),
       }),
     );
@@ -306,7 +307,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([flaky]),
       }),
     );
@@ -314,7 +315,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
 
     const clean = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
       }),
     );
@@ -324,7 +325,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
   test("planner cache: an identical request reuses the plan (no second planner call); any input change misses", async () => {
     const { plannerCacheClear } = await import("../src/sim-engine/gen/planner-cache.js");
     plannerCacheClear();
-    const base = { flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m", plannerCacheTtlMs: 60_000 };
+    const base = { flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m", plannerCacheTtlMs: 60_000 };
     const plannerLlm = new MockLLM([PLANNER_JSON]);
     const run = () =>
       collect(generateScenarios({ ...base, plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]) }));
@@ -362,7 +363,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
     const run = () =>
       collect(
         generateScenarios({
-          flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+          flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
           plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]),
         }),
       );
@@ -374,7 +375,7 @@ describe("generateScenarios — full pipeline (MockLLM planner+writer, real allo
   test("throws after the planner fails twice", async () => {
     const run = collect(
       generateScenarios({
-        flowJson: canonical,
+        flowJson: canonical, inventory: realShapeInventory,
         phloUuid: "a",
         maxScenarios: 4,
         model: "gpt-5.5-1",
@@ -408,7 +409,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
   test("smoke run: scenario count = unit count; smoke metadata + eval_metadata stamped", async () => {
     const events = await collect(
       generateScenarios({
-        flowJson: canonical,
+        flowJson: canonical, inventory: realShapeInventory,
         phloUuid: "agent-1",
         maxScenarios: 50, // a hint at most in smoke — the unit count governs
         model: "m",
@@ -438,7 +439,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
   test("smoke cap drops overflow units and reports them in metadata", async () => {
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 50, model: "m",
         simulationMode: "smoke", smokeCap: 2,
         plannerProvider: new MockLLM([SMOKE_PLANNER_JSON]),
         writerProvider: new MockLLM([writerResponder]),
@@ -468,7 +469,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     }));
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 50, model: "m",
         simulationMode: "smoke", smokeCap: 20,
         plannerProvider: new MockLLM([JSON.stringify(collidingPlanner)]),
         writerProvider: new MockLLM([writerResponder]),
@@ -494,7 +495,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     // PLANNER_JSON has no smoke_units — allocateSmokeSlots synthesizes {capId}__happy_path__001.
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 50, model: "m",
         simulationMode: "smoke", smokeCap: 20,
         plannerProvider: new MockLLM([PLANNER_JSON]),
         writerProvider: new MockLLM([writerResponder]),
@@ -520,7 +521,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     // entry across two effort settings, and JSON.stringify drops an undefined value anyway,
     // so the key this produces is byte-identical to the pre-effort key.
     const key = plannerCacheKey({
-      flowJson: canonical, phloUuid: "a", model: "m", reasoningEffort: undefined,
+      flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", model: "m", reasoningEffort: undefined,
       simulationMode: "smoke", smokeCap: 20, instructions: "", existingSummaries: [],
     });
     plannerCacheSet(key, { ...JSON.parse(PLANNER_JSON), capabilities: [] });
@@ -528,7 +529,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
     const run = () =>
       collect(
         generateScenarios({
-          flowJson: canonical, phloUuid: "a", maxScenarios: 50, model: "m",
+          flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 50, model: "m",
           simulationMode: "smoke", smokeCap: 20, plannerCacheTtlMs: 60_000,
           plannerProvider: plannerLlm, writerProvider: new MockLLM([writerResponder]),
         }),
@@ -552,7 +553,7 @@ describe("generateScenarios — SMOKE mode (one scenario per planner smoke unit)
   test("stress metadata carries NO smoke fields", async () => {
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([writerResponder]),
       }),
     );
@@ -574,7 +575,7 @@ describe("generateScenarios — G5 all-failed / partial", () => {
     await expect(
       collect(
         generateScenarios({
-          flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+          flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
           plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([allFail]),
         }),
       ),
@@ -590,7 +591,7 @@ describe("generateScenarios — G5 all-failed / partial", () => {
     };
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: new MockLLM([PLANNER_JSON]), writerProvider: new MockLLM([partialWriter]),
       }),
     );
@@ -611,7 +612,7 @@ describe("generateScenarios — per-role reasoning effort", () => {
     const writerLlm = new MockLLM([writerResponder]);
     return collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerProvider: plannerLlm, writerProvider: writerLlm, ...effort,
       }),
     ).then(() => ({ plannerLlm, writerLlm }));
@@ -641,7 +642,7 @@ describe("generateScenarios — per-role reasoning effort", () => {
     const first = new MockLLM([PLANNER_JSON]);
     await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerReasoningEffort: "low", plannerCacheTtlMs: 60_000,
         plannerProvider: first, writerProvider: new MockLLM([writerResponder]),
       }),
@@ -652,7 +653,7 @@ describe("generateScenarios — per-role reasoning effort", () => {
     const second = new MockLLM([PLANNER_JSON]);
     const events = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerReasoningEffort: "high", plannerCacheTtlMs: 60_000,
         plannerProvider: second, writerProvider: new MockLLM([writerResponder]),
       }),
@@ -666,7 +667,7 @@ describe("generateScenarios — per-role reasoning effort", () => {
     const third = new MockLLM([PLANNER_JSON]);
     const again = await collect(
       generateScenarios({
-        flowJson: canonical, phloUuid: "a", maxScenarios: 4, model: "m",
+        flowJson: canonical, inventory: realShapeInventory, phloUuid: "a", maxScenarios: 4, model: "m",
         plannerReasoningEffort: "high", plannerCacheTtlMs: 60_000,
         plannerProvider: third, writerProvider: new MockLLM([writerResponder]),
       }),

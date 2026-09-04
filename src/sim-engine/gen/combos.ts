@@ -175,7 +175,7 @@ export const SCENARIO_TYPE_DEFAULT_PATTERNS: Record<string, string[]> = {
 
 export const EXECUTABLE_NODE_TYPES = new Set<string>(["start", "initiate_call", "ai_agent_v2", "http_request", "branch_v2", "ai_action", "prompt", "contact_screening", "outbound_screening", "agent_node"]);
 export const SUPPORTED_TERMINAL_NODE_TYPES = new Set<string>(["end_conversation", "call_forward"]);
-export const BLOCKED_NODE_TYPES = new Set<string>(["queue_and_route", "ai_agent_whatsapp"]);
+export const BLOCKED_NODE_TYPES = new Set<string>(["ai_agent_whatsapp"]);
 
 export const SCENARIO_TYPE_ORDER: Record<string, number> = {
   clean_baseline: 0,
@@ -268,25 +268,3 @@ export const OUT_OF_SCOPE_ROUTE_TERMS = [
 export const OUT_OF_SCOPE_SCENARIO_TERMS = [
   "voicemail", "voice_mail", "answering_machine", "answering machine", "busy rejected", "failed call",
 ];
-
-export interface MockableNodeSpec {
-  node_type: string;
-  description: string;
-  outcome_source: "fixed" | "conditions";
-  fixed_outcomes: string[];
-}
-
-export const MOCKABLE_NODE_REGISTRY: Record<string, MockableNodeSpec> = {
-  http_request: {
-    node_type: "http_request",
-    description: "Makes an external HTTP API call.",
-    outcome_source: "fixed",
-    fixed_outcomes: ["success", "error", "failed"],
-  },
-  branch_v2: {
-    node_type: "branch_v2",
-    description: "Routes the flow based on conditional rules. Pick the condition alias that matches the scenario's intended path.",
-    outcome_source: "conditions",
-    fixed_outcomes: [],
-  },
-};

@@ -122,7 +122,15 @@ describe("validateAndFixScenario (with slot)", () => {
 
 describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
   const flow = { nodes: [{ id: "n-start", type: "start", data: { config: { name: "Start", payload_format: { caller_name: {} } } } }], edges: [] };
-  const planner = { agent_flow_description: "Refund agent.", planner_rationale: "r" } as any;
+  const planner = {
+    agent_flow_description: "Refund agent.",
+    planner_rationale: "r",
+    // The agent-runner inventory rides on the planner; the writer forwards its mockable_nodes so
+    // the LLM sees each branch's real outcome handles (the fix for branch pins -> no_match).
+    mechanical_inventory: {
+      mockable_nodes: [{ node_uuid: "n-check", name: "eligibility_check", type: "branch_v2", outcome_handles: ["eligible", "no_match", "error"], default_outcome: "no_match" }],
+    },
+  } as any;
 
   test("validates each scenario_item and stamps eval_metadata", async () => {
     const llm = new MockLLM([JSON.stringify({ agent_flow_description: "Refund agent.", scenario_items: [{ slot_id: "S001", scenario: writerScenario() }] })]);
@@ -131,6 +139,9 @@ describe("writeScenarioChunk (LLM 2) with MockLLM", () => {
     expect(res.failedSlotIds).toEqual([]);
     expect(res.scenarios[0].eval_metadata!.slot_id).toBe("S001");
     expect(res.scenarios[0].world_state["n-check"].outcome).toBe("eligible");
+    // the branch's real outcome_handles reach the writer LLM
+    const mn = JSON.parse(llm.calls[0].user).writer_context.mockable_nodes;
+    expect(mn.find((n: any) => n.node_uuid === "n-check").outcome_handles).toEqual(["eligible", "no_match", "error"]);
   });
 
   test("a missing slot in the writer output is reported failed", async () => {
