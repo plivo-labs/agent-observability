@@ -37,3 +37,7 @@ export const agentJudgesPutSchema = z.object({
     )
     .max(200),
 });
+
+export const judgeTestSchema = z.object({
+  session_ids: z.array(z.string().trim().min(1).max(200)).min(1).max(10),
+});
