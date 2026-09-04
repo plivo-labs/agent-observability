@@ -32,7 +32,7 @@ import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
 import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON, TRANSFER_CONSENT_JSON, TRANSFER_CONSENT_REASON_CODES, type TransferConsentReasonCode } from "./schemas.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
-const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
+export const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
 
 Criteria:
 1. Direct voicemail greetings, mailbox prompts, or leave-a-message flows mean voicemail_detected=true.
@@ -40,7 +40,7 @@ Criteria:
 3. Bot/IVR menus are NOT voicemail.
 4. Human conversation after an automated prompt means voicemail_detected=false.`;
 
-const BOT = `Detect whether the COUNTERPARTY is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
+export const BOT = `Detect whether the COUNTERPARTY is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
 
 WHO IS JUDGED: the transcript labels our own AI under test as "Agent:" — it is an automated assistant BY DEFINITION and is NEVER evidence for this metric. Judge ONLY the "User:" lines (the other party on the call). The Agent's self-identification ("I'm a virtual assistant…"), scripted greetings, menu-like offers of help, capability lists, idle re-prompts ("Are you still there?"), and scripted disconnect lines are its normal operation — citing ANY Agent: line as bot evidence is an automatic error.
 
@@ -51,7 +51,7 @@ Criteria (all applied to User: lines only):
 4. A conversational AI posing as the counterparty is ALSO a bot. Strong signals (require at least one clear instance, not mere politeness): persistent assistant-register speech with reversed roles (the counterparty repeatedly offers the agent help or asks what the agent needs, e.g. "I'm here to help with whatever you need", "What's the next step you'd like me to take?"); admitting to being an AI or language model when asked; or template-like responses that restate the agent's question instead of answering as a customer would. A fluent, cooperative human is NOT a bot — do not fire on eloquence alone.
 5. A human asking OUR agent whether IT is a robot/real person is a suspicious human, not a bot — that is evidence the counterparty is human.`;
 
-const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
+export const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
 
 Criteria:
 1. iOS/Android/Google call screening asks for the caller's name, purpose, or reason for calling.
@@ -59,7 +59,7 @@ Criteria:
 3. Screening followed by voicemail remains call_screening, not voicemail.
 4. IVR menus with numbered routing options are bot/IVR, not call screening.`;
 
-const LOW_ENGAGEMENT = `Detect low engagement: a real human answered but only gave minimal greetings or acknowledgements and never engaged with the topic. Pass when the user engaged meaningfully or the metric does not apply. Fail when low_engagement=true.
+export const LOW_ENGAGEMENT = `Detect low engagement: a real human answered but only gave minimal greetings or acknowledgements and never engaged with the topic. Pass when the user engaged meaningfully or the metric does not apply. Fail when low_engagement=true.
 
 Criteria:
 1. Applies after a human answered, not voicemail, call screening, or bot/IVR.
@@ -67,7 +67,7 @@ Criteria:
 3. Any substantive question, provided information, disinterest, wrong-number statement, or opt-out is not low engagement.
 4. Repeated connection checks ("hello?", "can you hear me?") with no response to the agent's purpose are low engagement, not confusion.`;
 
-const WRONG_NUMBER = `Detect whether the user indicates they are not the intended recipient. Pass when wrong_number=false. Fail when wrong_number=true.
+export const WRONG_NUMBER = `Detect whether the user indicates they are not the intended recipient. Pass when wrong_number=false. Fail when wrong_number=true.
 
 Criteria:
 1. Only flag AFTER the agent has introduced itself or explained the purpose — an initial "who is this?" / "hello?" alone is normal, not a wrong number.
@@ -75,7 +75,7 @@ Criteria:
 3. General confusion about the purpose of the call, or simply declining while acknowledging they are the right person, is not enough (that is do_not_disturb or negative sentiment).
 4. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
 
-const DO_NOT_DISTURB = `Detect whether the user explicitly asks not to be contacted again. Pass when do_not_disturb=false. Fail when do_not_disturb=true.
+export const DO_NOT_DISTURB = `Detect whether the user explicitly asks not to be contacted again. Pass when do_not_disturb=false. Fail when do_not_disturb=true.
 
 Criteria:
 1. Explicit opt-out language such as do not call me again, remove me, stop contacting me, take me off your list, unsubscribe, or similar means true.
@@ -83,7 +83,7 @@ Criteria:
 3. Asking to be contacted later ("call me back later", "not a good time") is rescheduling, not do_not_disturb.
 4. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
 
-const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, negative, confused, or not_applicable — the user's predominant emotional state, leaning on the closing tone. Pass unless the sentiment is clearly negative or confused; maybe for weak signals.
+export const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, negative, confused, or not_applicable — the user's predominant emotional state, leaning on the closing tone. Pass unless the sentiment is clearly negative or confused; maybe for weak signals.
 
 Rules:
 1. positive: cooperative, receptive, appreciative, agrees or provides requested information. A user who cooperates throughout is positive EVEN IF their final message is a follow-up question about next steps — a follow-up question is not negative. Declining an offered action is positive unless they express dissatisfaction with the service itself.
@@ -92,7 +92,7 @@ Rules:
 4. confused: REPEATED uncertainty or clarification requests across MULTIPLE user turns. A single message followed by silence is NOT confused — it is neutral.
 5. not_applicable: no human interaction — voicemail, call screening, or bot/IVR answered. When a detection outcome (voicemail/screening/bot) is present, sentiment is not_applicable.`;
 
-const STT = `Evaluate speech-to-text quality across the conversation. For each USER turn, decide whether the transcription shows an STT error, then whether the agent recovered. Output aggregate counts only.
+export const STT = `Evaluate speech-to-text quality across the conversation. For each USER turn, decide whether the transcription shows an STT error, then whether the agent recovered. Output aggregate counts only.
 
 Flag an STT error ONLY in these four categories:
 1. Garbled/nonsensical — not coherent language in any language the speaker used.
@@ -108,7 +108,7 @@ Rules: evaluate every user turn; at most one error per turn; recovered_count mus
 
 Default bias: CONSERVATIVE — when unsure whether a turn is an STT error or genuine user speech, do NOT flag it; when unsure about recovery, count it as not recovered.`;
 
-const TRANSFER_CONSENT = `Judge whether the caller gave clear, unambiguous consent to the transfer before the platform transferred them to a human. This judge runs ONLY on calls where a transfer was executed — a platform-confirmed fact, supplied as transfer_intent. Pass (consent_given=true) when the caller clearly agreed to be transferred. Fail (consent_given=false) when the transfer executed without that agreement.
+export const TRANSFER_CONSENT = `Judge whether the caller gave clear, unambiguous consent to the transfer before the platform transferred them to a human. This judge runs ONLY on calls where a transfer was executed — a platform-confirmed fact, supplied as transfer_intent. Pass (consent_given=true) when the caller clearly agreed to be transferred. Fail (consent_given=false) when the transfer executed without that agreement.
 
 WHO IS JUDGED: "Agent:" lines are our AI; "User:" lines are the caller. Consent must come from a User: line. An Agent: line announcing or assuming the transfer is not consent.
 
@@ -123,13 +123,13 @@ Criteria:
 8. transfer_node_instructions are the flow's own definition of when to transfer (e.g. a configured "Transfer Approved" intent). Read them for context, but the caller's actual words decide: an intent name or the agent's belief is NOT consent.
 9. Ambiguous fragments ("hmm", "uh", "hello?", "what?") are NOT consent. A clear affirmative is. Do not fail a transfer for brevity when the affirmative is unambiguous ("yes" is enough).`;
 
-const OUT_DETECTION =
+export const OUT_DETECTION =
   '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
-const OUT_SENTIMENT =
+export const OUT_SENTIMENT =
   '\n\nReturn ONLY a JSON object: {"sentiment": "positive"|"neutral"|"negative"|"confused"|"not_applicable", "reason": string, "technical_reason": string}.';
-const OUT_STT =
+export const OUT_STT =
   '\n\nReturn ONLY a JSON object: {"error_count": integer (>=0), "recovered_count": integer (0..error_count), "reason": string, "technical_reason": string}.';
-const OUT_TRANSFER_CONSENT =
+export const OUT_TRANSFER_CONSENT =
   '\n\nReturn ONLY a JSON object: {"consent_given": boolean, "reason_code": "ok"|"declined"|"busy"|"mid_sentence"|"hold_music"|"no_caller", "reason": string, "technical_reason": string}. reason_code MUST be "ok" when consent_given is true.';
 
 // ── Zod validation (the strict JSON schemas live in schemas.ts with the node/goal ones) ──
