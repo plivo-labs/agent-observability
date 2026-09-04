@@ -13,6 +13,7 @@
 // single place they are maintained.
 import type { SessionTag } from "./types.js";
 import { sql } from "../db.js";
+import type { CustomJudgeSpec } from "./judges/custom-metric.js";
 import { jsonbParam } from "../jsonb-param.js";
 
 /** Grace period before a session becomes claimable — lets the multipart
@@ -228,6 +229,8 @@ export interface SessionEvalSource {
    *  ingested session — an empty list means "the sender tagged nothing", which
    *  is a decidable "no transfer" (unlike the sim path, which supplies none). */
   tags: SessionTag[];
+  /** Session attribution for custom-judge mapping; null when never attributed. */
+  agentId: string | null;
 }
 
 /** Backdate a running claim so stale adoption re-picks it after roughly
@@ -248,7 +251,7 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
   // Tags ride the same round trip as a JSON array (one row per claimed
   // session on the hot path — a second query per session was measurable).
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.created_at AS session_created_at, s.ended_at AS session_ended_at,
+    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.agent_id, s.created_at AS session_created_at, s.ended_at AS session_ended_at,
       (SELECT COALESCE(json_agg(json_build_object('name', t.name, 'metadata', t.metadata)), '[]'::json)
          FROM ao_session_tags t WHERE t.session_id = c.session_id) AS tags
     FROM ao_session_agent_config c
@@ -282,7 +285,41 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     sessionCreatedAt: row.session_created_at ? new Date(row.session_created_at) : null,
     sessionEndedAt: row.session_ended_at ? new Date(row.session_ended_at) : null,
     transport: typeof row.transport === "string" ? row.transport : null,
+    agentId: typeof row.agent_id === "string" ? row.agent_id : null,
   };
+}
+
+/** The enabled custom judges mapped to this agent, as runner specs. Sessions
+ *  without an agent attribution get defaults only. */
+export async function getAgentCustomJudges(agentId: string | null): Promise<CustomJudgeSpec[]> {
+  if (!agentId) return [];
+  const rows = await sql`
+    SELECT j.name, j.display_name, j.scope, j.prompt, j.config
+    FROM ao_agent_judges aj
+    JOIN ao_judges j ON j.id = aj.judge_id
+    WHERE aj.agent_id = ${agentId}
+      AND aj.enabled = TRUE
+      AND j.enabled = TRUE
+      AND j.type = 'custom'
+      AND j.kind = 'llm'
+    ORDER BY j.name
+  `;
+  const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
+  return rows
+    .map((row: any): CustomJudgeSpec | null => {
+      const prompt = parse(row.prompt);
+      if (!prompt || typeof prompt.body !== "string" || typeof prompt.output !== "string") return null;
+      const cfg = parse(row.config) ?? {};
+      return {
+        name: row.name,
+        display_name: row.display_name,
+        scope: row.scope,
+        body: prompt.body,
+        output: prompt.output,
+        ...(typeof cfg.max_tokens === "number" ? { max_tokens: cfg.max_tokens } : {}),
+      };
+    })
+    .filter((s): s is CustomJudgeSpec => s !== null);
 }
 
 // ── Backfill re-judge helpers (scripts/rejudge-transfer-axis.ts) ─────────────

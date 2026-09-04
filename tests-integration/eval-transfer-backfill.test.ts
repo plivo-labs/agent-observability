@@ -78,7 +78,7 @@ describeDb("transfer-axis backfill seams", () => {
     expect(before?.status).toBe("done");
     const next = {
       ...(before!.verdicts as any),
-      conversation_metrics: { ...(before!.verdicts as any).conversation_metrics, human_transfer: det(true), transfer_consent: { ...det(true), reason_code: "declined" } },
+      conversation_metrics: { ...(before!.verdicts as any).conversation_metrics, human_transfer: det(true) },
     };
     expect(await commitRejudgedVerdicts(sid, next as any, monthAgo)).toBe(true);
 
@@ -86,7 +86,6 @@ describeDb("transfer-axis backfill seams", () => {
     const rows = await sql`SELECT id, judge_name, verdict, created_at FROM ao_session_external_evals WHERE session_id = ${sid} AND source = 'eval_sweeper' ORDER BY judge_name`;
     const byJudge = Object.fromEntries(rows.map((r: any) => [r.judge_name, r.verdict]));
     expect(byJudge.human_transfer).toBe("fail");
-    expect(byJudge.transfer_consent).toBe("fail");
     expect(byJudge.user_never_spoke).toBe("pass");
     // Every row carries the ORIGINAL created_at, not NOW().
     for (const r of rows) {

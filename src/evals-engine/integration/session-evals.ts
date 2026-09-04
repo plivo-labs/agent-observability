@@ -18,10 +18,14 @@ import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { evaluateConversationMetrics, evaluateHumanTransferMetric, zeroConversationMetrics } from "../judges/conversation-judges.js";
 import { IDLE_TAG } from "../types.js";
+import {
+  runCustomMetricJudges,
+  type CustomJudgeSpec,
+  type CustomMetricVerdict,
+} from "../judges/custom-metric.js";
 import type {
   ConversationInput,
   EvalTurn,
-  GoalInput,
   NodeEvalInput,
   NodeEvaluation,
   NodeGoalEvaluation,
@@ -61,14 +65,9 @@ export interface AgentConfigNode {
   intents?: AgentConfigIntent[];
   variables?: AgentConfigVariable[];
 }
-export interface AgentConfigGoal {
-  name?: string;
-  instructions?: string;
-}
 export interface AgentConfig {
   flow_name?: string;
   global_prompt?: string;
-  goals?: AgentConfigGoal[];
   nodes?: AgentConfigNode[];
   /** Runtime context the platform supplied to the agent — trigger inputs +
    *  mid-flow HTTP/tool outputs. Grounding evidence for the hallucination judge
@@ -209,17 +208,6 @@ function toolEvidence(item: NonNullable<StoredEvent["item"]>): string {
   }
   const out = item.output !== undefined ? (typeof item.output === "string" ? item.output : JSON.stringify(item.output)) : "";
   return `Tool_Result: ${name} -> ${out}`;
-}
-
-function nodeGoals(cfg: AgentConfig): GoalInput[] {
-  const raw = Array.isArray(cfg.goals) ? cfg.goals : [];
-  return raw
-    .map((g): GoalInput | null => {
-      const name = typeof g?.name === "string" ? g.name.trim() : "";
-      if (!name) return null;
-      return { goal_name: name, goal_instructions: typeof g.instructions === "string" ? g.instructions : "", flow_goal_id: 0 };
-    })
-    .filter((g): g is GoalInput => g !== null);
 }
 
 /** Parallel to the engine's `nodes`, in the same order: the opaque ref + name
@@ -488,7 +476,8 @@ export function buildSessionEvalInput(
       flow_name: typeof config.flow_name === "string" ? config.flow_name : "conversation",
       global_prompt: typeof config.global_prompt === "string" ? config.global_prompt : "",
       nodes: judgedNodes,
-      goals: nodeGoals(config),
+      // Conversation goals are judged as custom metrics, never as a goal axis.
+      goals: [],
       full_transcript: renderFullTranscript(allTurns),
       // Speech-only variant for the conversation-axis judges: drop the
       // synthetic evidence lines so config/tool text can't masquerade as
@@ -511,7 +500,8 @@ export function buildSessionEvalInput(
 export interface SessionEvalVerdicts {
   node_evaluations: Array<NodeEvaluation & { ref: string }>;
   conversation_metrics: SimConversationMetrics;
-  goal_evaluation?: NodeGoalEvaluation["goal_evaluation"];
+  /** Verdicts from the agent's mapped custom judges; absent when none ran. */
+  custom_metrics?: CustomMetricVerdict[];
 }
 
 /**
@@ -535,22 +525,56 @@ export async function evaluateIngestedSession(
    *  platform's `transfer:human` fact from them; absent ⇒ that axis is
    *  undecidable (unavailable), never a clean "no transfer". */
   tags?: SessionTag[],
+  /** The agent's mapped custom judges (resolved by the sweeper — the engine
+   *  itself never touches the DB). Empty ⇒ the path is identical to before
+   *  custom judges existed. */
+  customJudges: readonly CustomJudgeSpec[] = [],
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
   if (tags) input.tags = tags;
 
-  const [conversation_metrics, scored] = await Promise.all([
+  // Per-session custom-judge spend ceiling: a node-scope judge costs one call
+  // per judged node. Specs arrive in name order (getAgentCustomJudges), so the
+  // budget admits the SAME judges on a retried session — no verdict churn.
+  const maxCustomCalls = envConfig.EVAL_MAX_CUSTOM_JUDGE_CALLS ?? 200;
+  const budgeted: CustomJudgeSpec[] = [];
+  let plannedCalls = 0;
+  for (const spec of customJudges) {
+    const cost = spec.scope === "node" ? Math.max(1, input.nodes.length) : 1;
+    if (plannedCalls + cost > maxCustomCalls) continue;
+    plannedCalls += cost;
+    budgeted.push(spec);
+  }
+  if (budgeted.length < customJudges.length) {
+    console.warn(
+      `[evals] custom-judge budget: running ${budgeted.length}/${customJudges.length} judges (cap ${maxCustomCalls} calls/session)`,
+    );
+  }
+
+  const [conversation_metrics, scored, custom_metrics] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
-      // No transcript: nothing for the LLM axis to judge — but the transfer
+      // No transcript: nothing for the LLM axes to judge — but the transfer
       // FACT is a tag, not a transcript, and "a transfer executed with zero
-      // conversation" is the worst case the axis exists to record. Keep it;
-      // consent stays unavailable (nothing to judge, never fabricated).
+      // conversation" is the worst case the axis exists to record. Keep it.
       : Promise.resolve({ ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }),
     input.nodes.length
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
+    budgeted.length && input.full_transcript.trim()
+      ? runCustomMetricJudges(
+          budgeted,
+          input,
+          // input.nodes[i] ↔ nodeRefs[i]: resolve the engine uuid back to the
+          // sender's opaque ref so custom per-node rows tag like default rows.
+          (nodeUuid) => {
+            const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
+            return nodeRefs[i]?.ref ?? "";
+          },
+          provider,
+        )
+      : Promise.resolve([] as CustomMetricVerdict[]),
   ]);
 
   // evaluateSimulation preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
@@ -559,7 +583,7 @@ export async function evaluateIngestedSession(
   return {
     node_evaluations,
     conversation_metrics,
-    ...(scored.goal_evaluation ? { goal_evaluation: scored.goal_evaluation } : {}),
+    ...(custom_metrics.length ? { custom_metrics } : {}),
   };
 }
 

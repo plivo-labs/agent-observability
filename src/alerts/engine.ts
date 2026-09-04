@@ -87,6 +87,9 @@ async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult>
      FROM ao_session_external_evals e
      LEFT JOIN ao_agent_transport_sessions s ON s.session_id = e.session_id
      WHERE e.created_at > NOW() - ${WINDOW_SQL}
+       -- 'unknown' is a custom-metric non-decision (call never reached the judged
+       -- situation): it is neither a pass nor a fail, so it leaves the rate entirely.
+       AND LOWER(COALESCE(e.verdict, '')) <> 'unknown'
        AND ($2::text IS NULL OR e.judge_name = $2)
        AND ($3::text IS NULL OR s.agent_id = $3)
        AND ($4::text IS NULL OR s.account_id = $4)`,

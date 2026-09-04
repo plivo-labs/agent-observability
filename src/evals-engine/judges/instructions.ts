@@ -19,6 +19,8 @@
 // exactly the raw-schema fields (validated by the judge's Zod). `{slot}` placeholders
 // are filled with `fill()`.
 
+import { promptBody, promptOutput } from "./judge-prompts.js";
+
 /** Replace `{key}` placeholders. Mirrors Python `.format(**vars)` for our slotted prompts. */
 export function fill(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k]! : m));
@@ -277,16 +279,16 @@ The overall verdict is the MINIMUM accuracy over the applicable criteria — one
 
 // ── output-format sections (authored to request the rich fields the console contract needs) ──────────
 
-const OUT_HALLUCINATION = `Return ONLY a JSON object (score bands: 1.0 every claim grounded | 0.75 minor details not fully traceable, core grounded | 0.5 mix of grounded/ungrounded | 0.25 significant ungrounded | 0.0 entirely ungrounded):
+export const OUT_HALLUCINATION = `Return ONLY a JSON object (score bands: 1.0 every claim grounded | 0.75 minor details not fully traceable, core grounded | 0.5 mix of grounded/ungrounded | 0.25 significant ungrounded | 0.0 entirely ungrounded):
 {"hallucinated": boolean, "score": number (0.0-1.0, where 1.0 = fully grounded, no hallucination), "reason": string (concise, user-facing), "technical_reason": string (detailed evidence trace)}`;
 
-const OUT_VARIABLE = `Return ONLY a JSON object. HARD EXCLUSIONS: NEVER put agent-composed summaries/statuses/labels, absent defaults or other rule-produced workflow fields, backend/platform/tool/lookup values, unopened-gate variables, a configured yes-when-not-disputed default, or values pending a final recording batch prevented by truncation in missing_variables or incorrect_variables. A caller reply after an interrupted transfer/ending turn with no following agent/tool turn is truncation. missing_variables = ONLY APPLICABLE caller-capture variables whose value the caller EXPLICITLY STATED but the agent did not store — never inferred, derived, defaulted, duplicated, backend, tool, or lookup values; workflow/default fields are excluded too. incorrect_variables = applicable caller-capture values that are wrong or contradict the caller under the INCORRECT test above — not config-directed defaults or agent-authored workflow metadata. Use the exact variable names; empty arrays if none:
+export const OUT_VARIABLE = `Return ONLY a JSON object. HARD EXCLUSIONS: NEVER put agent-composed summaries/statuses/labels, absent defaults or other rule-produced workflow fields, backend/platform/tool/lookup values, unopened-gate variables, a configured yes-when-not-disputed default, or values pending a final recording batch prevented by truncation in missing_variables or incorrect_variables. A caller reply after an interrupted transfer/ending turn with no following agent/tool turn is truncation. missing_variables = ONLY APPLICABLE caller-capture variables whose value the caller EXPLICITLY STATED but the agent did not store — never inferred, derived, defaulted, duplicated, backend, tool, or lookup values; workflow/default fields are excluded too. incorrect_variables = applicable caller-capture values that are wrong or contradict the caller under the INCORRECT test above — not config-directed defaults or agent-authored workflow metadata. Use the exact variable names; empty arrays if none:
 {"extraction_successful": boolean, "score": number (0.0-1.0, where 1.0 = all required variables correctly extracted), "reason": string, "technical_reason": string, "missing_variables": [string], "incorrect_variables": [string]}`;
 
-const OUT_LOOP = `Return ONLY a JSON object:
+export const OUT_LOOP = `Return ONLY a JSON object:
 {"loop_detected": boolean, "score": number (0.0-1.0, where 1.0 = no unjustified repetition), "reason": string, "technical_reason": string}`;
 
-const OUT_INSTRUCTION = `Return ONLY a JSON object with the four sub-metrics (do NOT return a top-level pass/fail — that is computed by the caller). Use ONLY the reason_code / severity / category values enumerated in the rubric above; score is 0.0-1.0 per the anchors:
+export const OUT_INSTRUCTION = `Return ONLY a JSON object with the four sub-metrics (do NOT return a top-level pass/fail — that is computed by the caller). Use ONLY the reason_code / severity / category values enumerated in the rubric above; score is 0.0-1.0 per the anchors:
 {
   "objective_progress": {"achieved": boolean, "score": number (0.0-1.0), "reason_code": string, "reason": string, "technical_reason": string},
   "procedure_compliance": {"score": number (0.0-1.0), "reason_code": string, "missed_steps": [{"step": string, "severity": "critical"|"minor", "reason_code": string, "details": string}], "reason": string, "technical_reason": string},
@@ -294,7 +296,7 @@ const OUT_INSTRUCTION = `Return ONLY a JSON object with the four sub-metrics (do
   "policy_boundary_compliance": {"passed": boolean, "score": number (0.0-1.0), "reason_code": string, "reason": string, "technical_reason": string}
 }`;
 
-const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the caller derives it):
+export const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the caller derives it):
 {"intent_not_found": boolean, "intent_wrongly_identified": boolean, "reason": string, "technical_reason": string}`;
 
 const OUT_GOAL = `Return ONLY a JSON object with one entry per goal (use the exact goal_name given):
@@ -307,23 +309,35 @@ const OUT_CRITERIA = `Return ONLY a JSON object with one entry per numbered crit
 
 const compose = (body: string, output: string) => `${body}\n\n${output}`;
 
-export const systemForHallucination = (): string => compose(HALLUCINATION, OUT_HALLUCINATION);
-export const systemForLoop = (): string => compose(LOOP_DETECTION, OUT_LOOP);
+// Registry overrides: each builder resolves its body/output through the
+// override store at call time, falling back to the shipped constants. With the
+// seeded registry the two are byte-identical (proven by the parity test).
+
+export const systemForHallucination = (): string =>
+  compose(promptBody("hallucination", HALLUCINATION), promptOutput("hallucination", OUT_HALLUCINATION));
+export const systemForLoop = (): string =>
+  compose(promptBody("node_loop", LOOP_DETECTION), promptOutput("node_loop", OUT_LOOP));
 
 export const systemForVariableExtraction = (expectedVariables: string, actualVariables: string): string =>
-  compose(fill(VARIABLE_EXTRACTION, { expected_variables: expectedVariables, actual_variables: actualVariables }), OUT_VARIABLE);
+  compose(
+    fill(promptBody("variable_extraction", VARIABLE_EXTRACTION), {
+      expected_variables: expectedVariables,
+      actual_variables: actualVariables,
+    }),
+    promptOutput("variable_extraction", OUT_VARIABLE),
+  );
 
 export const systemForInstructionAdherence = (instructions: string, objective: string): string =>
-  compose(fill(INSTRUCTION_ADHERENCE, { instructions, objective }), OUT_INSTRUCTION);
+  compose(fill(promptBody("instructions_adherence", INSTRUCTION_ADHERENCE), { instructions, objective }), promptOutput("instructions_adherence", OUT_INSTRUCTION));
 
 export const systemForIntent = (availableIntents: string, chosenIntent: string): string =>
   compose(
-    fill(INTENT_IDENTIFICATION, {
+    fill(promptBody("intent_identification", INTENT_IDENTIFICATION), {
       available_intents: availableIntents,
       chosen_intent: chosenIntent,
       system_intents: SYSTEM_INTENTS.join(", "),
     }),
-    OUT_INTENT,
+    promptOutput("intent_identification", OUT_INTENT),
   );
 
 export const systemForGoal = (goals: string, flowHistory: string, isSimulation = false): string =>

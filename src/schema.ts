@@ -100,13 +100,6 @@ export const envSchema = z.object({
   // judged, only HOW SOON).
   EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
 
-  // Goal analyzer (post-session LLM judging of goal: tags). Placement
-  // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
-  // configured LLM provider has a key. It judges through the shared LLM stack
-  // (runGoalJudge → completeJSON) on the "judge" role, so the judge model comes
-  // from JUDGE_MODEL (below) — there is no goals-specific model knob.
-  GOAL_ANALYZER: z.enum(["inline", "off"]).default("inline"),
-
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In
   // production the dashboard is served same-origin so CORS isn't needed;
@@ -199,6 +192,19 @@ export const envSchema = z.object({
   // explicit value can be REJECTED by a deployment ("none" is not universally
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
   JUDGE_REASONING_EFFORT: reasoningEffort("none"),
+
+  // Per-session ceiling on custom-judge LLM calls (a node-scope judge costs one
+  // call per judged node). EVAL_MAX_JUDGED_NODES bounds the DEFAULT judges'
+  // per-session bill; without this cap, N custom judges × 30 nodes would make
+  // one session's bill unbounded — and re-spent on every retry. Judges are
+  // budgeted in name order, so the same set runs on a retried session.
+  EVAL_MAX_CUSTOM_JUDGE_CALLS: z.coerce.number().int().positive().default(200),
+
+  // Judge prompts come from the ao_judges registry (seeded byte-identical to
+  // the shipped constants). "false"/"0" reverts to the in-code prompts — the
+  // instant rollback lever for the registry cutover; behaviour is identical
+  // while the seed matches source (enforced by the parity test).
+  JUDGES_FROM_DB: z.enum(["on", "off"]).default("on"),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),

@@ -28,11 +28,12 @@ import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
 import { classifyErrorDurability } from "../../error-durability.js";
+import { promptBody, promptOutput } from "./judge-prompts.js";
 import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
-import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON, TRANSFER_CONSENT_JSON, TRANSFER_CONSENT_REASON_CODES, type TransferConsentReasonCode } from "./schemas.js";
+import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON } from "./schemas.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
-const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
+export const VOICEMAIL = `Detect whether the conversation reached voicemail. This is a voice-channel classifier. Pass when the transcript is NOT voicemail. Fail when direct voicemail is detected.
 
 Criteria:
 1. Direct voicemail greetings, mailbox prompts, or leave-a-message flows mean voicemail_detected=true.
@@ -40,7 +41,7 @@ Criteria:
 3. Bot/IVR menus are NOT voicemail.
 4. Human conversation after an automated prompt means voicemail_detected=false.`;
 
-const BOT = `Detect whether the COUNTERPARTY is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
+export const BOT = `Detect whether the COUNTERPARTY is an automated system or AI rather than a human. Pass when no bot/IVR/AI is present. Fail when bot_detected=true.
 
 WHO IS JUDGED: the transcript labels our own AI under test as "Agent:" — it is an automated assistant BY DEFINITION and is NEVER evidence for this metric. Judge ONLY the "User:" lines (the other party on the call). The Agent's self-identification ("I'm a virtual assistant…"), scripted greetings, menu-like offers of help, capability lists, idle re-prompts ("Are you still there?"), and scripted disconnect lines are its normal operation — citing ANY Agent: line as bot evidence is an automatic error.
 
@@ -51,7 +52,7 @@ Criteria (all applied to User: lines only):
 4. A conversational AI posing as the counterparty is ALSO a bot. Strong signals (require at least one clear instance, not mere politeness): persistent assistant-register speech with reversed roles (the counterparty repeatedly offers the agent help or asks what the agent needs, e.g. "I'm here to help with whatever you need", "What's the next step you'd like me to take?"); admitting to being an AI or language model when asked; or template-like responses that restate the agent's question instead of answering as a customer would. A fluent, cooperative human is NOT a bot — do not fire on eloquence alone.
 5. A human asking OUR agent whether IT is a robot/real person is a suspicious human, not a bot — that is evidence the counterparty is human.`;
 
-const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
+export const CALL_SCREENING = `Detect automated call screening where a system asks who is calling and why, and the real person does not subsequently answer. Pass when no unresolved call screening is present. Fail when call_screening=true.
 
 Criteria:
 1. iOS/Android/Google call screening asks for the caller's name, purpose, or reason for calling.
@@ -59,7 +60,7 @@ Criteria:
 3. Screening followed by voicemail remains call_screening, not voicemail.
 4. IVR menus with numbered routing options are bot/IVR, not call screening.`;
 
-const LOW_ENGAGEMENT = `Detect low engagement: a real human answered but only gave minimal greetings or acknowledgements and never engaged with the topic. Pass when the user engaged meaningfully or the metric does not apply. Fail when low_engagement=true.
+export const LOW_ENGAGEMENT = `Detect low engagement: a real human answered but only gave minimal greetings or acknowledgements and never engaged with the topic. Pass when the user engaged meaningfully or the metric does not apply. Fail when low_engagement=true.
 
 Criteria:
 1. Applies after a human answered, not voicemail, call screening, or bot/IVR.
@@ -67,7 +68,7 @@ Criteria:
 3. Any substantive question, provided information, disinterest, wrong-number statement, or opt-out is not low engagement.
 4. Repeated connection checks ("hello?", "can you hear me?") with no response to the agent's purpose are low engagement, not confusion.`;
 
-const WRONG_NUMBER = `Detect whether the user indicates they are not the intended recipient. Pass when wrong_number=false. Fail when wrong_number=true.
+export const WRONG_NUMBER = `Detect whether the user indicates they are not the intended recipient. Pass when wrong_number=false. Fail when wrong_number=true.
 
 Criteria:
 1. Only flag AFTER the agent has introduced itself or explained the purpose — an initial "who is this?" / "hello?" alone is normal, not a wrong number.
@@ -75,7 +76,7 @@ Criteria:
 3. General confusion about the purpose of the call, or simply declining while acknowledging they are the right person, is not enough (that is do_not_disturb or negative sentiment).
 4. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
 
-const DO_NOT_DISTURB = `Detect whether the user explicitly asks not to be contacted again. Pass when do_not_disturb=false. Fail when do_not_disturb=true.
+export const DO_NOT_DISTURB = `Detect whether the user explicitly asks not to be contacted again. Pass when do_not_disturb=false. Fail when do_not_disturb=true.
 
 Criteria:
 1. Explicit opt-out language such as do not call me again, remove me, stop contacting me, take me off your list, unsubscribe, or similar means true.
@@ -83,7 +84,7 @@ Criteria:
 3. Asking to be contacted later ("call me back later", "not a good time") is rescheduling, not do_not_disturb.
 4. Applies to voice, chat, SMS, and WhatsApp style transcripts.`;
 
-const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, negative, confused, or not_applicable — the user's predominant emotional state, leaning on the closing tone. Pass unless the sentiment is clearly negative or confused; maybe for weak signals.
+export const USER_SENTIMENT = `Classify the user's sentiment as positive, neutral, negative, confused, or not_applicable — the user's predominant emotional state, leaning on the closing tone. Pass unless the sentiment is clearly negative or confused; maybe for weak signals.
 
 Rules:
 1. positive: cooperative, receptive, appreciative, agrees or provides requested information. A user who cooperates throughout is positive EVEN IF their final message is a follow-up question about next steps — a follow-up question is not negative. Declining an offered action is positive unless they express dissatisfaction with the service itself.
@@ -92,7 +93,7 @@ Rules:
 4. confused: REPEATED uncertainty or clarification requests across MULTIPLE user turns. A single message followed by silence is NOT confused — it is neutral.
 5. not_applicable: no human interaction — voicemail, call screening, or bot/IVR answered. When a detection outcome (voicemail/screening/bot) is present, sentiment is not_applicable.`;
 
-const STT = `Evaluate speech-to-text quality across the conversation. For each USER turn, decide whether the transcription shows an STT error, then whether the agent recovered. Output aggregate counts only.
+export const STT = `Evaluate speech-to-text quality across the conversation. For each USER turn, decide whether the transcription shows an STT error, then whether the agent recovered. Output aggregate counts only.
 
 Flag an STT error ONLY in these four categories:
 1. Garbled/nonsensical — not coherent language in any language the speaker used.
@@ -108,40 +109,17 @@ Rules: evaluate every user turn; at most one error per turn; recovered_count mus
 
 Default bias: CONSERVATIVE — when unsure whether a turn is an STT error or genuine user speech, do NOT flag it; when unsure about recovery, count it as not recovered.`;
 
-const TRANSFER_CONSENT = `Judge whether the caller gave clear, unambiguous consent to the transfer before the platform transferred them to a human. This judge runs ONLY on calls where a transfer was executed — a platform-confirmed fact, supplied as transfer_intent. Pass (consent_given=true) when the caller clearly agreed to be transferred. Fail (consent_given=false) when the transfer executed without that agreement.
-
-WHO IS JUDGED: "Agent:" lines are our AI; "User:" lines are the caller. Consent must come from a User: line. An Agent: line announcing or assuming the transfer is not consent.
-
-Criteria:
-1. Consent = an explicit affirmative reply from the caller to a transfer offer ("yes", "sure, go ahead", "okay, connect me"), or the caller's own unprompted request to be connected ("can I talk to someone?"). It must come AFTER the agent offered or explained the transfer, or be the caller's own request.
-2. reason_code "declined": the caller said no, not interested, stop calling, or otherwise refused the transfer — and the transfer executed anyway.
-3. reason_code "busy": the caller said they were busy, could not talk now, or asked to be called back — and the transfer executed anyway.
-4. reason_code "mid_sentence": the caller was still speaking, or had only started answering a different question, with no completed affirmative — when the transfer executed.
-5. reason_code "hold_music": the User: lines are only hold music, an IVR, ringing, or non-conversational audio artefacts — no real person answered — yet the transfer executed.
-6. reason_code "no_caller": the User: lines carry nothing substantive at all (empty, silence markers, background noise) — nobody was on the line.
-7. reason_code "ok": consent was given. reason_code MUST be "ok" whenever consent_given is true.
-8. transfer_node_instructions are the flow's own definition of when to transfer (e.g. a configured "Transfer Approved" intent). Read them for context, but the caller's actual words decide: an intent name or the agent's belief is NOT consent.
-9. Ambiguous fragments ("hmm", "uh", "hello?", "what?") are NOT consent. A clear affirmative is. Do not fail a transfer for brevity when the affirmative is unambiguous ("yes" is enough).`;
-
-const OUT_DETECTION =
+export const OUT_DETECTION =
   '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
-const OUT_SENTIMENT =
+export const OUT_SENTIMENT =
   '\n\nReturn ONLY a JSON object: {"sentiment": "positive"|"neutral"|"negative"|"confused"|"not_applicable", "reason": string, "technical_reason": string}.';
-const OUT_STT =
+export const OUT_STT =
   '\n\nReturn ONLY a JSON object: {"error_count": integer (>=0), "recovered_count": integer (0..error_count), "reason": string, "technical_reason": string}.';
-const OUT_TRANSFER_CONSENT =
-  '\n\nReturn ONLY a JSON object: {"consent_given": boolean, "reason_code": "ok"|"declined"|"busy"|"mid_sentence"|"hold_music"|"no_caller", "reason": string, "technical_reason": string}. reason_code MUST be "ok" when consent_given is true.';
 
 // ── Zod validation (the strict JSON schemas live in schemas.ts with the node/goal ones) ──
 const DetectionRawZ = z.object({ detected: z.boolean(), reason: z.string(), technical_reason: z.string() });
 const SentimentRawZ = z.object({ sentiment: z.enum(SENTIMENT_VALUES), reason: z.string(), technical_reason: z.string() });
 const SttRawZ = z.object({ error_count: z.number(), recovered_count: z.number(), reason: z.string(), technical_reason: z.string() });
-const TransferConsentRawZ = z.object({
-  consent_given: z.boolean(),
-  reason_code: z.enum(TRANSFER_CONSENT_REASON_CODES),
-  reason: z.string(),
-  technical_reason: z.string(),
-});
 
 // ── judge execution ──────────────────────────────────────────────────────────
 const DETECTION_MAX_TOKENS = 1500;
@@ -187,9 +165,6 @@ async function safeJudge<T, R>(
   call: {
     system: string;
     ctx: ConversationInput;
-    /** Payload override for a judge that needs more than the transcript
-     *  (default: `payload(ctx)`). */
-    input?: unknown;
     schema: z.ZodType<T>;
     jsonSchema: RunLlmJudgeArgs<T>["jsonSchema"];
     maxTokens: number;
@@ -201,7 +176,7 @@ async function safeJudge<T, R>(
   try {
     const { data } = await runLlmJudge({
       system: call.system,
-      input: call.input ?? payload(call.ctx),
+      input: payload(call.ctx),
       schema: call.schema,
       jsonSchema: call.jsonSchema,
       maxTokens: call.maxTokens,
@@ -215,9 +190,9 @@ async function safeJudge<T, R>(
 }
 
 /** Run one boolean detection judge; default to `detected:false` on any failure. */
-function runDetection(criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
+function runDetection(judge: string, criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
   return safeJudge(
-    { system: criteria + OUT_DETECTION, ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
+    { system: promptBody(judge, criteria) + promptOutput(judge, OUT_DETECTION), ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): DetectionResult => ({ ...data, available: true }),
     { detected: false, reason: "", technical_reason: "conversation judge unavailable", available: false },
   );
@@ -227,7 +202,7 @@ type SentimentResult = { sentiment: string; reason: string; technical_reason: st
 
 function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
   return safeJudge(
-    { system: USER_SENTIMENT + OUT_SENTIMENT, ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
+    { system: promptBody("user_sentiment", USER_SENTIMENT) + promptOutput("user_sentiment", OUT_SENTIMENT), ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): SentimentResult => ({ ...data, available: true }),
     { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable", available: false },
   );
@@ -237,7 +212,7 @@ function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<S
  *  text channels. Fault-tolerant: any failure → unavailable (never a fabricated 0). */
 function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<SttResult> {
   return safeJudge(
-    { system: STT + OUT_STT, ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
+    { system: promptBody("stt", STT) + promptOutput("stt", OUT_STT), ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
     (data): SttResult => {
       const errors = Math.max(0, Math.round(data.error_count));
       // Clamp recovered into [0, errors] — the constraint the prompt states, enforced.
@@ -323,8 +298,6 @@ export function evaluateUserNeverSpoke(ctx: ConversationInput): DetectionResult 
  *  (runtime-confirmed). Its `metadata.intent` is the handoff intent that fired. */
 export const TRANSFER_TAG = "transfer:human";
 
-export type TransferConsentResult = DetectionResult & { reason_code: TransferConsentReasonCode | "" };
-
 /**
  * HUMAN TRANSFER — the transfer FACT, decided in CODE from the session tags.
  *
@@ -372,113 +345,20 @@ function transferIntent(ctx: ConversationInput): string | null {
   return typeof intent === "string" ? intent.trim().slice(0, 200) : "";
 }
 
-/** The node whose instructions define the transfer: the one that OWNS the
- *  handoff intent (matched by intent name in its available_intents), else the
- *  last node visited — the transfer is terminal by construction, so on the
- *  live path that is the transferring node; the intent match protects the
- *  case where a later node still ran (a revisit, a wrap-up hop). */
-function transferringNode(ctx: ConversationInput, intent: string): ConversationInput["nodes"][number] | undefined {
-  if (intent) {
-    const owner = ctx.nodes.find((n) =>
-      (n.available_intents ?? []).some((i) => {
-        const name = (i as { intent_name?: unknown } | null)?.intent_name;
-        return typeof name === "string" && name === intent;
-      }),
-    );
-    if (owner) return owner;
-  }
-  return ctx.nodes[ctx.nodes.length - 1];
-}
-
-/** The consent judge reads the speech transcript plus two facts the plain
- *  detection payload lacks: WHICH intent transferred, and the transferring
- *  node's own instructions. */
-function transferPayload(ctx: ConversationInput): Record<string, unknown> {
-  const intent = transferIntent(ctx) ?? "";
-  return {
-    ...payload(ctx),
-    transfer_intent: intent,
-    transfer_node_instructions: transferringNode(ctx, intent)?.node_prompt ?? "",
-  };
-}
-
-/**
- * TRANSFER CONSENT — the transfer JUDGEMENT. Gated on the fact: no transfer ⇒
- * not applicable (unavailable, fans out nothing). A transferred call where the
- * caller never spoke needs no LLM to grade — nobody consented because nobody
- * was there — so it short-circuits in code to `no_caller`. Everything else is
- * the LLM judge over the transcript up to the transfer.
- */
-async function resolveTransferConsent(
-  ctx: ConversationInput,
-  humanTransfer: DetectionResult,
-  userNeverSpoke: DetectionResult,
-  provider?: LlmProvider,
-): Promise<TransferConsentResult> {
-  if (!humanTransfer.available || !humanTransfer.detected) {
-    return { ...skippedDetection("no human transfer on this session — consent not applicable"), reason_code: "" };
-  }
-  if (userNeverSpoke.available && userNeverSpoke.detected) {
-    return {
-      detected: true,
-      reason: "The caller never spoke — the transfer executed with nobody on the line.",
-      technical_reason: "derived in code: user_never_spoke fired on a transferred session (no LLM call)",
-      available: true,
-      reason_code: "no_caller",
-    };
-  }
-  return safeJudge(
-    {
-      system: TRANSFER_CONSENT + OUT_TRANSFER_CONSENT,
-      ctx,
-      input: transferPayload(ctx),
-      schema: TransferConsentRawZ,
-      jsonSchema: TRANSFER_CONSENT_JSON,
-      maxTokens: DETECTION_MAX_TOKENS,
-      provider,
-    },
-    (data): TransferConsentResult => {
-      // The prompt pins the code to the verdict both ways: consent ⇒ "ok", and
-      // a fail must name a defect. A fail carrying "ok" is a contradictory
-      // verdict — stored, it would corrupt every reason-code rollup — so it is
-      // treated like any other invalid output: unavailable, never fabricated.
-      if (!data.consent_given && data.reason_code === "ok") {
-        return { ...skippedDetection("consent judge returned fail with reason_code ok — invalid verdict"), reason_code: "" };
-      }
-      return {
-        detected: !data.consent_given,
-        reason: data.reason,
-        technical_reason: data.technical_reason,
-        available: true,
-        reason_code: data.consent_given ? "ok" : data.reason_code,
-      };
-    },
-    { ...skippedDetection("transfer consent judge unavailable"), reason_code: "" },
-  );
-}
-
-/** The FACT alone, in the stored CmDetection shape — for the path where no
- *  transcript exists to judge (the fact needs none) and consent must stay
- *  unavailable rather than be fabricated from nothing. */
+/** The FACT in the stored CmDetection shape — for the path where no
+ *  transcript exists to judge (the fact is a tag, so it needs none). */
 export function evaluateHumanTransferMetric(ctx: ConversationInput): SimConversationMetrics["human_transfer"] {
   return det(evaluateHumanTransfer(ctx));
 }
 
-/** The whole transfer axis in one call: the code-derived FACT plus the gated
- *  consent JUDGEMENT, emitted in the stored CmDetection shape. Shared by the
- *  live evaluation (evaluateConversationMetrics) and the backfill re-judge
+/** The transfer axis in the stored CmDetection shape. Entirely code-derived
+ *  from the session tag — no LLM call, no provider. Shared by the live
+ *  evaluation (evaluateConversationMetrics) and the backfill re-judge
  *  (transfer-rejudge.ts), so both paths can never disagree on the rule. */
-export async function evaluateTransferAxis(
+export function evaluateTransferAxis(
   ctx: ConversationInput,
-  userNeverSpoke: DetectionResult,
-  provider?: LlmProvider,
-): Promise<Pick<SimConversationMetrics, "human_transfer" | "transfer_consent">> {
-  const humanTransfer = evaluateHumanTransfer(ctx);
-  const transferConsent = await resolveTransferConsent(ctx, humanTransfer, userNeverSpoke, provider);
-  return {
-    human_transfer: det(humanTransfer),
-    transfer_consent: { ...det(transferConsent), reason_code: transferConsent.reason_code },
-  };
+): Pick<SimConversationMetrics, "human_transfer"> {
+  return { human_transfer: det(evaluateHumanTransfer(ctx)) };
 }
 
 /** All-zero conversation metrics with every axis marked unavailable — the
@@ -500,7 +380,6 @@ export function zeroConversationMetrics(): SimConversationMetrics {
     stt: skippedStt(),
     user_never_spoke: d(),
     human_transfer: d(),
-    transfer_consent: { ...d(), reason_code: "" },
   };
 }
 
@@ -635,12 +514,12 @@ export async function evaluateConversationMetrics(
   const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
 
   const [voicemail, bot, screening, lowEng, wrong, dnd, sentiment, stt] = await Promise.all([
-    voice ? runDetection(VOICEMAIL, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection(BOT, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection(CALL_SCREENING, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    runDetection(LOW_ENGAGEMENT, ctx, provider),
-    runDetection(WRONG_NUMBER, ctx, provider),
-    runDetection(DO_NOT_DISTURB, ctx, provider),
+    voice ? runDetection("voicemail_detection", VOICEMAIL, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection("bot_detection", BOT, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection("call_screening", CALL_SCREENING, ctx, provider) : Promise.resolve(voiceOnlySkip),
+    runDetection("low_engagement", LOW_ENGAGEMENT, ctx, provider),
+    runDetection("wrong_number", WRONG_NUMBER, ctx, provider),
+    runDetection("do_not_disturb", DO_NOT_DISTURB, ctx, provider),
     runSentiment(ctx, provider),
     voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);
@@ -671,9 +550,9 @@ export async function evaluateConversationMetrics(
       )
     : evaluateUserNeverSpoke(ctx);
 
-  // Transfer axis: the fact is code-derived (free); the consent judge is the
-  // one extra LLM call, and only on transferred sessions.
-  const transferAxis = await evaluateTransferAxis(ctx, userNeverSpoke, provider);
+  // Transfer axis: the fact is code-derived from the session tag — free, no
+  // LLM call.
+  const transferAxis = evaluateTransferAxis(ctx);
 
   return {
     ...outcomes,

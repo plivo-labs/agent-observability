@@ -197,9 +197,9 @@ export async function claimDueFirings(limit = 50): Promise<DueDelivery[]> {
   // the same firing. markDelivered/markRetry/markFailed overwrite the lease.
   const rows = await sql`
     WITH due AS (
-      SELECT id FROM ao_alert_firings
+      SELECT id, next_attempt_at AS due_at FROM ao_alert_firings
       WHERE status = 'pending' AND next_attempt_at <= NOW()
-      ORDER BY next_attempt_at ASC
+      ORDER BY next_attempt_at ASC, id ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )
@@ -207,16 +207,25 @@ export async function claimDueFirings(limit = 50): Promise<DueDelivery[]> {
     SET next_attempt_at = NOW() + ${CLAIM_LEASE}::interval, updated_at = NOW()
     FROM due, ao_alert_rules r
     WHERE f.id = due.id AND r.id = f.rule_id
-    RETURNING f.*,
+    RETURNING f.*, due.due_at,
               r.name AS rule_name, r.metric, r.judge_name,
               r.threshold_value, r.window_minutes,
               r.agent_id, r.account_id,
               r.webhook_url, r.http_method, r.secret, r.headers
   `;
-  return rows.map((r: any) => ({
-    ...mapFiring(r),
-    headers: parseJsonb<Record<string, string> | null>(r.headers, null),
-  }));
+  // UPDATE…RETURNING yields rows in heap order, not CTE order — re-sort by the
+  // ORIGINAL due time (the update just overwrote next_attempt_at with the
+  // lease) so deliveries go out oldest-due first as documented.
+  return rows
+    .toSorted((a: any, b: any) =>
+      String(a.due_at) === String(b.due_at)
+        ? String(a.id).localeCompare(String(b.id))
+        : new Date(a.due_at).getTime() - new Date(b.due_at).getTime(),
+    )
+    .map((r: any) => ({
+      ...mapFiring(r),
+      headers: parseJsonb<Record<string, string> | null>(r.headers, null),
+    }));
 }
 
 export async function markDelivered(id: string, responseStatus: number | null): Promise<void> {

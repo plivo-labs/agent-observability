@@ -47,24 +47,16 @@ description: Configuration comes from environment variables. Only DATABASE_URL i
         'Where the alert sweeper runs. inline = inside the API process (zero-config single-container default). Set to off when the dedicated worker (bun run start:worker) is deployed, so exactly one sweeper is active.',
     },
     {
-      name: 'GOAL_ANALYZER',
-      default: 'inline',
+      name: 'JUDGES_FROM_DB',
+      default: 'on',
       description:
-        'Where the conversation-goal analyzer runs. Mirrors ALERT_SWEEPER: inline on the API by default, off when the dedicated worker is deployed. Regardless of placement, the analyzer is a no-op until OPENAI_API_KEY is set.',
+        'Judge prompts come from the ao_judges registry, seeded and boot-synced byte-identical to the shipped prompts. Set to off to revert to the in-code prompts.',
     },
     {
-      name: 'OPENAI_API_KEY',
+      name: 'EVAL_MAX_CUSTOM_JUDGE_CALLS',
+      default: '200',
       description:
-        'Enables the conversation-goal analyzer. Unset = goal tags are stored but never judged (one startup log notes the analyzer is disabled).',
-    },
-    {
-      name: 'JUDGE_LLM_MODEL',
-      description:
-        'Goal-judge model override. Precedence: JUDGE_LLM_MODEL → OPENAI_MODEL → gpt-4.1-mini — the same contract as the Python SDK judge helper.',
-    },
-    {
-      name: 'OPENAI_MODEL',
-      description: 'Fallback judge model name when JUDGE_LLM_MODEL is unset.',
+        'Per-session ceiling on custom-judge LLM calls. A node-scope judge costs one call per judged node.',
     },
     {
       name: 'S3_BUCKET',

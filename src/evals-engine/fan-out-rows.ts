@@ -5,6 +5,10 @@ export type ExternalEvalRow = {
   judgeName: string;
   tag: string | null;
   passed: boolean;
+  /** Overrides the pass/fail verdict text — custom metrics write 'unknown'
+   *  for calls that never reached the judged situation, which must count as
+   *  neither a pass nor a fail. */
+  verdictText?: string;
   reasoning: string;
   raw: Record<string, unknown>;
 };
@@ -60,13 +64,10 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
       // Code-derived signal judge: rides the same array so it reuses the
       // `available === false` skip below (an undecidable axis fans out nothing).
       ["user_never_spoke", cm.user_never_spoke],
-      // Transfer axis. human_transfer is the FACT (fail = a transfer executed,
-      // same detection convention as every row above); transfer_consent is the
-      // JUDGEMENT (fail = it executed without consent; `raw.reason_code` says
-      // why). Both unavailable on sessions with no transfer / no tag feed, so
-      // they fan out nothing there — never a phantom pass.
+      // The transfer FACT (fail = a transfer executed, same detection
+      // convention as every row above). Unavailable on sessions with no
+      // transfer tag, so it fans out nothing there — never a phantom pass.
       ["human_transfer", cm.human_transfer],
-      ["transfer_consent", cm.transfer_consent],
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
@@ -90,13 +91,28 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
     }
   }
 
-  for (const goal of verdicts.goal_evaluation?.goals ?? []) {
+  for (const cm of verdicts.custom_metrics ?? []) {
+    if (!cm.available) continue; // unavailable ⇒ skipped, same contract as detections
+    if (cm.scope === "node" && cm.per_node) {
+      for (const n of cm.per_node) {
+        rows.push({
+          judgeName: cm.judge_name,
+          tag: n.ref || null,
+          passed: n.verdict === "pass",
+          ...(n.verdict === "unknown" ? { verdictText: "unknown" } : {}),
+          reasoning: n.reason,
+          raw: n as unknown as Record<string, unknown>,
+        });
+      }
+      continue;
+    }
     rows.push({
-      judgeName: goal.goal_name ? `goal:${goal.goal_name}` : "goal",
+      judgeName: cm.judge_name,
       tag: null,
-      passed: goal.achieved,
-      reasoning: goal.reason,
-      raw: goal as any,
+      passed: cm.verdict === "pass",
+      ...(cm.verdict === "unknown" ? { verdictText: "unknown" } : {}),
+      reasoning: cm.reason,
+      raw: cm as unknown as Record<string, unknown>,
     });
   }
 
