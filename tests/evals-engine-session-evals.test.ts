@@ -13,7 +13,6 @@ function cfg(): AgentConfig {
   return {
     flow_name: "Support",
     global_prompt: "Be helpful.",
-    goals: [{ name: "Resolved", instructions: "Issue resolved" }, { name: "", instructions: "dropped" }],
     nodes: [
       {
         ref: "node-A",
@@ -213,9 +212,9 @@ describe("buildSessionEvalInput", () => {
     expect(input.nodes[0].turn_count).toBe(2);
   });
 
-  test("drops nameless goals; keeps valid ones", () => {
+  test("ingest path never feeds goals — they are custom metrics now", () => {
     const { input } = buildSessionEvalInput(cfg(), [ev("node-A", "user", "hi")]);
-    expect(input.goals).toEqual([{ goal_name: "Resolved", goal_instructions: "Issue resolved", flow_goal_id: 0 }]);
+    expect(input.goals).toEqual([]);
   });
 
   test("nodes with no turns are excluded; empty inputs never throw", () => {
@@ -427,7 +426,6 @@ describe("evaluateIngestedSession — session tags", () => {
         interaction_quality: { score: 1, issues: [], reason_code: "", reason: "", technical_reason: "" },
         policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
       });
-    if (s.includes("configured goals were achieved")) return JSON.stringify({ goals: [{ goal_name: "Resolved", achieved: true, reason: "", technical_reason: "" }] });
     if (s.includes("Classify the user's sentiment")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
     if (s.includes("speech-to-text quality")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
     return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });

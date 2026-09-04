@@ -26,7 +26,6 @@ import { registerAlertRoutes } from "./alerts/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, kickEvalForSession, probeEvalTables } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
-import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
 if (config.AUTO_MIGRATE && dbConfigured) {
@@ -75,18 +74,6 @@ if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbCon
   // Loud on purpose: with EVAL_SWEEPER=off nobody judges ingested sessions.
   // ("worker" is the normal non-inline value — the dedicated worker handles it.)
   console.warn("[evals] EVAL_SWEEPER=off — ingested-session judging is disabled everywhere; set it to \"inline\" (API) or \"worker\" (worker) to enable.");
-}
-
-// Goal analyzer: post-session LLM judging of goal:<text> tags. Same
-// placement model as the alert sweeper — DB-backed, so gate on dbConfigured
-// too (inert in stateless mode); additionally a no-op (with one startup log)
-// unless an LLM provider key is configured.
-if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
-  if (await tableExists("ao_session_goal_analyses")) {
-    startGoalAnalyzer();
-  } else {
-    console.log("[goals] goal tables absent — inline analyzer disabled (sim-only deployment)");
-  }
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -873,7 +860,6 @@ if (import.meta.main) {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
     stopEvalSweeper();
-    stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);

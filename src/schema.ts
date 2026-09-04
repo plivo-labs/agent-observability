@@ -100,12 +100,6 @@ export const envSchema = z.object({
   // judged, only HOW SOON).
   EVAL_EVENT_KICK: z.enum(["on", "off"]).default("on"),
 
-  // Goal analyzer (post-session LLM judging of goal: tags). Placement
-  // mirrors ALERT_SWEEPER; the analyzer is additionally a no-op unless the
-  // configured LLM provider has a key. It judges through the shared LLM stack
-  // (runGoalJudge → completeJSON) on the "judge" role, so the judge model comes
-  // from JUDGE_MODEL (below) — there is no goals-specific model knob.
-  GOAL_ANALYZER: z.enum(["inline", "off"]).default("inline"),
 
   // CORS allow-list for the /api/* dashboard endpoints. Comma-separated
   // origins (e.g. "https://obs.example.com,http://localhost:5173"). In

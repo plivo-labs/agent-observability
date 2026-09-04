@@ -90,15 +90,5 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
     }
   }
 
-  for (const goal of verdicts.goal_evaluation?.goals ?? []) {
-    rows.push({
-      judgeName: goal.goal_name ? `goal:${goal.goal_name}` : "goal",
-      tag: null,
-      passed: goal.achieved,
-      reasoning: goal.reason,
-      raw: goal as any,
-    });
-  }
-
   return rows;
 }

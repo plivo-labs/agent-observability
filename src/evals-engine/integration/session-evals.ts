@@ -21,7 +21,6 @@ import { IDLE_TAG } from "../types.js";
 import type {
   ConversationInput,
   EvalTurn,
-  GoalInput,
   NodeEvalInput,
   NodeEvaluation,
   NodeGoalEvaluation,
@@ -61,14 +60,9 @@ export interface AgentConfigNode {
   intents?: AgentConfigIntent[];
   variables?: AgentConfigVariable[];
 }
-export interface AgentConfigGoal {
-  name?: string;
-  instructions?: string;
-}
 export interface AgentConfig {
   flow_name?: string;
   global_prompt?: string;
-  goals?: AgentConfigGoal[];
   nodes?: AgentConfigNode[];
   /** Runtime context the platform supplied to the agent — trigger inputs +
    *  mid-flow HTTP/tool outputs. Grounding evidence for the hallucination judge
@@ -209,17 +203,6 @@ function toolEvidence(item: NonNullable<StoredEvent["item"]>): string {
   }
   const out = item.output !== undefined ? (typeof item.output === "string" ? item.output : JSON.stringify(item.output)) : "";
   return `Tool_Result: ${name} -> ${out}`;
-}
-
-function nodeGoals(cfg: AgentConfig): GoalInput[] {
-  const raw = Array.isArray(cfg.goals) ? cfg.goals : [];
-  return raw
-    .map((g): GoalInput | null => {
-      const name = typeof g?.name === "string" ? g.name.trim() : "";
-      if (!name) return null;
-      return { goal_name: name, goal_instructions: typeof g.instructions === "string" ? g.instructions : "", flow_goal_id: 0 };
-    })
-    .filter((g): g is GoalInput => g !== null);
 }
 
 /** Parallel to the engine's `nodes`, in the same order: the opaque ref + name
@@ -488,7 +471,8 @@ export function buildSessionEvalInput(
       flow_name: typeof config.flow_name === "string" ? config.flow_name : "conversation",
       global_prompt: typeof config.global_prompt === "string" ? config.global_prompt : "",
       nodes: judgedNodes,
-      goals: nodeGoals(config),
+      // Goal judging is gone from the ingest path — goals are custom metrics now.
+      goals: [],
       full_transcript: renderFullTranscript(allTurns),
       // Speech-only variant for the conversation-axis judges: drop the
       // synthetic evidence lines so config/tool text can't masquerade as
@@ -511,7 +495,6 @@ export function buildSessionEvalInput(
 export interface SessionEvalVerdicts {
   node_evaluations: Array<NodeEvaluation & { ref: string }>;
   conversation_metrics: SimConversationMetrics;
-  goal_evaluation?: NodeGoalEvaluation["goal_evaluation"];
 }
 
 /**
@@ -559,7 +542,6 @@ export async function evaluateIngestedSession(
   return {
     node_evaluations,
     conversation_metrics,
-    ...(scored.goal_evaluation ? { goal_evaluation: scored.goal_evaluation } : {}),
   };
 }
 
