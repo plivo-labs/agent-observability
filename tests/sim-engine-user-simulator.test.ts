@@ -49,6 +49,8 @@ function scenario(
     start_node_params: {},
     max_turns: 25,
     tags: [],
+    acceptance_criteria: [],
+    criteria_threshold: 0.7,
     ...rest,
     persona,
   } as Scenario;
@@ -222,6 +224,16 @@ describe("buildUserSimulatorPrompt — pinned template structure & injection", (
     expect(inb).toContain("You initiated this call.");
     expect(inb).not.toContain("You received this call");
   });
+
+  test("appends the TARGET DETECTION + END CALL decision block", () => {
+    const p = buildUserSimulatorPrompt(scenario(), [], "Refund helpline", false, "", "");
+    expect(p).toContain("TARGET DETECTION AND END CALL:");
+    expect(p).toContain("target_achieved:");
+    expect(p).toContain("end_call:");
+    // The decision block sits at the very end, right before the final generate instruction.
+    expect(p.indexOf("TARGET DETECTION AND END CALL:")).toBeGreaterThan(p.indexOf("Conversation so far:"));
+    expect(p.indexOf("TARGET DETECTION AND END CALL:")).toBeLessThan(p.indexOf("Generate your next response as the customer."));
+  });
 });
 
 describe("expandTraitDirectives — behavioral-trait mapping (behavioral_traits.go)", () => {
@@ -287,7 +299,10 @@ describe("generateUserMessage — LLM call (MockLLM injected)", () => {
       nonAnswerType: "",
       provider,
     });
-    expect(msg).toBe("Yes, please.");
+    expect(msg.message).toBe("Yes, please.");
+    // A bare {message} mock still parses — target_achieved / end_call default to false.
+    expect(msg.target_achieved).toBe(false);
+    expect(msg.end_call).toBe(false);
     // The provider saw exactly one call, carrying our pinned prompt content. The
     // simulator sends the template as `system` with an empty `user` (cx-sqs parity:
     // apiMode "chat" + noJsonHint), so assert on `system`.
@@ -308,8 +323,22 @@ describe("generateUserMessage — LLM call (MockLLM injected)", () => {
       nonAnswerType: "",
       provider,
     });
-    expect(msg).toBe("Okay.");
+    expect(msg.message).toBe("Okay.");
     expect(provider.calls.length).toBe(2); // one retry after the blank
+  });
+
+  test("parses the caller-decision fields when the model returns them", async () => {
+    const provider = new MockLLM([JSON.stringify({ message: "Okay, thanks. Bye.", target_achieved: true, end_call: true })]);
+    const msg = await generateUserMessage({
+      scenario: scenario(),
+      history: [],
+      agentFlowDescription: "",
+      isOutboundCall: false,
+      partialAssistantMsg: "",
+      nonAnswerType: "",
+      provider,
+    });
+    expect(msg).toEqual({ message: "Okay, thanks. Bye.", target_achieved: true, end_call: true });
   });
 
   test("throws when the message is still empty after the retry", async () => {

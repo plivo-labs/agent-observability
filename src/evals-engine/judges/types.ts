@@ -121,6 +121,24 @@ export const GoalRawZ = z.object({
 });
 export type GoalRaw = z.infer<typeof GoalRawZ>;
 
+// criteria — one entry per scenario acceptance criterion. `met` / `accuracy_score` are nullable:
+// a conditional criterion whose precondition never occurred is `applicable:false` with both null.
+// The array is NOT `.min(1)`: an empty verdict is a valid parse that the aggregator scores 0 (a
+// reference-harness-faithful fail), distinct from a parse failure (which throws → eval_error).
+export const CriteriaRawZ = z.object({
+  criteria: z.array(
+    z.object({
+      id: z.coerce.number().default(0),
+      description: reasonZ,
+      applicable: z.boolean(),
+      met: z.boolean().nullable().default(null),
+      accuracy_score: z.coerce.number().nullable().default(null),
+      evidence: reasonZ,
+    }),
+  ),
+});
+export type CriteriaRaw = z.infer<typeof CriteriaRawZ>;
+
 // ── the emitted contract (for test validation) ────────────────────────────────────
 
 const InstructionsAdherenceZ = z.object({

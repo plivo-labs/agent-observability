@@ -37,6 +37,8 @@ const writerScenario = () => ({
   world_state: [{ node_id: "n-check", outcome: "eligible", data_json: '{"order_id":"A1"}', action_mocks_json: "{}" }],
   start_node_params_json: "{}",
   tags: [],
+  acceptance_criteria: ["Agent confirms the order is eligible", "Agent states the refund amount"],
+  criteria_threshold: 0.8,
 });
 
 describe("runtimeConfig", () => {
@@ -84,6 +86,32 @@ describe("validateAndFixScenario (with slot)", () => {
 
   test("ensureStartNodeParams fills from persona details", () => {
     expect(fixed.start_node_params.caller_name).toBe("Sam");
+  });
+
+  test("acceptance_criteria + criteria_threshold carried onto the runtime scenario", () => {
+    expect(fixed.acceptance_criteria).toEqual(["Agent confirms the order is eligible", "Agent states the refund amount"]);
+    expect(fixed.criteria_threshold).toBe(0.8);
+  });
+
+  test("blank criteria dropped; out-of-range / garbage threshold clamped or defaulted", () => {
+    const overHigh = validateAndFixScenario(
+      { ...writerScenario(), acceptance_criteria: ["ok", "  ", ""], criteria_threshold: 1.5 },
+      slot,
+      "gen-1",
+      "",
+      [],
+    )!;
+    expect(overHigh.acceptance_criteria).toEqual(["ok"]);
+    expect(overHigh.criteria_threshold).toBe(1); // clamped into [0,1]
+
+    const garbage = validateAndFixScenario(
+      { ...writerScenario(), criteria_threshold: "nope" as unknown as number },
+      slot,
+      "gen-1",
+      "",
+      [],
+    )!;
+    expect(garbage.criteria_threshold).toBe(0.7); // non-finite → default
   });
 
   test("rejects a scenario missing name/goal → null", () => {

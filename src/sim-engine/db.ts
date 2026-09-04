@@ -193,10 +193,14 @@ export async function insertRunScenario(input: InsertRunScenarioInput): Promise<
 }
 
 /**
- * Tri-state goal outcome — an exact port of the orchestrator service's `_extract_goal_passed`:
- *   • error / eval_error / missing evaluation / missing-or-empty goal list → null
- *     (NEITHER counter moves — passed+failed ≤ completed is normal),
- *   • otherwise passed = ANY goal `achieved` (not all).
+ * Tri-state pass/fail outcome. Precedence (MUST be mirrored in the orchestrator service's
+ * `_extract_goal_passed` — the two write the same run counters, and drift here silently skews
+ * every dashboard pass rate):
+ *   1. error / eval_error → null (NEITHER counter moves — passed+failed ≤ completed is normal),
+ *   2. evaluation.criteria_evaluation present → its `passed` (criteria are authoritative over
+ *      flow goals; `caller_goal_met`'s target_achieved is NOT — it only ended the call),
+ *   3. otherwise the flow-goal fallback: passed = ANY goal `achieved` (not all),
+ *   4. nothing to judge (no evaluation / no criteria / empty goal list) → null.
  * Exported for unit tests.
  */
 export function extractGoalPassed(args: {
@@ -207,6 +211,10 @@ export function extractGoalPassed(args: {
   if (args.error || args.evalError) return null;
   const evaluation = args.evaluation;
   if (evaluation === null || typeof evaluation !== "object") return null;
+  const criteriaEval = (evaluation as Record<string, unknown>).criteria_evaluation;
+  if (criteriaEval !== null && typeof criteriaEval === "object" && typeof (criteriaEval as Record<string, unknown>).passed === "boolean") {
+    return (criteriaEval as Record<string, unknown>).passed as boolean;
+  }
   const goalEval = (evaluation as Record<string, unknown>).goal_evaluation;
   if (goalEval === null || typeof goalEval !== "object") return null;
   const goals = (goalEval as Record<string, unknown>).goals;

@@ -43,3 +43,21 @@ describe("extractGoalPassed (tri-state, ANY-goal)", () => {
     expect(extractGoalPassed({ evaluation })).toBe(false);
   });
 });
+
+describe("extractGoalPassed precedence (criteria over flow goals)", () => {
+  const criteria = (passed: boolean) => ({ criteria_evaluation: { threshold: 0.7, score: passed ? 1 : 0, passed, criteria: [] } });
+
+  test("criteria_evaluation is authoritative over flow goals", () => {
+    expect(extractGoalPassed({ evaluation: { ...criteria(false), ...goals(true) } })).toBe(false);
+    expect(extractGoalPassed({ evaluation: { ...criteria(true), ...goals(false) } })).toBe(true);
+  });
+
+  test("no criteria → falls back to the ANY-goal rule", () => {
+    expect(extractGoalPassed({ evaluation: goals(false, true) })).toBe(true);
+  });
+
+  test("caller_goal_met / caller_hung_up are not special-cased — judged by criteria/goals", () => {
+    expect(extractGoalPassed({ evaluation: criteria(false) })).toBe(false);
+    expect(extractGoalPassed({ evaluation: goals(true) })).toBe(true);
+  });
+});

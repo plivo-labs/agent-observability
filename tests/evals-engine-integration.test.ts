@@ -51,6 +51,62 @@ function judgeResponder(args: ProviderCompleteArgs): string {
   return "{}";
 }
 
+describe("fromSimTranscript screening surface", () => {
+  const SCREEN_FLOW = {
+    flow_name: "telecrm",
+    edges: [
+      { source: "SCR", sourceHandle: "reached", target: "COLL" },
+      { source: "SCR", sourceHandle: "wrong_contact", target: "H1" },
+      { source: "SCR", sourceHandle: "unavailable", target: "H2" },
+      { source: "SCR", sourceHandle: "no_answer", target: "H3" },
+      { source: "SCR", sourceHandle: "busy_rejected", target: "H4" },
+      { source: "SCR", sourceHandle: "failed", target: "H5" },
+    ],
+  };
+  const SCREEN_INDEX: NodeConfigIndex = new Map([
+    ["SCR", { config: { name: "Call And Screen", context: "reach the lead" }, configName: "Call And Screen", metaName: "Call And Screen", type: "outbound_screening" }],
+  ]);
+
+  test("intent surface = wired dispositions minus deterministic dial handles", () => {
+    const turns: EvalTurn[] = [
+      { node_uuid: "SCR", user: "hello?", agent: "am I speaking with Neha?", intent: "" },
+      { node_uuid: "SCR", user: "she is not here", agent: "thanks, goodbye", intent: "", exit_handle: "unavailable" },
+    ];
+    const input = fromSimTranscript({ turns, nodeIndex: SCREEN_INDEX, flowObj: SCREEN_FLOW, variablesByNode: {} });
+    const names = input.nodes[0].available_intents.map((i) => (i as { intent_name: string }).intent_name).sort();
+    expect(names).toEqual(["reached", "unavailable", "wrong_contact"]);
+    expect(input.nodes[0].chosen_intent).toBe("unavailable");
+    // screening keeps its prompt in `context` — the judges must see it as node_prompt
+    expect(input.nodes[0].node_prompt).toBe("reach the lead");
+  });
+
+  test("screening workflow outputs are not judged as extractions", () => {
+    const turns: EvalTurn[] = [{ node_uuid: "SCR", user: "hi", agent: "hello", intent: "" }];
+    const input = fromSimTranscript({
+      turns, nodeIndex: SCREEN_INDEX, flowObj: SCREEN_FLOW,
+      variablesByNode: { SCR: { screening_disposition: "unavailable", screening_status: "not_reached" } },
+    });
+    expect(input.nodes[0].extracted_variables).toEqual({});
+    expect(input.nodes[0].required_variables).toEqual([]);
+  });
+
+  test("agent_node collectibles count as required variables", () => {
+    const idx: NodeConfigIndex = new Map([
+      ["COLL", { config: { name: "Collector", agent_tasks: { variables: [{ name: "industry" }], extract_only: [{ name: "city" }] } }, configName: "Collector", metaName: "Collector", type: "agent_node" }],
+    ]);
+    const turns: EvalTurn[] = [{ node_uuid: "COLL", user: "logistics", agent: "noted", intent: "" }];
+    const input = fromSimTranscript({ turns, nodeIndex: idx, flowObj: { flow_name: "x" }, variablesByNode: { COLL: { industry: "logistics" } } });
+    expect(input.nodes[0].required_variables).toEqual(["industry", "city"]);
+    expect(input.nodes[0].extracted_variables).toEqual({ industry: "logistics" });
+  });
+
+  test("dial-handle exits never become the chosen intent", () => {
+    const turns: EvalTurn[] = [{ node_uuid: "SCR", user: "", agent: "", intent: "", exit_handle: "no_answer" }];
+    const input = fromSimTranscript({ turns, nodeIndex: SCREEN_INDEX, flowObj: SCREEN_FLOW, variablesByNode: {} });
+    expect(input.nodes[0].chosen_intent).toBe("");
+  });
+});
+
 describe("fromSimTranscript", () => {
   test("groups turns by node, reads config + goals + global prompt", () => {
     const input = fromSimTranscript({ turns: TURNS, nodeIndex: INDEX, flowObj: FLOW_OBJ, variablesByNode: { A1: { order_id: "42" } } });
