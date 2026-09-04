@@ -36,6 +36,7 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
 
   test("create stores the description as the prompt body with the fixed output section", async () => {
     const j = await createCustomJudge({
+      accountId: "",
       name: customJudgeName(displayName("insurance verified")),
       display_name: displayName("insurance verified"),
       description: "Fail if slots are offered before the member ID is confirmed.",
@@ -53,7 +54,7 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
 
   test("duplicate name → JudgeNameConflictError", async () => {
     const name = customJudgeName(displayName("dup"));
-    await createCustomJudge({ name, display_name: displayName("dup"), description: "d", scope: "conversation", enabled: false });
+    await createCustomJudge({ accountId: "", name, display_name: displayName("dup"), description: "d", scope: "conversation", enabled: false });
     await expect(
       createCustomJudge({ name, display_name: displayName("dup"), description: "d2", scope: "conversation", enabled: false }),
     ).rejects.toBeInstanceOf(JudgeNameConflictError);
@@ -61,7 +62,7 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
 
   test("patch updates description AND prompt body together; name never follows renames", async () => {
     const name = customJudgeName(displayName("renameme"));
-    const j = await createCustomJudge({ name, display_name: displayName("renameme"), description: "old", scope: "node", enabled: false });
+    const j = await createCustomJudge({ accountId: "", name, display_name: displayName("renameme"), description: "old", scope: "node", enabled: false });
     const updated = await updateCustomJudge(j.id, { display_name: displayName("renamed"), description: "new criteria", enabled: true });
     expect(updated!.display_name).toBe(displayName("renamed"));
     expect(updated!.description).toBe("new criteria");
@@ -81,8 +82,8 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
   });
 
   test("mapping: PUT-replace semantics, unknown ids rejected, delete cascades", async () => {
-    const a = await createCustomJudge({ name: customJudgeName(displayName("map a")), display_name: displayName("map a"), description: "a", scope: "node", enabled: true });
-    const b = await createCustomJudge({ name: customJudgeName(displayName("map b")), display_name: displayName("map b"), description: "b", scope: "conversation", enabled: true });
+    const a = await createCustomJudge({ accountId: "", name: customJudgeName(displayName("map a")), display_name: displayName("map a"), description: "a", scope: "node", enabled: true });
+    const b = await createCustomJudge({ accountId: "", name: customJudgeName(displayName("map b")), display_name: displayName("map b"), description: "b", scope: "conversation", enabled: true });
 
     let mapped = await setAgentJudges(agentId, [{ judge_id: a.id, enabled: true }, { judge_id: b.id, enabled: false }]);
     expect(mapped.map((m) => [m.id, m.mapping_enabled])).toEqual([
@@ -106,5 +107,29 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
     // deleting the judge cascades its mapping rows
     await deleteCustomJudge(b.id);
     expect(await listAgentJudges(agentId)).toEqual([]);
+  });
+});
+
+describeDb("judge account scoping (real PG)", () => {
+  test("scoped list sees defaults + own customs only; scoped writes cannot cross accounts", async () => {
+    const a = await createCustomJudge({ accountId: run + "-acctA", name: customJudgeName(run + " scoped a"), display_name: run + " scoped a", description: "d", scope: "conversation", enabled: true });
+    const b = await createCustomJudge({ accountId: run + "-acctB", name: customJudgeName(run + " scoped b"), display_name: run + " scoped b", description: "d", scope: "conversation", enabled: true });
+
+    // same name in two accounts is legal (per-account uniqueness)
+    const dupB = await createCustomJudge({ accountId: run + "-acctB", name: a.name, display_name: a.display_name, description: "d2", scope: "conversation", enabled: false });
+    expect(dupB.name).toBe(a.name);
+
+    const seenByA = await listJudges({ type: null, accountId: run + "-acctA", limit: 200, offset: 0 });
+    const customsA = seenByA.judges.filter((j) => j.type === "custom" && j.name.includes(run.replace(/-/g, "_")));
+    expect(customsA.map((j) => j.id)).toEqual([a.id]); // not b, not dupB
+    expect(seenByA.judges.some((j) => j.type === "default")).toBe(true); // defaults always visible
+
+    // cross-account write/delete blocked; own account allowed
+    expect(await updateCustomJudge(b.id, { description: "tamper" }, run + "-acctA")).toBeNull();
+    expect(await deleteCustomJudge(b.id, run + "-acctA")).toBe(false);
+    expect(await deleteCustomJudge(b.id, run + "-acctB")).toBe(true);
+
+    await deleteCustomJudge(a.id);
+    await deleteCustomJudge(dupB.id);
   });
 });

@@ -98,10 +98,10 @@ export async function syncDefaultJudges(db = sql): Promise<number> {
   let updated = 0;
   for (const row of DEFAULT_JUDGE_ROWS) {
     const res = await db`
-      INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config)
-      VALUES (${row.name}, ${row.display_name}, ${row.description}, 'default', ${row.scope}, ${row.kind},
+      INSERT INTO ao_judges (name, account_id, display_name, description, type, scope, kind, prompt, config)
+      VALUES (${row.name}, '', ${row.display_name}, ${row.description}, 'default', ${row.scope}, ${row.kind},
               ${jsonbParam(row.prompt)}::text::jsonb, ${jsonbParam(row.config)}::text::jsonb)
-      ON CONFLICT (name) DO UPDATE SET
+      ON CONFLICT (account_id, name) DO UPDATE SET
         display_name = EXCLUDED.display_name,
         description = EXCLUDED.description,
         scope = EXCLUDED.scope,

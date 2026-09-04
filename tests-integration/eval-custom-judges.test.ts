@@ -32,6 +32,7 @@ describeDb("custom judges through the real sweep (real PG)", () => {
     await t.seedAgent(agentId, t.run + "-acct");
 
     const judge = await createCustomJudge({
+      accountId: "",
       name: customJudgeName(`${t.run} hold warning`),
       display_name: `${t.run} hold warning`,
       description: "Fail if the caller was put on hold without warning.",
@@ -39,6 +40,7 @@ describeDb("custom judges through the real sweep (real PG)", () => {
       enabled: true,
     });
     const unknownJudge = await createCustomJudge({
+      accountId: "",
       name: customJudgeName(`${t.run} discount policy`),
       display_name: `${t.run} discount policy`,
       description: "Fail if a discount was promised outside the approved list.",

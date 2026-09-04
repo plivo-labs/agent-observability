@@ -10,6 +10,8 @@ import { CUSTOM_METRIC_OUT } from "../evals-engine/judges/custom-metric.js";
 export interface JudgeRecord {
   id: string;
   name: string;
+  /** '' = unscoped (defaults, and single-tenant installs). */
+  account_id: string;
   display_name: string;
   description: string;
   type: "default" | "custom";
@@ -20,20 +22,25 @@ export interface JudgeRecord {
   updated_at: string;
 }
 
-const COLS = sql`id, name, display_name, description, type, scope, kind, enabled, created_at, updated_at`;
+const COLS = sql`id, name, account_id, display_name, description, type, scope, kind, enabled, created_at, updated_at`;
 
 export async function listJudges(opts: {
   type: "default" | "custom" | null;
+  /** Tenant filter: defaults (account_id='') plus THIS account's customs.
+   *  null = unscoped caller (single-tenant/OSS) — sees everything. */
+  accountId: string | null;
   limit: number;
   offset: number;
 }): Promise<{ judges: JudgeRecord[]; totalCount: number }> {
-  const typeFilter = opts.type ? sql`WHERE type = ${opts.type}` : sql``;
+  const typeFilter = opts.type ? sql`AND type = ${opts.type}` : sql``;
+  const accountFilter =
+    opts.accountId !== null ? sql`AND account_id IN ('', ${opts.accountId})` : sql``;
   const rows = await sql`
-    SELECT ${COLS} FROM ao_judges ${typeFilter}
+    SELECT ${COLS} FROM ao_judges WHERE TRUE ${typeFilter} ${accountFilter}
     ORDER BY type, display_name
     LIMIT ${opts.limit} OFFSET ${opts.offset}
   `;
-  const count = await sql`SELECT COUNT(*)::int AS n FROM ao_judges ${typeFilter}`;
+  const count = await sql`SELECT COUNT(*)::int AS n FROM ao_judges WHERE TRUE ${typeFilter} ${accountFilter}`;
   return { judges: rows as unknown as JudgeRecord[], totalCount: count[0].n };
 }
 
@@ -46,6 +53,7 @@ export class JudgeNameConflictError extends Error {}
 
 export async function createCustomJudge(input: {
   name: string;
+  accountId: string;
   display_name: string;
   description: string;
   scope: "node" | "conversation";
@@ -56,8 +64,8 @@ export async function createCustomJudge(input: {
   const prompt = { body: input.description, output: CUSTOM_METRIC_OUT, slots: [] };
   try {
     const rows = await sql`
-      INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config, enabled)
-      VALUES (${input.name}, ${input.display_name}, ${input.description}, 'custom', ${input.scope},
+      INSERT INTO ao_judges (name, account_id, display_name, description, type, scope, kind, prompt, config, enabled)
+      VALUES (${input.name}, ${input.accountId ?? ""}, ${input.display_name}, ${input.description}, 'custom', ${input.scope},
               'llm', ${jsonbParam(prompt)}::text::jsonb, '{}'::jsonb, ${input.enabled})
       RETURNING ${COLS}
     `;
@@ -71,6 +79,8 @@ export async function createCustomJudge(input: {
 export async function updateCustomJudge(
   id: string,
   patch: { display_name?: string; description?: string; scope?: "node" | "conversation"; enabled?: boolean },
+  /** Scoped caller: may only update its own rows. null = unscoped. */
+  accountId: string | null = null,
 ): Promise<JudgeRecord | null> {
   // description drives the prompt body, so the two update together; the name
   // (fan-out key) deliberately does NOT follow display_name renames — verdicts
@@ -85,13 +95,17 @@ export async function updateCustomJudge(
                     ELSE jsonb_set(prompt, '{body}', to_jsonb(${patch.description ?? null}::text)) END,
       updated_at = NOW()
     WHERE id = ${id} AND type = 'custom'
+      ${accountId !== null ? sql`AND account_id = ${accountId}` : sql``}
     RETURNING ${COLS}
   `;
   return (rows[0] as unknown as JudgeRecord) ?? null;
 }
 
-export async function deleteCustomJudge(id: string): Promise<boolean> {
-  const rows = await sql`DELETE FROM ao_judges WHERE id = ${id} AND type = 'custom' RETURNING id`;
+export async function deleteCustomJudge(id: string, accountId: string | null = null): Promise<boolean> {
+  const rows = await sql`
+    DELETE FROM ao_judges WHERE id = ${id} AND type = 'custom'
+      ${accountId !== null ? sql`AND account_id = ${accountId}` : sql``}
+    RETURNING id`;
   return rows.length > 0;
 }
 

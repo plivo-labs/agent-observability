@@ -17,6 +17,14 @@ import {
 import { customJudgeName, CUSTOM_JUDGE_NAME_RE } from "../evals-engine/judges/custom-metric.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Tenant scope, injected by the gateway (hodor) as X-Account-Id — never by
+ *  the browser directly (the gateway strips/overwrites inbound values). Absent
+ *  on single-tenant/OSS installs → null → unscoped, today's behaviour. */
+const accountScope = (c: { req: { header: (n: string) => string | undefined } }): string | null => {
+  const v = c.req.header("x-account-id");
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+};
 const LIMIT = { fallback: 100, max: 200 };
 
 export function registerJudgeRoutes(app: Hono): void {
@@ -28,7 +36,7 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", "type must be 'default' or 'custom'"), 400);
     }
     try {
-      const { judges, totalCount } = await listJudges({ type: typeParam, limit, offset });
+      const { judges, totalCount } = await listJudges({ type: typeParam, accountId: accountScope(c), limit, offset });
       const extraParams: Record<string, string> = typeParam ? { type: typeParam } : {};
       return c.json(buildListResponse(judges, limit, offset, totalCount, "/api/judges", extraParams));
     } catch (e) {
@@ -69,7 +77,7 @@ export function registerJudgeRoutes(app: Hono): void {
       );
     }
     try {
-      const judge = await createCustomJudge({ ...parsed.data, name });
+      const judge = await createCustomJudge({ ...parsed.data, name, accountId: accountScope(c) ?? "" });
       return c.json({ api_id: newApiId(), ...judge }, 201);
     } catch (e) {
       if (e instanceof JudgeNameConflictError) {
@@ -94,7 +102,7 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
     }
     try {
-      const updated = await updateCustomJudge(id, parsed.data);
+      const updated = await updateCustomJudge(id, parsed.data, accountScope(c));
       if (updated) return c.json({ api_id: newApiId(), ...updated });
       // Distinguish "locked default" from "gone" — a builder editing a default
       // by mistake needs to hear why, not chase a phantom 404.
@@ -116,7 +124,7 @@ export function registerJudgeRoutes(app: Hono): void {
     const id = c.req.param("id");
     if (!UUID_RE.test(id)) return c.json(buildErrorResponse("not_found", "No such judge"), 404);
     try {
-      if (await deleteCustomJudge(id)) return c.json({ api_id: newApiId(), deleted: true });
+      if (await deleteCustomJudge(id, accountScope(c))) return c.json({ api_id: newApiId(), deleted: true });
       const existing = await getJudge(id);
       if (existing?.type === "default") {
         return c.json(
