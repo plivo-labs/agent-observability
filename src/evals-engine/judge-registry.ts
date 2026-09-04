@@ -38,7 +38,7 @@ const DEFAULT_LLM_JUDGES = [
   "instructions_adherence", "intent_identification", "variable_extraction",
   "hallucination", "node_loop", "voicemail_detection", "bot_detection",
   "call_screening", "low_engagement", "wrong_number", "do_not_disturb",
-  "user_sentiment", "stt", "transfer_consent",
+  "user_sentiment", "stt",
 ] as const;
 
 const REGISTRY_TTL_MS = 30_000;
@@ -127,9 +127,21 @@ export async function syncDefaultJudges(db = sql): Promise<number> {
     `;
     updated += res.length;
   }
-  if (updated > 0) {
-    console.log(`[evals] judge registry: synced ${updated} default judge row(s) to the shipped catalogue`);
+  // Defaults REMOVED from the catalogue must go too, or the API keeps listing
+  // a judge that will never run again (mappings cascade via the judge_id FK).
+  const names = DEFAULT_JUDGE_ROWS.map((r) => r.name);
+  const namesLiteral = `{${names.join(",")}}`; // catalogue names are code constants, literal-safe
+  const pruned = await db`
+    DELETE FROM ao_judges
+    WHERE type = 'default' AND NOT (name = ANY(${namesLiteral}::text[]))
+    RETURNING name
+  `;
+  for (const row of pruned) {
+    console.log(`[evals] judge registry: pruned retired default judge ${row.name}`);
+  }
+  if (updated > 0 || pruned.length > 0) {
+    if (updated > 0) console.log(`[evals] judge registry: synced ${updated} default judge row(s) to the shipped catalogue`);
     lastLoadedAt = 0; // force the next override load to pick up the new content
   }
-  return updated;
+  return updated + pruned.length;
 }

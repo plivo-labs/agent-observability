@@ -10,8 +10,7 @@ import {
 } from "./judges/instructions.js";
 import {
   VOICEMAIL, BOT, CALL_SCREENING, LOW_ENGAGEMENT, WRONG_NUMBER, DO_NOT_DISTURB,
-  USER_SENTIMENT, STT, TRANSFER_CONSENT, OUT_DETECTION, OUT_SENTIMENT, OUT_STT,
-  OUT_TRANSFER_CONSENT,
+  USER_SENTIMENT, STT, OUT_DETECTION, OUT_SENTIMENT, OUT_STT,
 } from "./judges/conversation-judges.js";
 import {
   CONFIG_DEFAULT_REVIEW_SYSTEM, FOCUSED_DEFECT_REVIEW_SYSTEM,
@@ -79,9 +78,6 @@ export const DEFAULT_JUDGE_ROWS: readonly CatalogueRow[] = [
   llm("stt", "STT quality",
     "Speech-to-text error and recovery counts. Stored in the verdict blob; not fanned out as a row.",
     "conversation", STT, OUT_STT, [], { max_tokens: 3000 }),
-  llm("transfer_consent", "Transfer consent",
-    "On transferred calls only: did the caller clearly agree to the transfer first?",
-    "conversation", TRANSFER_CONSENT, OUT_TRANSFER_CONSENT, [], { max_tokens: 1500 }),
   code("user_never_spoke", "Caller never spoke",
     "The caller produced no turn at all. Decided in code from the transcript."),
   code("human_transfer", "Human transfer",

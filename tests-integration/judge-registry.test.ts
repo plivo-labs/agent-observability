@@ -71,5 +71,12 @@ describeDb("default-judge boot sync (real PG)", () => {
     expect(row[0].prompt.body).toBe(DEFAULT_JUDGE_ROWS.find((r) => r.name === "hallucination")!.prompt!.body);
     // idempotent again
     expect(await syncDefaultJudges()).toBe(0);
+
+    // a retired default (in the DB, gone from the catalogue) is pruned
+    await sql`INSERT INTO ao_judges (name, display_name, type, scope, kind, prompt)
+              VALUES ('retired_judge', 'Retired', 'default', 'conversation', 'llm', '{"body":"x","output":"y"}'::jsonb)`;
+    expect(await syncDefaultJudges()).toBe(1);
+    const gone = await sql`SELECT 1 FROM ao_judges WHERE name = 'retired_judge'`;
+    expect(gone.length).toBe(0);
   });
 });

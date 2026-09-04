@@ -54,17 +54,21 @@ describe("custom metric judge", () => {
     expect(customJudgeName("Insurance verified before booking!")).toBe("metric:insurance_verified_before_booking");
   });
 
-  test("conversation scope: one call, system = body+output, speech transcript preferred", async () => {
+  test("conversation scope: one call, system = body+output, FULL transcript (evidence visible)", async () => {
     const llm = new MockLLM([verdictJson("fail", "slots before member id")]);
     const s = spec();
-    const input = ctx({ speech_transcript: "User: BlueCross" });
+    const input = ctx({
+      speech_transcript: "User: BlueCross",
+      full_transcript: "User: BlueCross\nTool_Call: send_sms -> {}",
+    });
     const [v] = await runCustomMetricJudges([s], input, (u) => u, llm);
     expect(v!.verdict).toBe("fail");
     expect(v!.available).toBe(true);
     expect(v!.judge_name).toBe("metric:insurance_verified");
     expect(llm.calls.length).toBe(1);
     expect(llm.calls[0]!.system.startsWith(s.body + s.output)).toBe(true);
-    expect(JSON.parse(llm.calls[0]!.user).conversation_history).toBe("User: BlueCross");
+    // evidence lines must be visible — a custom metric judging tool behaviour is blind on speech-only
+    expect(JSON.parse(llm.calls[0]!.user).conversation_history).toBe("User: BlueCross\nTool_Call: send_sms -> {}");
   });
 
   test("node scope: one call per node, per-node verdicts + rolled-up summary and fail wins", async () => {

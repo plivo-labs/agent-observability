@@ -555,10 +555,9 @@ export async function evaluateIngestedSession(
   const [conversation_metrics, scored, custom_metrics] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
-      // No transcript: nothing for the LLM axis to judge — but the transfer
+      // No transcript: nothing for the LLM axes to judge — but the transfer
       // FACT is a tag, not a transcript, and "a transfer executed with zero
-      // conversation" is the worst case the axis exists to record. Keep it;
-      // consent stays unavailable (nothing to judge, never fabricated).
+      // conversation" is the worst case the axis exists to record. Keep it.
       : Promise.resolve({ ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }),
     input.nodes.length
       ? evaluateSimulation(input, { provider })

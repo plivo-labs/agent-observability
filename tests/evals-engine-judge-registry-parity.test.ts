@@ -45,7 +45,6 @@ const SHIPPED: Record<string, [string, string]> = {
   do_not_disturb: [conv.DO_NOT_DISTURB, conv.OUT_DETECTION],
   user_sentiment: [conv.USER_SENTIMENT, conv.OUT_SENTIMENT],
   stt: [conv.STT, conv.OUT_STT],
-  transfer_consent: [conv.TRANSFER_CONSENT, conv.OUT_TRANSFER_CONSENT],
 };
 
 describe("judge registry parity", () => {
@@ -132,14 +131,13 @@ describe("override liveness — every judge name maps to its real call site", ()
     const { evaluateConversationMetrics } = await import("../src/evals-engine/judges/conversation-judges.js");
     const NAMES = [
       "voicemail_detection", "bot_detection", "call_screening", "low_engagement",
-      "wrong_number", "do_not_disturb", "user_sentiment", "stt", "transfer_consent",
+      "wrong_number", "do_not_disturb", "user_sentiment", "stt",
     ];
     const markers = new Map(NAMES.map((n) => [n, { body: `MARKER[${n}]`, output: SHIPPED[n]![1] }]));
     const reply = (args: any) => {
       const s = args.system as string;
       if (s.includes("MARKER[user_sentiment]")) return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
       if (s.includes("MARKER[stt]")) return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
-      if (s.includes("MARKER[transfer_consent]")) return JSON.stringify({ consent_given: true, reason_code: "ok", reason: "r", technical_reason: "t" });
       return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
     };
     prompts.clearJudgePromptOverrides();
@@ -155,7 +153,7 @@ describe("override liveness — every judge name maps to its real call site", ()
       await evaluateConversationMetrics(input, llm);
       const systems = llm.calls.map((c) => c.system);
       // every judge that ran must have used ITS OWN marker...
-      for (const n of ["voicemail_detection", "bot_detection", "call_screening", "low_engagement", "wrong_number", "do_not_disturb", "user_sentiment", "stt", "transfer_consent"]) {
+      for (const n of ["voicemail_detection", "bot_detection", "call_screening", "low_engagement", "wrong_number", "do_not_disturb", "user_sentiment", "stt"]) {
         expect(systems.some((s) => s.startsWith(`MARKER[${n}]`))).toBe(true);
       }
       // ...and no call may mix markers (a transposition would surface here)

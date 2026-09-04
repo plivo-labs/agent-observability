@@ -137,7 +137,11 @@ async function runCustomMetricJudge(
         {
           metric_name: spec.display_name,
           flow_name: ctx.flow_name,
-          conversation_history: ctx.speech_transcript || ctx.full_transcript,
+          // FULL transcript, evidence lines included — unlike the counterparty
+          // detections (which deliberately judge speech only), a custom metric
+          // often judges tool behaviour ("claimed to send the SMS", "booking
+          // actually created") and is blind without Tool_Call/Tool_Result.
+          conversation_history: ctx.full_transcript,
         },
         provider,
       );

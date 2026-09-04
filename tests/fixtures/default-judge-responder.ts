@@ -23,8 +23,6 @@ export function defaultJudgeResponder(system: string): string | null {
     return JSON.stringify({ sentiment: "neutral", reason: "r", technical_reason: "t" });
   if (system.includes("speech-to-text quality"))
     return JSON.stringify({ error_count: 0, recovered_count: 0, reason: "r", technical_reason: "t" });
-  if (system.includes("consent to the transfer"))
-    return JSON.stringify({ consent_given: true, reason_code: "ok", reason: "r", technical_reason: "t" });
   if (system.includes("Detect ")) // the six boolean detections share this skeleton
     return JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
   return null;

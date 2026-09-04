@@ -64,13 +64,10 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
       // Code-derived signal judge: rides the same array so it reuses the
       // `available === false` skip below (an undecidable axis fans out nothing).
       ["user_never_spoke", cm.user_never_spoke],
-      // Transfer axis. human_transfer is the FACT (fail = a transfer executed,
-      // same detection convention as every row above); transfer_consent is the
-      // JUDGEMENT (fail = it executed without consent; `raw.reason_code` says
-      // why). Both unavailable on sessions with no transfer / no tag feed, so
-      // they fan out nothing there — never a phantom pass.
+      // The transfer FACT (fail = a transfer executed, same detection
+      // convention as every row above). Unavailable on sessions with no
+      // transfer tag, so it fans out nothing there — never a phantom pass.
       ["human_transfer", cm.human_transfer],
-      ["transfer_consent", cm.transfer_consent],
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
