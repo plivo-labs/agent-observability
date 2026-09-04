@@ -23,6 +23,7 @@ import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/p
 import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
+import { registerJudgeRoutes } from "./judges/routes.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, kickEvalForSession, probeEvalTables } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
@@ -208,6 +209,10 @@ registerAnalyticsRoutes(app);
 // ── Alert rules (windowed metric/count triggers + webhooks) ─────────────────
 
 registerAlertRoutes(app);
+
+// ── Judge registry (custom-judge CRUD; defaults are read-only) ──────────────
+
+registerJudgeRoutes(app);
 
 // ── Simulation engine (scenario generation + scenario library CRUD) ──────────
 //    Routes under /api/simulation; 404s when the engine is unconfigured (no
