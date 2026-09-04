@@ -70,6 +70,13 @@ describe("buildUserSimulatorPrompt — pinned template structure & injection", (
     expect(p).toContain("how can I help you"); // forbid-rule phrasing
     expect(p).toContain("Conversation so far:");
     expect(p).toContain("Generate your next response as the customer.");
+    expect(p).toContain("CALLER DISCIPLINE (hard rules, highest priority):");
+    expect(p).toContain("CORRECTION HARD LIMIT");
+    expect(p).toContain("ONLY JUDGE WHAT YOU KNOW");
+    expect(p).toContain("ANSWER THE QUESTION");
+    expect(p).toContain("never reply with a content-free filler");
+    // discipline block sits with the contract, before the identity line
+    expect(p.indexOf("CALLER DISCIPLINE")).toBeLessThan(p.indexOf("Your identity:"));
 
     // Ordering: the length/shape contract must precede the identity line (Go test parity).
     expect(p.indexOf("LENGTH AND SHAPE")).toBeLessThan(p.indexOf("Your identity:"));
@@ -339,6 +346,20 @@ describe("generateUserMessage — LLM call (MockLLM injected)", () => {
       provider,
     });
     expect(msg).toEqual({ message: "Okay, thanks. Bye.", target_achieved: true, end_call: true });
+  });
+
+  test("a bare {message} reply still parses — decision flags default false", async () => {
+    const provider = new MockLLM([JSON.stringify({ message: "Tomorrow works." })]);
+    const msg = await generateUserMessage({
+      scenario: scenario(),
+      history: [],
+      agentFlowDescription: "",
+      isOutboundCall: false,
+      partialAssistantMsg: "",
+      nonAnswerType: "",
+      provider,
+    });
+    expect(msg).toEqual({ message: "Tomorrow works.", target_achieved: false, end_call: false });
   });
 
   test("throws when the message is still empty after the retry", async () => {
