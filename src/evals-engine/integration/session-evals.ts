@@ -18,6 +18,11 @@ import { renderFullTranscript } from "../conversation-input.js";
 import { evaluateSimulation } from "../evaluator.js";
 import { evaluateConversationMetrics, evaluateHumanTransferMetric, zeroConversationMetrics } from "../judges/conversation-judges.js";
 import { IDLE_TAG } from "../types.js";
+import {
+  runCustomMetricJudges,
+  type CustomJudgeSpec,
+  type CustomMetricVerdict,
+} from "../judges/custom-metric.js";
 import type {
   ConversationInput,
   EvalTurn,
@@ -495,6 +500,8 @@ export function buildSessionEvalInput(
 export interface SessionEvalVerdicts {
   node_evaluations: Array<NodeEvaluation & { ref: string }>;
   conversation_metrics: SimConversationMetrics;
+  /** Verdicts from the agent's mapped custom judges; absent when none ran. */
+  custom_metrics?: CustomMetricVerdict[];
 }
 
 /**
@@ -518,12 +525,16 @@ export async function evaluateIngestedSession(
    *  platform's `transfer:human` fact from them; absent ⇒ that axis is
    *  undecidable (unavailable), never a clean "no transfer". */
   tags?: SessionTag[],
+  /** The agent's mapped custom judges (resolved by the sweeper — the engine
+   *  itself never touches the DB). Empty ⇒ the path is identical to before
+   *  custom judges existed. */
+  customJudges: readonly CustomJudgeSpec[] = [],
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
   if (tags) input.tags = tags;
 
-  const [conversation_metrics, scored] = await Promise.all([
+  const [conversation_metrics, scored, custom_metrics] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
       // No transcript: nothing for the LLM axis to judge — but the transfer
@@ -534,6 +545,9 @@ export async function evaluateIngestedSession(
     input.nodes.length
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
+    customJudges.length && input.full_transcript.trim()
+      ? runCustomMetricJudges(customJudges, input, provider)
+      : Promise.resolve([] as CustomMetricVerdict[]),
   ]);
 
   // evaluateSimulation preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
@@ -542,6 +556,7 @@ export async function evaluateIngestedSession(
   return {
     node_evaluations,
     conversation_metrics,
+    ...(custom_metrics.length ? { custom_metrics } : {}),
   };
 }
 

@@ -11,6 +11,7 @@ import {
   heartbeatEvalClaim,
   retireExpiredEvalClaims,
   type EvalClaim,
+  getAgentCustomJudges,
 } from "./db.js";
 import { classifyErrorDurability } from "../error-durability.js";
 import { jsonbParam } from "../jsonb-param.js";
@@ -18,6 +19,7 @@ import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
 import { ensureJudgePromptOverrides } from "./judge-registry.js";
+import type { LlmProvider } from "../llm/index.js";
 import { buildExternalEvalRows } from "./fan-out-rows.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
@@ -145,7 +147,7 @@ async function rewriteFanOutRows(
       source: "eval_sweeper",
       judgeName: row.judgeName,
       tag: row.tag,
-      verdict: row.passed ? "pass" : "fail",
+      verdict: row.verdictText ?? (row.passed ? "pass" : "fail"),
       reasoning: row.reasoning || null,
       instructions: null,
       observedAt,
@@ -240,7 +242,7 @@ export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
 }
 
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
-async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
+async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider }): Promise<boolean> {
   const sessionId = claim.sessionId;
   // Registry prompts (TTL-cached, never throws): defaults resolve through the
   // ao_judges rows from here on; a load failure keeps the shipped constants.
@@ -333,7 +335,13 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
 
     // `built` is threaded through so the (pure but heavy) input build from the
     // judgeability gate above isn't recomputed inside the evaluation.
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined, built, source.tags);
+    // The agent's mapped custom judges ride the same evaluation call. A DB
+    // failure here degrades to defaults-only judging rather than blocking.
+    const customJudges = await getAgentCustomJudges(source.agentId).catch((e) => {
+      console.error(`[evals] custom-judge lookup failed session=${sanitizeForLog(sessionId)}:`, e);
+      return [];
+    });
+    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges);
     // Judging is done — no more provider spend to protect. Stop the heartbeat
     // and drain any in-flight beat so the fan-out + completion below read a
     // token no concurrent beat can invalidate.
@@ -397,7 +405,7 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
   }
 }
 
-export async function runEvalSweepOnce(): Promise<void> {
+export async function runEvalSweepOnce(opts?: { provider?: LlmProvider }): Promise<void> {
   if (sweeping) return; // re-entrancy guard: a slow sweep can't stack
   sweeping = true;
   try {
@@ -437,7 +445,7 @@ export async function runEvalSweepOnce(): Promise<void> {
         remaining--;
         const claim = await claimNextEvalSession();
         if (!claim) return; // backlog drained
-        await judgeClaimed(claim);
+        await judgeClaimed(claim, opts);
       }
     };
     await Promise.all(Array.from({ length: MAX_CONCURRENT_SESSIONS }, () => worker()));

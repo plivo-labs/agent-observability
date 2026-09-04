@@ -5,6 +5,10 @@ export type ExternalEvalRow = {
   judgeName: string;
   tag: string | null;
   passed: boolean;
+  /** Overrides the pass/fail verdict text — custom metrics write 'unknown'
+   *  for calls that never reached the judged situation, which must count as
+   *  neither a pass nor a fail. */
+  verdictText?: string;
   reasoning: string;
   raw: Record<string, unknown>;
 };
@@ -88,6 +92,31 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
         raw: sentiment as any,
       });
     }
+  }
+
+  for (const cm of verdicts.custom_metrics ?? []) {
+    if (!cm.available) continue; // unavailable ⇒ skipped, same contract as detections
+    if (cm.scope === "node" && cm.per_node) {
+      for (const n of cm.per_node) {
+        rows.push({
+          judgeName: cm.judge_name,
+          tag: n.ref || null,
+          passed: n.verdict === "pass",
+          ...(n.verdict === "unknown" ? { verdictText: "unknown" } : {}),
+          reasoning: n.reason,
+          raw: n as unknown as Record<string, unknown>,
+        });
+      }
+      continue;
+    }
+    rows.push({
+      judgeName: cm.judge_name,
+      tag: null,
+      passed: cm.verdict === "pass",
+      ...(cm.verdict === "unknown" ? { verdictText: "unknown" } : {}),
+      reasoning: cm.reason,
+      raw: cm as unknown as Record<string, unknown>,
+    });
   }
 
   return rows;
