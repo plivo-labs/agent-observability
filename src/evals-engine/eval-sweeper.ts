@@ -408,7 +408,7 @@ async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider })
   }
 }
 
-export async function runEvalSweepOnce(opts?: { provider?: LlmProvider }): Promise<void> {
+export async function runEvalSweepOnce(): Promise<void> {
   if (sweeping) return; // re-entrancy guard: a slow sweep can't stack
   sweeping = true;
   try {
@@ -448,7 +448,7 @@ export async function runEvalSweepOnce(opts?: { provider?: LlmProvider }): Promi
         remaining--;
         const claim = await claimNextEvalSession();
         if (!claim) return; // backlog drained
-        await judgeClaimed(claim, opts);
+        await judgeClaimed(claim);
       }
     };
     await Promise.all(Array.from({ length: MAX_CONCURRENT_SESSIONS }, () => worker()));

@@ -476,7 +476,7 @@ export function buildSessionEvalInput(
       flow_name: typeof config.flow_name === "string" ? config.flow_name : "conversation",
       global_prompt: typeof config.global_prompt === "string" ? config.global_prompt : "",
       nodes: judgedNodes,
-      // Goal judging is gone from the ingest path — goals are custom metrics now.
+      // Conversation goals are judged as custom metrics, never as a goal axis.
       goals: [],
       full_transcript: renderFullTranscript(allTurns),
       // Speech-only variant for the conversation-axis judges: drop the

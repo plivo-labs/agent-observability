@@ -43,7 +43,6 @@ const DEFAULT_LLM_JUDGES = [
 
 const REGISTRY_TTL_MS = 30_000;
 let lastLoadedAt = 0;
-let cached: JudgeRegistryRow[] = [];
 
 /** Refresh the override store from the registry (TTL-cached). Never throws. */
 export async function ensureJudgePromptOverrides(db = sql): Promise<void> {
@@ -68,7 +67,6 @@ export async function ensureJudgePromptOverrides(db = sql): Promise<void> {
       }
     }
     setJudgePromptOverrides(map);
-    cached = rows;
     lastLoadedAt = now;
   } catch (e) {
     // Keep whatever prompts are active (shipped constants on first failure).
@@ -77,15 +75,10 @@ export async function ensureJudgePromptOverrides(db = sql): Promise<void> {
   }
 }
 
-/** Registry rows from the last successful load (custom judges included). */
-export function cachedJudgeRegistry(): readonly JudgeRegistryRow[] {
-  return cached;
-}
 
 /** Test hook: force the next ensure call to reload. */
 export function __resetJudgeRegistryCacheForTest(): void {
   lastLoadedAt = 0;
-  cached = [];
 }
 
 // ── boot-time default sync ───────────────────────────────────────────────────
