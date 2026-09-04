@@ -8,6 +8,7 @@ import {
   deleteCustomJudge,
   getJudge,
   JudgeNameConflictError,
+  ForeignAgentError,
   listAgentJudges,
   listJudges,
   setAgentJudges,
@@ -144,9 +145,12 @@ export function registerJudgeRoutes(app: Hono): void {
   app.get("/api/agents/:agent_id/judges", async (c) => {
     const agentId = c.req.param("agent_id");
     try {
-      const judges = await listAgentJudges(agentId);
+      const judges = await listAgentJudges(agentId, accountScope(c));
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
+      if (e instanceof ForeignAgentError) {
+        return c.json(buildErrorResponse("foreign_agent", "That agent belongs to a different account"), 403);
+      }
       console.error(`[judges] agent mapping list failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("list_failed", "Failed to list agent judges"), 500);
     }
@@ -171,11 +175,14 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", "duplicate judge_id in judges"), 400);
     }
     try {
-      const judges = await setAgentJudges(agentId, entries);
+      const judges = await setAgentJudges(agentId, entries, accountScope(c));
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
       if (e instanceof UnknownJudgeIdsError) {
         return c.json(buildErrorResponse("invalid_payload", e.message), 400);
+      }
+      if (e instanceof ForeignAgentError) {
+        return c.json(buildErrorResponse("foreign_agent", "That agent belongs to a different account"), 403);
       }
       console.error(`[judges] agent mapping update failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("update_failed", "Failed to update agent judges"), 500);

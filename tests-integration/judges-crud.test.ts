@@ -132,4 +132,32 @@ describeDb("judge account scoping (real PG)", () => {
     await deleteCustomJudge(a.id);
     await deleteCustomJudge(dupB.id);
   });
+
+  test("agent-ownership fence: scoped callers cannot touch a foreign agent's mappings; unknown agents allowed", async () => {
+    const { ForeignAgentError } = await import("../src/judges/db.js");
+    const ownedAgent = t.uid("own-agent");
+    await t.seedAgent(ownedAgent, run + "-acctA");
+    const j = await createCustomJudge({ accountId: run + "-acctA", name: customJudgeName(run + " fence"), display_name: run + " fence", description: "d", scope: "conversation", enabled: true });
+
+    // owner: fine
+    await setAgentJudges(ownedAgent, [{ judge_id: j.id, enabled: true }], run + "-acctA");
+    expect((await listAgentJudges(ownedAgent, run + "-acctA")).map((m) => m.id)).toEqual([j.id]);
+
+    // foreign scoped caller: read AND write both refused
+    await expect(listAgentJudges(ownedAgent, run + "-acctB")).rejects.toBeInstanceOf(ForeignAgentError);
+    await expect(setAgentJudges(ownedAgent, [], run + "-acctB")).rejects.toBeInstanceOf(ForeignAgentError);
+
+    // scoped caller cannot map another account's judge even onto its own agent
+    const myAgent = t.uid("own-agent-b");
+    await t.seedAgent(myAgent, run + "-acctB");
+    await expect(setAgentJudges(myAgent, [{ judge_id: j.id, enabled: true }], run + "-acctB")).rejects.toBeInstanceOf(UnknownJudgeIdsError);
+
+    // an agent AO has never seen: allowed (new flow before first call)
+    const unseen = t.uid("unseen-agent");
+    const mapped = await setAgentJudges(unseen, [{ judge_id: j.id, enabled: false }], run + "-acctA");
+    expect(mapped.map((m) => m.id)).toEqual([j.id]);
+
+    await sql`DELETE FROM ao_agent_judges WHERE agent_id IN (${ownedAgent}, ${unseen})`;
+    await deleteCustomJudge(j.id);
+  });
 });
