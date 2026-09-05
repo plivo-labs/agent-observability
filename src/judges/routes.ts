@@ -2,7 +2,12 @@
 // the default judges are locked (403), enforced both here and in the db layer.
 import type { Hono } from "hono";
 import { buildErrorResponse, buildListResponse, formatZodError, newApiId, parseLimit } from "../response.js";
-import { agentJudgesPutSchema, judgeCreateSchema, judgePatchSchema } from "./schema.js";
+import { agentJudgesPutSchema, judgeCreateSchema, judgePatchSchema, judgeTestSchema } from "./schema.js";
+import { getJudgeSpec } from "./db.js";
+import { getSessionEvalSource } from "../evals-engine/db.js";
+import { buildSessionEvalInput, type AgentConfig } from "../evals-engine/integration/session-evals.js";
+import { eventsFromChatHistory } from "../evals-engine/eval-sweeper.js";
+import { runCustomMetricJudges } from "../evals-engine/judges/custom-metric.js";
 import {
   createCustomJudge,
   deleteCustomJudge,
@@ -141,6 +146,77 @@ export function registerJudgeRoutes(app: Hono): void {
     } catch (e) {
       console.error(`[judges] delete failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("db_error", "Failed to delete judge"), 500);
+    }
+  });
+
+  // ── dry-run test ───────────────────────────────────────────────────────────
+  //
+  // Runs ONE judge against already-ingested sessions and returns the verdicts
+  // WITHOUT writing anything — no fan-out rows, no verdict blob. This is the
+  // "Test metric" flow: judge a few recent calls before turning the metric on.
+  // Works on drafts (enabled=false) deliberately — testing precedes enabling.
+  app.post("/api/judges/:id/test", async (c) => {
+    const id = c.req.param("id");
+    if (!UUID_RE.test(id)) return c.json(buildErrorResponse("not_found", "No such judge"), 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+    }
+    const parsed = judgeTestSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
+    }
+    try {
+      const spec = await getJudgeSpec(id);
+      if (!spec) return c.json(buildErrorResponse("not_found", "No such LLM judge"), 404);
+
+      const results = await Promise.all(
+        parsed.data.session_ids.map(async (sessionId) => {
+          const source = await getSessionEvalSource(sessionId);
+          if (!source) {
+            return { session_id: sessionId, verdict: null, reason: "session not found or has no agent config", available: false };
+          }
+          const events =
+            Array.isArray((source.rawReport as any)?.events) && (source.rawReport as any).events.length > 0
+              ? ((source.rawReport as any).events as any[])
+              : eventsFromChatHistory(source.chatHistory);
+          const { input, nodeRefs } = buildSessionEvalInput(source.config as AgentConfig, events);
+          if (!input.full_transcript.trim()) {
+            return { session_id: sessionId, verdict: null, reason: "no judgeable transcript", available: false };
+          }
+          if (source.transport) input.transport = source.transport;
+          const [v] = await runCustomMetricJudges([spec], input, (nodeUuid) => {
+            const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
+            return nodeRefs[i]?.ref ?? "";
+          });
+          return {
+            session_id: sessionId,
+            verdict: v!.verdict,
+            reason: v!.reason,
+            technical_reason: v!.technical_reason,
+            available: v!.available,
+            ...(v!.per_node ? { per_node: v!.per_node } : {}),
+          };
+        }),
+      );
+      const decided = results.filter((r) => r.available);
+      return c.json({
+        api_id: newApiId(),
+        judge_id: id,
+        judge_name: spec.name,
+        summary: {
+          scored: decided.length,
+          passed: decided.filter((r) => r.verdict === "pass").length,
+          failed: decided.filter((r) => r.verdict === "fail").length,
+          unknown: decided.filter((r) => r.verdict === "unknown").length,
+        },
+        results,
+      });
+    } catch (e) {
+      console.error(`[judges] test failed judge=${id}: ${(e as Error).message}`);
+      return c.json(buildErrorResponse("test_failed", "Failed to test judge"), 500);
     }
   });
 

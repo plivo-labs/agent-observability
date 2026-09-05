@@ -176,3 +176,28 @@ export async function setAgentJudges(
   });
   return listAgentJudges(agentId, accountId);
 }
+
+/** One judge as a runner spec (any type/enabled state — Test runs drafts too,
+ *  that is the point of testing before Turn on). Null for code judges. */
+export async function getJudgeSpec(id: string): Promise<
+  | { name: string; display_name: string; scope: "node" | "conversation"; body: string; output: string; max_tokens?: number }
+  | null
+> {
+  const rows = await sql`
+    SELECT name, display_name, scope, kind, prompt, config FROM ao_judges WHERE id = ${id}
+  `;
+  const row = rows[0] as any;
+  if (!row || row.kind !== "llm") return null;
+  const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
+  const prompt = parse(row.prompt);
+  if (!prompt || typeof prompt.body !== "string" || typeof prompt.output !== "string") return null;
+  const cfg = parse(row.config) ?? {};
+  return {
+    name: row.name,
+    display_name: row.display_name,
+    scope: row.scope,
+    body: prompt.body,
+    output: prompt.output,
+    ...(typeof cfg.max_tokens === "number" ? { max_tokens: cfg.max_tokens } : {}),
+  };
+}
