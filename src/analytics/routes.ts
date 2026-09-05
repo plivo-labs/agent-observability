@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { buildErrorResponse, newApiId } from "../response.js";
 import { getFleetStats } from "./db.js";
-import { getMetricsAnalytics } from "./metrics-analytics.js";
+import { getMetricFailedRuns, getMetricsAnalytics } from "./metrics-analytics.js";
 
 const ALLOWED_RANGES = new Set(["24h", "7d", "30d"]);
 
@@ -53,6 +53,35 @@ export function registerAnalyticsRoutes(app: Hono) {
         `[analytics] metrics failed account_id=${accountId ?? "(any)"} agent_id=${agentId ?? "(any)"} range=${range}: ${err.message}\n${err.stack ?? ""}`,
       );
       return c.json(buildErrorResponse("metrics_failed", "Failed to compute metrics analytics"), 500);
+    }
+  });
+
+  // ── Failed runs behind one metric (drill-down) ────────────────────────────
+  //
+  // The flow_run_uuids of the sessions that FAILED `metric` (a judge name, e.g.
+  // `metric:<slug>`) in the window, so the client can filter its runs table to
+  // them. Same account/agent/range scope as the metrics route.
+  app.get("/api/analytics/metric-failed-runs", async (c) => {
+    const accountId = c.req.header("x-account-id") || c.req.query("account_id") || null;
+    const agentId = c.req.query("agent_id") || null;
+    const metric = c.req.query("metric") || "";
+    const rangeParam = c.req.query("range") ?? "7d";
+    const range = ALLOWED_RANGES.has(rangeParam) ? rangeParam : "7d";
+    if (!metric) {
+      return c.json(buildErrorResponse("metric_required", "metric query param is required"), 400);
+    }
+    try {
+      const data = await getMetricFailedRuns({ range, accountId, agentId, judgeName: metric });
+      return c.json({ api_id: newApiId(), ...data });
+    } catch (e) {
+      const err = e as Error;
+      console.error(
+        `[analytics] metric-failed-runs failed account_id=${accountId ?? "(any)"} agent_id=${agentId ?? "(any)"} metric=${metric} range=${range}: ${err.message}\n${err.stack ?? ""}`,
+      );
+      return c.json(
+        buildErrorResponse("metric_failed_runs_failed", "Failed to fetch failed runs"),
+        500,
+      );
     }
   });
 }
