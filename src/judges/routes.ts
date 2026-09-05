@@ -1,6 +1,7 @@
 // Judge-registry API. Read covers the whole catalogue; writes are custom-only —
 // the default judges are locked (403), enforced both here and in the db layer.
 import type { Hono } from "hono";
+import { sql } from "../db.js";
 import { buildErrorResponse, buildListResponse, formatZodError, newApiId, parseLimit } from "../response.js";
 import {
   agentJudgesPutSchema,
@@ -210,7 +211,18 @@ export function registerJudgeRoutes(app: Hono): void {
           };
         }),
       );
-      const decided = results.filter((r) => r.available);
+      // The console deep-links each result into Agent Runs, which is keyed by
+      // flow_run_uuid (stored as a session tag), not session_id.
+      const idsLiteral = `{${parsed.data.session_ids.map((s) => `"${s.replace(/"/g, '\\"')}"`).join(",")}}`;
+      const runIdRows = (await sql`
+        SELECT session_id, substring(name FROM 15) AS flow_run_uuid
+        FROM ao_session_tags
+        WHERE session_id = ANY(${idsLiteral}::text[]) AND name LIKE 'flow_run_uuid:%'
+      `) as Array<{ session_id: string; flow_run_uuid: string }>;
+      const runIdBySession = new Map(runIdRows.map((r) => [r.session_id, r.flow_run_uuid]));
+      const withRun = results.map((r) => ({ ...r, flow_run_uuid: runIdBySession.get(r.session_id) ?? null }));
+
+      const decided = withRun.filter((r) => r.available);
       return c.json({
         api_id: newApiId(),
         judge_id: id,
@@ -221,7 +233,7 @@ export function registerJudgeRoutes(app: Hono): void {
           failed: decided.filter((r) => r.verdict === "fail").length,
           unknown: decided.filter((r) => r.verdict === "unknown").length,
         },
-        results,
+        results: withRun,
       });
     } catch (e) {
       console.error(`[judges] test failed judge=${id}: ${(e as Error).message}`);

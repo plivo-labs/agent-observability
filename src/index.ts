@@ -611,7 +611,10 @@ app.get("/api/sessions", async (c) => {
 
   const rows = await sql.unsafe(
     `SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
-            turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol}
+            turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol},
+            (SELECT substring(t.name FROM 15) FROM ao_session_tags t
+               WHERE t.session_id = ao_agent_transport_sessions.session_id
+                 AND t.name LIKE 'flow_run_uuid:%' LIMIT 1) AS flow_run_uuid
      FROM ao_agent_transport_sessions
      ${whereClause}
      ORDER BY ended_at DESC
