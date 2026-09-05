@@ -109,6 +109,34 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
   });
 });
 
+describeDb("agent-ownership fence (real PG)", () => {
+  test("scoped callers cannot touch a foreign agent's mappings; unknown agents allowed", async () => {
+    const { ForeignAgentError } = await import("../src/judges/db.js");
+    const ownedAgent = t.uid("own-agent");
+    await t.seedAgent(ownedAgent, run + "-acctA");
+    const j = await createCustomJudge({ name: customJudgeName(run + " fence"), display_name: run + " fence", description: "d", scope: "conversation", enabled: true });
+
+    // owner (X-Account-Id = acctA): fine
+    await setAgentJudges(ownedAgent, [{ judge_id: j.id, enabled: true }], run + "-acctA");
+    expect((await listAgentJudges(ownedAgent, run + "-acctA")).map((m) => m.id)).toEqual([j.id]);
+
+    // foreign scoped caller: read AND write both refused via ao_agents.account_id
+    await expect(listAgentJudges(ownedAgent, run + "-acctB")).rejects.toBeInstanceOf(ForeignAgentError);
+    await expect(setAgentJudges(ownedAgent, [], run + "-acctB")).rejects.toBeInstanceOf(ForeignAgentError);
+
+    // an agent AO has never seen (new flow before first call): allowed
+    const unseen = t.uid("unseen-agent");
+    const mapped = await setAgentJudges(unseen, [{ judge_id: j.id, enabled: false }], run + "-acctA");
+    expect(mapped.map((m) => m.id)).toEqual([j.id]);
+
+    // unscoped caller (single-tenant/OSS, no header): everything allowed
+    expect((await listAgentJudges(ownedAgent, null)).length).toBe(1);
+
+    await sql`DELETE FROM ao_agent_judges WHERE agent_id IN (${ownedAgent}, ${unseen})`;
+    await deleteCustomJudge(j.id);
+  });
+});
+
 describeDb("judge dry-run test flow (real PG)", () => {
   test("getJudgeSpec + dry-run judging writes NOTHING", async () => {
     const { getJudgeSpec } = await import("../src/judges/db.js");
@@ -160,5 +188,6 @@ describeDb("judge dry-run test flow (real PG)", () => {
 
     await sql`DELETE FROM ao_session_agent_config WHERE session_id = ${sid}`;
     await sql`DELETE FROM ao_agent_transport_sessions WHERE session_id = ${sid}`;
+
   });
 });

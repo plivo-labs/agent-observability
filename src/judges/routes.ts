@@ -13,6 +13,7 @@ import {
   deleteCustomJudge,
   getJudge,
   JudgeNameConflictError,
+  ForeignAgentError,
   listAgentJudges,
   listJudges,
   setAgentJudges,
@@ -22,6 +23,18 @@ import {
 import { customJudgeName, CUSTOM_JUDGE_NAME_RE } from "../evals-engine/judges/custom-metric.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Tenant identity, injected by the gateway (hodor) as X-Account-Id — never by
+ *  the browser directly (the gateway overwrites inbound values). Used ONLY to
+ *  fence the per-agent mapping endpoints against ao_agents.account_id (the
+ *  account each agent already carries from ingest); the judge catalogue itself
+ *  is account-blind — a custom judge does nothing until it is mapped to an
+ *  agent, and that mapping is where the tenant boundary lives. Absent on
+ *  single-tenant/OSS installs → null → unscoped, today's behaviour. */
+const accountScope = (c: { req: { header: (n: string) => string | undefined } }): string | null => {
+  const v = c.req.header("x-account-id");
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+};
 const LIMIT = { fallback: 100, max: 200 };
 
 export function registerJudgeRoutes(app: Hono): void {
@@ -212,9 +225,12 @@ export function registerJudgeRoutes(app: Hono): void {
   app.get("/api/agents/:agent_id/judges", async (c) => {
     const agentId = c.req.param("agent_id");
     try {
-      const judges = await listAgentJudges(agentId);
+      const judges = await listAgentJudges(agentId, accountScope(c));
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
+      if (e instanceof ForeignAgentError) {
+        return c.json(buildErrorResponse("foreign_agent", "That agent belongs to a different account"), 403);
+      }
       console.error(`[judges] agent mapping list failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("list_failed", "Failed to list agent judges"), 500);
     }
@@ -239,11 +255,14 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", "duplicate judge_id in judges"), 400);
     }
     try {
-      const judges = await setAgentJudges(agentId, entries);
+      const judges = await setAgentJudges(agentId, entries, accountScope(c));
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
       if (e instanceof UnknownJudgeIdsError) {
         return c.json(buildErrorResponse("invalid_payload", e.message), 400);
+      }
+      if (e instanceof ForeignAgentError) {
+        return c.json(buildErrorResponse("foreign_agent", "That agent belongs to a different account"), 403);
       }
       console.error(`[judges] agent mapping update failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("update_failed", "Failed to update agent judges"), 500);

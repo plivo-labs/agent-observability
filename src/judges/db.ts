@@ -102,7 +102,28 @@ export interface AgentJudgeRecord extends JudgeRecord {
   mapping_enabled: boolean;
 }
 
-export async function listAgentJudges(agentId: string): Promise<AgentJudgeRecord[]> {
+export class ForeignAgentError extends Error {
+  constructor(agentId: string) {
+    super(`agent ${agentId} belongs to a different account`);
+  }
+}
+
+/** The tenant fence for agent-scoped calls: agent uuids are flow uuids (guessable
+ *  from other surfaces), so a scoped caller must own the agent it touches.
+ *  An agent AO has never seen (no ao_agents row yet — a new flow before its
+ *  first call) is allowed: ownership is unknown, and blocking it would keep
+ *  new flows from configuring metrics until their first call lands. */
+async function assertAgentOwnership(agentId: string, accountId: string | null): Promise<void> {
+  if (accountId === null) return;
+  const rows = await sql`SELECT account_id FROM ao_agents WHERE agent_id = ${agentId}`;
+  const owner = rows[0]?.account_id;
+  if (typeof owner === "string" && owner !== "" && owner !== accountId) {
+    throw new ForeignAgentError(agentId);
+  }
+}
+
+export async function listAgentJudges(agentId: string, accountId: string | null = null): Promise<AgentJudgeRecord[]> {
+  await assertAgentOwnership(agentId, accountId);
   const rows = await sql`
     SELECT j.id, j.name, j.display_name, j.description, j.type, j.scope, j.kind, j.enabled,
            j.created_at, j.updated_at, aj.enabled AS mapping_enabled
@@ -126,7 +147,9 @@ export class UnknownJudgeIdsError extends Error {
 export async function setAgentJudges(
   agentId: string,
   entries: Array<{ judge_id: string; enabled: boolean }>,
+  accountId: string | null = null,
 ): Promise<AgentJudgeRecord[]> {
+  await assertAgentOwnership(agentId, accountId);
   const ids = entries.map((e) => e.judge_id);
   // bun:sql binds a JS array as a comma-joined STRING, not a Postgres array —
   // hand-build the {…} literal from ids the caller has already UUID-validated,
@@ -151,7 +174,7 @@ export async function setAgentJudges(
       `;
     }
   });
-  return listAgentJudges(agentId);
+  return listAgentJudges(agentId, accountId);
 }
 
 /** One judge as a runner spec (any type/enabled state — Test runs drafts too,
