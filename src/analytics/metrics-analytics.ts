@@ -188,3 +188,46 @@ export async function getMetricsAnalytics(opts: {
     custom_metrics: customs,
   };
 }
+
+// The runs behind a metric — the flow_run_uuids of the sessions that FAILED this
+// judge in the window, so a client can drill the metric into its runs table.
+// Same account / agent / range scope as getMetricsAnalytics; generic over AO's
+// own verdicts.
+export async function getMetricFailedRuns(opts: {
+  range?: string;
+  accountId?: string | null;
+  agentId?: string | null;
+  judgeName: string;
+  limit?: number;
+}): Promise<{ range: string; judge_name: string; flow_run_uuids: string[] }> {
+  const range = RANGE_TO_INTERVAL[opts.range ?? "7d"] ? (opts.range ?? "7d") : "7d";
+  const { interval } = RANGE_TO_INTERVAL[range];
+  const accountId = opts.accountId ?? null;
+  const agentId = opts.agentId ?? null;
+  const limit = Math.min(Math.max(opts.limit ?? 500, 1), 2000);
+
+  // The tag name is `flow_run_uuid:<uuid>`; substring FROM 15 drops the prefix.
+  const rows = await sql.unsafe(
+    `SELECT DISTINCT substring(t.name FROM 15) AS flow_run_uuid
+     FROM ao_session_external_evals e
+     JOIN ao_agent_transport_sessions s ON s.session_id = e.session_id
+     JOIN ao_session_tags t
+       ON t.session_id = e.session_id AND t.name LIKE 'flow_run_uuid:%'
+     WHERE e.source = 'eval_sweeper'
+       AND e.judge_name = $1
+       AND e.verdict = 'fail'
+       AND s.ended_at >= NOW() - $2::interval
+       AND ($3::text IS NULL OR s.account_id = $3)
+       AND ($4::text IS NULL OR s.agent_id = $4)
+     LIMIT $5`,
+    [opts.judgeName, interval, accountId, agentId, limit],
+  );
+
+  return {
+    range,
+    judge_name: opts.judgeName,
+    flow_run_uuids: (rows as Array<{ flow_run_uuid: string | null }>)
+      .map((r) => r.flow_run_uuid)
+      .filter((v): v is string => !!v),
+  };
+}
