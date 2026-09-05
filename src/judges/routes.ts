@@ -2,7 +2,16 @@
 // the default judges are locked (403), enforced both here and in the db layer.
 import type { Hono } from "hono";
 import { buildErrorResponse, buildListResponse, formatZodError, newApiId, parseLimit } from "../response.js";
-import { agentJudgesPutSchema, judgeCreateSchema, judgePatchSchema, judgeTestSchema } from "./schema.js";
+import {
+  agentJudgesPutSchema,
+  judgeCreateSchema,
+  judgePatchSchema,
+  judgeTestSchema,
+  metricCalibrateSchema,
+  metricGenerateSchema,
+  metricImproveSchema,
+} from "./schema.js";
+import { calibrateMetric, generateMetrics, improveMetricDescription, NoCalibrationTranscriptsError } from "./ai-assist.js";
 import { getJudgeSpec } from "./db.js";
 import { getSessionEvalSource } from "../evals-engine/db.js";
 import { buildSessionEvalInput, type AgentConfig } from "../evals-engine/integration/session-evals.js";
@@ -266,6 +275,73 @@ export function registerJudgeRoutes(app: Hono): void {
       }
       console.error(`[judges] agent mapping update failed: ${(e as Error).message}`);
       return c.json(buildErrorResponse("update_failed", "Failed to update agent judges"), 500);
+    }
+  });
+
+  // ── AI authoring (LLM transforms; nothing persisted) ─────────────────────────
+  //
+  // Account-blind and stateless: each returns text for the console to show and
+  // the user to review + save. They reuse the judge model and, for calibrate,
+  // AO's own stored transcripts. Generate needs the flow, which the console
+  // holds in the builder and sends; improve/calibrate need no flow.
+  app.post("/api/judges/improve-description", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+    }
+    const parsed = metricImproveSchema.safeParse(body);
+    if (!parsed.success) return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
+    try {
+      const out = await improveMetricDescription(parsed.data);
+      return c.json({ api_id: newApiId(), ...out });
+    } catch (e) {
+      console.error(`[judges] improve failed: ${(e as Error).message}`);
+      return c.json(buildErrorResponse("improve_failed", "Failed to improve the description"), 502);
+    }
+  });
+
+  app.post("/api/judges/generate", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+    }
+    const parsed = metricGenerateSchema.safeParse(body);
+    if (!parsed.success) return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
+    try {
+      const out = await generateMetrics({
+        flow: parsed.data.flow,
+        existing: parsed.data.existing,
+        maxNew: parsed.data.max_new,
+      });
+      return c.json({ api_id: newApiId(), ...out });
+    } catch (e) {
+      console.error(`[judges] generate failed: ${(e as Error).message}`);
+      return c.json(buildErrorResponse("generate_failed", "Failed to generate metrics"), 502);
+    }
+  });
+
+  app.post("/api/judges/calibrate", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(buildErrorResponse("invalid_json", "Body is not valid JSON"), 400);
+    }
+    const parsed = metricCalibrateSchema.safeParse(body);
+    if (!parsed.success) return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
+    try {
+      const out = await calibrateMetric(parsed.data);
+      return c.json({ api_id: newApiId(), ...out });
+    } catch (e) {
+      if (e instanceof NoCalibrationTranscriptsError) {
+        return c.json(buildErrorResponse("no_transcripts", "None of the flagged calls have a transcript to learn from"), 400);
+      }
+      console.error(`[judges] calibrate failed: ${(e as Error).message}`);
+      return c.json(buildErrorResponse("calibrate_failed", "Failed to calibrate the metric"), 502);
     }
   });
 }
