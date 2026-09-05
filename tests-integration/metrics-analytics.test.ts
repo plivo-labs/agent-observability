@@ -5,12 +5,14 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { describeDb, testRun } from "./helpers.js";
 import { sql } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
-import { getMetricsAnalytics } from "../src/analytics/metrics-analytics.js";
+import { getMetricFailedRuns, getMetricsAnalytics } from "../src/analytics/metrics-analytics.js";
 
 const t = testRun("metrics-analytics");
 const acct = t.run + "-acct";
 const agentId = t.uid("agent");
 const otherAgent = t.uid("other");
+// flow_run_uuid seeded per session index, so the failed-runs test can assert exact ids.
+const sessFru: string[] = [];
 
 async function seedSession(sessionId: string, agent: string): Promise<void> {
   await sql`
@@ -24,6 +26,12 @@ async function seedVerdict(sessionId: string, judge: string, verdict: string): P
   await sql`
     INSERT INTO ao_session_external_evals (session_id, judge_name, verdict, reasoning, source, created_at)
     VALUES (${sessionId}, ${judge}, ${verdict}, ${"r"}, ${"eval_sweeper"}, NOW() - interval '111 minutes')
+  `;
+}
+async function seedFlowRunTag(sessionId: string, flowRunUuid: string): Promise<void> {
+  await sql`
+    INSERT INTO ao_session_tags (session_id, name, metadata, source, observed_at)
+    VALUES (${sessionId}, ${"flow_run_uuid:" + flowRunUuid}, '{}'::jsonb, ${"test"}, NOW())
   `;
 }
 
@@ -40,7 +48,10 @@ describeDb("metrics analytics (real PG)", () => {
       [2, "fail", "fail"],
     ] as Array<[number, string, string]>) {
       const sid = t.uid(`sess${i}`);
+      const fru = t.uid(`fru${i}`);
+      sessFru[i] = fru;
       await seedSession(sid, agentId);
+      await seedFlowRunTag(sid, fru);
       await seedVerdict(sid, "hallucination", hv);
       await seedVerdict(sid, "metric:insurance_verified", cv);
     }
@@ -51,6 +62,7 @@ describeDb("metrics analytics (real PG)", () => {
   });
   afterAll(async () => {
     await sql`DELETE FROM ao_session_external_evals WHERE session_id IN (SELECT session_id FROM ao_agent_transport_sessions WHERE account_id = ${acct})`;
+    await sql`DELETE FROM ao_session_tags WHERE session_id IN (SELECT session_id FROM ao_agent_transport_sessions WHERE account_id = ${acct})`;
     await sql`DELETE FROM ao_agent_transport_sessions WHERE account_id = ${acct}`;
   });
 
@@ -81,5 +93,25 @@ describeDb("metrics analytics (real PG)", () => {
     // the other agent's failing hallucination verdict must not inflate the count
     const hall = a.default_checks.find((m) => m.judge_name === "hallucination");
     expect(hall!.passed + hall!.failed).toBe(3); // 3, not 4
+  });
+
+  test("metric-failed-runs returns the flow_run_uuids that failed a metric, scoped", async () => {
+    const r = await getMetricFailedRuns({
+      range: "24h",
+      accountId: acct,
+      agentId,
+      judgeName: "metric:insurance_verified",
+    });
+    // insurance_verified failed on the 2nd and 3rd calls.
+    expect(r.flow_run_uuids.slice().sort()).toEqual([sessFru[1], sessFru[2]].sort());
+
+    // hallucination failed only on the 3rd call (the other agent's fail is out of scope).
+    const h = await getMetricFailedRuns({
+      range: "24h",
+      accountId: acct,
+      agentId,
+      judgeName: "hallucination",
+    });
+    expect(h.flow_run_uuids).toEqual([sessFru[2]]);
   });
 });
