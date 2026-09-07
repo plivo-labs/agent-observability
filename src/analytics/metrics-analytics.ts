@@ -78,15 +78,25 @@ export async function getMetricsAnalytics(opts: {
     sql.unsafe(
       `WITH ${winCte},
        ev AS (
-         SELECT e.judge_name, e.verdict, e.session_id, w.period
+         SELECT e.judge_name, e.verdict, e.session_id, e.tag, w.period
          FROM ao_session_external_evals e
          JOIN win w ON w.session_id = e.session_id
          WHERE e.source = 'eval_sweeper'
        )
        SELECT
          ev.judge_name,
-         COALESCE(j.display_name, ev.judge_name) AS display_name,
-         j.scope,
+         -- Prefer the registry's display name; if a custom's definition row is missing,
+         -- prettify metric:<slug> instead of showing the raw id.
+         COALESCE(
+           j.display_name,
+           CASE WHEN ev.judge_name LIKE 'metric:%'
+                THEN initcap(replace(substring(ev.judge_name FROM 8), '_', ' '))
+                ELSE ev.judge_name END
+         ) AS display_name,
+         -- Scope from the registry; if the definition is missing, derive it from whether the
+         -- metric's verdicts carry a node tag (node-scope) or none (conversation-scope) — so a
+         -- definition-less custom still shows Per node / Per call instead of "—".
+         COALESCE(j.scope, CASE WHEN bool_or(ev.tag IS NOT NULL) THEN 'node' ELSE 'conversation' END) AS scope,
          COALESCE(j.type, CASE WHEN ev.judge_name LIKE 'metric:%' THEN 'custom' ELSE 'default' END) AS type,
          COUNT(*) FILTER (WHERE period = 'cur' AND verdict = 'pass')::int AS passed,
          COUNT(*) FILTER (WHERE period = 'cur' AND verdict = 'fail')::int AS failed,
@@ -96,7 +106,11 @@ export async function getMetricsAnalytics(opts: {
          COUNT(*) FILTER (WHERE period = 'prev' AND verdict = 'fail')::int AS prev_failed
        FROM ev
        LEFT JOIN ao_judges j ON j.name = ev.judge_name
-       GROUP BY ev.judge_name, display_name, j.scope, type`,
+       -- Only surface judges that exist in the registry (the shipped catalogue) or are real
+       -- custom metrics; drop orphaned/retired verdict names (goal:*, dead_air, …) so the
+       -- default count reflects the catalogue, not stale names left in the data.
+       WHERE j.name IS NOT NULL OR ev.judge_name LIKE 'metric:%'
+       GROUP BY ev.judge_name, j.display_name, j.scope, j.type`,
       [interval, accountId, agentId],
     ),
     sql.unsafe(
