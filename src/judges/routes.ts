@@ -213,7 +213,9 @@ export function registerJudgeRoutes(app: Hono): void {
       );
       // The console deep-links each result into Agent Runs, which is keyed by
       // flow_run_uuid (stored as a session tag), not session_id.
-      const idsLiteral = `{${parsed.data.session_ids.map((s) => `"${s.replace(/"/g, '\\"')}"`).join(",")}}`;
+      // Strip " and \ rather than escaping them — session ids never contain either, and full
+      // removal is what the eval-sweeper text[] idiom uses (complete, not partial, sanitization).
+      const idsLiteral = `{${parsed.data.session_ids.map((s) => `"${s.replace(/["\\]/g, "")}"`).join(",")}}`;
       const runIdRows = (await sql`
         SELECT session_id, substring(name FROM 15) AS flow_run_uuid
         FROM ao_session_tags
