@@ -22,10 +22,15 @@ async function seedSession(sessionId: string, agent: string): Promise<void> {
       '{"items":[]}'::jsonb, '{}'::jsonb, NULL, 'livekit')
   `;
 }
-async function seedVerdict(sessionId: string, judge: string, verdict: string): Promise<void> {
+async function seedVerdict(
+  sessionId: string,
+  judge: string,
+  verdict: string,
+  tag: string | null = null,
+): Promise<void> {
   await sql`
-    INSERT INTO ao_session_external_evals (session_id, judge_name, verdict, reasoning, source, created_at)
-    VALUES (${sessionId}, ${judge}, ${verdict}, ${"r"}, ${"eval_sweeper"}, NOW() - interval '111 minutes')
+    INSERT INTO ao_session_external_evals (session_id, judge_name, verdict, reasoning, source, tag, created_at)
+    VALUES (${sessionId}, ${judge}, ${verdict}, ${"r"}, ${"eval_sweeper"}, ${tag}, NOW() - interval '111 minutes')
   `;
 }
 async function seedFlowRunTag(sessionId: string, flowRunUuid: string): Promise<void> {
@@ -113,5 +118,28 @@ describeDb("metrics analytics (real PG)", () => {
       judgeName: "hallucination",
     });
     expect(h.flow_run_uuids).toEqual([sessFru[2]]);
+  });
+
+  test("orphaned verdict names are dropped; a definition-less custom derives scope from its tags", async () => {
+    // a retired/orphaned default name (no ao_judges row, not a metric:) must be dropped —
+    // neither shown as a check nor counted, so the default count reflects the catalogue.
+    const orph = t.uid("orph");
+    await seedSession(orph, agentId);
+    await seedVerdict(orph, "goal:retired_thing", "fail");
+    // a custom whose definition row is absent, with a node-tagged verdict → node scope derived.
+    const nodeSid = t.uid("node-custom");
+    await seedSession(nodeSid, agentId);
+    await seedVerdict(nodeSid, "metric:node_only", "pass", "node-abc");
+
+    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentId, target: 0.75 });
+
+    expect(a.default_checks.some((m) => m.judge_name === "goal:retired_thing")).toBe(false);
+    expect(a.kpis.default_metric_count).toBe(1); // still just the catalogue default (hallucination)
+
+    const nodeOnly = a.custom_metrics.find((m) => m.judge_name === "metric:node_only");
+    expect(nodeOnly?.scope).toBe("node"); // derived from the node tag, no definition needed
+    const conv = a.custom_metrics.find((m) => m.judge_name === "metric:insurance_verified");
+    expect(conv?.scope).toBe("conversation"); // tagless → conversation
+    expect(conv?.display_name).toBe("Insurance Verified"); // prettified fallback (no definition row)
   });
 });
