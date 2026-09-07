@@ -72,7 +72,7 @@ describeDb("metrics analytics (real PG)", () => {
   });
 
   test("aggregates pass rates and splits default vs custom, scoped to the agent", async () => {
-    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentId, target: 0.75 });
+    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentIds: [agentId], target: 0.75 });
 
     const hall = a.default_checks.find((m) => m.judge_name === "hallucination");
     expect(hall).toBeDefined();
@@ -94,7 +94,7 @@ describeDb("metrics analytics (real PG)", () => {
   });
 
   test("account/agent scoping excludes another agent's calls", async () => {
-    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentId, target: 0.75 });
+    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentIds: [agentId], target: 0.75 });
     // the other agent's failing hallucination verdict must not inflate the count
     const hall = a.default_checks.find((m) => m.judge_name === "hallucination");
     expect(hall!.passed + hall!.failed).toBe(3); // 3, not 4
@@ -104,7 +104,7 @@ describeDb("metrics analytics (real PG)", () => {
     const r = await getMetricFailedRuns({
       range: "24h",
       accountId: acct,
-      agentId,
+      agentIds: [agentId],
       judgeName: "metric:insurance_verified",
     });
     // insurance_verified failed on the 2nd and 3rd calls.
@@ -114,7 +114,7 @@ describeDb("metrics analytics (real PG)", () => {
     const h = await getMetricFailedRuns({
       range: "24h",
       accountId: acct,
-      agentId,
+      agentIds: [agentId],
       judgeName: "hallucination",
     });
     expect(h.flow_run_uuids).toEqual([sessFru[2]]);
@@ -131,7 +131,7 @@ describeDb("metrics analytics (real PG)", () => {
     await seedSession(nodeSid, agentId);
     await seedVerdict(nodeSid, "metric:node_only", "pass", "node-abc");
 
-    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentId, target: 0.75 });
+    const a = await getMetricsAnalytics({ range: "24h", accountId: acct, agentIds: [agentId], target: 0.75 });
 
     expect(a.default_checks.some((m) => m.judge_name === "goal:retired_thing")).toBe(false);
     expect(a.kpis.default_metric_count).toBe(1); // still just the catalogue default (hallucination)
@@ -141,5 +141,18 @@ describeDb("metrics analytics (real PG)", () => {
     const conv = a.custom_metrics.find((m) => m.judge_name === "metric:insurance_verified");
     expect(conv?.scope).toBe("conversation"); // tagless → conversation
     expect(conv?.display_name).toBe("Insurance Verified"); // prettified fallback (no definition row)
+  });
+
+  test("multiple selected agent flows aggregate together (agentIds → ANY)", async () => {
+    // agentId has 3 hallucination verdicts (2 pass / 1 fail); otherAgent has 1 (fail).
+    // Selecting BOTH flows must include all 4 — the single-agent path returned 0 here.
+    const a = await getMetricsAnalytics({
+      range: "24h",
+      accountId: acct,
+      agentIds: [agentId, otherAgent],
+      target: 0.75,
+    });
+    const hall = a.default_checks.find((m) => m.judge_name === "hallucination");
+    expect(hall!.passed + hall!.failed).toBe(4);
   });
 });
