@@ -26,7 +26,7 @@ import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { runLlmJudge } from "./run-llm-judge.js";
-import { renderNodeTranscript } from "./node-judge-payload.js";
+import { nodePayload } from "./node-judge-payload.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 
 /** What the sweeper hands the engine per mapped custom judge. */
@@ -137,11 +137,15 @@ async function runCustomMetricJudge(
         {
           metric_name: spec.display_name,
           flow_name: ctx.flow_name,
+          global_prompt: ctx.global_prompt,
           // FULL transcript, evidence lines included — unlike the counterparty
           // detections (which deliberately judge speech only), a custom metric
           // often judges tool behaviour ("claimed to send the SMS", "booking
           // actually created") and is blind without Tool_Call/Tool_Result.
           conversation_history: ctx.full_transcript,
+          ...(ctx.global_variables && Object.keys(ctx.global_variables).length > 0
+            ? { global_variables: ctx.global_variables }
+            : {}),
         },
         provider,
       );
@@ -155,10 +159,11 @@ async function runCustomMetricJudge(
           {
             metric_name: spec.display_name,
             flow_name: ctx.flow_name,
-            node_name: node.node_name,
-            node_prompt: node.node_prompt,
-            node_transcript: renderNodeTranscript(node),
-            conversation_history: ctx.full_transcript,
+            // Give a custom node metric the SAME payload the built-in node judges see
+            // (node_prompt, available_intents, chosen_intent, extracted/global variables,
+            // global_prompt, node transcript + full history) so it can judge intent- or
+            // variable-shaped criteria, not just the raw transcript text.
+            ...nodePayload(node, ctx),
           },
           provider,
         );
