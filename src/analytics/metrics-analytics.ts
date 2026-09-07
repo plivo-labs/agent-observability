@@ -53,13 +53,19 @@ function rate(passed: number, failed: number): number | null {
 export async function getMetricsAnalytics(opts: {
   range?: string;
   accountId?: string | null;
-  agentId?: string | null;
+  agentIds?: string[] | null;
   target?: number;
 }): Promise<MetricsAnalytics> {
   const range = RANGE_TO_INTERVAL[opts.range ?? "7d"] ? (opts.range ?? "7d") : "7d";
   const { interval, bucket } = RANGE_TO_INTERVAL[range];
   const accountId = opts.accountId ?? null;
-  const agentId = opts.agentId ?? null;
+  // Multiple selected agent flows → a Postgres text[] literal bound to `= ANY(...)`. The manual
+  // literal sidesteps bun:sql's array-binding gotcha (same idiom as eval-sweeper); agent-flow
+  // uuids are safe, but strip "/\ defensively. null = no agent filter (all flows).
+  const agentIds = opts.agentIds && opts.agentIds.length ? opts.agentIds : null;
+  const agentIdsLit = agentIds
+    ? `{${agentIds.map((id) => `"${id.replace(/["\\]/g, "")}"`).join(",")}}`
+    : null;
   const target = opts.target ?? 0.75;
 
   // Sessions in the CURRENT and PRIOR windows (prior = the same length again,
@@ -71,22 +77,32 @@ export async function getMetricsAnalytics(opts: {
       FROM ao_agent_transport_sessions
       WHERE ended_at >= NOW() - ($1::interval * 2)
         AND ($2::text IS NULL OR account_id = $2)
-        AND ($3::text IS NULL OR agent_id = $3)
+        AND ($3::text IS NULL OR agent_id = ANY($3::text[]))
     )`;
 
   const [aggRows, trendRows, callRows] = await Promise.all([
     sql.unsafe(
       `WITH ${winCte},
        ev AS (
-         SELECT e.judge_name, e.verdict, e.session_id, w.period
+         SELECT e.judge_name, e.verdict, e.session_id, e.tag, w.period
          FROM ao_session_external_evals e
          JOIN win w ON w.session_id = e.session_id
          WHERE e.source = 'eval_sweeper'
        )
        SELECT
          ev.judge_name,
-         COALESCE(j.display_name, ev.judge_name) AS display_name,
-         j.scope,
+         -- Prefer the registry's display name; if a custom's definition row is missing,
+         -- prettify metric:<slug> instead of showing the raw id.
+         COALESCE(
+           j.display_name,
+           CASE WHEN ev.judge_name LIKE 'metric:%'
+                THEN initcap(replace(substring(ev.judge_name FROM 8), '_', ' '))
+                ELSE ev.judge_name END
+         ) AS display_name,
+         -- Scope from the registry; if the definition is missing, derive it from whether the
+         -- metric's verdicts carry a node tag (node-scope) or none (conversation-scope) — so a
+         -- definition-less custom still shows Per node / Per call instead of "—".
+         COALESCE(j.scope, CASE WHEN bool_or(ev.tag IS NOT NULL) THEN 'node' ELSE 'conversation' END) AS scope,
          COALESCE(j.type, CASE WHEN ev.judge_name LIKE 'metric:%' THEN 'custom' ELSE 'default' END) AS type,
          COUNT(*) FILTER (WHERE period = 'cur' AND verdict = 'pass')::int AS passed,
          COUNT(*) FILTER (WHERE period = 'cur' AND verdict = 'fail')::int AS failed,
@@ -96,8 +112,12 @@ export async function getMetricsAnalytics(opts: {
          COUNT(*) FILTER (WHERE period = 'prev' AND verdict = 'fail')::int AS prev_failed
        FROM ev
        LEFT JOIN ao_judges j ON j.name = ev.judge_name
-       GROUP BY ev.judge_name, display_name, j.scope, type`,
-      [interval, accountId, agentId],
+       -- Only surface judges that exist in the registry (the shipped catalogue) or are real
+       -- custom metrics; drop orphaned/retired verdict names (goal:*, dead_air, …) so the
+       -- default count reflects the catalogue, not stale names left in the data.
+       WHERE j.name IS NOT NULL OR ev.judge_name LIKE 'metric:%'
+       GROUP BY ev.judge_name, j.display_name, j.scope, j.type`,
+      [interval, accountId, agentIdsLit],
     ),
     sql.unsafe(
       `WITH ${winCte}
@@ -111,7 +131,7 @@ export async function getMetricsAnalytics(opts: {
        WHERE e.source = 'eval_sweeper'
        GROUP BY e.judge_name, date_trunc($4, e.created_at)
        ORDER BY bucket_start`,
-      [interval, accountId, agentId, bucket],
+      [interval, accountId, agentIdsLit, bucket],
     ),
     sql.unsafe(
       `WITH ${winCte}
@@ -123,7 +143,7 @@ export async function getMetricsAnalytics(opts: {
            )
          )::int AS calls_scored
        FROM win`,
-      [interval, accountId, agentId],
+      [interval, accountId, agentIdsLit],
     ),
   ]);
 
@@ -174,7 +194,7 @@ export async function getMetricsAnalytics(opts: {
   return {
     range,
     account_id: accountId,
-    agent_id: agentId,
+    agent_id: agentIds ? agentIds.join(",") : null,
     target,
     kpis: {
       overall_pass_rate: rate(totalPassed, totalFailed),
@@ -196,14 +216,18 @@ export async function getMetricsAnalytics(opts: {
 export async function getMetricFailedRuns(opts: {
   range?: string;
   accountId?: string | null;
-  agentId?: string | null;
+  agentIds?: string[] | null;
   judgeName: string;
   limit?: number;
 }): Promise<{ range: string; judge_name: string; flow_run_uuids: string[] }> {
   const range = RANGE_TO_INTERVAL[opts.range ?? "7d"] ? (opts.range ?? "7d") : "7d";
   const { interval } = RANGE_TO_INTERVAL[range];
   const accountId = opts.accountId ?? null;
-  const agentId = opts.agentId ?? null;
+  // See getMetricsAnalytics: manual text[] literal for `= ANY(...)`, or null for all flows.
+  const agentIds = opts.agentIds && opts.agentIds.length ? opts.agentIds : null;
+  const agentIdsLit = agentIds
+    ? `{${agentIds.map((id) => `"${id.replace(/["\\]/g, "")}"`).join(",")}}`
+    : null;
   const limit = Math.min(Math.max(opts.limit ?? 500, 1), 2000);
 
   // The tag name is `flow_run_uuid:<uuid>`; substring FROM 15 drops the prefix.
@@ -218,9 +242,9 @@ export async function getMetricFailedRuns(opts: {
        AND e.verdict = 'fail'
        AND s.ended_at >= NOW() - $2::interval
        AND ($3::text IS NULL OR s.account_id = $3)
-       AND ($4::text IS NULL OR s.agent_id = $4)
+       AND ($4::text IS NULL OR s.agent_id = ANY($4::text[]))
      LIMIT $5`,
-    [opts.judgeName, interval, accountId, agentId, limit],
+    [opts.judgeName, interval, accountId, agentIdsLit, limit],
   );
 
   return {
