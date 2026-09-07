@@ -46,7 +46,6 @@ mock.module("../src/db.js", () => ({
     "ao_session_tags",
     "ao_session_outcomes",
     "ao_session_raw_report_patches",
-    "ao_session_goal_analyses",
   ],
 }));
 

@@ -5,11 +5,13 @@ const realFetch = globalThis.fetch;
 
 const mockInsertWebhookAttempt = mock(() => Promise.resolve());
 
-// Full export surface, though only insertWebhookAttempt is exercised here.
-// bun shares ONE module registry across test files, so a partial mock makes
-// every module importing a name this one omits (src/alerts/routes.ts,
+// Full export surface, though only insertWebhookAttempt is exercised here: bun
+// shares one module registry across test files, so a partial mock makes every
+// module that imports a name this one omits (src/alerts/routes.ts,
 // src/alerts/sweeper.ts) fail to link — "Export named 'deleteAlertRule' not
-// found" — for whichever files happen to load after this one.
+// found" — whenever file order puts them after this file. Main's ordering
+// happens to dodge it today; adding any test file elsewhere in tests/ exposes
+// it.
 mock.module("../src/alerts/db.js", () => ({
   insertWebhookAttempt: mockInsertWebhookAttempt,
   listAlertRules: mock(() => Promise.resolve({ rules: [], totalCount: 0 })),

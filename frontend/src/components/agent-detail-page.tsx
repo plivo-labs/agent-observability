@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 import { parseAsStringEnum, useQueryState } from 'nuqs'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ConversationEvalsTab } from '@/components/conversation-evals-tab'
-import { ConversationGoalsTab } from '@/components/conversation-goals-tab'
 import { SessionsPage } from '@/components/sessions-page'
 import { AgentRunsPage } from '@/components/agent-runs-page'
 import { AgentScopeHeader } from '@/components/agent-scope-header'
@@ -19,7 +18,6 @@ const TAB_VALUES = [
   'sessions',
   'simulation-evals',
   'conversation-evals',
-  'conversation-goals',
 ] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
@@ -80,7 +78,6 @@ export const AgentDetailPage = ({
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="simulation-evals">Simulation Evals</TabsTrigger>
           <TabsTrigger value="conversation-evals">Conversation Evals</TabsTrigger>
-          <TabsTrigger value="conversation-goals">Conversation Goals</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sessions" className="mt-4">
@@ -108,10 +105,6 @@ export const AgentDetailPage = ({
         <TabsContent value="conversation-evals" className="mt-4">
           {/* No accountId passed — eval list spans all accounts for this id. */}
           <ConversationEvalsTab agentId={agentId} />
-        </TabsContent>
-
-        <TabsContent value="conversation-goals" className="mt-4">
-          <ConversationGoalsTab agentId={agentId} />
         </TabsContent>
       </Tabs>
     </div>

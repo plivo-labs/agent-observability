@@ -67,3 +67,28 @@ describe("buildExternalEvalRows — SER-6035 #3: skip adherence on machine-answe
     expect(names(v)).toContain("instructions_adherence");
   });
 });
+
+describe("buildExternalEvalRows — the transfer fact (human_transfer)", () => {
+  const withTransfer = (over: { transferred?: boolean } = {}) => {
+    const v = verdicts();
+    v.conversation_metrics.human_transfer = det(!!over.transferred);
+    return v;
+  };
+  const row = (v: any, name: string) => buildExternalEvalRows(v).find((r) => r.judgeName === name);
+
+  test("a transferred session fans out human_transfer as fail (detection convention: fail = it happened)", () => {
+    const r = row(withTransfer({ transferred: true }), "human_transfer");
+    expect(r).toBeDefined();
+    expect(r!.passed).toBe(false);
+  });
+
+  test("a session with no transfer fact fans out NO human_transfer row (the judge is unavailable, not a pass)", () => {
+    const v = withTransfer({ transferred: false });
+    v.conversation_metrics.human_transfer = det(false, false); // what evaluateHumanTransfer emits without the tag
+    expect(row(v, "human_transfer")).toBeUndefined();
+  });
+
+  test("verdicts that predate the transfer axis fan out no transfer row", () => {
+    expect(names(verdicts())).not.toContain("human_transfer");
+  });
+});

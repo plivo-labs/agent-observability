@@ -148,7 +148,6 @@ export function testRun(prefix: string): TestRun {
     async cleanup() {
       await sql`DELETE FROM ao_alert_rules WHERE name LIKE ${run + "%"}`;
       await sql`DELETE FROM ao_session_tags WHERE session_id LIKE ${run + "%"}`;
-      await sql`DELETE FROM ao_session_goal_analyses WHERE session_id LIKE ${run + "%"}`;
       await sql`DELETE FROM ao_session_external_evals WHERE session_id LIKE ${run + "%"}`;
       await sql`DELETE FROM ao_session_external_evals WHERE source = ${run}`;
       await sql`DELETE FROM ao_session_outcomes WHERE source = ${run}`;
