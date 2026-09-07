@@ -39,18 +39,23 @@ export function registerAnalyticsRoutes(app: Hono) {
   // or the query param on single-tenant installs.
   app.get("/api/analytics/metrics", async (c) => {
     const accountId = c.req.header("x-account-id") || c.req.query("account_id") || null;
-    const agentId = c.req.query("agent_id") || null;
+    // One or more agent flows: repeated ?agent_id=a&agent_id=b or a comma list.
+    const agentIds = (c.req.queries("agent_id") ?? [])
+      .flatMap((v) => v.split(","))
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const agentIdsOrNull = agentIds.length ? agentIds : null;
     const rangeParam = c.req.query("range") ?? "7d";
     const range = ALLOWED_RANGES.has(rangeParam) ? rangeParam : "7d";
     const targetRaw = Number(c.req.query("target"));
     const target = Number.isFinite(targetRaw) && targetRaw > 0 && targetRaw <= 1 ? targetRaw : 0.75;
     try {
-      const data = await getMetricsAnalytics({ range, accountId, agentId, target });
+      const data = await getMetricsAnalytics({ range, accountId, agentIds: agentIdsOrNull, target });
       return c.json({ api_id: newApiId(), ...data });
     } catch (e) {
       const err = e as Error;
       console.error(
-        `[analytics] metrics failed account_id=${accountId ?? "(any)"} agent_id=${agentId ?? "(any)"} range=${range}: ${err.message}\n${err.stack ?? ""}`,
+        `[analytics] metrics failed account_id=${accountId ?? "(any)"} agent_id=${agentIdsOrNull?.join(",") ?? "(any)"} range=${range}: ${err.message}\n${err.stack ?? ""}`,
       );
       return c.json(buildErrorResponse("metrics_failed", "Failed to compute metrics analytics"), 500);
     }
@@ -63,7 +68,11 @@ export function registerAnalyticsRoutes(app: Hono) {
   // them. Same account/agent/range scope as the metrics route.
   app.get("/api/analytics/metric-failed-runs", async (c) => {
     const accountId = c.req.header("x-account-id") || c.req.query("account_id") || null;
-    const agentId = c.req.query("agent_id") || null;
+    const agentIds = (c.req.queries("agent_id") ?? [])
+      .flatMap((v) => v.split(","))
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const agentIdsOrNull = agentIds.length ? agentIds : null;
     const metric = c.req.query("metric") || "";
     const rangeParam = c.req.query("range") ?? "7d";
     const range = ALLOWED_RANGES.has(rangeParam) ? rangeParam : "7d";
@@ -71,12 +80,12 @@ export function registerAnalyticsRoutes(app: Hono) {
       return c.json(buildErrorResponse("metric_required", "metric query param is required"), 400);
     }
     try {
-      const data = await getMetricFailedRuns({ range, accountId, agentId, judgeName: metric });
+      const data = await getMetricFailedRuns({ range, accountId, agentIds: agentIdsOrNull, judgeName: metric });
       return c.json({ api_id: newApiId(), ...data });
     } catch (e) {
       const err = e as Error;
       console.error(
-        `[analytics] metric-failed-runs failed account_id=${accountId ?? "(any)"} agent_id=${agentId ?? "(any)"} metric=${metric} range=${range}: ${err.message}\n${err.stack ?? ""}`,
+        `[analytics] metric-failed-runs failed account_id=${accountId ?? "(any)"} agent_id=${agentIdsOrNull?.join(",") ?? "(any)"} metric=${metric} range=${range}: ${err.message}\n${err.stack ?? ""}`,
       );
       return c.json(
         buildErrorResponse("metric_failed_runs_failed", "Failed to fetch failed runs"),
