@@ -150,6 +150,10 @@ export async function listAgentJudges(
   return rows as unknown as AgentJudgeRecord[];
 }
 
+export class MappingOwnershipConflictError extends Error {
+  constructor() { super("Existing metric mappings need ownership reconciliation"); }
+}
+
 export class UnknownJudgeIdsError extends Error {
   constructor(public readonly ids: string[]) {
     super(`unknown or non-custom judge ids: ${ids.join(", ")}`);
@@ -175,6 +179,16 @@ export async function setAgentJudges(
   }
   const idsLiteral = `{${ids.join(",")}}`;
   await sql.begin(async (tx: any) => {
+    if (accountId !== null) {
+      // Keep the owner stable through replacement. Hidden legacy mappings are
+      // evidence for operator reconciliation, not an empty user-visible set.
+      const agents = await tx`SELECT account_id FROM ao_agents WHERE agent_id = ${agentId} FOR UPDATE`;
+      if (agents[0]?.account_id !== accountId) throw new ForeignAgentError(agentId);
+      const unresolved = await tx`SELECT 1 FROM ao_agent_judges aj JOIN ao_judges j ON j.id = aj.judge_id
+        WHERE aj.agent_id = ${agentId} AND j.type = 'custom'
+          AND j.account_id IS DISTINCT FROM ${accountId}::text LIMIT 1`;
+      if (unresolved.length > 0) throw new MappingOwnershipConflictError();
+    }
     if (ids.length > 0) {
       const found = await tx`SELECT id FROM ao_judges WHERE id = ANY(${idsLiteral}::uuid[]) AND type = 'custom'
         AND (${accountId}::text IS NULL OR account_id = ${accountId}) FOR SHARE`;

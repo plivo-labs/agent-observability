@@ -1,3 +1,4 @@
+import { textArrayLiteral } from "./pg-array.js";
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { config } from "./config.js";
@@ -26,7 +27,7 @@ export class SessionAccessError extends Error {
 /** Authorize the whole batch before reading transcripts or starting an LLM. */
 export async function assertSessionAccess(ids: string[], accountId: string | null): Promise<void> {
   if (accountId === null) return;
-  const literal = `{${ids.map(id => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+  const literal = textArrayLiteral(ids);
   const rows = await sql`SELECT session_id FROM ao_agent_transport_sessions
     WHERE session_id = ANY(${literal}::text[]) AND account_id = ${accountId}`;
   const allowed = new Set(rows.map((row: { session_id: string }) => row.session_id));
