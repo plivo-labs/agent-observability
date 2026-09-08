@@ -90,6 +90,16 @@ describe("fromSimTranscript screening surface", () => {
     expect(input.nodes[0].required_variables).toEqual([]);
   });
 
+  test("ai_agent_v29 input_collected counts as required variables (SER-6564)", () => {
+    const idx: NodeConfigIndex = new Map([
+      ["V29", { config: { name: "Collector", input_collected: [{ variable_name: "dob" }, { variable_name: "policy_no" }] }, configName: "Collector", metaName: "Collector", type: "ai_agent_v29" }],
+    ]);
+    const turns: EvalTurn[] = [{ node_uuid: "V29", user: "1990-01-01", agent: "noted", intent: "" }];
+    const input = fromSimTranscript({ turns, nodeIndex: idx, flowObj: { flow_name: "x" }, variablesByNode: { V29: { dob: "1990-01-01" } } });
+    expect(input.nodes[0].required_variables).toEqual(["dob", "policy_no"]);
+    expect(input.nodes[0].extracted_variables).toEqual({ dob: "1990-01-01" });
+  });
+
   test("agent_node collectibles count as required variables", () => {
     const idx: NodeConfigIndex = new Map([
       ["COLL", { config: { name: "Collector", agent_tasks: { variables: [{ name: "industry" }], extract_only: [{ name: "city" }] } }, configName: "Collector", metaName: "Collector", type: "agent_node" }],

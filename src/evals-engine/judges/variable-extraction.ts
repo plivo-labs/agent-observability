@@ -266,13 +266,13 @@ export async function runVariableExtractionJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: VariableExtractionRaw; usage: LlmUsage }> {
-  if (node.required_variables.length === 0 && Object.keys(node.extracted_variables ?? {}).length === 0) {
+  if (node.required_variables.length === 0) {
     return {
       data: {
         extraction_successful: true,
         score: 1.0,
-        reason: "No variables configured on this node — extraction not applicable.",
-        technical_reason: "skipped: empty required_variables and extracted_variables",
+        reason: "No variables declared on this node — extraction not applicable.",
+        technical_reason: "skipped: node declares no required_variables",
         missing_variables: [],
         incorrect_variables: [],
       } as VariableExtractionRaw,
