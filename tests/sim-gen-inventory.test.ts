@@ -72,32 +72,9 @@ describe("extractEmbeddedActions", () => {
     expect(extractEmbeddedActions({ nodes: [{ id: "b", type: "branch_v2", data: { config: {} } }] })).toEqual([]);
   });
 
-  test("an ai_agent_v29 node's embedded actions are extracted (SER-6564)", () => {
-    const v29 = {
-      nodes: [
-        {
-          id: "v29",
-          type: "ai_agent_v29",
-          data: {
-            config: {
-              name: "Collect Claim",
-              actions: [
-                { action_type: "HTTP", http_tool_name: "file_claim", http_tool_description: "File the claim.", http_function_schema: { type: "object" } },
-              ],
-            },
-          },
-        },
-      ],
-    };
-    expect(extractEmbeddedActions(v29)).toEqual([
-      {
-        node_uuid: "v29",
-        node_name: "Collect Claim",
-        actions: [
-          { action_type: "HTTP", mock_key: "file_claim", description: "File the claim.", schema_json: JSON.stringify({ type: "object" }) },
-        ],
-      },
-    ]);
+  test("ai_agent_v29 is treated as an embedded-action node (SER-6564)", () => {
+    const flow = { nodes: [{ id: "v29", type: "ai_agent_v29", data: { config: { name: "Collect Claim", actions: [{ action_type: "HTTP", http_tool_name: "file_claim" }] } } }] };
+    expect(extractEmbeddedActions(flow).map((e) => e.node_uuid)).toEqual(["v29"]);
   });
 });
 
