@@ -35,6 +35,7 @@ import { emitScenarioStarted, emitScenarioDbReady, emitTurnCompleted, emitScenar
 import { simEngineConfig } from "../config.js";
 import { insertRunScenario, completeRunScenario } from "../db.js";
 import { evaluateSimulationForRun } from "../../evals-engine/integration/sim-adapter.js";
+import { formatToolCall } from "../../evals-engine/integration/session-evals.js";
 import { flowHasOutboundCall } from "../gen/inventory.js";
 import type { EvalTurn } from "../../evals-engine/index.js";
 
@@ -304,6 +305,22 @@ class ScenarioRunner {
             : `[flow action] HTTP request node "${name}" webhook call did NOT succeed (outcome: ${hop.outcome || "unknown"}) — this outcome was NOT recorded.`;
         this.evalTurns.push({ node_uuid: nodeUuid, user: "", agent: line, intent: "", evidence: true });
       }
+    }
+    // Tool calls the agent fired this turn (ai_agent_v29's collect_input /
+    // record_<name> / change_earlier_value, and any other function call) — surfaced
+    // as Tool_Call evidence so the variable/criteria judges can quote a grounded
+    // value. Rendered identically to the StoredEvent path via formatToolCall.
+    for (const call of resp.tool_calls ?? []) {
+      if (!call || typeof call !== "object") continue;
+      const name = (call as Record<string, unknown>).name;
+      if (typeof name !== "string" || !name) continue;
+      this.evalTurns.push({
+        node_uuid: nodeUuid,
+        user: "",
+        agent: formatToolCall(name, (call as Record<string, unknown>).arguments),
+        intent: "",
+        evidence: true,
+      });
     }
     this.turnIndex += 1;
     this.stress = NO_STRESS;
