@@ -25,6 +25,6 @@ WHERE j.type = 'custom' AND j.account_id IS NULL
 ORDER BY j.id, aj.agent_id;
 ```
 
-Use authoritative external customer/agent records to reconcile these rows. Knowing a judge UUID, its name, or the first requester is insufficient evidence. For a definition shared across accounts, create a separate owned definition for each legitimate account and remap only its verified agents; do not assign the shared row arbitrarily. Preserve original data until that reconciliation is reviewed.
+Use authoritative external customer/agent records to reconcile these rows. Knowing a judge UUID, its name, or the first requester is insufficient evidence. For a definition shared across accounts, create a separate owned definition for each legitimate account and remap only its verified agents; do not assign the shared row arbitrarily. Preserve original data until that reconciliation is reviewed. Scoped mapping replacement returns 409 while an agent still has foreign or unowned custom mappings, so an apparently empty list cannot silently erase that evidence.
 
 Enable required scope only after compatible AO code and gateway assertions are ready. Validate an owned metric and new agent, foreign metric/session rejection, mixed calibration rejection, exact session filtering and permission denial before restoring feature traffic. A rollback to global name uniqueness is impossible once two accounts have created the same name without a separate reconciliation; prefer rolling forward.
