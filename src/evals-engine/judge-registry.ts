@@ -101,7 +101,7 @@ export async function syncDefaultJudges(db = sql): Promise<number> {
       INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config)
       VALUES (${row.name}, ${row.display_name}, ${row.description}, 'default', ${row.scope}, ${row.kind},
               ${jsonbParam(row.prompt)}::text::jsonb, ${jsonbParam(row.config)}::text::jsonb)
-      ON CONFLICT (name) DO UPDATE SET
+      ON CONFLICT (name) WHERE type = 'default' DO UPDATE SET
         display_name = EXCLUDED.display_name,
         description = EXCLUDED.description,
         scope = EXCLUDED.scope,

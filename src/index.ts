@@ -1,3 +1,4 @@
+import { accountScope, accountScopeGuard } from "./account-scope.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { basicAuth } from "hono/basic-auth";
@@ -518,10 +519,12 @@ app.post("/observability/metrics/otlp/v0", async (c) => {
 const TS_HEADLINE_OPTIONS =
   'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "';
 
+app.use("/api/sessions", accountScopeGuard);
 app.get("/api/sessions", async (c) => {
+  const trustedAccount = accountScope(c);
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
-  const accountId = c.req.query("account_id") || null;
+  const accountId = trustedAccount ?? (c.req.query("account_id") || null);
   const agentId = c.req.query("agent_id") || null;
   const agentName = c.req.query("agent_name") || null;
   const startedFrom = c.req.query("started_from") || null;
@@ -555,7 +558,10 @@ app.get("/api/sessions", async (c) => {
     );
     params.push(q);
   }
-  if (accountId) {
+  if (trustedAccount !== null) {
+    predicates.push(`account_id = $${params.length + 1}`);
+    params.push(trustedAccount);
+  } else if (accountId) {
     // Case-insensitive substring match. The user-typed value is escaped
     // for LIKE metacharacters and lower-cased once in JS so the SQL can
     // pattern-match against `LOWER(account_id)` without a runtime

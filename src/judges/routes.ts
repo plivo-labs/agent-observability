@@ -1,6 +1,7 @@
 // Judge-registry API. Read covers the whole catalogue; writes are custom-only —
 // the default judges are locked (403), enforced both here and in the db layer.
 import type { Hono } from "hono";
+import { accountScope, accountScopeGuard, assertSessionAccess, SessionAccessError } from "../account-scope.js";
 import { sql } from "../db.js";
 import { buildErrorResponse, buildListResponse, formatZodError, newApiId, parseLimit } from "../response.js";
 import {
@@ -34,20 +35,12 @@ import { customJudgeName, CUSTOM_JUDGE_NAME_RE } from "../evals-engine/judges/cu
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Tenant identity, injected by the gateway (hodor) as X-Account-Id — never by
- *  the browser directly (the gateway overwrites inbound values). Used ONLY to
- *  fence the per-agent mapping endpoints against ao_agents.account_id (the
- *  account each agent already carries from ingest); the judge catalogue itself
- *  is account-blind — a custom judge does nothing until it is mapped to an
- *  agent, and that mapping is where the tenant boundary lives. Absent on
- *  single-tenant/OSS installs → null → unscoped, today's behaviour. */
-const accountScope = (c: { req: { header: (n: string) => string | undefined } }): string | null => {
-  const v = c.req.header("x-account-id");
-  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
-};
 const LIMIT = { fallback: 100, max: 200 };
 
 export function registerJudgeRoutes(app: Hono): void {
+  app.use("/api/judges", accountScopeGuard);
+  app.use("/api/judges/*", accountScopeGuard);
+  app.use("/api/agents/:agent_id/judges", accountScopeGuard);
   app.get("/api/judges", async (c) => {
     const limit = parseLimit(c.req.query("limit"), LIMIT);
     const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
@@ -56,7 +49,7 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", "type must be 'default' or 'custom'"), 400);
     }
     try {
-      const { judges, totalCount } = await listJudges({ type: typeParam, limit, offset });
+      const { judges, totalCount } = await listJudges({ type: typeParam, limit, offset, accountId: accountScope(c) });
       const extraParams: Record<string, string> = typeParam ? { type: typeParam } : {};
       return c.json(buildListResponse(judges, limit, offset, totalCount, "/api/judges", extraParams));
     } catch (e) {
@@ -69,7 +62,7 @@ export function registerJudgeRoutes(app: Hono): void {
     const id = c.req.param("id");
     if (!UUID_RE.test(id)) return c.json(buildErrorResponse("not_found", "No such judge"), 404);
     try {
-      const judge = await getJudge(id);
+      const judge = await getJudge(id, accountScope(c));
       if (!judge) return c.json(buildErrorResponse("not_found", "No such judge"), 404);
       return c.json({ api_id: newApiId(), ...judge });
     } catch (e) {
@@ -97,7 +90,7 @@ export function registerJudgeRoutes(app: Hono): void {
       );
     }
     try {
-      const judge = await createCustomJudge({ ...parsed.data, name });
+      const judge = await createCustomJudge({ ...parsed.data, name, accountId: accountScope(c) });
       return c.json({ api_id: newApiId(), ...judge }, 201);
     } catch (e) {
       if (e instanceof JudgeNameConflictError) {
@@ -122,11 +115,11 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
     }
     try {
-      const updated = await updateCustomJudge(id, parsed.data);
+      const updated = await updateCustomJudge(id, parsed.data, accountScope(c));
       if (updated) return c.json({ api_id: newApiId(), ...updated });
       // Distinguish "locked default" from "gone" — a builder editing a default
       // by mistake needs to hear why, not chase a phantom 404.
-      const existing = await getJudge(id);
+      const existing = await getJudge(id, accountScope(c));
       if (existing?.type === "default") {
         return c.json(
           buildErrorResponse("default_judge_immutable", "Default judges are read-only; create a custom judge instead"),
@@ -144,8 +137,8 @@ export function registerJudgeRoutes(app: Hono): void {
     const id = c.req.param("id");
     if (!UUID_RE.test(id)) return c.json(buildErrorResponse("not_found", "No such judge"), 404);
     try {
-      if (await deleteCustomJudge(id)) return c.json({ api_id: newApiId(), deleted: true });
-      const existing = await getJudge(id);
+      if (await deleteCustomJudge(id, accountScope(c))) return c.json({ api_id: newApiId(), deleted: true });
+      const existing = await getJudge(id, accountScope(c));
       if (existing?.type === "default") {
         return c.json(
           buildErrorResponse("default_judge_immutable", "Default judges cannot be deleted"),
@@ -179,12 +172,14 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
     }
     try {
-      const spec = await getJudgeSpec(id);
+      const accountId = accountScope(c);
+      const spec = await getJudgeSpec(id, accountId);
       if (!spec) return c.json(buildErrorResponse("not_found", "No such LLM judge"), 404);
+      await assertSessionAccess(parsed.data.session_ids, accountId);
 
       const results = await Promise.all(
         parsed.data.session_ids.map(async (sessionId) => {
-          const source = await getSessionEvalSource(sessionId);
+          const source = await getSessionEvalSource(sessionId, accountId);
           if (!source) {
             return { session_id: sessionId, verdict: null, reason: "session not found or has no agent config", available: false };
           }
@@ -236,6 +231,7 @@ export function registerJudgeRoutes(app: Hono): void {
         results: withRun,
       });
     } catch (e) {
+      if (e instanceof SessionAccessError) return c.json(buildErrorResponse("not_found", "No such session"), 404);
       console.error(`[judges] test failed judge=${id}: ${(e as Error).message}`);
       return c.json(buildErrorResponse("test_failed", "Failed to test judge"), 500);
     }
@@ -246,7 +242,7 @@ export function registerJudgeRoutes(app: Hono): void {
   app.get("/api/agents/:agent_id/judges", async (c) => {
     const agentId = c.req.param("agent_id");
     try {
-      const judges = await listAgentJudges(agentId, accountScope(c));
+      const judges = await listAgentJudges(agentId, accountScope(c), c.req.header("x-verified-agent-id") ?? null);
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
       if (e instanceof ForeignAgentError) {
@@ -276,7 +272,7 @@ export function registerJudgeRoutes(app: Hono): void {
       return c.json(buildErrorResponse("invalid_payload", "duplicate judge_id in judges"), 400);
     }
     try {
-      const judges = await setAgentJudges(agentId, entries, accountScope(c));
+      const judges = await setAgentJudges(agentId, entries, accountScope(c), c.req.header("x-verified-agent-id") ?? null);
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
       if (e instanceof UnknownJudgeIdsError) {
@@ -292,9 +288,9 @@ export function registerJudgeRoutes(app: Hono): void {
 
   // ── AI authoring (LLM transforms; nothing persisted) ─────────────────────────
   //
-  // Account-blind and stateless: each returns text for the console to show and
+  // Each returns text for the caller to show and
   // the user to review + save. They reuse the judge model and, for calibrate,
-  // AO's own stored transcripts. Generate needs the flow, which the console
+  // account-authorized stored transcripts. Generate needs the flow, which the caller
   // holds in the builder and sends; improve/calibrate need no flow.
   app.post("/api/judges/improve-description", async (c) => {
     let body: unknown;
@@ -346,9 +342,10 @@ export function registerJudgeRoutes(app: Hono): void {
     const parsed = metricCalibrateSchema.safeParse(body);
     if (!parsed.success) return c.json(buildErrorResponse("invalid_payload", formatZodError(parsed.error)), 400);
     try {
-      const out = await calibrateMetric(parsed.data);
+      const out = await calibrateMetric(parsed.data, undefined, accountScope(c));
       return c.json({ api_id: newApiId(), ...out });
     } catch (e) {
+      if (e instanceof SessionAccessError) return c.json(buildErrorResponse("not_found", "No such session"), 404);
       if (e instanceof NoCalibrationTranscriptsError) {
         return c.json(buildErrorResponse("no_transcripts", "None of the flagged calls have a transcript to learn from"), 400);
       }
