@@ -421,7 +421,7 @@ class ScenarioRunner {
     }
 
     // The run is still held on agent-runner after a caller-decided end — release it best-effort.
-    if (this.callerEnded) await this.livekit.end(this.flowRunUuid);
+    if (this.callerEnded) await this.livekit.end(this.flowRunUuid, this.job.authId);
 
     return {
       stopReason: this.stopReason,
@@ -544,7 +544,7 @@ export async function runScenario(deps: ScenarioRunnerDeps, job: RunScenarioJob)
     const runLost = err instanceof LiveKitSimError && err.runLost;
     // Best-effort early teardown so a mid-run failure doesn't leave the run held on its owner
     // until TTL (a run_lost owner is already gone — end() no-ops on the dead address).
-    await client.end(flowRunUuid);
+    await client.end(flowRunUuid, job.authId);
     await emitScenarioCompleted(deps.redis, job.simRunUuid, {
       scenario_id: job.scenarioId,
       flow_run_uuid: flowRunUuid,

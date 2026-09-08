@@ -98,16 +98,16 @@ describe("LiveKitSimClient.turn — wire contract", () => {
 });
 
 describe("end", () => {
-  test("posts {phlo_run_uuid} to /end", async () => {
-    await new LiveKitSimClient({ url: base }).end("run-9");
+  test("posts {phlo_run_uuid, auth_id} to /end", async () => {
+    await new LiveKitSimClient({ url: base }).end("run-9", "acct");
     expect(last.path).toBe("/v1/simulation/end");
-    expect(last.body).toEqual({ phlo_run_uuid: "run-9" });
+    expect(last.body).toEqual({ phlo_run_uuid: "run-9", auth_id: "acct" });
   });
 
   test("no-op (no request) when the URL is unset or the run id is empty", async () => {
     last = { path: "__none__", auth: null, body: {} };
-    await new LiveKitSimClient({ url: "" }).end("run-9");
-    await new LiveKitSimClient({ url: base }).end("");
+    await new LiveKitSimClient({ url: "" }).end("run-9", "acct");
+    await new LiveKitSimClient({ url: base }).end("", "acct");
     expect(last.path).toBe("__none__");
   });
 });

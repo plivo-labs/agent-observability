@@ -36,6 +36,7 @@ function fakeRedis(events: Ev[]) {
 class FakeClient {
   requests: Array<{ req: any }> = [];
   ended: string[] = [];
+  endedAuth: string[] = [];
   private i = 0;
   constructor(private script: Array<SimResponse | Error>) {}
   private next(): SimResponse {
@@ -45,7 +46,7 @@ class FakeClient {
     return r;
   }
   async turn(req: any) { this.requests.push({ req }); return this.next(); }
-  async end(id: string) { this.ended.push(id); }
+  async end(id: string, auth: string) { this.ended.push(id); this.endedAuth.push(auth); }
 }
 
 const resp = (over: Partial<SimResponse>): SimResponse => ({
@@ -254,6 +255,7 @@ describe("runScenario turn loop", () => {
     expect(done.stop_detail).toBe("run_lost");
     // best-effort teardown fired with the scenario's flow_run_uuid
     expect(client.ended).toEqual([started.flow_run_uuid]);
+    expect(client.endedAuth).toEqual(["auth"]);
     expect(completeCalls[0].status).toBe("error");
   });
 });

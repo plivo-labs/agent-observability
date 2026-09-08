@@ -147,10 +147,10 @@ export class LiveKitSimClient {
   }
 
   /** Best-effort early teardown of a run (agent-runner also evicts on `ended` + TTL). */
-  async end(phloRunUuid: string): Promise<void> {
+  async end(phloRunUuid: string, authId: string): Promise<void> {
     if (!this.url || !phloRunUuid) return;
     try {
-      await this.rawPost(END_PATH, { phlo_run_uuid: phloRunUuid });
+      await this.rawPost(END_PATH, { phlo_run_uuid: phloRunUuid, auth_id: authId });
     } catch (err) {
       // Cleanup is advisory (TTL eviction covers it); log so a leak is traceable.
       console.warn(`[sim] end failed for ${phloRunUuid}: ${(err as Error).message}`);
