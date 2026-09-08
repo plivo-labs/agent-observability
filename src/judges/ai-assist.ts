@@ -6,10 +6,11 @@
 //
 // These live in AO (not a separate eval service) because AO owns the judge
 // contract the output must satisfy and already holds the call transcripts the
-// calibration step needs. They are account-blind and generic: any OSS install
+// calibration step needs. They use generic account scoping for stored calls; any OSS install
 // with an LLM configured gets them.
 import { z } from "zod";
 import { sql } from "../db.js";
+import { assertSessionAccess, SessionAccessError } from "../account-scope.js";
 import { completeJSON } from "../llm/index.js";
 import type { LlmProvider } from "../llm/index.js";
 
@@ -235,14 +236,18 @@ export async function calibrateMetric(
     examples: CalibrationExampleInput[];
   },
   provider?: LlmProvider,
+  accountId: string | null = null,
 ): Promise<z.infer<typeof CalibrateZ>> {
   const ids = input.examples.map((e) => e.session_id);
-  const idsLiteral = `{${ids.map((id) => `"${id.replace(/["\\]/g, "")}"`).join(",")}}`;
+  await assertSessionAccess(ids, accountId);
+  const idsLiteral = `{${ids.map((id) => `"${id.replace(/"/g, '\\"')}"`).join(",")}}`;
   const rows = (await sql`
     SELECT session_id, chat_history FROM ao_agent_transport_sessions
     WHERE session_id = ANY(${idsLiteral}::text[])
+      AND (${accountId}::text IS NULL OR account_id = ${accountId})
   `) as Array<{ session_id: string; chat_history: unknown }>;
   const byId = new Map(rows.map((r) => [r.session_id, r.chat_history]));
+  if (accountId !== null && ids.some(id => !byId.has(id))) throw new SessionAccessError();
 
   const blocks = input.examples
     .map((ex, i) => {

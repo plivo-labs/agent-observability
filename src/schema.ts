@@ -29,6 +29,8 @@ export const envSchema = z.object({
   // Basic auth (optional — if both set, all routes require basic auth)
   AGENT_OBSERVABILITY_USER: z.string().optional(),
   AGENT_OBSERVABILITY_PASS: z.string().optional(),
+  // Trusted account context on judge, metric analytics and session-list APIs.
+  REQUIRE_ACCOUNT_SCOPE: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
 
   // Escape hatch: allow the server to boot with NO authentication configured
   // (neither basic nor LiveKit). Off by default so a misconfigured deploy
