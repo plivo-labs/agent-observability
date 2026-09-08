@@ -306,10 +306,6 @@ class ScenarioRunner {
         this.evalTurns.push({ node_uuid: nodeUuid, user: "", agent: line, intent: "", evidence: true });
       }
     }
-    // Tool calls the agent fired this turn (ai_agent_v29's collect_input /
-    // record_<name> / change_earlier_value, and any other function call) — surfaced
-    // as Tool_Call evidence so the variable/criteria judges can quote a grounded
-    // value. Rendered identically to the StoredEvent path via formatToolCall.
     for (const call of resp.tool_calls ?? []) {
       if (!call || typeof call !== "object") continue;
       const name = (call as Record<string, unknown>).name;

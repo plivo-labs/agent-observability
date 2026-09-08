@@ -195,10 +195,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Render a function-call as a `Tool_Call: name(args)` evidence line. Shared by the
- *  StoredEvent path (toolEvidence) and the sim orchestrator's per-turn tool_calls so
- *  both surfaces read identically. Prefers the parsed argument object so
- *  string-serialized arguments don't render double-encoded (`"{\"value\": ...}"`). */
+/** Parses string arguments first so a serialized payload isn't rendered double-encoded. */
 export function formatToolCall(name: unknown, args: unknown): string {
   const label = typeof name === "string" ? name : "tool";
   const parsed = parseToolArguments(args);

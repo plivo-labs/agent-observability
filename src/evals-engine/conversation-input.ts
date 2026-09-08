@@ -50,10 +50,8 @@ function requiredVariables(config: Record<string, unknown> | null): string[] {
           .map((v) => (v && typeof v === "object" ? (v as Record<string, unknown>)[key] : undefined))
           .filter((n): n is string => typeof n === "string" && n.length > 0)
       : [];
-  // ai_agent_v2 declares collectibles as extract_variables; ai_agent_v29 as
-  // input_collected (same item shape); agent_node as agent_tasks.variables /
-  // agent_tasks.extract_only. Read all so a collector's genuine captures are
-  // judged instead of counting as "extra".
+  // Collectibles live under a different key per node type: extract_variables (ai_agent_v2),
+  // input_collected (ai_agent_v29), agent_tasks.variables/extract_only (agent_node).
   const tasks = (config?.agent_tasks ?? {}) as Record<string, unknown>;
   return [
     ...names(config?.extract_variables, "variable_name"),
