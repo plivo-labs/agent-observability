@@ -339,7 +339,7 @@ async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider })
     // TRANSIENT lookup failure rethrows so the session retries with its full
     // judge set (silently judging defaults-only would permanently drop the
     // custom verdicts); only a deterministic failure degrades to defaults.
-    const customJudges = await getAgentCustomJudges(source.agentId).catch((e) => {
+    const customJudges = await getAgentCustomJudges(source.agentId, source.accountId).catch((e) => {
       if (classifyErrorDurability(e) === "transient") throw e;
       console.error(`[evals] custom-judge lookup failed session=${sanitizeForLog(sessionId)} — judging defaults only:`, e);
       return [];

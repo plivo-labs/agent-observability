@@ -74,3 +74,9 @@ export const basicAuthEnabled =
 export const liveKitAuthEnabled =
   !!config.LIVEKIT_API_KEY &&
   !!config.LIVEKIT_API_SECRET;
+
+// Tenant assertions require the service-authenticated gateway trust model.
+if (config.REQUIRE_ACCOUNT_SCOPE && !basicAuthEnabled) {
+  console.error("REQUIRE_ACCOUNT_SCOPE=true requires AGENT_OBSERVABILITY_USER and AGENT_OBSERVABILITY_PASS");
+  process.exit(1);
+}

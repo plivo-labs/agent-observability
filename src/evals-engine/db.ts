@@ -11,6 +11,7 @@
 // statements without sql.unsafe, which the repo's bun:sql guidance cautions
 // against. They are kept inline and adjacent here so the one file is the
 // single place they are maintained.
+import { config } from "../config.js";
 import type { SessionTag } from "./types.js";
 import { sql } from "../db.js";
 import type { CustomJudgeSpec } from "./judges/custom-metric.js";
@@ -210,6 +211,7 @@ export async function countPendingEvalSessions(): Promise<number> {
 
 export interface SessionEvalSource {
   sessionId: string;
+  accountId: string | null;
   config: Record<string, unknown>;
   chatHistory: unknown;
   rawReport: unknown;
@@ -247,16 +249,17 @@ export async function deferEvalClaimRetry(claim: EvalClaim, retryInSeconds: numb
 }
 
 /** Everything the eval sweeper needs to judge one session. */
-export async function getSessionEvalSource(sessionId: string): Promise<SessionEvalSource | null> {
+export async function getSessionEvalSource(sessionId: string, accountId: string | null = null): Promise<SessionEvalSource | null> {
   // Tags ride the same round trip as a JSON array (one row per claimed
   // session on the hot path — a second query per session was measurable).
   const rows = await sql`
-    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.agent_id, s.created_at AS session_created_at, s.ended_at AS session_ended_at,
+    SELECT c.config, s.chat_history, s.raw_report, s.transport, s.agent_id, s.account_id, s.created_at AS session_created_at, s.ended_at AS session_ended_at,
       (SELECT COALESCE(json_agg(json_build_object('name', t.name, 'metadata', t.metadata)), '[]'::json)
          FROM ao_session_tags t WHERE t.session_id = c.session_id) AS tags
     FROM ao_session_agent_config c
     JOIN ao_agent_transport_sessions s ON s.session_id = c.session_id
     WHERE c.session_id = ${sessionId}
+      AND (${accountId}::text IS NULL OR s.account_id = ${accountId})
   `;
   if (rows.length === 0) {
     return null;
@@ -274,6 +277,7 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
     : [];
   return {
     sessionId,
+    accountId: typeof row.account_id === "string" ? row.account_id : null,
     tags,
     config: parse(row.config) as Record<string, unknown>,
     // Returned RAW (possibly a JSON string): it's only consumed by the
@@ -291,13 +295,17 @@ export async function getSessionEvalSource(sessionId: string): Promise<SessionEv
 
 /** The enabled custom judges mapped to this agent, as runner specs. Sessions
  *  without an agent attribution get defaults only. */
-export async function getAgentCustomJudges(agentId: string | null): Promise<CustomJudgeSpec[]> {
-  if (!agentId) return [];
+export async function getAgentCustomJudges(agentId: string | null, accountId: string | null): Promise<CustomJudgeSpec[]> {
+  if (!agentId || (config.REQUIRE_ACCOUNT_SCOPE && !accountId)) return [];
   const rows = await sql`
     SELECT j.name, j.display_name, j.scope, j.prompt, j.config
     FROM ao_agent_judges aj
     JOIN ao_judges j ON j.id = aj.judge_id
+    JOIN ao_agents a ON a.agent_id = aj.agent_id
     WHERE aj.agent_id = ${agentId}
+      AND a.account_id IS NOT DISTINCT FROM ${accountId}::text
+      AND (j.account_id IS NOT DISTINCT FROM ${accountId}::text
+        OR (j.account_id IS NULL AND ${!config.REQUIRE_ACCOUNT_SCOPE}))
       AND aj.enabled = TRUE
       AND j.enabled = TRUE
       AND j.type = 'custom'
@@ -319,7 +327,7 @@ export async function getAgentCustomJudges(agentId: string | null): Promise<Cust
         ...(typeof cfg.max_tokens === "number" ? { max_tokens: cfg.max_tokens } : {}),
       };
     })
-    .filter((s): s is CustomJudgeSpec => s !== null);
+    .filter((s: CustomJudgeSpec | null): s is CustomJudgeSpec => s !== null);
 }
 
 // ── Backfill re-judge helpers (scripts/rejudge-transfer-axis.ts) ─────────────
