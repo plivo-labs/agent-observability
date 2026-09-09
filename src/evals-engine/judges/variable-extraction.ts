@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { systemForVariableExtraction } from "./instructions.js";
 import { nodePayload, renderNodeTranscript } from "./node-judge-payload.js";
+import { promptSub } from "./judge-prompts.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { VARIABLE_EXTRACTION_JSON } from "./schemas.js";
 import { VariableExtractionRawZ, type VariableExtractionRaw } from "./types.js";
@@ -247,13 +248,13 @@ function canonicalizeVariableVerdict(
   };
 }
 
-const CONFIG_DEFAULT_REVIEW_SYSTEM =
+export const CONFIG_DEFAULT_REVIEW_SYSTEM =
   "Review ONLY whether the caller explicitly established an exception to each configured default. " +
   "The variable's recording rule is authoritative. An unanswered question, missing identity confirmation, silence, a busy/callback request, or model uncertainty is NOT an exception. " +
   "Set defect_confirmed=true only when the caller's words satisfy an exception written in the rule and the stored value violates that exception. Otherwise set it false. " +
   "Return one review per candidate with issue_type=incorrect and cite caller evidence.";
 
-const FOCUSED_DEFECT_REVIEW_SYSTEM =
+export const FOCUSED_DEFECT_REVIEW_SYSTEM =
   "Verify ONLY the proposed variable defects against the exact recording rule and caller transcript. " +
   "For missing: confirm only when the caller explicitly stated an applicable value in that variable's own terms and it was not stored. Reject inferred/derived values, absent defaults such as not_asked or no_questions, unopened paths, duplicate/sibling demands, workflow fields, and backend/platform/tool/lookup data. " +
   "For incorrect: confirm only when the stored value materially conflicts with the caller or the exact rule. A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. " +
@@ -363,7 +364,7 @@ export async function runVariableExtractionJudge(
   const [defaultReview, focusedReview] = await Promise.all([
     defaultCandidates.length
       ? runGuardedReview(
-          CONFIG_DEFAULT_REVIEW_SYSTEM,
+          promptSub("variable_extraction", "review_config_default", CONFIG_DEFAULT_REVIEW_SYSTEM),
           defaultCandidates,
           { node_transcript: renderNodeTranscript(node) },
           600,
@@ -372,7 +373,7 @@ export async function runVariableExtractionJudge(
       : undefined,
     focusedCandidates.length
       ? runGuardedReview(
-          FOCUSED_DEFECT_REVIEW_SYSTEM,
+          promptSub("variable_extraction", "review_focused_defect", FOCUSED_DEFECT_REVIEW_SYSTEM),
           focusedCandidates,
           {
             node_transcript: renderNodeTranscript(node),

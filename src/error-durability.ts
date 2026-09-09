@@ -40,7 +40,15 @@ const DETERMINISTIC_SIGNALS =
   /constraint|duplicate key|invalid input|value too long|out of range|null value|syntax|malformed|unsupported unicode|invalid byte sequence/i;
 
 export function classifyErrorDurability(e: unknown): ErrorDurability {
-  const code = (e as { code?: string })?.code ?? "";
+  const raw = e as { code?: string; errno?: string | number };
+  // Bun's SQL.PostgresError carries its own class name in `code`
+  // ("ERR_POSTGRES_SERVER_ERROR") and the REAL Postgres SQLSTATE in `errno`
+  // (verified empirically on bun 1.3.14 against PG 17). Reading only `code`
+  // classified EVERY Postgres error as transient — endless re-judging of
+  // deterministic failures like 23505/22P05. Prefer errno when it looks like
+  // a SQLSTATE.
+  const errno = String(raw?.errno ?? "");
+  const code = /^[0-9A-Z]{5}$/.test(errno) ? errno : (raw?.code ?? "");
   if (/^(22|23|42)/.test(code)) return "deterministic";
   if (code) return "transient";
 

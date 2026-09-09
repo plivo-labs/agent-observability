@@ -1,3 +1,4 @@
+import { accountScope, accountScopeGuard } from "./account-scope.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { basicAuth } from "hono/basic-auth";
@@ -23,10 +24,11 @@ import { decodeMetricsRecordingHeader, decodeOtlpLogsRequest } from "./livekit/p
 import { persistLiveKitOtlpLogs } from "./livekit/observability.js";
 import { normalizeRawReport, parseJsonValue } from "./raw-report.js";
 import { registerAlertRoutes } from "./alerts/routes.js";
+import { registerJudgeRoutes } from "./judges/routes.js";
+import { syncDefaultJudges } from "./evals-engine/judge-registry.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, kickEvalForSession, probeEvalTables } from "./evals-engine/eval-sweeper.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
-import { startGoalAnalyzer, stopGoalAnalyzer } from "./goals/analyzer.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
 if (config.AUTO_MIGRATE && dbConfigured) {
@@ -61,12 +63,16 @@ if (process.env.NODE_ENV !== "test" && config.ALERT_SWEEPER === "inline" && dbCo
 // Eval sweeper: judges ingested sessions that carry an agent config. Same
 // inline-by-default posture as the alert sweeper (set EVAL_SWEEPER=off on the
 // API when the dedicated worker runs it). DB-backed, so inert in stateless mode.
-// Table-probed like the alert/goal loops: a DB without the eval tables
+// Table-probed like the alert loop: a DB without the eval tables
 // (sim-only deploy, or prod before the core-db eval migration) must not
 // error-log every sweep tick + every ingest kick forever. The probe outcome
 // also disarms the ingest event-kick, which writes to the same tables.
 if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbConfigured) {
   if (await probeEvalTables()) {
+    // Defaults are code-owned: reconcile ao_judges' default rows with the
+    // shipped catalogue before judging starts (migration 024 is only the
+    // initial seed — see syncDefaultJudges).
+    await syncDefaultJudges().catch((e) => console.error("[evals] default judge sync failed:", e));
     startEvalSweeper();
   } else {
     console.log("[evals] eval tables absent — inline sweeper + ingest event-kick disabled (apply migrations 021–023 to enable)");
@@ -75,18 +81,6 @@ if (process.env.NODE_ENV !== "test" && config.EVAL_SWEEPER === "inline" && dbCon
   // Loud on purpose: with EVAL_SWEEPER=off nobody judges ingested sessions.
   // ("worker" is the normal non-inline value — the dedicated worker handles it.)
   console.warn("[evals] EVAL_SWEEPER=off — ingested-session judging is disabled everywhere; set it to \"inline\" (API) or \"worker\" (worker) to enable.");
-}
-
-// Goal analyzer: post-session LLM judging of goal:<text> tags. Same
-// placement model as the alert sweeper — DB-backed, so gate on dbConfigured
-// too (inert in stateless mode); additionally a no-op (with one startup log)
-// unless an LLM provider key is configured.
-if (process.env.NODE_ENV !== "test" && config.GOAL_ANALYZER === "inline" && dbConfigured) {
-  if (await tableExists("ao_session_goal_analyses")) {
-    startGoalAnalyzer();
-  } else {
-    console.log("[goals] goal tables absent — inline analyzer disabled (sim-only deployment)");
-  }
 }
 
 // When neither auth mode is configured, every ingest route AND the whole
@@ -221,6 +215,10 @@ registerAnalyticsRoutes(app);
 // ── Alert rules (windowed metric/count triggers + webhooks) ─────────────────
 
 registerAlertRoutes(app);
+
+// ── Judge registry (custom-judge CRUD; defaults are read-only) ──────────────
+
+registerJudgeRoutes(app);
 
 // ── Simulation engine (scenario generation + scenario library CRUD) ──────────
 //    Routes under /api/simulation; 404s when the engine is unconfigured (no
@@ -521,10 +519,12 @@ app.post("/observability/metrics/otlp/v0", async (c) => {
 const TS_HEADLINE_OPTIONS =
   'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "';
 
+app.use("/api/sessions", accountScopeGuard);
 app.get("/api/sessions", async (c) => {
+  const trustedAccount = accountScope(c);
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
   const offset = Math.max(0, Number(c.req.query("offset")) || 0);
-  const accountId = c.req.query("account_id") || null;
+  const accountId = trustedAccount ?? (c.req.query("account_id") || null);
   const agentId = c.req.query("agent_id") || null;
   const agentName = c.req.query("agent_name") || null;
   const startedFrom = c.req.query("started_from") || null;
@@ -558,7 +558,10 @@ app.get("/api/sessions", async (c) => {
     );
     params.push(q);
   }
-  if (accountId) {
+  if (trustedAccount !== null) {
+    predicates.push(`account_id = $${params.length + 1}`);
+    params.push(trustedAccount);
+  } else if (accountId) {
     // Case-insensitive substring match. The user-typed value is escaped
     // for LIKE metacharacters and lower-cased once in JS so the SQL can
     // pattern-match against `LOWER(account_id)` without a runtime
@@ -614,7 +617,10 @@ app.get("/api/sessions", async (c) => {
 
   const rows = await sql.unsafe(
     `SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
-            turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol}
+            turn_count, has_stt, has_llm, has_tts, record_url, created_at${snippetCol},
+            (SELECT substring(t.name FROM 15) FROM ao_session_tags t
+               WHERE t.session_id = ao_agent_transport_sessions.session_id
+                 AND t.name LIKE 'flow_run_uuid:%' LIMIT 1) AS flow_run_uuid
      FROM ao_agent_transport_sessions
      ${whereClause}
      ORDER BY ended_at DESC
@@ -668,15 +674,13 @@ app.delete("/api/sessions", async (c) => {
       sessionIds,
     );
     // Cascade to the session's satellite rows. Verdicts embed transcript quotes
-    // and extracted variable values, the agent config embeds the flow's prompts,
-    // and the goal-analysis claim (no FK, keyed by session_id) must go too — a
-    // surviving 'done' row makes claimGoalSessions skip a re-ingested session
-    // with the same id forever. These tables have no FKs (the session row can
-    // arrive after them), so the cascade is explicit here.
+    // and extracted variable values, and the agent config embeds the flow's
+    // prompts. These tables have no FKs (the session row can arrive after
+    // them), so the cascade is explicit here.
     //
     // Delete only from the satellites that EXIST in this deployment: a
     // feature-scoped core DB (e.g. the eval-only schema) omits the
-    // goal-analyzer / alert / CI-eval tables, and a hardcoded DELETE against a
+    // alert / CI-eval tables, and a hardcoded DELETE against a
     // missing table would abort the whole erasure transaction. The names come
     // from the SESSION_SATELLITE_TABLES registry (db.ts) resolved against
     // pg_tables, so the interpolation below is never user-controlled.
@@ -873,7 +877,6 @@ if (import.meta.main) {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
     stopEvalSweeper();
-    stopGoalAnalyzer();
     await server.stop(); // stop intake, wait for in-flight requests
     await (sql as any).close?.();
     process.exit(0);

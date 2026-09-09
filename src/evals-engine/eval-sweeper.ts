@@ -11,11 +11,15 @@ import {
   heartbeatEvalClaim,
   retireExpiredEvalClaims,
   type EvalClaim,
+  getAgentCustomJudges,
 } from "./db.js";
 import { classifyErrorDurability } from "../error-durability.js";
+import { jsonbParam } from "../jsonb-param.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
 import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type SessionEvalVerdicts, type StoredEvent } from "./integration/session-evals.js";
+import { ensureJudgePromptOverrides } from "./judge-registry.js";
+import type { LlmProvider } from "../llm/index.js";
 import { buildExternalEvalRows } from "./fan-out-rows.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
@@ -110,20 +114,90 @@ export async function fanOutExternalEvals(
       FOR UPDATE
     `;
     if (owned.length === 0) return false; // session deleted, or claim adopted by another sweeper
+    await rewriteFanOutRows(tx, sessionId, rows, observedAt, null);
+    return true;
+  });
+}
+
+/** The one place eval_sweeper rows are (re)written: clear this session's set
+ *  and insert the current one, inside the caller's transaction. Shared by the
+ *  live fan-out and the backfill commit so the two can never drift. */
+async function rewriteFanOutRows(
+  tx: typeof sql,
+  sessionId: string,
+  rows: ReturnType<typeof buildExternalEvalRows>,
+  observedAt: Date,
+  createdAt: Date | null,
+  /** Restrict the rewrite to these judges (the backfill re-judges one axis and
+   *  must leave every other row physically untouched). Absent = all rows. */
+  onlyJudges?: readonly string[],
+): Promise<void> {
+  if (onlyJudges) {
+    // bun:sql binds a JS array as a comma-joined STRING, not a Postgres array
+    // ("malformed array literal"), so hand it a real text[] literal.
+    const literal = `{${onlyJudges.map((j) => `"${j.replace(/["\\]/g, "")}"`).join(",")}}`;
+    await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper' AND judge_name = ANY(${literal}::text[])`;
+    rows = rows.filter((r) => onlyJudges.includes(r.judgeName));
+  } else {
     await tx`DELETE FROM ao_session_external_evals WHERE session_id = ${sessionId} AND source = 'eval_sweeper'`;
-    for (const row of rows) {
-      await insertLiveKitEvaluation({
-        sessionId,
-        source: "eval_sweeper",
-        judgeName: row.judgeName,
-        tag: row.tag,
-        verdict: row.passed ? "pass" : "fail",
-        reasoning: row.reasoning || null,
-        instructions: null,
-        observedAt,
-        raw: row.raw,
-      }, tx);
-    }
+  }
+  for (const row of rows) {
+    await insertLiveKitEvaluation({
+      sessionId,
+      source: "eval_sweeper",
+      judgeName: row.judgeName,
+      tag: row.tag,
+      verdict: row.verdictText ?? (row.passed ? "pass" : "fail"),
+      reasoning: row.reasoning || null,
+      instructions: null,
+      observedAt,
+      raw: row.raw,
+      createdAt,
+    }, tx);
+  }
+}
+
+/** Commit an in-place axis re-judge of a DONE session
+ *  (scripts/rejudge-transfer-axis.ts): the verdict blob and the per-judge rows
+ *  are written in ONE transaction, fenced on the verdict row being terminal
+ *  'done' (a running claim belongs to a sweeper and is never touched). Both
+ *  halves land or neither does — the stored verdicts can never disagree with
+ *  the rows consumers read. Only the transfer-axis rows are rewritten; every
+ *  other row stays the same physical row (same id, same created_at), so the
+ *  "everything else is byte-identical" promise holds for the rows too, and
+ *  the replication churn is one row per session, not ~ten. The rewritten rows take
+ *  the session's ORIGINAL created_at (the earliest existing eval_sweeper row,
+ *  else the call time): alert rules window on created_at, so re-inserting
+ *  months-old verdicts with NOW() would page on history. Returns false when
+ *  there is no done row. */
+export const TRANSFER_AXIS_JUDGES = ["human_transfer"] as const;
+
+export async function commitRejudgedVerdicts(
+  sessionId: string,
+  verdicts: SessionEvalVerdicts,
+  /** Call-end time — the observed_at stamp, same as the live fan-out. */
+  observedAt: Date,
+): Promise<boolean> {
+  const rows = buildExternalEvalRows(verdicts);
+  return await sql.begin(async (tx: typeof sql) => {
+    const done = await tx`
+      SELECT 1 FROM ao_session_eval_verdicts
+      WHERE session_id = ${sessionId} AND status = 'done'
+      FOR UPDATE
+    `;
+    if (done.length === 0) return false;
+    const prior = await tx`
+      SELECT MIN(created_at) AS first_created_at
+      FROM ao_session_external_evals
+      WHERE session_id = ${sessionId} AND source = 'eval_sweeper'
+    `;
+    const firstCreatedAt = prior[0]?.first_created_at ? new Date(prior[0].first_created_at) : observedAt;
+    await tx`
+      UPDATE ao_session_eval_verdicts
+      SET verdicts = ${jsonbParam(verdicts)}::text::jsonb, updated_at = NOW()
+      WHERE session_id = ${sessionId} AND status = 'done'
+    `;
+    await rewriteFanOutRows(tx, sessionId, rows, observedAt, firstCreatedAt, TRANSFER_AXIS_JUDGES);
     return true;
   });
 }
@@ -142,7 +216,7 @@ function isTerminalEvalError(e: unknown): boolean {
 /** Synthesize builder events from stored chat_history items when the OTLP
  *  event channel was lost — judging the recording's transcript beats marking
  *  a fully transcribed call "done" with phantom empty-input verdicts. */
-function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
+export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
   // Parse lazily: getSessionEvalSource returns the column raw so the common
   // path (raw_report.events present) never pays for parsing the large blob.
   if (typeof chatHistory === "string") {
@@ -168,8 +242,11 @@ function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
 }
 
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
-async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
+async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider }): Promise<boolean> {
   const sessionId = claim.sessionId;
+  // Registry prompts (TTL-cached, never throws): defaults resolve through the
+  // ao_judges rows from here on; a load failure keeps the shipped constants.
+  await ensureJudgePromptOverrides();
   // Poison isolation: a session whose stored JSON can't be read (e.g. the
   // 2026-07-13 bun-runtime jsonb corruption) must fail THAT session as a
   // terminal eval_error — an uncaught throw here killed every sweep tick and
@@ -258,7 +335,16 @@ async function judgeClaimed(claim: EvalClaim): Promise<boolean> {
 
     // `built` is threaded through so the (pure but heavy) input build from the
     // judgeability gate above isn't recomputed inside the evaluation.
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, undefined, source.transport ?? undefined, built);
+    // The agent's mapped custom judges ride the same evaluation call. A
+    // TRANSIENT lookup failure rethrows so the session retries with its full
+    // judge set (silently judging defaults-only would permanently drop the
+    // custom verdicts); only a deterministic failure degrades to defaults.
+    const customJudges = await getAgentCustomJudges(source.agentId, source.accountId).catch((e) => {
+      if (classifyErrorDurability(e) === "transient") throw e;
+      console.error(`[evals] custom-judge lookup failed session=${sanitizeForLog(sessionId)} — judging defaults only:`, e);
+      return [];
+    });
+    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges);
     // Judging is done — no more provider spend to protect. Stop the heartbeat
     // and drain any in-flight beat so the fan-out + completion below read a
     // token no concurrent beat can invalidate.
@@ -391,7 +477,7 @@ let activeKicks = 0;
  * MUST NOT be awaited on the ingest hot path — call as `void
  * kickEvalForSession(id)` so a slow judge run never delays the ingest 200.
  */
-export async function kickEvalForSession(sessionId: string): Promise<void> {
+export async function kickEvalForSession(sessionId: string, opts?: { provider?: LlmProvider }): Promise<void> {
   if (config.EVAL_EVENT_KICK === "off") return;
   if (evalTablesPresent === false) return; // boot probe found no eval tables — nothing to judge into
   // Only the inline-sweeper process both ingests AND judges; in worker mode the
@@ -403,7 +489,7 @@ export async function kickEvalForSession(sessionId: string): Promise<void> {
   try {
     const claim = await claimEvalSessionNow(sessionId);
     if (!claim) return; // already claimed/judged, or data not fully landed → poller covers it
-    await judgeClaimed(claim);
+    await judgeClaimed(claim, opts);
   } catch (e) {
     console.warn(`[evals] event-kick failed session=${sanitizeForLog(sessionId)} (poller will retry): ${(e as Error).message}`);
   } finally {

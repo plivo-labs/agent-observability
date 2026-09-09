@@ -132,6 +132,8 @@ export async function getStatsCore(
            END
            FROM ao_session_external_evals see
            WHERE see.session_id IN (SELECT session_id FROM win)
+             -- custom-metric 'unknown' is a non-decision, not a fail
+             AND COALESCE(see.verdict, '') <> 'unknown'
          ) AS llm_pass_rate,
          (
            SELECT CASE

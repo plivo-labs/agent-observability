@@ -34,3 +34,4 @@ plugins/examples/node/*.js
 tsconfig.tsbuildinfo
 .claude/
 PLANS.md
+.DS_Store

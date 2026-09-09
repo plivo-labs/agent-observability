@@ -25,11 +25,11 @@
 import { config, dbConfigured } from "./config.js";
 import { runSweepOnce, SWEEP_INTERVAL_MS } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, probeEvalTables } from "./evals-engine/eval-sweeper.js";
+import { syncDefaultJudges } from "./evals-engine/judge-registry.js";
 import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
 import { makeLiveKitSimClient } from "./sim-engine/run-engine/livekit-client.js";
-import { runGoalSweepOnce } from "./goals/analyzer.js";
 
 let running = true;
 
@@ -103,22 +103,17 @@ async function sleepInSlices(totalMs: number): Promise<void> {
 
 if (dbConfigured) {
   // A sim-persistence deploy points DATABASE_URL at a shared core DB that carries ONLY the
-  // ao_sim_* tables — the AO-product tables (alerts, goals) deliberately don't exist there.
+  // ao_sim_* tables — the AO-product tables (alerts) deliberately don't exist there.
   // Probe once at boot instead of erroring every sweep interval; ALERT_SWEEPER=off must not
   // gate the worker (off on the API means the worker owns sweeping), so table existence is
   // the only signal that distinguishes a full AO deploy from a sim-only one.
   const { tableExists } = await import("./db.js");
-  const goalAnalyzerOn = config.GOAL_ANALYZER !== "off";
   const sweepAlerts = await tableExists("ao_alert_rules");
-  const sweepGoals = goalAnalyzerOn && (await tableExists("ao_session_goal_analyses"));
   if (!sweepAlerts) {
     console.log("[worker] alert tables absent — alert sweeper disabled (sim-only deployment)");
   }
-  if (goalAnalyzerOn && !sweepGoals) {
-    console.log("[worker] goal tables absent — goal analyzer disabled (sim-only deployment)");
-  }
   // The eval sweep runs on its OWN timer (the shared startSweeper harness — the
-  // same one the API uses in inline mode), independent of the alert/goal tables:
+  // same one the API uses in inline mode), independent of the alert tables:
   // one eval tick can spend minutes on provider latency, and its internal
   // re-entrancy guard makes overlapping ticks a no-op. Gated so an inline-API
   // deployment can run this worker for alerts/SQS without doubling eval sweepers.
@@ -126,6 +121,7 @@ if (dbConfigured) {
     // Same boot probe as the API's inline gate: a DB without the eval tables
     // must go quiet with one line, not error-log every sweep tick.
     if (await probeEvalTables()) {
+      await syncDefaultJudges().catch((e) => console.error("[worker] default judge sync failed:", e));
       startEvalSweeper();
     } else {
       console.log("[worker] eval tables absent — eval sweeper disabled (apply migrations 021–023 to enable)");
@@ -133,18 +129,10 @@ if (dbConfigured) {
   } else {
     console.log(`[worker] EVAL_SWEEPER=${config.EVAL_SWEEPER} — this worker does not judge ingested sessions (set EVAL_SWEEPER=worker here, or "inline" on the API).`);
   }
-  if (sweepAlerts || sweepGoals) {
+  if (sweepAlerts) {
     console.log(`[worker] started — sweeping every ${SWEEP_INTERVAL_MS / 1000}s`);
     while (running) {
-      if (sweepAlerts) {
-        await runSweepOnce();
-      }
-      // Goal analyzer rides the same loop (no-op without an LLM key); DB-backed like the sweeper.
-      // Honor GOAL_ANALYZER=off so an AO deploy that is the sim/eval engine (not the goals instance)
-      // doesn't run goal sweeps in the worker either — parity with the API-side inline gate.
-      if (sweepGoals) {
-        await runGoalSweepOnce();
-      }
+      await runSweepOnce();
       await sleepInSlices(SWEEP_INTERVAL_MS);
     }
   } else {
