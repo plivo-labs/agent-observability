@@ -119,7 +119,7 @@ describe("silent webhook evidence", () => {
       }),
     ]);
     const events: Ev[] = [];
-    await runScenario(deps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
+    await runScenario(decisionDeps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
 
     const turns = evalArgs[0].turns;
     const evidence = turns.filter((t: any) => t.evidence);
@@ -141,7 +141,7 @@ describe("silent webhook evidence", () => {
       }),
     ]);
     const events: Ev[] = [];
-    await runScenario(deps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
+    await runScenario(decisionDeps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
 
     const evidence = evalArgs[0].turns.filter((t: any) => t.evidence);
     expect(evidence).toHaveLength(1);
@@ -166,7 +166,7 @@ describe("tool-call evidence (SER-6564)", () => {
       }),
     ]);
     const events: Ev[] = [];
-    await runScenario(deps(client, events, [{ message: "my dob is 1990-01-01", target_achieved: false, end_call: false }]), job());
+    await runScenario(decisionDeps(client, events, [{ message: "my dob is 1990-01-01", target_achieved: false, end_call: false }]), job());
 
     const evidence = evalArgs[0].turns.filter((t: any) => t.evidence);
     expect(evidence.map((t: any) => t.agent)).toEqual([
