@@ -90,6 +90,7 @@ describe("fromSimTranscript screening surface", () => {
     expect(input.nodes[0].required_variables).toEqual([]);
   });
 
+
   test("agent_node collectibles count as required variables", () => {
     const idx: NodeConfigIndex = new Map([
       ["COLL", { config: { name: "Collector", agent_tasks: { variables: [{ name: "industry" }], extract_only: [{ name: "city" }] } }, configName: "Collector", metaName: "Collector", type: "agent_node" }],

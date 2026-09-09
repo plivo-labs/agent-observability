@@ -119,7 +119,7 @@ describe("silent webhook evidence", () => {
       }),
     ]);
     const events: Ev[] = [];
-    await runScenario(deps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
+    await runScenario(decisionDeps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
 
     const turns = evalArgs[0].turns;
     const evidence = turns.filter((t: any) => t.evidence);
@@ -141,13 +141,41 @@ describe("silent webhook evidence", () => {
       }),
     ]);
     const events: Ev[] = [];
-    await runScenario(deps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
+    await runScenario(decisionDeps(client, events, [{ message: "remove me", target_achieved: false, end_call: false }]), job());
 
     const evidence = evalArgs[0].turns.filter((t: any) => t.evidence);
     expect(evidence).toHaveLength(1);
     expect(evidence[0].agent).toContain("did NOT succeed");
     expect(evidence[0].agent).toContain("NOT recorded");
     expect(evidence[0].agent).not.toContain("successfully");
+  });
+});
+
+describe("tool-call evidence (SER-6564)", () => {
+  test("each named resp.tool_calls entry becomes a Tool_Call evidence row; nameless entries are skipped", async () => {
+    const client = new FakeClient([
+      resp({
+        turn_node_uuid: "A1", node_uuid: "A1", message: "Sure.", turn_type: "speech",
+        ended: true, stop_reason: "end_conversation", turn_count: 1,
+        tool_calls: [
+          { id: "t1", name: "collect_input", arguments: '{"name":"dob","task_type":"date"}' },
+          { id: "t2", name: "record_dob", arguments: '{"value":"1990-01-01"}' },
+          { id: "t3", name: "", arguments: "{}" },
+          "not-an-object",
+        ],
+      }),
+    ]);
+    const events: Ev[] = [];
+    await runScenario(decisionDeps(client, events, [{ message: "my dob is 1990-01-01", target_achieved: false, end_call: false }]), job());
+
+    const evidence = evalArgs[0].turns.filter((t: any) => t.evidence);
+    expect(evidence.map((t: any) => t.agent)).toEqual([
+      'Tool_Call: collect_input({"name":"dob","task_type":"date"})',
+      'Tool_Call: record_dob({"value":"1990-01-01"})',
+    ]);
+    expect(evidence.every((t: any) => t.node_uuid === "A1" && t.user === "" && t.intent === "")).toBe(true);
+    // the spoken row is untouched
+    expect(evalArgs[0].turns.some((t: any) => !t.evidence && t.agent === "Sure.")).toBe(true);
   });
 });
 
