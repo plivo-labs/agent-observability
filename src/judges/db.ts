@@ -9,6 +9,7 @@ import { CUSTOM_METRIC_OUT } from "../evals-engine/judges/custom-metric.js";
 
 export interface JudgeRecord {
   id: string;
+  account_id: string | null;
   name: string;
   display_name: string;
   description: string;
@@ -20,14 +21,16 @@ export interface JudgeRecord {
   updated_at: string;
 }
 
-const COLS = sql`id, name, display_name, description, type, scope, kind, enabled, created_at, updated_at`;
+const COLS = sql`id, account_id, name, display_name, description, type, scope, kind, enabled, created_at, updated_at`;
 
 export async function listJudges(opts: {
   type: "default" | "custom" | null;
   limit: number;
   offset: number;
+  accountId?: string | null;
 }): Promise<{ judges: JudgeRecord[]; totalCount: number }> {
-  const typeFilter = opts.type ? sql`WHERE type = ${opts.type}` : sql``;
+  const typeFilter = sql`WHERE (${opts.type}::text IS NULL OR type = ${opts.type})
+    AND (${opts.accountId ?? null}::text IS NULL OR type = 'default' OR account_id = ${opts.accountId ?? null})`;
   const rows = await sql`
     SELECT ${COLS} FROM ao_judges ${typeFilter}
     ORDER BY type, display_name
@@ -37,8 +40,9 @@ export async function listJudges(opts: {
   return { judges: rows as unknown as JudgeRecord[], totalCount: count[0].n };
 }
 
-export async function getJudge(id: string): Promise<JudgeRecord | null> {
-  const rows = await sql`SELECT ${COLS} FROM ao_judges WHERE id = ${id}`;
+export async function getJudge(id: string, accountId: string | null = null): Promise<JudgeRecord | null> {
+  const rows = await sql`SELECT ${COLS} FROM ao_judges WHERE id = ${id}
+    AND (${accountId}::text IS NULL OR type = 'default' OR account_id = ${accountId})`;
   return (rows[0] as unknown as JudgeRecord) ?? null;
 }
 
@@ -50,14 +54,15 @@ export async function createCustomJudge(input: {
   description: string;
   scope: "node" | "conversation";
   enabled: boolean;
+  accountId?: string | null;
 }): Promise<JudgeRecord> {
   // The description IS the judge's criteria: stored as the prompt body with
   // the fixed custom-metric output section, mirroring the default rows' shape.
   const prompt = { body: input.description, output: CUSTOM_METRIC_OUT, slots: [] };
   try {
     const rows = await sql`
-      INSERT INTO ao_judges (name, display_name, description, type, scope, kind, prompt, config, enabled)
-      VALUES (${input.name}, ${input.display_name}, ${input.description}, 'custom', ${input.scope},
+      INSERT INTO ao_judges (account_id, name, display_name, description, type, scope, kind, prompt, config, enabled)
+      VALUES (${input.accountId ?? null}, ${input.name}, ${input.display_name}, ${input.description}, 'custom', ${input.scope},
               'llm', ${jsonbParam(prompt)}::text::jsonb, '{}'::jsonb, ${input.enabled})
       RETURNING ${COLS}
     `;
@@ -71,6 +76,7 @@ export async function createCustomJudge(input: {
 export async function updateCustomJudge(
   id: string,
   patch: { display_name?: string; description?: string; scope?: "node" | "conversation"; enabled?: boolean },
+  accountId: string | null = null,
 ): Promise<JudgeRecord | null> {
   // description drives the prompt body, so the two update together; the name
   // (fan-out key) deliberately does NOT follow display_name renames — verdicts
@@ -85,13 +91,15 @@ export async function updateCustomJudge(
                     ELSE jsonb_set(prompt, '{body}', to_jsonb(${patch.description ?? null}::text)) END,
       updated_at = NOW()
     WHERE id = ${id} AND type = 'custom'
+      AND (${accountId}::text IS NULL OR account_id = ${accountId})
     RETURNING ${COLS}
   `;
   return (rows[0] as unknown as JudgeRecord) ?? null;
 }
 
-export async function deleteCustomJudge(id: string): Promise<boolean> {
-  const rows = await sql`DELETE FROM ao_judges WHERE id = ${id} AND type = 'custom' RETURNING id`;
+export async function deleteCustomJudge(id: string, accountId: string | null = null): Promise<boolean> {
+  const rows = await sql`DELETE FROM ao_judges WHERE id = ${id} AND type = 'custom'
+    AND (${accountId}::text IS NULL OR account_id = ${accountId}) RETURNING id`;
   return rows.length > 0;
 }
 
@@ -108,31 +116,42 @@ export class ForeignAgentError extends Error {
   }
 }
 
-/** The tenant fence for agent-scoped calls: agent uuids are flow uuids (guessable
- *  from other surfaces), so a scoped caller must own the agent it touches.
- *  An agent AO has never seen (no ao_agents row yet — a new flow before its
- *  first call) is allowed: ownership is unknown, and blocking it would keep
- *  new flows from configuring metrics until their first call lands. */
-async function assertAgentOwnership(agentId: string, accountId: string | null): Promise<void> {
+/** The gateway may register an unseen agent only after independently verifying
+ * its ownership. This assertion cannot transfer an already-owned agent. */
+async function assertAgentOwnership(
+  agentId: string, accountId: string | null, verifiedAgentId: string | null = null,
+): Promise<void> {
   if (accountId === null) return;
+  if (verifiedAgentId === agentId) {
+    await sql`INSERT INTO ao_agents (agent_id, account_id) VALUES (${agentId}, ${accountId})
+      ON CONFLICT (agent_id) DO UPDATE SET account_id = EXCLUDED.account_id, updated_at = NOW()
+      WHERE ao_agents.account_id IS NULL OR ao_agents.account_id = ''`;
+  }
   const rows = await sql`SELECT account_id FROM ao_agents WHERE agent_id = ${agentId}`;
   const owner = rows[0]?.account_id;
-  if (typeof owner === "string" && owner !== "" && owner !== accountId) {
+  if (owner !== accountId) {
     throw new ForeignAgentError(agentId);
   }
 }
 
-export async function listAgentJudges(agentId: string, accountId: string | null = null): Promise<AgentJudgeRecord[]> {
-  await assertAgentOwnership(agentId, accountId);
+export async function listAgentJudges(
+  agentId: string, accountId: string | null = null, verifiedAgentId: string | null = null,
+): Promise<AgentJudgeRecord[]> {
+  await assertAgentOwnership(agentId, accountId, verifiedAgentId);
   const rows = await sql`
-    SELECT j.id, j.name, j.display_name, j.description, j.type, j.scope, j.kind, j.enabled,
+    SELECT j.id, j.account_id, j.name, j.display_name, j.description, j.type, j.scope, j.kind, j.enabled,
            j.created_at, j.updated_at, aj.enabled AS mapping_enabled
     FROM ao_agent_judges aj
     JOIN ao_judges j ON j.id = aj.judge_id
     WHERE aj.agent_id = ${agentId}
+      AND (${accountId}::text IS NULL OR j.account_id = ${accountId})
     ORDER BY j.display_name
   `;
   return rows as unknown as AgentJudgeRecord[];
+}
+
+export class MappingOwnershipConflictError extends Error {
+  constructor() { super("Existing metric mappings need ownership reconciliation"); }
 }
 
 export class UnknownJudgeIdsError extends Error {
@@ -148,8 +167,9 @@ export async function setAgentJudges(
   agentId: string,
   entries: Array<{ judge_id: string; enabled: boolean }>,
   accountId: string | null = null,
+  verifiedAgentId: string | null = null,
 ): Promise<AgentJudgeRecord[]> {
-  await assertAgentOwnership(agentId, accountId);
+  await assertAgentOwnership(agentId, accountId, verifiedAgentId);
   const ids = entries.map((e) => e.judge_id);
   // bun:sql binds a JS array as a comma-joined STRING, not a Postgres array —
   // hand-build the {…} literal from ids the caller has already UUID-validated,
@@ -159,8 +179,19 @@ export async function setAgentJudges(
   }
   const idsLiteral = `{${ids.join(",")}}`;
   await sql.begin(async (tx: any) => {
+    if (accountId !== null) {
+      // Keep the owner stable through replacement. Hidden legacy mappings are
+      // evidence for operator reconciliation, not an empty user-visible set.
+      const agents = await tx`SELECT account_id FROM ao_agents WHERE agent_id = ${agentId} FOR UPDATE`;
+      if (agents[0]?.account_id !== accountId) throw new ForeignAgentError(agentId);
+      const unresolved = await tx`SELECT 1 FROM ao_agent_judges aj JOIN ao_judges j ON j.id = aj.judge_id
+        WHERE aj.agent_id = ${agentId} AND j.type = 'custom'
+          AND j.account_id IS DISTINCT FROM ${accountId}::text LIMIT 1`;
+      if (unresolved.length > 0) throw new MappingOwnershipConflictError();
+    }
     if (ids.length > 0) {
-      const found = await tx`SELECT id FROM ao_judges WHERE id = ANY(${idsLiteral}::uuid[]) AND type = 'custom'`;
+      const found = await tx`SELECT id FROM ao_judges WHERE id = ANY(${idsLiteral}::uuid[]) AND type = 'custom'
+        AND (${accountId}::text IS NULL OR account_id = ${accountId}) FOR SHARE`;
       const ok = new Set(found.map((r: any) => r.id));
       const missing = ids.filter((id) => !ok.has(id));
       if (missing.length > 0) throw new UnknownJudgeIdsError(missing);
@@ -179,12 +210,13 @@ export async function setAgentJudges(
 
 /** One judge as a runner spec (any type/enabled state — Test runs drafts too,
  *  that is the point of testing before Turn on). Null for code judges. */
-export async function getJudgeSpec(id: string): Promise<
+export async function getJudgeSpec(id: string, accountId: string | null = null): Promise<
   | { name: string; display_name: string; scope: "node" | "conversation"; body: string; output: string; max_tokens?: number }
   | null
 > {
   const rows = await sql`
     SELECT name, display_name, scope, kind, prompt, config FROM ao_judges WHERE id = ${id}
+      AND (${accountId}::text IS NULL OR type = 'default' OR account_id = ${accountId})
   `;
   const row = rows[0] as any;
   if (!row || row.kind !== "llm") return null;

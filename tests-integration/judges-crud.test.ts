@@ -110,11 +110,11 @@ describeDb("custom judge CRUD + mapping (real PG)", () => {
 });
 
 describeDb("agent-ownership fence (real PG)", () => {
-  test("scoped callers cannot touch a foreign agent's mappings; unknown agents allowed", async () => {
+  test("scoped callers cannot touch foreign mappings; unseen agents require verification", async () => {
     const { ForeignAgentError } = await import("../src/judges/db.js");
     const ownedAgent = t.uid("own-agent");
     await t.seedAgent(ownedAgent, run + "-acctA");
-    const j = await createCustomJudge({ name: customJudgeName(run + " fence"), display_name: run + " fence", description: "d", scope: "conversation", enabled: true });
+    const j = await createCustomJudge({ name: customJudgeName(run + " fence"), display_name: run + " fence", description: "d", scope: "conversation", enabled: true, accountId: run + "-acctA" });
 
     // owner (X-Account-Id = acctA): fine
     await setAgentJudges(ownedAgent, [{ judge_id: j.id, enabled: true }], run + "-acctA");
@@ -124,9 +124,10 @@ describeDb("agent-ownership fence (real PG)", () => {
     await expect(listAgentJudges(ownedAgent, run + "-acctB")).rejects.toBeInstanceOf(ForeignAgentError);
     await expect(setAgentJudges(ownedAgent, [], run + "-acctB")).rejects.toBeInstanceOf(ForeignAgentError);
 
-    // an agent AO has never seen (new flow before first call): allowed
+    // A trusted gateway must verify a new flow before its first call.
     const unseen = t.uid("unseen-agent");
-    const mapped = await setAgentJudges(unseen, [{ judge_id: j.id, enabled: false }], run + "-acctA");
+    await expect(listAgentJudges(unseen, run + "-acctA")).rejects.toBeInstanceOf(ForeignAgentError);
+    const mapped = await setAgentJudges(unseen, [{ judge_id: j.id, enabled: false }], run + "-acctA", unseen);
     expect(mapped.map((m) => m.id)).toEqual([j.id]);
 
     // unscoped caller (single-tenant/OSS, no header): everything allowed
