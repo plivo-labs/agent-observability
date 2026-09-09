@@ -50,12 +50,9 @@ function requiredVariables(config: Record<string, unknown> | null): string[] {
           .map((v) => (v && typeof v === "object" ? (v as Record<string, unknown>)[key] : undefined))
           .filter((n): n is string => typeof n === "string" && n.length > 0)
       : [];
-  // Collectibles live under a different key per node type: extract_variables (ai_agent_v2),
-  // input_collected (ai_agent_v29), agent_tasks.variables/extract_only (agent_node).
   const tasks = (config?.agent_tasks ?? {}) as Record<string, unknown>;
   return [
     ...names(config?.extract_variables, "variable_name"),
-    ...names(config?.input_collected, "variable_name"),
     ...names(tasks.variables, "name"),
     ...names(tasks.extract_only, "name"),
   ];
