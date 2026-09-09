@@ -79,7 +79,9 @@ describeDb("judge HTTP tenant authorization", () => {
   });
 
   test("calibration sends only authorized transcripts to the model", async () => {
-    const own = await t.seedSession({ accountId: accountA, chatHistory: [{ role: "user", content: ["own private text"] }] });
+    const seeded = await t.seedSession({ accountId: accountA, chatHistory: [{ role: "user", content: ["own private text"] }] });
+    const own = seeded + '\\,"';
+    await sql`UPDATE ao_agent_transport_sessions SET session_id = ${own} WHERE session_id = ${seeded}`;
     const foreign = await t.seedSession({ accountId: accountB, chatHistory: [{ role: "user", content: ["foreign private text"] }] });
     const llm = new MockLLM([JSON.stringify({ description: "Refined own policy" })]);
     await expect(calibrateMetric({ description: "Policy", scope: "conversation", examples: [
@@ -123,6 +125,8 @@ describeDb("judge HTTP tenant authorization", () => {
       VALUES (${t.uid("custom_legacy")}, ${t.run + " legacy"}, 'Policy', 'custom', 'conversation', 'llm',
         '{"body":"Policy","output":"Return a verdict","slots":[]}'::jsonb, '{}'::jsonb, TRUE) RETURNING id`;
     await sql`INSERT INTO ao_agent_judges (agent_id, judge_id, enabled) VALUES (${agent}, ${rows[0].id}, TRUE)`;
+    expect((await request(accountA, "PUT", `/api/agents/${agent}/judges`, { judges: [] })).status).toBe(409);
+    expect((await sql`SELECT count(*)::int AS n FROM ao_agent_judges WHERE agent_id = ${agent}`)[0].n).toBe(1);
     const previous = config.REQUIRE_ACCOUNT_SCOPE;
     try {
       config.REQUIRE_ACCOUNT_SCOPE = true;
