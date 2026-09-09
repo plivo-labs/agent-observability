@@ -8,6 +8,7 @@
 // contract the output must satisfy and already holds the call transcripts the
 // calibration step needs. They use generic account scoping for stored calls; any OSS install
 // with an LLM configured gets them.
+import { textArrayLiteral } from "../pg-array.js";
 import { z } from "zod";
 import { sql } from "../db.js";
 import { assertSessionAccess, SessionAccessError } from "../account-scope.js";
@@ -240,7 +241,7 @@ export async function calibrateMetric(
 ): Promise<z.infer<typeof CalibrateZ>> {
   const ids = input.examples.map((e) => e.session_id);
   await assertSessionAccess(ids, accountId);
-  const idsLiteral = `{${ids.map((id) => `"${id.replace(/"/g, '\\"')}"`).join(",")}}`;
+  const idsLiteral = textArrayLiteral(ids);
   const rows = (await sql`
     SELECT session_id, chat_history FROM ao_agent_transport_sessions
     WHERE session_id = ANY(${idsLiteral}::text[])

@@ -1,5 +1,6 @@
 // Judge-registry API. Read covers the whole catalogue; writes are custom-only —
 // the default judges are locked (403), enforced both here and in the db layer.
+import { textArrayLiteral } from "../pg-array.js";
 import type { Hono } from "hono";
 import { accountScope, accountScopeGuard, assertSessionAccess, SessionAccessError } from "../account-scope.js";
 import { sql } from "../db.js";
@@ -24,6 +25,7 @@ import {
   deleteCustomJudge,
   getJudge,
   JudgeNameConflictError,
+  MappingOwnershipConflictError,
   ForeignAgentError,
   listAgentJudges,
   listJudges,
@@ -208,7 +210,7 @@ export function registerJudgeRoutes(app: Hono): void {
       );
       // The console deep-links each result into Agent Runs, which is keyed by
       // flow_run_uuid (stored as a session tag), not session_id.
-      const idsLiteral = `{${parsed.data.session_ids.map((s) => `"${s.replace(/"/g, '\\"')}"`).join(",")}}`;
+      const idsLiteral = textArrayLiteral(parsed.data.session_ids);
       const runIdRows = (await sql`
         SELECT session_id, substring(name FROM 15) AS flow_run_uuid
         FROM ao_session_tags
@@ -275,6 +277,9 @@ export function registerJudgeRoutes(app: Hono): void {
       const judges = await setAgentJudges(agentId, entries, accountScope(c), c.req.header("x-verified-agent-id") ?? null);
       return c.json({ api_id: newApiId(), objects: judges });
     } catch (e) {
+      if (e instanceof MappingOwnershipConflictError) {
+        return c.json(buildErrorResponse("mapping_ownership_unresolved", e.message), 409);
+      }
       if (e instanceof UnknownJudgeIdsError) {
         return c.json(buildErrorResponse("invalid_payload", e.message), 400);
       }
