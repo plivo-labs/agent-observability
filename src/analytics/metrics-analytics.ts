@@ -214,13 +214,23 @@ export async function getMetricsAnalytics(opts: {
 // judge in the window, so a client can drill the metric into its runs table.
 // Same account / agent / range scope as getMetricsAnalytics; generic over AO's
 // own verdicts.
+export interface MetricFailedRun {
+  flow_run_uuid: string;
+  flow_uuid: string | null;
+  flow_name: string | null;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  outcome: string | null;
+}
+
 export async function getMetricFailedRuns(opts: {
   range?: string;
   accountId?: string | null;
   agentIds?: string[] | null;
   judgeName: string;
   limit?: number;
-}): Promise<{ range: string; judge_name: string; flow_run_uuids: string[] }> {
+}): Promise<{ range: string; judge_name: string; flow_run_uuids: string[]; runs: MetricFailedRun[] }> {
   const range = RANGE_TO_INTERVAL[opts.range ?? "7d"] ? (opts.range ?? "7d") : "7d";
   const { interval } = RANGE_TO_INTERVAL[range];
   const accountId = opts.accountId ?? null;
@@ -233,20 +243,43 @@ export async function getMetricFailedRuns(opts: {
 
   // The tag name is `flow_run_uuid:<uuid>`; substring FROM 15 drops the prefix.
   const rows = await sql.unsafe(
-    `SELECT DISTINCT substring(t.name FROM 15) AS flow_run_uuid
+    `SELECT DISTINCT ON (substring(t.name FROM 15)) substring(t.name FROM 15) AS flow_run_uuid,
+            s.agent_id AS flow_uuid, s.agent_name AS flow_name,
+            s.started_at, s.ended_at, s.duration_ms,
+            latest_outcome.outcome
      FROM ao_session_external_evals e
      JOIN ao_agent_transport_sessions s ON s.session_id = e.session_id
      JOIN ao_session_tags t
        ON t.session_id = e.session_id AND t.name LIKE 'flow_run_uuid:%'
+     LEFT JOIN LATERAL (
+       SELECT o.outcome
+       FROM ao_session_outcomes o
+       WHERE o.session_id = s.session_id
+       ORDER BY COALESCE(o.observed_at, o.updated_at, o.created_at) DESC
+       LIMIT 1
+     ) latest_outcome ON TRUE
      WHERE e.source = 'eval_sweeper'
        AND e.judge_name = $1
        AND e.verdict = 'fail'
        AND s.ended_at >= NOW() - $2::interval
        AND ($3::text IS NULL OR s.account_id = $3)
        AND ($4::text IS NULL OR s.agent_id = ANY($4::text[]))
+       ORDER BY substring(t.name FROM 15), e.created_at DESC
      LIMIT $5`,
     [opts.judgeName, interval, accountId, agentIdsLit, limit],
   );
+
+  const runs = (rows as Array<any>)
+    .filter((r) => r.flow_run_uuid)
+    .map((r) => ({
+      flow_run_uuid: r.flow_run_uuid,
+      flow_uuid: r.flow_uuid ?? null,
+      flow_name: r.flow_name ?? null,
+      started_at: new Date(r.started_at).toISOString(),
+      ended_at: new Date(r.ended_at).toISOString(),
+      duration_ms: Number(r.duration_ms ?? 0),
+      outcome: r.outcome ?? null,
+    }));
 
   return {
     range,
@@ -254,5 +287,6 @@ export async function getMetricFailedRuns(opts: {
     flow_run_uuids: (rows as Array<{ flow_run_uuid: string | null }>)
       .map((r) => r.flow_run_uuid)
       .filter((v): v is string => !!v),
+    runs,
   };
 }
