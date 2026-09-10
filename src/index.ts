@@ -731,7 +731,7 @@ app.get("/api/sessions/:id", async (c) => {
     return c.json(buildErrorResponse("not_found", "Session not found"), 404);
   }
 
-  const [tagRows, evaluationRows, outcomeRows, evalVerdictRows] = await Promise.all([
+  const [tagRows, evaluationRows, outcomeRows, evalVerdictRows, metricRows] = await Promise.all([
     sql`
       SELECT name, metadata, source, observed_at, created_at, updated_at
       FROM ao_session_tags
@@ -756,6 +756,20 @@ app.get("/api/sessions/:id", async (c) => {
       FROM ao_session_eval_verdicts
       WHERE session_id = ${sessionId}
       LIMIT 1
+    `,
+    // Custom-metric verdicts (metric:<slug>) for this session, latest per metric,
+    // joined to the registry for the display name. Surfaced through the legacy
+    // goal_evaluation shape below so goal-shape consumers render them unchanged.
+    sql`
+      SELECT DISTINCT ON (e.judge_name) j.display_name, e.verdict, e.reasoning
+      FROM ao_session_external_evals e
+      JOIN ao_judges j ON j.type = 'custom' AND j.name = e.judge_name
+        AND COALESCE(j.account_id, '') = COALESCE(${rows[0].account_id ?? ''}, '')
+      WHERE e.session_id = ${sessionId}
+        AND e.source = 'eval_sweeper'
+        AND e.judge_name LIKE 'metric:%'
+        AND e.verdict IN ('pass', 'fail', 'unknown')
+      ORDER BY e.judge_name, COALESCE(e.observed_at, e.created_at) DESC
     `,
   ]);
 
@@ -814,6 +828,23 @@ app.get("/api/sessions/:id", async (c) => {
         completed_at: evalRow.completed_at,
       }
     : null;
+  // Custom-metric verdicts ride the goal_evaluation channel (goals retired → metrics):
+  // consumers that read goal_evaluation.goals keep working unchanged, so metrics
+  // render wherever conversation goals used to.
+  const metricGoals = (metricRows ?? []).map((m: any) => ({
+    goal_name: m.display_name,
+    achieved: m.verdict === "pass",
+    // Full verdict (pass | fail | unknown) so consumers can render the "unknown"
+    // (metric didn't apply / insufficient evidence) case distinctly instead of
+    // collapsing it to a misleading achieved=false.
+    verdict: m.verdict,
+    reason: m.reasoning ?? "",
+  }));
+  if (metricGoals.length > 0) {
+    if (!row.eval) row.eval = { status: "done", verdicts: {}, error: null, completed_at: null };
+    if (!row.eval.verdicts || typeof row.eval.verdicts !== "object") row.eval.verdicts = {};
+    row.eval.verdicts.goal_evaluation = { goals: metricGoals };
+  }
   row.api_id = newApiId();
 
   return c.json(row);
