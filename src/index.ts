@@ -768,7 +768,7 @@ app.get("/api/sessions/:id", async (c) => {
       WHERE e.session_id = ${sessionId}
         AND e.source = 'eval_sweeper'
         AND e.judge_name LIKE 'metric:%'
-        AND e.verdict IN ('pass', 'fail')
+        AND e.verdict IN ('pass', 'fail', 'unknown')
       ORDER BY e.judge_name, COALESCE(e.observed_at, e.created_at) DESC
     `,
   ]);
@@ -834,6 +834,10 @@ app.get("/api/sessions/:id", async (c) => {
   const metricGoals = (metricRows ?? []).map((m: any) => ({
     goal_name: m.display_name,
     achieved: m.verdict === "pass",
+    // Full verdict (pass | fail | unknown) so consumers can render the "unknown"
+    // (metric didn't apply / insufficient evidence) case distinctly instead of
+    // collapsing it to a misleading achieved=false.
+    verdict: m.verdict,
     reason: m.reasoning ?? "",
   }));
   if (metricGoals.length > 0) {
