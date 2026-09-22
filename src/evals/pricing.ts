@@ -47,6 +47,8 @@ export interface ModelPrice {
 const INTERNAL_PRICES: Record<string, ModelPrice> = {
   "openai:gpt-5.5":        { input: 5,    output: 30,  cache_read: 0.5 },
   "openai:gpt-5.6-luna":   { input: 0.2,  output: 1.2, cache_read: 0.02 },
+  // Jev bills input only (docs.typesafe.ai/models.md); output tokens are free.
+  "typesafe:jev-1.13.0":   { input: 0.042, output: 0 },
 };
 
 // Static seed. Kept small — just enough so cost is non-null for the
