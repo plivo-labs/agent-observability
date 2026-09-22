@@ -40,5 +40,14 @@ export function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record
  */
 export function adherenceNodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
   const { available_intents: _omit, ...rest } = nodePayload(node, ctx);
-  return rest;
+  return { ...rest, next_node: nextNodeName(node, ctx) };
+}
+
+/** Null when this segment ends the conversation. A node-to-node exit leaves no
+ *  transcript line, so without this the judge marks the handoff missed and
+ *  reads the next node's turns as this node's. `ctx.nodes` is in visit order. */
+function nextNodeName(node: NodeEvalInput, ctx: ConversationInput): string | null {
+  const i = ctx.nodes.indexOf(node);
+  const next = i >= 0 ? ctx.nodes[i + 1] : undefined;
+  return next?.node_name ? next.node_name : null;
 }
