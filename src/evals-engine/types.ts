@@ -110,6 +110,11 @@ export interface ConversationInput {
    *  human_transfer judge reads this. Absent ⇒ that judge is undecidable (the
    *  sim path, or a sender that never tags) — never a clean "no transfer". */
   tags?: SessionTag[];
+  /** Runtime system/developer messages in full (the rendered transcript keeps
+   *  only the first 600 chars of each as a System_Note). The hallucination
+   *  grounding index reads these: a lead's templated details live here and
+   *  nowhere else in the config. Absent on the sim path. */
+  system_messages?: string[];
 }
 
 /** One session tag as stored: an opaque name plus optional JSON metadata. */
@@ -147,6 +152,15 @@ export interface InteractionQualityIssue {
   reason_code: string;
   details: string;
 }
+/** Which backend decided an axis and how sure it was. Optional so stored
+ *  verdicts written before the Jev path stay readable; `confidence` is Jev's
+ *  calibrated probability of the defect for the deciding question. */
+export interface JudgeProvenance {
+  confidence?: number;
+  backend?: "jev" | "llm" | "code";
+  jev_model?: string;
+}
+
 export interface InteractionQualityMetrics {
   score: number;
   issues: InteractionQualityIssue[];
@@ -161,7 +175,7 @@ export interface PolicyBoundaryComplianceMetrics {
   reason: string;
   technical_reason: string;
 }
-export interface InstructionsAdherenceMetrics {
+export interface InstructionsAdherenceMetrics extends JudgeProvenance {
   /** Code-derived: objective.achieved ∧ procedure.passed ∧ policy.passed. */
   adherence_passed: boolean;
   /** Code-derived weighted score: .35·obj + .25·proc + .25·inter + .15·policy. */
@@ -174,14 +188,14 @@ export interface InstructionsAdherenceMetrics {
   policy_boundary_compliance: PolicyBoundaryComplianceMetrics | null;
 }
 
-export interface IntentIdentificationMetrics {
+export interface IntentIdentificationMetrics extends JudgeProvenance {
   reason: string;
   technical_reason: string;
   intent_not_found: boolean;
   intent_wrongly_identified: boolean;
   score: number;
 }
-export interface VariableExtractionMetrics {
+export interface VariableExtractionMetrics extends JudgeProvenance {
   extraction_successful: boolean;
   score: number;
   reason: string;
@@ -193,13 +207,13 @@ export interface VariableExtractionMetrics {
   /** Variables the agent extracted with a wrong/ungrounded value (LLM). */
   incorrect_variables: string[];
 }
-export interface HallucinationMetrics {
+export interface HallucinationMetrics extends JudgeProvenance {
   hallucinated: boolean;
   score: number;
   reason: string;
   technical_reason: string;
 }
-export interface NodeLoopMetrics {
+export interface NodeLoopMetrics extends JudgeProvenance {
   loop_detected: boolean;
   score: number;
   reason: string;
@@ -252,7 +266,7 @@ export interface CriteriaEvaluationResult {
 // The node/goal path leaves these zero-valued; the conversation judges populate
 // the real values when scoring the whole-transcript axis.
 
-interface CmDetection {
+interface CmDetection extends JudgeProvenance {
   detected: boolean;
   detected_value: number;
   reason: string;

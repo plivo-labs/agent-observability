@@ -208,6 +208,37 @@ export const envSchema = z.object({
   // while the seed matches source (enforced by the parity test).
   JUDGES_FROM_DB: z.enum(["on", "off"]).default("on"),
 
+  // ── Jev (TypeSafe System One) first-pass judge ──────────────────────────────
+  // "primary": Jev answers every default binary judge first and a per-judge
+  // confidence gate decides which axes Luna still reviews (see
+  // src/evals-engine/jev/). "off" (default) is byte-identical to today's path
+  // and is the rollback lever. primary without JEV_API_KEY logs at boot and
+  // behaves as off.
+  JEV_MODE: z.enum(["off", "primary"]).default("off"),
+  JEV_API_KEY: z.string().optional(),
+  JEV_BASE_URL: z.string().default("https://api.typesafe.ai"),
+  // Pinned to a version, not the "jev-latest" alias: the gates below were
+  // calibrated against this model, and an alias move would silently move them.
+  JEV_MODEL: z.string().default("jev-1.13.0"),
+  // A cold connection to Jev takes 5-8 s for the first request; warm calls are
+  // 0.4-2 s. Below ~10 s every cold session would fall back to Luna.
+  JEV_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+  // Jev requests bypass the LLM judge semaphore (EVAL_MAX_CONCURRENT_JUDGE_CALLS)
+  // and carry their own cap.
+  JEV_MAX_CONCURRENT: z.coerce.number().int().positive().default(8),
+  // Comma-separated allow-list of default judges Jev answers first ("all" =
+  // every default binary judge). A judge not listed runs on Luna exactly as today.
+  JEV_JUDGES: z.string().default("all"),
+  // Custom metrics have no benchmark yet; they join the Jev path only when
+  // switched on after measuring in dev.
+  JEV_CUSTOM_METRICS: z.enum(["off", "on"]).default("off"),
+  // JSON {judge: {pass_below, fail_above}} overlaying the code defaults in
+  // src/jev/gates.ts; a malformed value falls back to the defaults with a warning.
+  JEV_GATES: z.string().optional(),
+  // Per-request state budget in ESTIMATED tokens (src/jev/tokens.ts); a request
+  // over budget is never sent and its axes go to Luna.
+  JEV_STATE_TOKEN_BUDGET: z.coerce.number().int().positive().default(30000),
+
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).default(1),
