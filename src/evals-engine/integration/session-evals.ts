@@ -578,7 +578,7 @@ export async function evaluateIngestedSession(
     const { stats } = result;
     console.log(
       `[jev] judged nodes=${input.nodes.length} requests=${stats.requests} axes=${stats.axesTotal} ` +
-        `auto_pass=${stats.autoPass} auto_fail=${stats.autoFail} reviewed=${stats.reviewed} ` +
+        `auto_pass=${stats.autoPass} auto_fail=${stats.autoFail} unknown=${stats.unknown} reviewed=${stats.reviewed} ` +
         `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}`,
     );
     return {
