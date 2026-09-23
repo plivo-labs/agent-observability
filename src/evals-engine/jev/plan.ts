@@ -1,7 +1,7 @@
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import type { CustomJudgeSpec } from "../judges/custom-metric.js";
 import { isVoiceChannel } from "../judges/conversation-judges.js";
-import { clipToolResults, estimateRequestTokens } from "../../jev/tokens.js";
+import { clipToolResults, estimateQuestionTokens, estimateRequestTokens } from "../../jev/tokens.js";
 import { buildHallucinationState, residualClaims } from "../../jev/hallucination-grounding.js";
 import {
   ADHERENCE_QUESTION,
@@ -42,7 +42,7 @@ export const CONVERSATION_JUDGES = [
 export type ConversationJudgeName = (typeof CONVERSATION_JUDGES)[number];
 
 /** Voice-only by the same rule the LLM path uses (conversation-judges.ts). */
-const VOICE_ONLY: ReadonlySet<string> = new Set(["voicemail_detection", "bot_detection", "call_screening"]);
+export const VOICE_ONLY: ReadonlySet<string> = new Set(["voicemail_detection", "bot_detection", "call_screening"]);
 
 export const NODE_JUDGES = [
   "node_loop",
@@ -83,6 +83,8 @@ interface JevAxisCommon {
   judge: string;
   requestKey: string;
   questionKeys: string[];
+  /** Set on the axes that belong to one node. */
+  nodeIndex?: number;
 }
 export interface JevConversationAxis extends JevAxisCommon {
   kind: "conversation";
@@ -99,7 +101,6 @@ export interface JevCustomAxis extends JevAxisCommon {
   kind: "custom";
   judge: string;
   scope: "conversation" | "node";
-  nodeIndex?: number;
   applicableKey: string;
   failKey: string;
 }
@@ -115,13 +116,10 @@ export interface JevPlan {
 
 export interface BuildJevPlanOptions {
   /** Allow-list of judges Jev may answer; omitted means DEFAULT_JEV_JUDGES. */
-  judges?: readonly string[] | "all";
+  judges?: readonly string[];
   customSpecs?: readonly CustomJudgeSpec[];
   customEnabled?: boolean;
   budgetTokens?: number;
-  /** Cap on nodes asked about; mirrors EVAL_MAX_JUDGED_NODES, which the input
-   *  builder has already applied, so this is only a second guard. */
-  maxNodes?: number;
 }
 
 export const DEFAULT_BUDGET_TOKENS = 30_000;
@@ -172,7 +170,6 @@ export function jevConversationState(ctx: ConversationInput): string {
 }
 
 function judgeAllowed(judges: BuildJevPlanOptions["judges"], judge: string): boolean {
-  if (judges === "all") return ALL_JEV_JUDGES.includes(judge);
   return (judges ?? DEFAULT_JEV_JUDGES).includes(judge);
 }
 
@@ -208,6 +205,9 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
 
   const hasTranscript = !!ctx.full_transcript?.trim();
   const voice = isVoiceChannel(ctx.transport);
+  const longestHallucinationQuestion = Math.max(
+    ...Object.values(HALLUCINATION_QUESTIONS).map((q) => estimateQuestionTokens(q)),
+  );
 
   // ── conversation axis ──────────────────────────────────────────────────────
   if (hasTranscript) {
@@ -224,8 +224,11 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     addRequest("c", jevConversationState(ctx), questions, pending);
   }
 
-  const nodes = (ctx.nodes ?? []).slice(0, opts.maxNodes ?? Infinity);
+  const nodes = ctx.nodes ?? [];
   const clippedTranscript = clipToolResults(ctx.full_transcript ?? "");
+  // Everything the hallucination questions ground against depends on the CALL,
+  // not the node, so a multi-node session retrieves it once.
+  const claims = hasTranscript ? residualClaims(ctx, clippedTranscript, MAX_CLAIM_QUESTIONS) : [];
 
   nodes.forEach((node, nodeIndex) => {
     const state = jevNodeState(node, ctx);
@@ -263,9 +266,6 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     }
     addRequest(prefix, state, nodeQuestions, nodeAxes);
 
-    // variables ride their own request: one full recording rule per variable is
-    // the input that lifted recall from 27% to 91%, and 20 of them next to the
-    // node state is the largest payload in the plan.
     if (judgeAllowed(opts.judges, "variable_extraction")) {
       const vars = variableQuestions(node);
       if (vars.length > 0) {
@@ -294,7 +294,9 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     // hallucination: its own compact grounded state (config windows around what
     // the agent actually said) plus one question per value code cannot ground.
     if (judgeAllowed(opts.judges, "hallucination")) {
-      const { state: hState, agentLines } = buildHallucinationState(ctx, node, clippedTranscript, DEFAULT_BUDGET_TOKENS);
+      // Shed against the budget this plan is actually held to, minus the
+      // longest question that will ride with the state.
+      const { state: hState, agentLines } = buildHallucinationState(ctx, node, clippedTranscript, budget - longestHallucinationQuestion);
       if (agentLines.length > 0) {
         const questions: Record<string, JevNoul> = {};
         const keys: string[] = [];
@@ -303,7 +305,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
           questions[full] = question;
           keys.push(full);
         }
-        residualClaims(ctx, clippedTranscript, MAX_CLAIM_QUESTIONS).forEach((claim, i) => {
+        claims.forEach((claim, i) => {
           const full = `h${nodeIndex}.claim.${i}`;
           questions[full] = claimQuestion(claim.token, claim.line);
           keys.push(full);

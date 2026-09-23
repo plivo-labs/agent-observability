@@ -85,7 +85,7 @@ const CUSTOM_METRIC_JSON = {
 
 const DEFAULT_CUSTOM_MAX_TOKENS = 1200;
 
-export const unavailableCustomMetric = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
+const unavailable = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
   judge_name: spec.name,
   display_name: spec.display_name,
   scope: spec.scope,
@@ -198,7 +198,7 @@ export async function runCustomMetricJudge(
     };
   } catch (e) {
     if (classifyErrorDurability(e) === "transient") throw e;
-    return unavailableCustomMetric(spec, `custom judge unavailable: ${(e as Error).message ?? e}`);
+    return unavailable(spec, `custom judge unavailable: ${(e as Error).message ?? e}`);
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { DEFAULT_GATES, decide, gateFor, resolveGates, NEVER_FAIL, NEVER_PASS } from "../src/jev/gates.js";
+import { CUSTOM_METRIC_GATE, DEFAULT_GATES, decide, resolveGates, NEVER_FAIL, NEVER_PASS } from "../src/jev/gates.js";
 
 describe("decide", () => {
   const g = { pass_below: 0.2, fail_above: 0.8 };
@@ -47,9 +47,10 @@ describe("resolveGates", () => {
   });
 });
 
-describe("gateFor", () => {
-  test("custom metrics share one gate; unknown judges have none", () => {
-    expect(gateFor(DEFAULT_GATES, "metric:hold_warning")).toEqual(DEFAULT_GATES.custom_metric);
-    expect(gateFor(DEFAULT_GATES, "stt")).toBeUndefined();
+describe("the gate table", () => {
+  test("custom judges share one gate; a judge with no gate is not Jev's to decide", () => {
+    expect(DEFAULT_GATES[CUSTOM_METRIC_GATE]).toEqual({ pass_below: 0.2, fail_above: 0.8 });
+    expect(DEFAULT_GATES.stt).toBeUndefined();
+    expect(DEFAULT_GATES.user_sentiment).toBeUndefined();
   });
 });
