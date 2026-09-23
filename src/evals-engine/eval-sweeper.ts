@@ -14,6 +14,8 @@ import {
   getAgentCustomJudges,
 } from "./db.js";
 import { classifyErrorDurability } from "../error-durability.js";
+import { createJevClientFromConfig } from "../jev/client.js";
+import type { JevClient } from "../jev/types.js";
 import { jsonbParam } from "../jsonb-param.js";
 import { sanitizeForLog } from "../response.js";
 import { startSweeper, type SweeperHandle } from "../sweeper-loop.js";
@@ -241,8 +243,16 @@ export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
     });
 }
 
+/** Test injection: a provider and/or a Jev client. Passing `jev` explicitly
+ *  (even as undefined) overrides the env-resolved client, so a test can drive
+ *  either path without touching process env. */
+export interface JudgeOpts {
+  provider?: LlmProvider;
+  jev?: JevClient;
+}
+
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
-async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider }): Promise<boolean> {
+async function judgeClaimed(claim: EvalClaim, opts?: JudgeOpts): Promise<boolean> {
   const sessionId = claim.sessionId;
   // Registry prompts (TTL-cached, never throws): defaults resolve through the
   // ao_judges rows from here on; a load failure keeps the shipped constants.
@@ -344,7 +354,12 @@ async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider })
       console.error(`[evals] custom-judge lookup failed session=${sanitizeForLog(sessionId)} — judging defaults only:`, e);
       return [];
     });
-    const verdicts = await evaluateIngestedSession(source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges);
+    const verdicts = await evaluateIngestedSession(
+      source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges,
+      // `jev` is resolved per call, not cached at import: JEV_MODE=off returns
+      // null and the path below is byte-identical to before Jev existed.
+      opts && "jev" in opts ? opts.jev : createJevClientFromConfig(),
+    );
     // Judging is done — no more provider spend to protect. Stop the heartbeat
     // and drain any in-flight beat so the fan-out + completion below read a
     // token no concurrent beat can invalidate.
@@ -477,7 +492,7 @@ let activeKicks = 0;
  * MUST NOT be awaited on the ingest hot path — call as `void
  * kickEvalForSession(id)` so a slow judge run never delays the ingest 200.
  */
-export async function kickEvalForSession(sessionId: string, opts?: { provider?: LlmProvider }): Promise<void> {
+export async function kickEvalForSession(sessionId: string, opts?: JudgeOpts): Promise<void> {
   if (config.EVAL_EVENT_KICK === "off") return;
   if (evalTablesPresent === false) return; // boot probe found no eval tables — nothing to judge into
   // Only the inline-sweeper process both ingests AND judges; in worker mode the

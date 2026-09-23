@@ -23,6 +23,8 @@ import {
   type CustomJudgeSpec,
   type CustomMetricVerdict,
 } from "../judges/custom-metric.js";
+import type { JevClient } from "../../jev/types.js";
+import { evaluateSessionJevFirst } from "../jev/session.js";
 import type {
   ConversationInput,
   EvalTurn,
@@ -541,6 +543,10 @@ export async function evaluateIngestedSession(
    *  itself never touches the DB). Empty ⇒ the path is identical to before
    *  custom judges existed. */
   customJudges: readonly CustomJudgeSpec[] = [],
+  /** When present, Jev answers every gated judge first and the LLM judges run
+   *  only where its confidence gate says so. Absent (JEV_MODE=off, no key, or
+   *  a test that injects nothing) ⇒ the LLM-only path below, unchanged. */
+  jev?: JevClient,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
@@ -564,6 +570,28 @@ export async function evaluateIngestedSession(
     );
   }
 
+  // `input.nodes[i] ↔ nodeRefs[i]`: resolve the engine uuid back to the
+  // sender's opaque ref so custom per-node rows tag like default rows.
+  const refOf = (nodeUuid: string): string => {
+    const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
+    return nodeRefs[i]?.ref ?? "";
+  };
+
+  if (jev) {
+    const result = await evaluateSessionJevFirst({ input, refOf, jev, provider, customJudges: budgeted });
+    const { stats } = result;
+    console.log(
+      `[jev] judged nodes=${input.nodes.length} requests=${stats.requests} axes=${stats.axesTotal} ` +
+        `auto_pass=${stats.autoPass} auto_fail=${stats.autoFail} reviewed=${stats.reviewed} ` +
+        `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}`,
+    );
+    return {
+      node_evaluations: result.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" })),
+      conversation_metrics: result.conversation_metrics,
+      ...(result.custom_metrics.length ? { custom_metrics: result.custom_metrics } : {}),
+    };
+  }
+
   const [conversation_metrics, scored, custom_metrics] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
@@ -575,17 +603,7 @@ export async function evaluateIngestedSession(
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
     budgeted.length && input.full_transcript.trim()
-      ? runCustomMetricJudges(
-          budgeted,
-          input,
-          // input.nodes[i] ↔ nodeRefs[i]: resolve the engine uuid back to the
-          // sender's opaque ref so custom per-node rows tag like default rows.
-          (nodeUuid) => {
-            const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
-            return nodeRefs[i]?.ref ?? "";
-          },
-          provider,
-        )
+      ? runCustomMetricJudges(budgeted, input, refOf, provider)
       : Promise.resolve([] as CustomMetricVerdict[]),
   ]);
 
