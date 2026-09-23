@@ -58,16 +58,8 @@ export type NodeJudgeName = (typeof NODE_JUDGES)[number];
 /** Every judge Jev CAN answer. */
 export const ALL_JEV_JUDGES: readonly string[] = [...CONVERSATION_JUDGES, ...NODE_JUDGES];
 
-/**
- * What "all" means: every judge Jev answers by default.
- *
- * `low_engagement` is deliberately excluded. The tuning run scored it well, but
- * replaying the shipped path over the same 300 sessions did not reproduce that
- * (F1 46 vs 77) while the LLM judge scores 80 on the same set, so there is
- * nothing to win here and a 3% auto-pass miss to lose. Put it in JEV_JUDGES
- * explicitly to opt back in after re-tuning.
- */
-export const DEFAULT_JEV_JUDGES: readonly string[] = ALL_JEV_JUDGES.filter((j) => j !== "low_engagement");
+/** What "all" means: every judge Jev answers by default. */
+export const DEFAULT_JEV_JUDGES: readonly string[] = ALL_JEV_JUDGES;
 
 export interface JevIntentQuestionRef {
   key: string;

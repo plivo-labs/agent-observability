@@ -80,6 +80,12 @@ async function main(): Promise<void> {
       }),
     );
     const gated = mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES));
+    // Some axes are decided in CODE before any judge verdict is emitted (a
+    // voice call with zero caller turns IS low engagement, resolveOutcomes).
+    // Scoring the raw probability instead of the emitted verdict once produced
+    // a wrong call on low_engagement, so the flag is recorded here.
+    const speech = (input.speech_transcript || input.full_transcript).split("\n");
+    const silentCall = !speech.some((l) => /^User:\s*\S/.test(l)) && speech.some((l) => l.startsWith("Agent:") && l.includes("?"));
     // tuned_flags stores ONE probability per judge per session (the max across
     // that judge's questions AND nodes), so collapse the same way.
     const byJudge: Record<string, { p: number | null; fallback?: string }> = {};
@@ -94,6 +100,7 @@ async function main(): Promise<void> {
         nodes: input.nodes.length,
         requests: plan.requests.map((r) => ({ key: r.key, est: r.estTotalTokens, longest: r.estTokens, real: (results.get(r.key) as any)?.response?.usage?.input_tokens ?? null })),
         dropped: plan.dropped,
+        silent_call: silentCall,
         errors: [...results].filter(([, r]) => !r.ok).map(([k, r]) => [k, String((r as any).error?.message ?? "")]),
         judges: byJudge,
       }) + "\n",
@@ -143,7 +150,10 @@ async function main(): Promise<void> {
       if (mine === undefined || mine === null) { s.onlyTuned++; continue; }
       const gate = DEFAULT_GATES[judge]!;
       s.n++;
-      if (decide(mine, gate) === decide(tunedP, gate)) s.agree++;
+      // The code rule outranks the judge on this axis, so compare what would
+      // actually be emitted.
+      const forced = judge === "low_engagement" && line.silent_call;
+      if (forced || decide(mine, gate) === decide(tunedP, gate)) s.agree++;
       const dp = Math.abs(mine - tunedP);
       s.dpSum += dp;
       s.dpMax = Math.max(s.dpMax, dp);

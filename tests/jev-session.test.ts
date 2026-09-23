@@ -62,9 +62,9 @@ describe("confident Jev verdicts", () => {
   test("all-clean: no judge call at all beyond sentiment and STT", async () => {
     const jev = new MockJev([{}], 0.01);
     const { v, provider } = await run(jev);
-    // adherence never auto-passes by design, and low engagement is not on the
-    // Jev path by default — those two plus sentiment and STT are all that remain
-    expect(labelsOf(provider)).toEqual(["eval_detection", "eval_instruction", "eval_sentiment", "eval_stt"]);
+    // adherence never auto-passes by design, so it plus sentiment and STT are
+    // all that remain
+    expect(labelsOf(provider)).toEqual(["eval_instruction", "eval_sentiment", "eval_stt"]);
     expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
 
     const node = v.node_evaluations[0]!;
@@ -231,13 +231,14 @@ describe("uncertain and unavailable axes fall to the LLM", () => {
 });
 
 describe("failures never escape as unhandled rejections", () => {
-  test("a detection judge throwing transiently rejects the session, with sentiment and STT handled", async () => {
+  test("a judge throwing transiently rejects the session, with sentiment and STT handled", async () => {
     const provider = new MockLLM([(args: any) => {
       const system = args.system as string;
-      if (system.includes("Detect low engagement")) throw new Error("429 rate limit exceeded");
+      if (system.includes("four-part rubric")) throw new Error("429 rate limit exceeded");
       return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
     }]);
-    // Jev answers the detections it owns; low engagement is the LLM's, and it throws.
+    // Jev answers everything it owns; adherence never auto-passes, so it is the
+    // LLM's — and it throws.
     const jev = new MockJev([{}], 0.01);
     await expect(run(jev, provider)).rejects.toThrow(/429/);
     // sentiment and STT were started in the same batch, so their results were
@@ -254,8 +255,7 @@ describe("a text transport never gets a voice-only verdict", () => {
     expect(v.conversation_metrics.bot_detected.available).toBe(false);
     expect(v.conversation_metrics.call_screening.available).toBe(false);
     expect(v.conversation_metrics.low_engagement.available).toBe(true);
-    // low engagement stays on the LLM by default
-    expect(v.conversation_metrics.low_engagement.backend).toBe("llm");
+    expect(v.conversation_metrics.low_engagement.backend).toBe("jev");
     const asked = jev.calls.flatMap((c) => Object.keys(c.questions));
     expect(asked.some((k) => k.includes("voicemail"))).toBe(false);
   });
