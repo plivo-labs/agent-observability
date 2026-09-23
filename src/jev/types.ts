@@ -16,8 +16,11 @@ export interface JevRequest {
   key: string;
   state: unknown;
   questions: Record<string, JevNoul>;
-  /** Content-aware estimate used for the budget decision (see tokens.ts). */
+  /** Estimated state tokens PLUS the longest question — the number Jev caps at
+   *  ~32k (see tokens.ts; the estimate is deliberately conservative). */
   estTokens: number;
+  /** Estimated state plus EVERY question — Jev's other cap, ~64k. */
+  estTotalTokens: number;
 }
 
 export interface JevNoulAnswer {

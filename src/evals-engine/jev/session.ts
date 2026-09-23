@@ -42,7 +42,7 @@ import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableE
 import { classifyErrorDurability } from "../../error-durability.js";
 import { writeFailReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
 import { buildJevPlan, parseJevJudges, type JevNodeAxis, type NodeJudgeName } from "./plan.js";
-import { byAxisId, gatePlan, type GatedAxis, type RequestResult } from "./gate.js";
+import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
 import {
   attachDetectionProvenance,
   provenanceOf,
@@ -177,11 +177,11 @@ export async function evaluateSessionJevFirst(args: {
   const startedAt = Date.now();
   const results = await runPlanRequests(jev, plan.requests);
   const jevMs = Date.now() - startedAt;
-  const gated = byAxisId(gatePlan(plan, results, gates));
+  const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, results, gates)));
 
   const stats: JevSessionResult["stats"] = {
     requests: plan.requests.length,
-    axesTotal: plan.axes.length,
+    axesTotal: gated.size,
     autoPass: 0,
     autoFail: 0,
     reviewed: 0,

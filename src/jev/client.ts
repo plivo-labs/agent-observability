@@ -153,7 +153,7 @@ export class HttpJevClient implements JevClient {
     const prompt = res?.usage.input_tokens ?? 0;
     const completion = res?.usage.output_tokens ?? 0;
     const cost = costForTokens("typesafe", this.model, { promptTokens: prompt, completionTokens: completion });
-    const ratio = prompt > 0 && req.estTokens > 0 ? (prompt / req.estTokens).toFixed(2) : "-";
+    const ratio = prompt > 0 && req.estTotalTokens > 0 ? (prompt / req.estTotalTokens).toFixed(2) : "-";
     // Same line shape as completeJSON's so the cost report groups it with the
     // LLM judges; est_ratio is how the token estimator's calibration is watched.
     console.log(
@@ -161,7 +161,7 @@ export class HttpJevClient implements JevClient {
         `correlation_id=${req.key} prompt_tokens=${prompt} completion_tokens=${completion} ` +
         `reasoning_tokens=0 total_tokens=${prompt + completion} attempts=${attempts} ` +
         `duration_ms=${Date.now() - startedAt} cost_usd=${cost === null ? "unknown" : cost.toFixed(6)} ` +
-        `outcome=${outcome} est_tokens=${req.estTokens} est_ratio=${ratio} questions=${Object.keys(req.questions).length}`,
+        `outcome=${outcome} est_tokens=${req.estTokens} est_total=${req.estTotalTokens} est_ratio=${ratio} questions=${Object.keys(req.questions).length}`,
     );
   }
 

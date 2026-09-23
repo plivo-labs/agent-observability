@@ -16,6 +16,7 @@ const req = (over: Partial<JevRequest> = {}): JevRequest => ({
     "n0.h1": { type: "noul", instructions: "h1?", criteria: { true: "yes", false: "no" } },
   },
   estTokens: 100,
+  estTotalTokens: 140,
   ...over,
 });
 

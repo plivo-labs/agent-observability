@@ -4,7 +4,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { buildJevPlan } = await import("../src/evals-engine/jev/plan.js");
-const { gatePlan, byAxisId } = await import("../src/evals-engine/jev/gate.js");
+const { gatePlan, byAxisId, mergeChunkedAxes } = await import("../src/evals-engine/jev/gate.js");
 const { DEFAULT_GATES } = await import("../src/jev/gates.js");
 const { JevError, JEV_OVERFLOW } = await import("../src/jev/types.js");
 type JevResponse = import("../src/jev/types.js").JevResponse;
@@ -41,36 +41,36 @@ function respond(plan: JevPlan, p: number, overrides: Record<string, number> = {
 describe("gatePlan", () => {
   test("low probabilities auto-pass, high ones auto-fail, the middle is reviewed", () => {
     const plan = buildJevPlan(ctx());
-    const low = byAxisId(gatePlan(plan, respond(plan, 0.02), DEFAULT_GATES));
+    const low = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.02), DEFAULT_GATES)));
     expect(low.get("c.voicemail_detection")!.outcome).toBe("pass");
     expect(low.get("n0:node_loop")!.outcome).toBe("pass");
     expect(low.get("n0:node_loop")!.p).toBe(0.02);
     expect(low.get("n0:node_loop")!.jevModel).toBe("jev-1.13.0");
 
-    const high = byAxisId(gatePlan(plan, respond(plan, 0.95), DEFAULT_GATES));
+    const high = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.95), DEFAULT_GATES)));
     expect(high.get("c.voicemail_detection")!.outcome).toBe("fail");
     expect(high.get("n0:variable_extraction")!.outcome).toBe("fail");
 
-    const mid = byAxisId(gatePlan(plan, respond(plan, 0.5), DEFAULT_GATES));
+    const mid = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.5), DEFAULT_GATES)));
     expect(mid.get("n0:node_loop")!.outcome).toBe("review");
     expect(mid.get("n0:node_loop")!.fallback).toBeUndefined();
   });
 
   test("hallucination never auto-fails and adherence never auto-passes", () => {
     const plan = buildJevPlan(ctx());
-    const high = byAxisId(gatePlan(plan, respond(plan, 0.99), DEFAULT_GATES));
+    const high = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.99), DEFAULT_GATES)));
     expect(high.get("n0:hallucination")!.outcome).toBe("review");
     expect(high.get("n0:instructions_adherence")!.outcome).toBe("fail");
-    const low = byAxisId(gatePlan(plan, respond(plan, 0.01), DEFAULT_GATES));
+    const low = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.01), DEFAULT_GATES)));
     expect(low.get("n0:hallucination")!.outcome).toBe("pass");
     expect(low.get("n0:instructions_adherence")!.outcome).toBe("review");
   });
 
   test("an axis takes the highest of its questions, and fired keys are the ones at or above the threshold", () => {
     const plan = buildJevPlan(ctx());
-    const vars = plan.axes.find((a) => a.id === "n0:variable_extraction")!;
+    const vars = plan.axes.find((a) => a.id === "n0:variable_extraction#0")!;
     const [first, second] = vars.questionKeys;
-    const gated = byAxisId(gatePlan(plan, respond(plan, 0.05, { [second!]: 0.97 }), DEFAULT_GATES));
+    const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.05, { [second!]: 0.97 }), DEFAULT_GATES)));
     const axis = gated.get("n0:variable_extraction")!;
     expect(axis.outcome).toBe("fail");
     expect(axis.p).toBe(0.97);
@@ -84,14 +84,14 @@ describe("gatePlan", () => {
     results.delete("n0");
     const withError = new Map<string, any>(results);
     withError.set("n0", { ok: false, error: new JevError(500, "server_error") });
-    withError.set("v0", { ok: false, error: new JevError(400, JEV_OVERFLOW) });
-    const gated = byAxisId(gatePlan(plan, withError, DEFAULT_GATES));
+    withError.set("v0.0", { ok: false, error: new JevError(400, JEV_OVERFLOW) });
+    const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, withError, DEFAULT_GATES)));
     expect(gated.get("n0:node_loop")!.outcome).toBe("review");
     expect(gated.get("n0:node_loop")!.fallback).toBe("error");
     expect(gated.get("n0:variable_extraction")!.fallback).toBe("overflow");
 
     const budgetPlan = buildJevPlan(ctx({ nodes: [node({ node_prompt: "P".repeat(400_000) })] }));
-    const budgetGated = byAxisId(gatePlan(budgetPlan, respond(budgetPlan, 0.02), DEFAULT_GATES));
+    const budgetGated = byAxisId(mergeChunkedAxes(gatePlan(budgetPlan, respond(budgetPlan, 0.02), DEFAULT_GATES)));
     expect(budgetGated.get("n0:node_loop")!.fallback).toBe("budget");
   });
 
@@ -100,7 +100,7 @@ describe("gatePlan", () => {
     const empty = new Map(
       plan.requests.map((r) => [r.key, { ok: true as const, response: { model: "m", usage: { input_tokens: 1, output_tokens: 0 }, answers: {} } }]),
     );
-    const gated = byAxisId(gatePlan(plan, empty, DEFAULT_GATES));
+    const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, empty, DEFAULT_GATES)));
     expect(gated.get("n0:node_loop")!.outcome).toBe("review");
     expect(gated.get("n0:node_loop")!.fallback).toBe("unanswered");
     expect(gated.get("n0:node_loop")!.p).toBeNull();
@@ -110,10 +110,10 @@ describe("gatePlan", () => {
     const spec = { name: "metric:hold", display_name: "Hold", scope: "conversation" as const, body: "Fail if held without warning.", output: "" };
     const plan = buildJevPlan(ctx(), { customSpecs: [spec], customEnabled: true });
     const axis = plan.axes.find((a) => a.id === "m.metric:hold")! as any;
-    const gated = byAxisId(gatePlan(plan, respond(plan, 0.9, { [axis.applicableKey]: 0.03 }), DEFAULT_GATES));
+    const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.9, { [axis.applicableKey]: 0.03 }), DEFAULT_GATES)));
     expect(gated.get("m.metric:hold")!.outcome).toBe("unknown");
 
-    const applies = byAxisId(gatePlan(plan, respond(plan, 0.9, { [axis.applicableKey]: 0.98 }), DEFAULT_GATES));
+    const applies = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.9, { [axis.applicableKey]: 0.98 }), DEFAULT_GATES)));
     expect(applies.get("m.metric:hold")!.outcome).toBe("fail");
   });
 });

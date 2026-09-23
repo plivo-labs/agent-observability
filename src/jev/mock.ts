@@ -38,6 +38,6 @@ export class MockJev implements JevClient {
       const p = (value as Record<string, number>)[key] ?? this.unansweredDefault;
       if (p !== null && p !== undefined) answers[key] = { type: "noul", noul: p };
     }
-    return { model: "jev-mock", usage: { input_tokens: req.estTokens, output_tokens: Object.keys(answers).length }, answers };
+    return { model: "jev-mock", usage: { input_tokens: req.estTotalTokens, output_tokens: Object.keys(answers).length }, answers };
   }
 }

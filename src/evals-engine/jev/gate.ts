@@ -84,6 +84,53 @@ export function gatePlan(
   });
 }
 
+/**
+ * Collapse an axis that was asked across several requests (the chunked variable
+ * questions) into the one verdict the judge owns.
+ *
+ * Any chunk failing fails the axis — the questions are independent defects. A
+ * pass needs EVERY chunk to pass: an unanswered or uncertain chunk means some
+ * variable was never decided, so the axis goes to review rather than claiming a
+ * clean call on partial evidence.
+ */
+export function mergeChunkedAxes(gated: readonly GatedAxis[]): GatedAxis[] {
+  const groups = new Map<string, GatedAxis[]>();
+  const order: string[] = [];
+  for (const g of gated) {
+    const id = g.axis.id.split("#")[0]!;
+    if (!groups.has(id)) { groups.set(id, []); order.push(id); }
+    groups.get(id)!.push(g);
+  }
+  return order.map((id) => {
+    const chunks = groups.get(id)!;
+    // Normalize the id even for a single chunk: downstream looks the axis up by
+    // the judge's own id, never by the request it happened to ride in.
+    if (chunks.length === 1) {
+      const only = chunks[0]!;
+      return only.axis.id === id ? only : { ...only, axis: { ...only.axis, id } };
+    }
+    const fails = chunks.filter((c) => c.outcome === "fail");
+    const outcome: AxisOutcome = fails.length > 0 ? "fail" : chunks.some((c) => c.outcome === "review") ? "review" : "pass";
+    const deciding = fails.length > 0 ? fails : chunks;
+    const axis = chunks[0]!.axis;
+    const merged: GatedAxis = {
+      axis: {
+        ...axis,
+        id,
+        questionKeys: chunks.flatMap((c) => c.axis.questionKeys),
+        ...(axis.kind === "node" && axis.variables ? { variables: chunks.flatMap((c) => (c.axis as typeof axis).variables ?? []) } : {}),
+      },
+      outcome,
+      p: deciding.reduce<number | null>((max, c) => (c.p === null ? max : Math.max(max ?? -1, c.p)), null),
+      firedKeys: deciding.flatMap((c) => c.firedKeys),
+      probabilities: Object.assign({}, ...chunks.map((c) => c.probabilities)),
+      ...(chunks.find((c) => c.fallback) ? { fallback: chunks.find((c) => c.fallback)!.fallback } : {}),
+      ...(chunks.find((c) => c.jevModel) ? { jevModel: chunks.find((c) => c.jevModel)!.jevModel } : {}),
+    };
+    return merged;
+  });
+}
+
 /** Index by axis id for the merge step. */
 export function byAxisId(gated: readonly GatedAxis[]): Map<string, GatedAxis> {
   return new Map(gated.map((g) => [g.axis.id, g]));
