@@ -100,9 +100,10 @@ export function jevIntent(g: GatedAxis, reasons: ReasonMap): IntentIdentificatio
   const missed = axis.intents?.some((i) => !isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const failed = g.outcome === "fail";
   return {
-    // A fail that names neither question (no intent refs survived) is recorded
-    // as not-found: the conservative reading of "the right intent did not fire".
-    intent_not_found: failed && (missed || !wrong),
+    // A fail always names at least one question, so these are exclusive in
+    // practice; the `!wrong` arm covers only the impossible case of a fail
+    // whose fired key matched no declared intent.
+    intent_not_found: failed && (missed || (!wrong && g.firedKeys.length === 0)),
     intent_wrongly_identified: failed && wrong,
     score: failed ? 0 : 1,
     reason: t.reason,
