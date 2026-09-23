@@ -198,6 +198,10 @@ export function buildHallucinationState(
     caller_said: transcriptLines(clipped, ["User:"]).map((l) => l.slice(0, LINE_CHARS)),
     agent_spoken: agentLines.map((l) => l.slice(0, LINE_CHARS)),
   };
+  // Shed the bulkiest evidence first. There is deliberately no rung that drops
+  // tool results entirely: "was this claim backed by a successful tool call?"
+  // is unanswerable without them, so a state that still does not fit is better
+  // left to the LLM judge (the plan's budget check drops it) than asked blind.
   const shedding: Array<[keyof HallucinationState, number]> = [
     ["tool_results", 12],
     ["agent_persona_and_scripted_lines_from_config", 15],

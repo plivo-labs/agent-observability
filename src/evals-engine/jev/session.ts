@@ -96,6 +96,8 @@ export interface JevSessionResult {
     axesTotal: number;
     autoPass: number;
     autoFail: number;
+    /** Custom metrics the call never reached — neither a pass nor a fail. */
+    unknown: number;
     reviewed: number;
     fallbacks: Record<string, number>;
     jevMs: number;
@@ -174,13 +176,15 @@ export async function evaluateSessionJevFirst(args: {
     axesTotal: gated.size,
     autoPass: 0,
     autoFail: 0,
+    unknown: 0,
     reviewed: 0,
     fallbacks: {},
     jevMs,
   };
   for (const g of gated.values()) {
-    if (g.outcome === "pass" || g.outcome === "unknown") stats.autoPass++;
+    if (g.outcome === "pass") stats.autoPass++;
     else if (g.outcome === "fail") stats.autoFail++;
+    else if (g.outcome === "unknown") stats.unknown++;
     else stats.reviewed++;
     if (g.fallback) stats.fallbacks[g.fallback] = (stats.fallbacks[g.fallback] ?? 0) + 1;
   }
@@ -236,6 +240,11 @@ export async function evaluateSessionJevFirst(args: {
       return { metrics: { ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }, provenance };
     }
     const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
+    // Sentiment and STT stay on the LLM in v1 (sentiment has no ground truth to
+    // calibrate a gate against, STT is a count) — start them now rather than
+    // after the detections, which Jev may answer without any call at all.
+    const sentimentPromise = runSentiment(input, provider);
+    const sttPromise = voice ? runStt(input, provider) : Promise.resolve(skippedStt());
     const rawEntries = await Promise.all(
       CONVERSATION_AXES.map(async ({ judge, criteria, rawKey, metricKey }): Promise<[keyof ConversationDetectionRaws, DetectionResult]> => {
         if (VOICE_ONLY.has(judge) && !voice) return [rawKey, voiceOnlySkip];
@@ -251,12 +260,7 @@ export async function evaluateSessionJevFirst(args: {
       }),
     );
     const raws = Object.fromEntries(rawEntries) as unknown as ConversationDetectionRaws;
-    // Sentiment and STT stay on the LLM in v1: sentiment has no ground truth to
-    // calibrate a gate against, and STT is a count, not a pass/fail.
-    const [sentiment, stt] = await Promise.all([
-      runSentiment(input, provider),
-      voice ? runStt(input, provider) : Promise.resolve(skippedStt()),
-    ]);
+    const [sentiment, stt] = await Promise.all([sentimentPromise, sttPromise]);
     return { metrics: assembleConversationMetrics({ ctx: input, raws, sentiment, stt }), provenance };
   })();
 
@@ -313,46 +317,83 @@ export async function evaluateSessionJevFirst(args: {
   const customPromise = Promise.all(
     customJudges.map(async (spec): Promise<CustomMetricVerdict | null> => {
       if (!hasTranscript) return null;
-      if (spec.scope === "conversation") {
-        const decision = decided(`m.${spec.name}`);
-        if (decision) return jevCustomMetric(spec, decision, await reasonsPromise);
-        return runCustomMetricJudge(spec, input, refOf, provider);
+      // Same containment the LLM path has: one broken custom judge must not
+      // blank the session's other judging, while a provider blip still retries it.
+      try {
+        if (spec.scope === "conversation") {
+          const decision = decided(`m.${spec.name}`);
+          if (decision) return jevCustomMetric(spec, decision, await reasonsPromise);
+          return await runCustomMetricJudge(spec, input, refOf, provider);
+        }
+        // Node scope: a node the gate left uncertain is re-judged on its own;
+        // the decided ones cost nothing. Roll-up is the shared rule either way.
+        const anyDecided = input.nodes.some((_, i) => decided(`m${i}.${spec.name}`));
+        if (!anyDecided) return await runCustomMetricJudge(spec, input, refOf, provider);
+        return await judgeNodeScopeCustomMetric({ spec, input, refOf, decided, reasonsPromise, provider });
+      } catch (e) {
+        if (classifyErrorDurability(e) === "transient") throw e;
+        console.error(`[jev] custom judge ${spec.name} unavailable: ${(e as Error).message}`);
+        return {
+          judge_name: spec.name,
+          display_name: spec.display_name,
+          scope: spec.scope,
+          verdict: "unknown",
+          reason: "",
+          technical_reason: `custom judge unavailable: ${(e as Error).message}`,
+          available: false,
+        };
       }
-      // Node scope: a node the gate left uncertain is re-judged on its own; the
-      // decided ones cost nothing. Roll-up is the shared rule either way.
-      const anyDecided = input.nodes.some((_, i) => decided(`m${i}.${spec.name}`));
-      if (!anyDecided) return runCustomMetricJudge(spec, input, refOf, provider);
-      const perNode: CustomMetricNodeVerdict[] = await Promise.all(
-        input.nodes.map(async (node, nodeIndex): Promise<CustomMetricNodeVerdict> => {
-          const decision = decided(`m${nodeIndex}.${spec.name}`);
-          if (!decision) return judgeCustomMetricNode(spec, node, input, refOf, provider);
-          const verdict = jevCustomMetric(spec, decision, await reasonsPromise);
-          return { ref: refOf(node.node_uuid), node_name: node.node_name, verdict: verdict.verdict, reason: verdict.reason, technical_reason: verdict.technical_reason };
-        }),
-      );
-      const rolled = rollUpNodeVerdicts(perNode);
-      const decidingIndex = perNode.findIndex((n) => n.verdict === rolled);
-      const deciding = decidingIndex >= 0 ? perNode[decidingIndex] : undefined;
-      const decidingGate = decidingIndex >= 0 ? decided(`m${decidingIndex}.${spec.name}`) : undefined;
-      return {
-        judge_name: spec.name,
-        display_name: spec.display_name,
-        scope: spec.scope,
-        verdict: rolled,
-        reason: deciding?.reason ?? "",
-        technical_reason: deciding?.technical_reason ?? "",
-        available: true,
-        per_node: perNode,
-        ...(decidingGate ? { confidence: decidingGate.p ?? undefined, backend: "jev" as const, ...(decidingGate.jevModel ? { jev_model: decidingGate.jevModel } : {}) } : LLM),
-      };
     }),
   );
 
   const [conversation, node_evaluations, custom] = await Promise.all([conversationPromise, nodesPromise, customPromise]);
+
   return {
     conversation_metrics: attachDetectionProvenance(conversation.metrics, conversation.provenance),
     node_evaluations,
     custom_metrics: custom.filter((c): c is CustomMetricVerdict => c !== null),
     stats,
+  };
+}
+
+/** A node-scope custom metric the gate decided on some nodes and left uncertain
+ *  on others: judge only the uncertain ones, then apply the shared roll-up. */
+async function judgeNodeScopeCustomMetric(args: {
+  spec: CustomJudgeSpec;
+  input: ConversationInput;
+  refOf: (nodeUuid: string) => string;
+  decided: (id: string) => GatedAxis | undefined;
+  reasonsPromise: Promise<ReasonMap>;
+  provider?: LlmProvider;
+}): Promise<CustomMetricVerdict> {
+  const { spec, input, refOf, decided, reasonsPromise, provider } = args;
+  const perNode: CustomMetricNodeVerdict[] = await Promise.all(
+    input.nodes.map(async (node, nodeIndex): Promise<CustomMetricNodeVerdict> => {
+      const decision = decided(`m${nodeIndex}.${spec.name}`);
+      if (!decision) return judgeCustomMetricNode(spec, node, input, refOf, provider);
+      const verdict = jevCustomMetric(spec, decision, await reasonsPromise);
+      return {
+        ref: refOf(node.node_uuid),
+        node_name: node.node_name,
+        verdict: verdict.verdict,
+        reason: verdict.reason,
+        technical_reason: verdict.technical_reason,
+      };
+    }),
+  );
+  const rolled = rollUpNodeVerdicts(perNode);
+  const decidingIndex = perNode.findIndex((n) => n.verdict === rolled);
+  const deciding = decidingIndex >= 0 ? perNode[decidingIndex] : undefined;
+  const decidingGate = decidingIndex >= 0 ? decided(`m${decidingIndex}.${spec.name}`) : undefined;
+  return {
+    judge_name: spec.name,
+    display_name: spec.display_name,
+    scope: spec.scope,
+    verdict: rolled,
+    reason: deciding?.reason ?? "",
+    technical_reason: deciding?.technical_reason ?? "",
+    available: true,
+    per_node: perNode,
+    ...(decidingGate ? provenanceOf(decidingGate) : LLM),
   };
 }

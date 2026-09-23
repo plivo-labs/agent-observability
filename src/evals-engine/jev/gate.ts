@@ -79,7 +79,13 @@ export function gatePlan(
     // highest of its questions — the same aggregation the benchmark scored.
     let p = -1;
     for (const [, value] of answered) p = Math.max(p, value);
-    const outcome = decide(p, gate);
+    let outcome = decide(p, gate);
+    // A FAIL needs one question; a PASS needs all of them. An unanswered
+    // question, or one the caps never asked, was judged by nobody, so calling
+    // the axis clean on the rest would be a verdict about evidence we do not
+    // have.
+    const complete = answered.length === axis.questionKeys.length && !(axis.kind === "node" && axis.truncated);
+    if (outcome === "pass" && !complete) outcome = "review";
     const firedKeys = answered.filter(([, value]) => value >= gate.fail_above).map(([key]) => key);
     return { axis, outcome, p, firedKeys, probabilities, jevModel };
   });

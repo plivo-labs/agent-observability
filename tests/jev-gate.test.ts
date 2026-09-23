@@ -95,6 +95,65 @@ describe("gatePlan", () => {
     expect(budgetGated.get("n0:node_loop")!.fallback).toBe("budget");
   });
 
+  test("a PASS needs every question answered; a FAIL needs only one", () => {
+    const plan = buildJevPlan(ctx());
+    const vars = plan.axes.find((a) => a.id === "n0:variable_extraction#0")!;
+    const [first, second] = vars.questionKeys;
+
+    // only one of the two variable questions came back, and it is clean
+    const partial = respond(plan, 0.02);
+    const varsRequest = partial.get(vars.requestKey)!;
+    delete varsRequest.response.answers[second!];
+    const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, partial, DEFAULT_GATES)));
+    expect(gated.get("n0:variable_extraction")!.outcome).toBe("review");
+    expect(gated.get("n0:node_loop")!.outcome).toBe("pass");
+
+    // the same partial response, but the answered question fires: still a fail
+    varsRequest.response.answers[first!] = { type: "noul", noul: 0.97 };
+    const failing = byAxisId(mergeChunkedAxes(gatePlan(plan, partial, DEFAULT_GATES)));
+    expect(failing.get("n0:variable_extraction")!.outcome).toBe("fail");
+    expect(failing.get("n0:variable_extraction")!.firedKeys).toEqual([first!]);
+  });
+
+  test("a node with more variables than the cap can fail but never auto-pass", () => {
+    const many = Array.from({ length: 25 }, (_, i) => `v${i}`);
+    const wide = node({
+      required_variables: many,
+      variable_rules: Object.fromEntries(many.map((n) => [n, `Record ${n} when the caller states it.`])),
+      extracted_variables: {},
+    });
+    const plan = buildJevPlan(ctx({ nodes: [wide] }));
+    const clean = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.02), DEFAULT_GATES)));
+    expect(clean.get("n0:variable_extraction")!.outcome).toBe("review");
+    const dirty = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.95), DEFAULT_GATES)));
+    expect(dirty.get("n0:variable_extraction")!.outcome).toBe("fail");
+  });
+
+  test("chunked variable questions merge into one verdict", () => {
+    const many = Array.from({ length: 12 }, (_, i) => `v${i}`);
+    const wide = node({
+      required_variables: many,
+      variable_rules: Object.fromEntries(many.map((n) => [n, `Record ${n}.`])),
+      extracted_variables: { v0: "x" },
+    });
+    const plan = buildJevPlan(ctx({ nodes: [wide] }));
+    const chunkKeys = plan.requests.filter((r) => r.key.startsWith("v0.")).map((r) => r.key);
+    expect(chunkKeys).toEqual(["v0.0", "v0.1"]);
+
+    // clean first chunk, a fail in the second
+    const secondChunkFirstKey = Object.keys(plan.requests.find((r) => r.key === "v0.1")!.questions)[0]!;
+    const mixed = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.02, { [secondChunkFirstKey]: 0.96 }), DEFAULT_GATES)));
+    const axis = mixed.get("n0:variable_extraction")!;
+    expect(axis.outcome).toBe("fail");
+    expect(axis.firedKeys).toEqual([secondChunkFirstKey]);
+    expect(axis.p).toBe(0.96);
+
+    // one chunk uncertain, the other clean ⇒ the whole axis is reviewed
+    const uncertainKey = Object.keys(plan.requests.find((r) => r.key === "v0.0")!.questions)[0]!;
+    const partly = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.02, { [uncertainKey]: 0.5 }), DEFAULT_GATES)));
+    expect(partly.get("n0:variable_extraction")!.outcome).toBe("review");
+  });
+
   test("a missing answer is reviewed, never read as a probability", () => {
     const plan = buildJevPlan(ctx());
     const empty = new Map(

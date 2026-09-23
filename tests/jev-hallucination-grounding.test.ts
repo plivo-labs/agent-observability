@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { keyTokens, configExcerpts, residualClaims, buildHallucinationState } from "../src/jev/hallucination-grounding.js";
+import { estimateJevTokens } from "../src/jev/tokens.js";
 
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 type NodeEvalInput = import("../src/evals-engine/types.js").NodeEvalInput;
@@ -121,9 +122,19 @@ describe("buildHallucinationState", () => {
   test("sheds evidence lists, never the prompt or the agent's lines, to fit the budget", () => {
     const many = Array.from({ length: 60 }, (_, i) => `Tool_Result: t${i} -> ${"z".repeat(1400)}`).join("\n");
     const t = `User: hi\nAgent: hello\n${many}`;
-    const { state } = buildHallucinationState(ctx(), node(), t, 2000);
-    expect(state.tool_results.length).toBeLessThanOrEqual(12);
+    const { state } = buildHallucinationState(ctx(), node(), t, 20_000);
+    expect(estimateJevTokens(state)).toBeLessThanOrEqual(20_000);
+    expect(state.tool_results).toHaveLength(12);
     expect(state.agent_spoken).toEqual(["Agent: hello"]);
+    expect(state.caller_said).toEqual(["User: hi"]);
     expect(state.node_instructions_full).toBe(node().node_prompt);
+  });
+
+  test("a state that cannot fit even at the last rung keeps its tool results — the plan drops it to the LLM instead of asking blind", () => {
+    const many = Array.from({ length: 60 }, (_, i) => `Tool_Result: t${i} -> ${"z".repeat(1400)}`).join("\n");
+    const { state } = buildHallucinationState(ctx(), node(), `User: hi\nAgent: hello\n${many}`, 2000);
+    expect(state.tool_results).toHaveLength(4);
+    expect(estimateJevTokens(state)).toBeGreaterThan(2000);
+    expect(state.agent_spoken).toEqual(["Agent: hello"]);
   });
 });

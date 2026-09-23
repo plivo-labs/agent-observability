@@ -8,6 +8,8 @@ import {
   CONVERSATION_QUESTIONS,
   HALLUCINATION_QUESTIONS,
   MAX_CLAIM_QUESTIONS,
+  MAX_INTENT_QUESTIONS,
+  MAX_VARIABLE_QUESTIONS,
   NODE_LOOP_QUESTION,
   claimQuestion,
   customMetricQuestions,
@@ -96,6 +98,10 @@ export interface JevNodeAxis extends JevAxisCommon {
   nodeIndex: number;
   intents?: JevIntentQuestionRef[];
   variables?: JevVariableQuestionRef[];
+  /** The node declares more intents/variables than the caps allow, so the
+   *  questions do not cover the whole surface: the unasked ones can never fire
+   *  and must not be read as clean. */
+  truncated?: boolean;
 }
 export interface JevCustomAxis extends JevAxisCommon {
   kind: "custom";
@@ -261,6 +267,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
         nodeAxes.push({
           kind: "node", id: `${prefix}:intent_identification`, judge: "intent_identification", nodeIndex,
           requestKey: prefix, questionKeys: refs.map((r) => r.key), intents: refs,
+          ...((node.available_intents?.length ?? 0) > MAX_INTENT_QUESTIONS ? { truncated: true } : {}),
         });
       }
     }
@@ -286,6 +293,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
             kind: "node", id: `${prefix}:variable_extraction#${start / VARIABLE_QUESTIONS_PER_REQUEST}`,
             judge: "variable_extraction", nodeIndex,
             requestKey, questionKeys: refs.map((r) => r.key), variables: refs,
+            ...((node.required_variables?.length ?? 0) > MAX_VARIABLE_QUESTIONS ? { truncated: true } : {}),
           }]);
         }
       }

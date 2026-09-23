@@ -197,6 +197,20 @@ describe("uncertain and unavailable axes fall to the LLM", () => {
     expect(v.node_evaluations[0]!.node_loop.backend).toBe("llm");
   });
 
+  test("a transient reason-writer failure retries the session instead of stamping a templated reason", async () => {
+    const provider = new MockLLM([(args: any) => {
+      const system = args.system as string;
+      if (system.includes("calibrated classifier")) throw new Error("429 rate limit exceeded");
+      return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+    }]);
+    const jev = new MockJev([(req) => {
+      const out: Record<string, number> = {};
+      for (const key of Object.keys(req.questions)) out[key] = key.includes("node_loop") ? 0.97 : 0.01;
+      return out;
+    }]);
+    await expect(run(jev, provider)).rejects.toThrow(/429/);
+  });
+
   test("the reason writer failing keeps the verdict with a plain explanation", async () => {
     const provider = new MockLLM([(args: any) => {
       const system = args.system as string;
