@@ -286,6 +286,10 @@ export function buildSessionEvalInput(
   // scramble the full transcript on node revisits (all A-turns then all
   // B-turns), misleading the conversation/goal judges.
   const allTurns: EvalTurn[] = [];
+  // Full runtime system/developer messages — the rendered transcript keeps
+  // only a 600-char System_Note of each, but the hallucination grounding
+  // index needs the templated details that live nowhere else.
+  const systemMessages: string[] = [];
   const pushTurn = (ref: string, turn: EvalTurn) => {
     if (!turnsByRef.has(ref)) { turnsByRef.set(ref, []); orderedRefs.push(ref); }
     turnsByRef.get(ref)!.push(turn);
@@ -342,6 +346,7 @@ export function buildSessionEvalInput(
     // dominate the judge's transcript (node instructions already arrive via
     // node_prompt).
     if (!isUser && (role === "system" || role === "developer")) {
+      systemMessages.push(text);
       const note = text.length > 600 ? `${text.slice(0, 600)}…` : text;
       pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
@@ -426,11 +431,13 @@ export function buildSessionEvalInput(
     const nodeToolCalls = toolCallsByRef.get(ref) ?? [];
     const extractedVariables = deriveExtractedVariables(def, nodeToolCalls, allToolCalls);
     const chosenIntent = deriveChosenIntent(def, nodeToolCalls);
+    const intentTools = deriveIntentTools(def);
     nodes.push({
       node_uuid: ref,
       node_name: typeof def.name === "string" && def.name ? def.name : (ref.startsWith(SYNTHETIC_REF) ? "node" : ref),
       node_prompt: typeof def.instructions === "string" ? def.instructions : "",
       available_intents: Array.isArray(def.intents) ? def.intents.map((i) => ({ intent_name: i?.name, intent_instructions: i?.description })) : [],
+      ...(intentTools ? { intent_tools: intentTools } : {}),
       chosen_intent: chosenIntent,
       required_variables: requiredVariables,
       ...(Object.keys(rules).length ? { variable_rules: rules } : {}),
@@ -490,6 +497,7 @@ export function buildSessionEvalInput(
       // Grounding evidence for the hallucination judge (omitted when empty).
       ...(globalVariables ? { global_variables: globalVariables } : {}),
       ...(pronunciationGuides ? { pronunciation_guides: pronunciationGuides } : {}),
+      ...(systemMessages.length ? { system_messages: systemMessages } : {}),
     },
     nodeRefs: judgedRefs,
   };
@@ -611,6 +619,15 @@ function deriveExtractedVariables(
     else extracted[varName] = "(recorded)";
   }
   return extracted;
+}
+
+/** Declared intent name → tool name, for intents that declare one. */
+function deriveIntentTools(def: AgentConfigNode): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const i of def.intents ?? []) {
+    if (typeof i?.name === "string" && i.name && typeof i?.tool === "string" && i.tool) out[i.name] = i.tool;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The intent the agent selected on a node: a config intent whose declared

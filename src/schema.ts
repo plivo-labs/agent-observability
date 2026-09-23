@@ -215,11 +215,13 @@ export const envSchema = z.object({
   // and is the rollback lever. primary without JEV_API_KEY logs at boot and
   // behaves as off.
   JEV_MODE: z.enum(["off", "primary"]).default("off"),
-  JEV_API_KEY: z.string().optional(),
-  JEV_BASE_URL: z.string().default("https://api.typesafe.ai"),
+  // preprocess: an env file rendering `JEV_API_KEY=` must read as unset (Jev
+  // disabled) rather than as an empty bearer token. Mirrors DATABASE_URL.
+  JEV_API_KEY: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
+  JEV_BASE_URL: z.preprocess((v) => (v === "" ? undefined : v), z.string().url().default("https://api.typesafe.ai")),
   // Pinned to a version, not the "jev-latest" alias: the gates below were
   // calibrated against this model, and an alias move would silently move them.
-  JEV_MODEL: z.string().default("jev-1.13.0"),
+  JEV_MODEL: z.preprocess((v) => (v === "" ? undefined : v), z.string().default("jev-1.13.0")),
   // A cold connection to Jev takes 5-8 s for the first request; warm calls are
   // 0.4-2 s. Below ~10 s every cold session would fall back to Luna.
   JEV_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
@@ -228,13 +230,13 @@ export const envSchema = z.object({
   JEV_MAX_CONCURRENT: z.coerce.number().int().positive().default(8),
   // Comma-separated allow-list of default judges Jev answers first ("all" =
   // every default binary judge). A judge not listed runs on Luna exactly as today.
-  JEV_JUDGES: z.string().default("all"),
+  JEV_JUDGES: z.preprocess((v) => (v === "" ? undefined : v), z.string().default("all")),
   // Custom metrics have no benchmark yet; they join the Jev path only when
   // switched on after measuring in dev.
   JEV_CUSTOM_METRICS: z.enum(["off", "on"]).default("off"),
   // JSON {judge: {pass_below, fail_above}} overlaying the code defaults in
   // src/jev/gates.ts; a malformed value falls back to the defaults with a warning.
-  JEV_GATES: z.string().optional(),
+  JEV_GATES: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
   // Per-request state budget in ESTIMATED tokens (src/jev/tokens.ts); a request
   // over budget is never sent and its axes go to Luna.
   JEV_STATE_TOKEN_BUDGET: z.coerce.number().int().positive().default(30000),

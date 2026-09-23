@@ -24,7 +24,7 @@ export const CUSTOM_JUDGE_NAME_RE = /^metric:[a-z0-9_]+$/;
 // ── execution ────────────────────────────────────────────────────────────────
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
-import type { ConversationInput, NodeEvalInput } from "../types.js";
+import type { ConversationInput, JudgeProvenance, NodeEvalInput } from "../types.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { nodePayload } from "./node-judge-payload.js";
 import { classifyErrorDurability } from "../../error-durability.js";
@@ -47,7 +47,7 @@ export type CustomMetricNodeVerdict = {
   technical_reason: string;
 };
 
-export type CustomMetricVerdict = {
+export type CustomMetricVerdict = JudgeProvenance & {
   judge_name: string;
   display_name: string;
   scope: "node" | "conversation";
@@ -85,7 +85,7 @@ const CUSTOM_METRIC_JSON = {
 
 const DEFAULT_CUSTOM_MAX_TOKENS = 1200;
 
-const unavailable = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
+export const unavailableCustomMetric = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
   judge_name: spec.name,
   display_name: spec.display_name,
   scope: spec.scope,
@@ -111,6 +111,35 @@ async function judgeOnce(
   return data;
 }
 
+/** One node's verdict for a node-scope custom metric. Exported so a caller that
+ *  already holds verdicts for the other nodes (the Jev-first path re-judges only
+ *  the nodes its gate left uncertain) can fill in a single node without
+ *  re-spending the whole metric. */
+export async function judgeCustomMetricNode(
+  spec: CustomJudgeSpec,
+  node: NodeEvalInput,
+  ctx: ConversationInput,
+  refOf: (nodeUuid: string) => string,
+  provider?: LlmProvider,
+): Promise<CustomMetricNodeVerdict> {
+  const data = await judgeOnce(
+    spec,
+    {
+      metric_name: spec.display_name,
+      flow_name: ctx.flow_name,
+      // Give a custom node metric the SAME payload the built-in node judges see
+      // (node_prompt, available_intents, chosen_intent, extracted/global variables,
+      // global_prompt, node transcript + full history) so it can judge intent- or
+      // variable-shaped criteria, not just the raw transcript text.
+      ...nodePayload(node, ctx),
+    },
+    provider,
+  );
+  // The SENDER's opaque ref, not the engine uuid — consumers map custom
+  // per-node rows back to their nodes exactly like the default node rows.
+  return { ref: refOf(node.node_uuid), node_name: node.node_name, ...data };
+}
+
 /** Roll per-node verdicts up to one metric verdict: any fail fails the call,
  *  any pass (without a fail) passes it, all-unknown stays unknown. */
 export function rollUpNodeVerdicts(nodes: CustomMetricNodeVerdict[]): "pass" | "fail" | "unknown" {
@@ -124,7 +153,7 @@ export function rollUpNodeVerdicts(nodes: CustomMetricNodeVerdict[]): "pass" | "
  *  unavailable verdict — one broken custom judge must not blank the default
  *  judging — while a TRANSIENT failure (timeout/429/5xx) rethrows so the
  *  whole session retries via stale claim adoption. */
-async function runCustomMetricJudge(
+export async function runCustomMetricJudge(
   spec: CustomJudgeSpec,
   ctx: ConversationInput,
   refOf: (nodeUuid: string) => string,
@@ -153,24 +182,7 @@ async function runCustomMetricJudge(
     }
     // node scope: judge each judged node independently, roll up for the summary
     const per_node = await Promise.all(
-      ctx.nodes.map(async (node: NodeEvalInput): Promise<CustomMetricNodeVerdict> => {
-        const data = await judgeOnce(
-          spec,
-          {
-            metric_name: spec.display_name,
-            flow_name: ctx.flow_name,
-            // Give a custom node metric the SAME payload the built-in node judges see
-            // (node_prompt, available_intents, chosen_intent, extracted/global variables,
-            // global_prompt, node transcript + full history) so it can judge intent- or
-            // variable-shaped criteria, not just the raw transcript text.
-            ...nodePayload(node, ctx),
-          },
-          provider,
-        );
-        // The SENDER's opaque ref, not the engine uuid — consumers map custom
-        // per-node rows back to their nodes exactly like the default node rows.
-        return { ref: refOf(node.node_uuid), node_name: node.node_name, ...data };
-      }),
+      ctx.nodes.map((node: NodeEvalInput) => judgeCustomMetricNode(spec, node, ctx, refOf, provider)),
     );
     const verdict = rollUpNodeVerdicts(per_node);
     const deciding = per_node.find((n) => n.verdict === verdict);
@@ -186,7 +198,7 @@ async function runCustomMetricJudge(
     };
   } catch (e) {
     if (classifyErrorDurability(e) === "transient") throw e;
-    return unavailable(spec, `custom judge unavailable: ${(e as Error).message ?? e}`);
+    return unavailableCustomMetric(spec, `custom judge unavailable: ${(e as Error).message ?? e}`);
   }
 }
 
