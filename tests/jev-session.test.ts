@@ -62,8 +62,9 @@ describe("confident Jev verdicts", () => {
   test("all-clean: no judge call at all beyond sentiment and STT", async () => {
     const jev = new MockJev([{}], 0.01);
     const { v, provider } = await run(jev);
-    // adherence never auto-passes by design, so it is the one judge still called
-    expect(labelsOf(provider)).toEqual(["eval_instruction", "eval_sentiment", "eval_stt"]);
+    // adherence never auto-passes by design, and low engagement is not on the
+    // Jev path by default — those two plus sentiment and STT are all that remain
+    expect(labelsOf(provider)).toEqual(["eval_detection", "eval_instruction", "eval_sentiment", "eval_stt"]);
     expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
 
     const node = v.node_evaluations[0]!;
@@ -201,7 +202,8 @@ describe("a text transport never gets a voice-only verdict", () => {
     expect(v.conversation_metrics.bot_detected.available).toBe(false);
     expect(v.conversation_metrics.call_screening.available).toBe(false);
     expect(v.conversation_metrics.low_engagement.available).toBe(true);
-    expect(v.conversation_metrics.low_engagement.backend).toBe("jev");
+    // low engagement stays on the LLM by default
+    expect(v.conversation_metrics.low_engagement.backend).toBe("llm");
     const asked = jev.calls.flatMap((c) => Object.keys(c.questions));
     expect(asked.some((k) => k.includes("voicemail"))).toBe(false);
   });
