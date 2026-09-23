@@ -56,7 +56,8 @@ export function gatePlan(
     if (answered.length === 0) return review("unanswered");
 
     const gate = gateFor(gates, axis.judge);
-    if (!gate) return review("unanswered"); // a judge with no gate is not Jev's to decide
+    // A judge with no gate is not Jev's to decide.
+    if (!gate) return review("unanswered");
 
     const jevModel = result.response.model || undefined;
 

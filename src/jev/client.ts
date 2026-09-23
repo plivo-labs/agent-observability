@@ -117,8 +117,8 @@ export class HttpJevClient implements JevClient {
           : new JevError(0, "network", (e as Error).message);
         continue;
       }
-      clearTimeout(timer);
       if (!res.ok) {
+        clearTimeout(timer);
         const errorType = await errorTypeOf(res);
         const err = new JevError(res.status, errorType);
         // Overflow is deterministic for this request — retrying the same bytes
@@ -133,9 +133,15 @@ export class HttpJevClient implements JevClient {
       }
       let json: unknown;
       try {
+        // The timeout stays armed until the BODY is read: a stalled response
+        // body would otherwise hold a slot open with nothing to abort it.
         json = await res.json();
       } catch (e) {
-        throw new JevError(res.status, "invalid_response", `body is not JSON: ${(e as Error).message}`);
+        throw controller.signal.aborted
+          ? new JevError(408, "timeout", `${this.timeoutMs}ms`)
+          : new JevError(res.status, "invalid_response", `body is not JSON: ${(e as Error).message}`);
+      } finally {
+        clearTimeout(timer);
       }
       const parsed = ResponseZ.safeParse(json);
       if (!parsed.success) throw new JevError(res.status, "invalid_response", parsed.error.issues[0]?.message);
@@ -175,7 +181,9 @@ export class HttpJevClient implements JevClient {
 
   private release(): void {
     const next = this.waiters.shift();
-    if (next) next(); // slot handed over directly; `active` count is unchanged
+    // Hand the slot straight to the waiter: decrementing first would let a
+    // newcomer overtake the queue.
+    if (next) next();
     else this.active--;
   }
 }

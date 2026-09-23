@@ -11,8 +11,10 @@ describe("estimateJevTokens", () => {
     expect(config).toBeGreaterThanOrEqual(250);
   });
 
-  test("non-object states fall back to the config rate", () => {
-    expect(estimateJevTokens("abcd".repeat(100))).toBeGreaterThanOrEqual(100);
+  test("a bare-string state is a transcript, so it takes the transcript rate", () => {
+    const text = "x".repeat(1000);
+    expect(estimateJevTokens(text)).toBe(350);
+    expect(estimateJevTokens(text)).toBeGreaterThan(estimateJevTokens({ node_prompt: text }) - 60);
     expect(estimateJevTokens(null)).toBeGreaterThanOrEqual(0);
   });
 });

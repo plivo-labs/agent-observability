@@ -215,7 +215,8 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     const pending: JevAxis[] = [];
     for (const judge of CONVERSATION_JUDGES) {
       if (!judgeAllowed(opts.judges, judge)) continue;
-      if (!voice && VOICE_ONLY.has(judge)) continue; // never asked on a text channel
+      // Never asked on a text channel, so no row can be fabricated there.
+      if (!voice && VOICE_ONLY.has(judge)) continue;
       const key = `c.${judge}`;
       questions[key] = CONVERSATION_QUESTIONS[judge]!;
       pending.push({ kind: "conversation", id: key, judge, requestKey: "c", questionKeys: [key] });

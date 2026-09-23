@@ -17,6 +17,9 @@ export const TRANSCRIPT_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 export function estimateJevTokens(state: unknown): number {
+  // A bare-string state is always a rendered transcript (the conversation
+  // detections take one), so it takes the transcript rate.
+  if (typeof state === "string") return Math.ceil(state.length * TRANSCRIPT_TOKENS_PER_CHAR);
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     return Math.ceil(JSON.stringify(state ?? "").length * CONFIG_TOKENS_PER_CHAR);
   }
