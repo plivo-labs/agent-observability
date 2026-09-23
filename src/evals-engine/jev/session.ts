@@ -215,10 +215,16 @@ export async function evaluateSessionJevFirst(args: {
       ...(detailFor(g) ? { detail: detailFor(g)! } : {}),
     });
   }
+  // Only the nodes a defect was found on: node configs are large, and sending
+  // every node of a 30-node session would make this the most expensive call of
+  // the run — and risk truncating the very explanations it exists to produce.
+  const failingNodeIndexes = new Set(
+    failing.map((f) => f.id.match(/^n(\d+):/)?.[1]).filter((i): i is string => i !== undefined).map(Number),
+  );
   const reasonsPromise: Promise<ReasonMap> = failing.length
     ? writeFailReasons({
         ctx: input,
-        nodes: input.nodes.map((node, nodeIndex) => ({ node, nodeIndex })),
+        nodes: input.nodes.flatMap((node, nodeIndex) => (failingNodeIndexes.has(nodeIndex) ? [{ node, nodeIndex }] : [])),
         axes: failing,
         provider,
       })

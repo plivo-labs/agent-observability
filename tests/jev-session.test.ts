@@ -103,6 +103,28 @@ describe("confident Jev verdicts", () => {
     expect(node.instructions_adherence.objective_progress).toBeNull();
   });
 
+  test("the reason call carries only the nodes a defect was found on", async () => {
+    const twoNodeConfig = {
+      ...config,
+      nodes: [config.nodes![0]!, { ref: "node-B", name: "wrap_up", instructions: "Thank the caller and close.", intents: [], variables: [] }],
+    };
+    const twoNodeEvents = [
+      ...events,
+      { type: "conversation_item_added", node_ref: "node-B", item: { type: "message", role: "assistant", content: "Thanks, goodbye." } },
+    ] as StoredEvent[];
+    const jev = new MockJev([(req) => {
+      const out: Record<string, number> = {};
+      for (const key of Object.keys(req.questions)) out[key] = key.startsWith("n1.") && key.includes("node_loop") ? 0.97 : 0.01;
+      return out;
+    }]);
+    const provider = llm();
+    await evaluateIngestedSession(twoNodeConfig, twoNodeEvents, provider, "livekit", undefined, undefined, [], jev as any);
+    const reasonCall = provider.calls.find((c) => (c.system as string).includes("calibrated classifier"))!;
+    const sent = JSON.parse(reasonCall.user);
+    expect(sent.nodes.map((n: { node_index: number }) => n.node_index)).toEqual([1]);
+    expect(sent.defects.map((d: { id: string }) => d.id)).toEqual(["n1:node_loop"]);
+  });
+
   test("a fired variable question becomes a named defect, filed by whether it was recorded", async () => {
     const jev = new MockJev([(req) => {
       const out: Record<string, number> = {};
@@ -112,7 +134,7 @@ describe("confident Jev verdicts", () => {
     const { v } = await run(jev);
     const ve = v.node_evaluations[0]!.variable_extraction;
     expect(ve.extraction_successful).toBe(false);
-    expect(ve.incorrect_variables).toEqual(["order_id"]); // it WAS recorded
+    expect(ve.incorrect_variables).toEqual(["order_id"]);
     expect(ve.missing_variables).toEqual([]);
     expect(ve.required_variables).toEqual(["order_id"]);
   });

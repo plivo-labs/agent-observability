@@ -59,7 +59,9 @@ export function keyTokens(text: string): string[] {
     if (/^\d/.test(raw)) {
       if (token.length < 2 || seen.has(token)) continue;
     } else {
-      if (raw[0] !== raw[0]!.toUpperCase() || raw[0] === raw[0]!.toLowerCase()) continue; // not capitalized
+      // Capitalization is the signal a word is a specific value (a name, a
+      // place, a product) rather than ordinary speech.
+      if (raw[0] !== raw[0]!.toUpperCase() || raw[0] === raw[0]!.toLowerCase()) continue;
       if (raw.length <= 2 || STOP.has(token) || seen.has(token)) continue;
     }
     seen.add(token);
@@ -153,7 +155,9 @@ export function residualClaims(call: ConversationInput, transcript: string, max:
     if (pool.includes(t)) continue;
     const abbreviation = STATE_ABBREVIATIONS[t];
     if (abbreviation && new RegExp(`\\b${abbreviation}\\b`).test(pool)) continue;
-    if (/^\d+$/.test(t) && poolDigits.includes(t)) continue; // grounded ignoring spacing/punctuation
+    // A number the agent spoke digit by digit is the same number the config
+    // stores unspaced.
+    if (/^\d+$/.test(t) && poolDigits.includes(t)) continue;
     const line = agentLines.find((l) => l.toLowerCase().includes(t)) ?? "";
     out.push({ token, line: line.slice(0, 220) });
     if (out.length >= max) break;
