@@ -358,7 +358,7 @@ async function judgeClaimed(claim: EvalClaim, opts?: JudgeOpts): Promise<boolean
       source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges,
       // `jev` is resolved per call, not cached at import: JEV_MODE=off returns
       // null and the path below is byte-identical to before Jev existed.
-      opts && "jev" in opts ? opts.jev : createJevClientFromConfig(),
+      (opts && "jev" in opts ? opts.jev : createJevClientFromConfig()) ?? undefined,
     );
     // Judging is done — no more provider spend to protect. Stop the heartbeat
     // and drain any in-flight beat so the fan-out + completion below read a
