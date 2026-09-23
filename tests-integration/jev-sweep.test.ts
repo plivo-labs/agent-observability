@@ -96,7 +96,7 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     expect(node.node_loop.confidence).toBe(0.97);
     expect(node.node_loop.reason).toBe("explained n0:node_loop");
     expect(node.hallucination.backend).toBe("jev");
-    // adherence never auto-passes, and low engagement is not on the Jev path
+    // adherence never auto-passes, so it is the one node judge the LLM still ran
     expect(node.instructions_adherence.backend).toBe("llm");
 
     const rows = await sql`
@@ -117,7 +117,7 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     // one Jev request per purpose, and the LLM only where the gate sent it
     expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
     const labels = provider.calls.map((c) => c.jsonSchema?.name ?? "none").sort();
-    expect(labels).toEqual(["eval_detection", "eval_instruction", "eval_jev_reason", "eval_sentiment", "eval_stt"]);
+    expect(labels).toEqual(["eval_instruction", "eval_jev_reason", "eval_sentiment", "eval_stt"]);
 
     // idempotency: a second kick must not re-judge a done session
     const before = provider.calls.length;

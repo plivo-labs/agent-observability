@@ -10,6 +10,9 @@ import { JEV_OVERFLOW, JevError, type JevClient, type JevNoulAnswer, type JevReq
 
 const SYSTEM_ONE_PATH = "/v1/systemone";
 const RETRYABLE = new Set([408, 429, 529]);
+/** Statuses that mean the configuration itself is wrong, not that this request failed. */
+const UNUSABLE = new Set([401, 402, 403]);
+let warnedUnusable = false;
 const MAX_RETRY_AFTER_MS = 10_000;
 
 const NoulAnswerZ = z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) });
@@ -131,6 +134,13 @@ export class HttpJevClient implements JevClient {
         // the signal rather than from the error it produced.
         const timedOut = controller.signal.aborted;
         const err = new JevError(timedOut ? 408 : res.status, timedOut ? "timeout" : errorType);
+        // 401/402/403 are not a blip: the key is wrong, revoked, or out of
+        // credit, so EVERY session silently falls back to the LLM judge until
+        // someone acts. Said once, at error level, rather than per request.
+        if (UNUSABLE.has(err.status) && !warnedUnusable) {
+          warnedUnusable = true;
+          console.error(`[jev] ${err.message} — Jev is unusable with this configuration; every session is judging on the LLM path until it is fixed`);
+        }
         // Overflow is deterministic for this request — retrying the same bytes
         // cannot succeed; the orchestrator routes the request's axes to the LLM judge.
         if (err.status === 400 && err.errorType === JEV_OVERFLOW) throw err;
