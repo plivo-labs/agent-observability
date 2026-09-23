@@ -81,7 +81,7 @@ interface GuardedCandidate {
   stored_value?: unknown;
 }
 
-interface FinalBatchContext {
+export interface FinalBatchContext {
   cutoffConfirmed: boolean;
   recordingSchedule: string;
   schedulesCompleteBatch: boolean;
@@ -97,7 +97,7 @@ function recordingScheduleExcerpt(node: NodeEvalInput): string {
     .slice(0, 2000);
 }
 
-function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
+export function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
   const recordingSchedule = recordingScheduleExcerpt(node);
   const chronological = node.turns.filter((turn) => !turn.idle && (turn.user || turn.agent));
   const last = chronological.at(-1);
@@ -123,7 +123,7 @@ function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
   return { cutoffConfirmed, recordingSchedule, schedulesCompleteBatch };
 }
 
-function finalBatchCoversVariable(
+export function finalBatchCoversVariable(
   batch: FinalBatchContext,
   node: NodeEvalInput,
   variableName: string,
@@ -133,7 +133,7 @@ function finalBatchCoversVariable(
   return !EARLY_RECORDING_RULE.test(rule);
 }
 
-function outOfScopeVariableKind(
+export function outOfScopeVariableKind(
   _variableName: string,
   rule: string | undefined,
 ): "platform" | "workflow" | undefined {
