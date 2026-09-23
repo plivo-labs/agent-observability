@@ -103,12 +103,13 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
       SELECT judge_name, tag, verdict, reasoning, raw FROM ao_session_external_evals
       WHERE session_id = ${sessionId} AND source = 'eval_sweeper' ORDER BY judge_name
     `;
-    const byName = new Map(rows.map((r: any) => [r.judge_name, r]));
+    const byName = new Map<string, any>(rows.map((r: any) => [r.judge_name as string, r]));
     expect(byName.get("node_loop")!.verdict).toBe("fail");
     expect(byName.get("node_loop")!.tag).toBe("node-A");
     expect(byName.get("hallucination")!.verdict).toBe("pass");
     expect(byName.get("voicemail_detection")!.verdict).toBe("pass");
-    const raw = typeof byName.get("node_loop")!.raw === "string" ? JSON.parse(byName.get("node_loop")!.raw) : byName.get("node_loop")!.raw;
+    const loopRow = byName.get("node_loop")!;
+    const raw = typeof loopRow.raw === "string" ? JSON.parse(loopRow.raw) : loopRow.raw;
     expect(raw.backend).toBe("jev");
     expect(raw.confidence).toBe(0.97);
     expect(raw.jev_model).toBe("jev-mock");

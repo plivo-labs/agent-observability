@@ -270,7 +270,7 @@ export interface CriteriaEvaluationResult {
 // The node/goal path leaves these zero-valued; the conversation judges populate
 // the real values when scoring the whole-transcript axis.
 
-interface CmDetection extends JudgeProvenance {
+export interface CmDetection extends JudgeProvenance {
   detected: boolean;
   detected_value: number;
   reason: string;
