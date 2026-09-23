@@ -33,7 +33,7 @@ const config: AgentConfig = {
   }],
 };
 const events: StoredEvent[] = [
-  { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "system", content: "# Initial Context\nLead is Dana in Pontiac, Michigan. " + "filler ".repeat(200) } },
+  { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "system", content: "# Initial Context\nLead is Ada in Testville, Statia. " + "filler ".repeat(200) } },
   { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "What is your order id?" } },
   { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "user", content: "It is 42." } },
 ];

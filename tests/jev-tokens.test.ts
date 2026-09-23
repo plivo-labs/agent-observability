@@ -32,6 +32,19 @@ describe("clipToolResults", () => {
     expect(out[4]).toBe("Agent: bye");
   });
 
+  test("clips a MULTI-LINE tool result as one block, and resumes at the next line label", () => {
+    const body = Array.from({ length: 200 }, (_, i) => `row ${i}: ${"v".repeat(60)}`).join("\n");
+    const t = ["User: hi", `Tool_Result: kb_lookup -> ${body}`, "Agent: here is what I found", "User: thanks"].join("\n");
+    const out = clipToolResults(t);
+    expect(out.length).toBeLessThan(TOOL_RESULT_CLIP_CHARS + 200);
+    expect(out).toContain("Tool_Result: kb_lookup");
+    expect(out).toContain("[tool output clipped]");
+    // the turns after the tool result survive untouched
+    expect(out).toContain("Agent: here is what I found");
+    expect(out).toContain("User: thanks");
+    expect(out).not.toContain("row 199");
+  });
+
   test("never touches spoken turns, however long", () => {
     const turn = "User: " + "word ".repeat(2000);
     expect(clipToolResults(turn)).toBe(turn);

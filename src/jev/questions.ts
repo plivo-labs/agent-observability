@@ -162,15 +162,15 @@ export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
     "Look only at what the agent SPOKE (agent_spoken). Did the agent assert that something HAS BEEN DONE or WILL NOT HAPPEN as a result of this call — " +
       "'you won't be contacted again', 'you're on our do-not-call list', 'I've updated your number', 'confirmation has been sent', 'it's booked/cancelled' — " +
       "with NO successful tool call that plausibly performed it? A successful tool whose PURPOSE covers the claim counts as backing even if its name differs " +
-      "(e.g. register_prospect succeeded -> 'the property link is being sent' is backed; record_callback_time -> 'you're set for a callback' is backed). A " +
-      "failed/error tool result (HTTP 405) is NOT backing. NOT a completion claim: future/intent ('I'll transfer you now', 'let me update that'), step-by-step " +
-      "guidance ('open the Play Store'), or reading a script.",
+      "a tool that registers the caller backs 'the link is being sent'; a tool that records a callback time backs 'you're set for a callback'. A " +
+      "failed or error tool result is NOT backing. NOT a completion claim: future/intent ('I'll transfer you now', 'let me update that'), step-by-step " +
+      "guidance ('open the app store'), or reading a script.",
     "asserted a completed action / guarantee with no successful tool plausibly performing it",
     "every completion claim is backed by a plausible successful tool, or none was made",
   ),
   h2_policy: noul(
     "Look only at what the agent SPOKE. Did the agent state a specific business POLICY, staffing/availability, price, procedure, or security assurance — " +
-      "'we take walk-ins', 'someone will be available during the day', 'this PIN is secure', 'download the app to begin enrollment' — that appears NOWHERE in " +
+      "'we take walk-ins', 'someone will be available during the day', 'this code is secure', 'sign in to begin' — that appears NOWHERE in " +
       "node_instructions_full, global_prompt, the config excerpts, OR any tool_results (a knowledge-base lookup result counts as support)? Reading a scripted " +
       "line, restating a tool result, or restating the caller is NOT a hallucination. If the same policy is in the instructions in another language, it is " +
       "supported. When unsure whether it is in the instructions, answer FALSE.",
@@ -189,7 +189,7 @@ export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
   h4_invented: noul(
     "Look only at what the agent SPOKE. Did the agent CLAIM to have looked something up, researched the caller's business, or found specific facts about " +
       "them with NO lookup tool call — OR attribute a phone number / detail to the business or a third party when it actually belongs to the caller? NOT " +
-      "invented: an outreach line that node_instructions_full or the config excerpts script ('I was looking at roofers on Google and saw your profile'), or a " +
+      "invented: an outreach line that node_instructions_full or the config excerpts script ('I was looking at businesses like yours online and saw your profile'), or a " +
       "fact present in a tool result.",
     "claimed unsupported research/lookup, or mis-attributed a detail",
     "no such claim",

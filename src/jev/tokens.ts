@@ -34,15 +34,35 @@ export function estimateJevTokens(state: unknown): number {
 export const TOOL_RESULT_CLIP_CHARS = 1500;
 const CLIP_MARK = " …[tool output clipped]";
 
-/** A lookup can return >100k chars of JSON in one Tool_Result line; the judges
- *  read only its head. Only this is ever cut from a state — never a spoken
- *  turn, never config. */
+/** The labels the transcript renderer puts at the start of a line. A line with
+ *  none of them is a continuation of the block above it — a tool that returns
+ *  text spans many lines. */
+const LINE_LABELS = ["User:", "Agent:", "Tool_Call:", "Tool_Result:", "System_Note:", "Agent_Handoff:"];
+
+/** A lookup can return >100k chars in ONE tool result, across as many lines as
+ *  it likes; the judges read only its head. This is the only thing ever cut
+ *  from a state — never a spoken turn, never config. */
 export function clipToolResults(transcript: string, max: number = TOOL_RESULT_CLIP_CHARS): string {
   if (!transcript.includes("Tool_Result:")) return transcript;
-  return transcript
-    .split("\n")
-    .map((line) => (line.startsWith("Tool_Result:") && line.length > max ? line.slice(0, max) + CLIP_MARK : line))
-    .join("\n");
+  const out: string[] = [];
+  let inResult = false;
+  let used = 0;
+  for (const line of transcript.split("\n")) {
+    const starts = LINE_LABELS.some((l) => line.startsWith(l));
+    if (starts) {
+      inResult = line.startsWith("Tool_Result:");
+      used = 0;
+    }
+    if (!inResult) {
+      out.push(line);
+      continue;
+    }
+    if (used >= max) continue;
+    const room = max - used;
+    used += line.length + 1;
+    out.push(line.length > room ? line.slice(0, room) + CLIP_MARK : line);
+  }
+  return out.join("\n");
 }
 
 /** Tokens a question costs on the wire (instructions + both criteria). */

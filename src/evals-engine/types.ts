@@ -52,7 +52,7 @@ export interface NodeEvalInput {
   /** Intent the agent actually chose at this node (last detected intent). */
   chosen_intent: string;
   /** Declared intent name → the tool that fires it (config `intents[].tool`).
-   *  Kept OFF the shared node payload so Luna's input is unchanged; the Jev
+   *  Kept OFF the shared node payload so the LLM judges' input is unchanged; the Jev
    *  intent questions name the tool so "narrated but never fired" is decidable. */
   intent_tools?: Record<string, string>;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
