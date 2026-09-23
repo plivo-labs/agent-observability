@@ -35,6 +35,13 @@ describe("resolveGates", () => {
     expect(gates["metric:x"]).toEqual({ pass_below: 0.1, fail_above: 0.95 });
     expect(warnings.some((w) => w.includes("node_loop"))).toBe(true);
   });
+  test("a threshold outside [0,1] is rejected — a typo must not auto-pass a judge", () => {
+    const warnings: string[] = [];
+    const gates = resolveGates(JSON.stringify({ node_loop: { pass_below: 1.5, fail_above: 2 } }), (m) => warnings.push(m));
+    expect(gates.node_loop).toEqual(DEFAULT_GATES.node_loop);
+    expect(warnings[0]).toContain("node_loop");
+  });
+
   test("malformed JSON keeps defaults and warns once", () => {
     const warnings: string[] = [];
     expect(resolveGates("{not json", (m) => warnings.push(m))).toEqual({ ...DEFAULT_GATES });

@@ -230,6 +230,22 @@ describe("uncertain and unavailable axes fall to the LLM", () => {
   });
 });
 
+describe("failures never escape as unhandled rejections", () => {
+  test("a detection judge throwing transiently rejects the session, with sentiment and STT handled", async () => {
+    const provider = new MockLLM([(args: any) => {
+      const system = args.system as string;
+      if (system.includes("Detect low engagement")) throw new Error("429 rate limit exceeded");
+      return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+    }]);
+    // Jev answers the detections it owns; low engagement is the LLM's, and it throws.
+    const jev = new MockJev([{}], 0.01);
+    await expect(run(jev, provider)).rejects.toThrow(/429/);
+    // sentiment and STT were started in the same batch, so their results were
+    // consumed rather than left dangling
+    expect(provider.calls.some((c) => c.jsonSchema?.name === "eval_sentiment")).toBe(true);
+  });
+});
+
 describe("a text transport never gets a voice-only verdict", () => {
   test("voicemail, bot and screening are unavailable and unasked", async () => {
     const jev = new MockJev([{}], 0.01);

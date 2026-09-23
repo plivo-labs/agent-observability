@@ -245,11 +245,12 @@ export async function evaluateSessionJevFirst(args: {
     }
     const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
     // Sentiment and STT stay on the LLM in v1 (sentiment has no ground truth to
-    // calibrate a gate against, STT is a count) — start them now rather than
-    // after the detections, which Jev may answer without any call at all.
-    const sentimentPromise = runSentiment(input, provider);
-    const sttPromise = voice ? runStt(input, provider) : Promise.resolve(skippedStt());
-    const rawEntries = await Promise.all(
+    // calibrate a gate against, STT is a count). They ride the SAME Promise.all
+    // as the detections rather than being started separately: a detection
+    // rejecting first would otherwise leave them without a handler, and an
+    // unhandled rejection takes the whole process down.
+    const [rawEntries, sentiment, stt] = await Promise.all([
+      Promise.all(
       CONVERSATION_AXES.map(async ({ judge, criteria, rawKey, metricKey }): Promise<[keyof ConversationDetectionRaws, DetectionResult]> => {
         if (VOICE_ONLY.has(judge) && !voice) return [rawKey, voiceOnlySkip];
         const g = decided(`c.${judge}`);
@@ -262,9 +263,11 @@ export async function evaluateSessionJevFirst(args: {
         provenance.set(metricKey, LLM);
         return [rawKey, await runDetection(judge, criteria, input, provider)];
       }),
-    );
+      ),
+      runSentiment(input, provider),
+      voice ? runStt(input, provider) : Promise.resolve(skippedStt()),
+    ]);
     const raws = Object.fromEntries(rawEntries) as unknown as ConversationDetectionRaws;
-    const [sentiment, stt] = await Promise.all([sentimentPromise, sttPromise]);
     return { metrics: assembleConversationMetrics({ ctx: input, raws, sentiment, stt }), provenance };
   })();
 

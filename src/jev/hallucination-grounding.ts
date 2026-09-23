@@ -159,7 +159,9 @@ export function residualClaims(call: ConversationInput, transcript: string, max:
     // stores unspaced.
     if (/^\d+$/.test(t) && poolDigits.includes(t)) continue;
     const line = agentLines.find((l) => l.toLowerCase().includes(t)) ?? "";
-    out.push({ token, line: line.slice(0, 220) });
+    // `t`, not the raw token: the question must quote the same value the
+    // grounding failed on, or it asks about something never said.
+    out.push({ token: t, line: line.slice(0, 220) });
     if (out.length >= max) break;
   }
   return out;
