@@ -65,8 +65,12 @@ export function gatePlan(
       // "Did the call even reach this metric's situation?" is asked first: a
       // metric that never applied is `unknown`, which is neither a pass nor a
       // fail and costs no LLM call — the same contract the LLM judge has.
+      // Both questions or neither: the fail question's FALSE criterion is
+      // "passes the metric OR does not apply", so a low probability alone
+      // cannot tell a clean call from one the metric never reached.
       const applicable = probabilities[axis.applicableKey];
-      if (applicable !== undefined && applicable <= gate.pass_below) {
+      if (applicable === undefined) return review("unanswered");
+      if (applicable <= gate.pass_below) {
         return { axis, outcome: "unknown", p: applicable, firedKeys: [], probabilities, jevModel };
       }
       const failP = probabilities[axis.failKey];

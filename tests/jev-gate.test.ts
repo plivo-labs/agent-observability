@@ -175,4 +175,26 @@ describe("gatePlan", () => {
     const applies = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.9, { [axis.applicableKey]: 0.98 }), DEFAULT_GATES)));
     expect(applies.get("m.metric:hold")!.outcome).toBe("fail");
   });
+
+  test("a custom metric answered on one question only is reviewed, not decided", () => {
+    const spec = { name: "metric:hold", display_name: "Hold", scope: "conversation" as const, body: "Fail if held without warning.", output: "" };
+    const plan = buildJevPlan(ctx(), { customSpecs: [spec], customEnabled: true });
+    const axis = plan.axes.find((a) => a.id === "m.metric:hold")! as any;
+    // The fail question's FALSE criterion is "passes OR does not apply", so a
+    // low probability without the applicability answer is ambiguous — and N/A
+    // is the commoner reading, which would make a `pass` wrong most of the time.
+    const answers = new Map(
+      plan.requests.map((r) => {
+        const kept = Object.fromEntries(
+          Object.keys(r.questions)
+            .filter((k) => k !== axis.applicableKey)
+            .map((k) => [k, { type: "noul" as const, noul: 0.02 }]),
+        );
+        return [r.key, { ok: true as const, response: { model: "m", usage: { input_tokens: 1, output_tokens: 0 }, answers: kept } }];
+      }),
+    );
+    const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, answers, DEFAULT_GATES)));
+    expect(gated.get("m.metric:hold")!.outcome).toBe("review");
+    expect(gated.get("m.metric:hold")!.fallback).toBe("unanswered");
+  });
 });

@@ -34,7 +34,7 @@ describe("writeFailReasons", () => {
     const sent = JSON.parse(call.user);
     expect(sent.conversation_history).toContain("What is your order id?");
     expect(sent.nodes).toHaveLength(1);
-    expect(sent.defects.map((d: { id: string }) => d.id)).toEqual(["n0:variable_extraction", "c.low_engagement"]);
+    expect(sent.items.map((d: { id: string }) => d.id)).toEqual(["n0:variable_extraction", "c.low_engagement"]);
     expect(reasons.get("c.low_engagement")).toEqual({ reason: "r c.low_engagement", technical_reason: "t c.low_engagement" });
   });
 
