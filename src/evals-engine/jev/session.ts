@@ -117,6 +117,10 @@ async function runPlanRequests(
         const response: JevResponse = await jev.systemOne(request);
         return [request.key, { ok: true, response }];
       } catch (error) {
+        // The only place a Jev failure is visible: without it a rotated key, a
+        // wrong base URL and an outage all look identical in the data (every
+        // axis simply says backend=llm).
+        console.warn(`[jev] request=${request.key} failed, its axes fall back to the LLM judge: ${(error as Error).message}`);
         return [request.key, { ok: false, error }];
       }
     }),

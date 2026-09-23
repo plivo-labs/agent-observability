@@ -356,8 +356,8 @@ async function judgeClaimed(claim: EvalClaim, opts?: JudgeOpts): Promise<boolean
     });
     const verdicts = await evaluateIngestedSession(
       source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges,
-      // `jev` is resolved per call, not cached at import: JEV_MODE=off returns
-      // null and the path below is byte-identical to before Jev existed.
+      // One memoized client per process (JEV_MODE=off memoizes null), so the
+      // call below is byte-identical to before Jev existed whenever it is off.
       (opts && "jev" in opts ? opts.jev : createJevClientFromConfig()) ?? undefined,
     );
     // Judging is done — no more provider spend to protect. Stop the heartbeat

@@ -1,6 +1,6 @@
 // Per-judge confidence gates. p is Jev's probability that the defect is
 // present; below pass_below the axis auto-passes, at or above fail_above it
-// auto-fails (Luna only writes the reason), in between Luna reviews it fully.
+// auto-fails (the LLM only writes the reason), in between the LLM reviews it fully.
 //
 // Defaults come from the 295-session benchmark (spec §4): a flat 0.2/0.8 gate
 // auto-passed 6.6% of real bots and 8.9% of real intent misses and auto-failed

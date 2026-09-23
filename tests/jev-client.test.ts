@@ -96,6 +96,28 @@ describe("HttpJevClient wire shape", () => {
     expect(err.message).toContain("jev 408 timeout");
   });
 
+  test("a stalled ERROR body times out instead of hanging, and frees its slot", async () => {
+    // A body that never completes until the request is aborted — what a real
+    // fetch does when the gateway sends headers and then stalls.
+    const f = fakeFetch([(call) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            (call.init.signal as AbortSignal).addEventListener("abort", () => controller.error(new Error("aborted")));
+          },
+        }),
+        { status: 500, headers: { "content-type": "application/json" } },
+      )]);
+    const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, timeoutMs: 25, maxRetries: 0, maxConcurrent: 1 });
+    const err = await c.systemOne(req()).catch((e) => e);
+    expect(err).toBeInstanceOf(JevError);
+    expect(err.errorType).toBe("timeout");
+    // the slot came back: a second call is served rather than queued forever
+    const ok2 = fakeFetch([() => ok({ "n0.node_loop": { type: "noul", noul: 0.1 } })]);
+    const c2 = new HttpJevClient({ apiKey: "k", fetchImpl: ok2.impl, sleep: noSleep, maxConcurrent: 1 });
+    await expect(c2.systemOne(req())).resolves.toBeDefined();
+  });
+
   test("an invalid 200 body is jev <status> invalid_response", async () => {
     const f = fakeFetch([() => new Response("<html>", { status: 200 })]);
     const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep });

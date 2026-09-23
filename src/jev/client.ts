@@ -118,13 +118,23 @@ export class HttpJevClient implements JevClient {
         continue;
       }
       if (!res.ok) {
-        clearTimeout(timer);
-        const errorType = await errorTypeOf(res);
-        const err = new JevError(res.status, errorType);
+        // The timeout stays armed across the ERROR body read as well: a gateway
+        // that sends headers and then stalls the body would otherwise hang this
+        // call forever and never release its concurrency slot.
+        let errorType: string;
+        try {
+          errorType = await errorTypeOf(res);
+        } finally {
+          clearTimeout(timer);
+        }
+        // errorTypeOf swallows a body-read failure, so the abort is read from
+        // the signal rather than from the error it produced.
+        const timedOut = controller.signal.aborted;
+        const err = new JevError(timedOut ? 408 : res.status, timedOut ? "timeout" : errorType);
         // Overflow is deterministic for this request — retrying the same bytes
-        // cannot succeed; the orchestrator routes the request's axes to Luna.
-        if (res.status === 400 && errorType === JEV_OVERFLOW) throw err;
-        if (RETRYABLE.has(res.status) || res.status >= 500) {
+        // cannot succeed; the orchestrator routes the request's axes to the LLM judge.
+        if (err.status === 400 && err.errorType === JEV_OVERFLOW) throw err;
+        if (RETRYABLE.has(err.status) || err.status >= 500) {
           err.retryAfterMs = retryAfterMs(res);
           lastError = err;
           continue;

@@ -9,9 +9,13 @@
  * run-to-run noise is |dp| <= ~0.07, so band agreement is the metric and dp is
  * reported alongside it.
  *
+ * `--calls` and `--tuned` point at a benchmark dataset produced OUTSIDE this
+ * repo (one session dossier per JSON file, plus the probabilities the tuning
+ * harness measured), so the paths are yours to supply:
+ *
  *   TYPESAFE_API_KEY=... bun scripts/jev-replay.ts \
- *     --calls ../agent-observability/outputs/fresh2_dataset/calls \
- *     --tuned ../agent-observability/scripts/jev-benchmark/tuned_flags.json \
+ *     --calls <dir of session dossiers> \
+ *     --tuned <tuned_flags.json> \
  *     --out /tmp/jev-replay.jsonl [--limit 50] [--concurrency 4]
  */
 import { readdir, readFile, appendFile, writeFile } from "node:fs/promises";
