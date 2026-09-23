@@ -465,3 +465,30 @@ describe("evaluateIngestedSession — session tags", () => {
     expect(verdicts.conversation_metrics.human_transfer.available).toBe(false);
   });
 });
+
+describe("inputs the gated judge path reads", () => {
+  test("system messages arrive in FULL, not the 600-char note the transcript renders", () => {
+    const long = `# Initial Context\nLead is in Pontiac, Michigan. ${"x".repeat(2000)}`;
+    const { input } = buildSessionEvalInput(
+      { flow_name: "f", global_prompt: "g", nodes: [{ ref: "n", name: "n", instructions: "i" }] },
+      [
+        { type: "conversation_item_added", node_ref: "n", item: { type: "message", role: "system", content: long } },
+        { type: "conversation_item_added", node_ref: "n", item: { type: "message", role: "user", content: "hi" } },
+      ],
+    );
+    expect(input.system_messages).toEqual([long]);
+    expect(input.full_transcript).toContain("System_Note:");
+    expect(input.full_transcript).not.toContain(long);
+  });
+
+  test("each declared intent's tool is carried so a narrated-but-never-fired intent is decidable", () => {
+    const { input } = buildSessionEvalInput(
+      {
+        flow_name: "f", global_prompt: "g",
+        nodes: [{ ref: "n", name: "n", instructions: "i", intents: [{ name: "opt_out", description: "d", tool: "handoff_opt_out" }, { name: "no_tool", description: "d" }] }],
+      },
+      [{ type: "conversation_item_added", node_ref: "n", item: { type: "message", role: "user", content: "hi" } }],
+    );
+    expect(input.nodes[0]!.intent_tools).toEqual({ opt_out: "handoff_opt_out" });
+  });
+});

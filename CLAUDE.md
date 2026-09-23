@@ -43,6 +43,9 @@ in query text (bun rewrites it as a placeholder; use `jsonb_exists()`).
 
 ### Backend (`src/`)
 
+- `src/jev/` — the Jev (TypeSafe System One) first-pass judge: `client.ts` (POST /v1/systemone, retries, concurrency cap, usage line), `questions.ts` (the tuned yes/no question sets, one per judge), `gates.ts` (per-judge confidence thresholds + `JEV_GATES` override), `tokens.ts` (content-aware state estimate + the tool-output clip), `hallucination-grounding.ts` (code-side retrieval of the config that grounds what the agent said), `mock.ts`.
+- `src/evals-engine/jev/` — the orchestrator: `plan.ts` builds the per-session request set, `gate.ts` turns probabilities into pass/fail/review, `merge.ts` synthesizes the verdict blocks, `session.ts` runs the whole thing. With `JEV_MODE=primary` Jev answers every gated judge in ONE round trip; confident axes are decided (one batched LLM call in `judges/reason-writer.ts` writes the reasons for fails), uncertain axes and anything Jev could not answer fall through to the existing LLM judges unchanged. `JEV_MODE=off` (default) is byte-identical to the LLM-only path.
+
 - `src/index.ts` — Hono HTTP server. Health check at `/health`. Session report at `POST /observability/recordings/v0`. OTLP ingest at `/observability/{logs,traces,metrics}/otlp/v0`. Dashboard API at `/api/sessions*`. In production, serves frontend static files.
 - `src/config.ts` — Zod-validated env config. All env vars are read here.
 - `src/db.ts` — Bun SQL client (`bun:sql`). `insertSession()` writes to `ao_agent_transport_sessions`; `upsertSessionTag` / `insertLiveKitEvaluation` / `upsertSessionOutcome` / `mergeSessionRawReport` populate the LiveKit OTLP-derived tables. (All AO tables carry an `ao_` prefix — see migration `023`.)
