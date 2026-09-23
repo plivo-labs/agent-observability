@@ -40,9 +40,8 @@ export function decide(p: number, gate: JudgeGate): GateDecision {
   return "review";
 }
 
-export function gateFor(gates: Readonly<Record<string, JudgeGate>>, judge: string): JudgeGate | undefined {
-  return gates[judge] ?? (judge.startsWith("metric:") ? gates.custom_metric : undefined);
-}
+/** Custom judges share one gate under this key until measured per judge. */
+export const CUSTOM_METRIC_GATE = "custom_metric";
 
 function validGate(v: unknown): v is JudgeGate {
   if (!v || typeof v !== "object") return false;

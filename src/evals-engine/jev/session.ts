@@ -41,7 +41,7 @@ import {
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 import { writeFailReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
-import { buildJevPlan, parseJevJudges, type NodeJudgeName } from "./plan.js";
+import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type NodeJudgeName } from "./plan.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
 import {
   attachDetectionProvenance,
@@ -69,32 +69,22 @@ import {
 // verdict shape the LLM path could not have written. That is what makes
 // JEV_MODE=off a true rollback rather than a different product.
 
-const DETECTION_CRITERIA: Record<string, string> = {
-  voicemail_detection: VOICEMAIL,
-  bot_detection: BOT,
-  call_screening: CALL_SCREENING,
-  low_engagement: LOW_ENGAGEMENT,
-  wrong_number: WRONG_NUMBER,
-  do_not_disturb: DO_NOT_DISTURB,
-};
-
-const RAW_KEY: Record<string, keyof ConversationDetectionRaws> = {
-  voicemail_detection: "voicemail",
-  bot_detection: "bot",
-  call_screening: "screening",
-  low_engagement: "lowEngagement",
-  wrong_number: "wrongNumber",
-  do_not_disturb: "doNotDisturb",
-};
-
-const METRIC_KEY: Record<string, keyof SimConversationMetrics> = {
-  voicemail_detection: "voicemail_detected",
-  bot_detection: "bot_detected",
-  call_screening: "call_screening",
-  low_engagement: "low_engagement",
-  wrong_number: "wrong_number",
-  do_not_disturb: "do_not_disturb",
-};
+/** The conversation detections Jev can answer, with everything the three
+ *  layers need: the LLM criteria to fall back to, the raw key resolveOutcomes
+ *  reads, and the emitted metric the provenance is stamped on. */
+const CONVERSATION_AXES: ReadonlyArray<{
+  judge: ConversationJudgeName;
+  criteria: string;
+  rawKey: keyof ConversationDetectionRaws;
+  metricKey: keyof SimConversationMetrics;
+}> = [
+  { judge: "voicemail_detection", criteria: VOICEMAIL, rawKey: "voicemail", metricKey: "voicemail_detected" },
+  { judge: "bot_detection", criteria: BOT, rawKey: "bot", metricKey: "bot_detected" },
+  { judge: "call_screening", criteria: CALL_SCREENING, rawKey: "screening", metricKey: "call_screening" },
+  { judge: "low_engagement", criteria: LOW_ENGAGEMENT, rawKey: "lowEngagement", metricKey: "low_engagement" },
+  { judge: "wrong_number", criteria: WRONG_NUMBER, rawKey: "wrongNumber", metricKey: "wrong_number" },
+  { judge: "do_not_disturb", criteria: DO_NOT_DISTURB, rawKey: "doNotDisturb", metricKey: "do_not_disturb" },
+];
 
 export interface JevSessionResult {
   conversation_metrics: SimConversationMetrics;
@@ -171,7 +161,7 @@ export async function evaluateSessionJevFirst(args: {
     judges,
     customSpecs: customJudges,
     customEnabled,
-    budgetTokens: envConfig.JEV_STATE_TOKEN_BUDGET ?? 30_000,
+    budgetTokens: envConfig.JEV_STATE_TOKEN_BUDGET ?? DEFAULT_BUDGET_TOKENS,
   });
 
   const startedAt = Date.now();
@@ -247,19 +237,17 @@ export async function evaluateSessionJevFirst(args: {
     }
     const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
     const rawEntries = await Promise.all(
-      Object.keys(DETECTION_CRITERIA).map(async (judge): Promise<[keyof ConversationDetectionRaws, DetectionResult]> => {
-        const key = RAW_KEY[judge]!;
-        const voiceOnly = judge === "voicemail_detection" || judge === "bot_detection" || judge === "call_screening";
-        if (voiceOnly && !voice) return [key, voiceOnlySkip];
+      CONVERSATION_AXES.map(async ({ judge, criteria, rawKey, metricKey }): Promise<[keyof ConversationDetectionRaws, DetectionResult]> => {
+        if (VOICE_ONLY.has(judge) && !voice) return [rawKey, voiceOnlySkip];
         const g = decided(`c.${judge}`);
         if (g) {
-          provenance.set(METRIC_KEY[judge]!, provenanceOf(g));
-          return [key, jevDetection(g, await reasonsPromise)];
+          provenance.set(metricKey, provenanceOf(g));
+          return [rawKey, jevDetection(g, await reasonsPromise)];
         }
         // Reviewed (or never asked): the LLM detection judge decides it, and
         // the row says so — a mixed run must be readable from the data alone.
-        provenance.set(METRIC_KEY[judge]!, LLM);
-        return [key, await runDetection(judge, DETECTION_CRITERIA[judge]!, input, provider)];
+        provenance.set(metricKey, LLM);
+        return [rawKey, await runDetection(judge, criteria, input, provider)];
       }),
     );
     const raws = Object.fromEntries(rawEntries) as unknown as ConversationDetectionRaws;

@@ -3,7 +3,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
-const { buildJevPlan, parseJevJudges, jevNodeState } = await import("../src/evals-engine/jev/plan.js");
+const { buildJevPlan, parseJevJudges, jevNodeState, ALL_JEV_JUDGES } = await import("../src/evals-engine/jev/plan.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 type NodeEvalInput = import("../src/evals-engine/types.js").NodeEvalInput;
 type CustomJudgeSpec = import("../src/evals-engine/judges/custom-metric.js").CustomJudgeSpec;
@@ -70,7 +70,7 @@ describe("buildJevPlan — what is never asked", () => {
   test("low engagement is not on the Jev path by default, but can be opted back in", () => {
     expect(ids(buildJevPlan(ctx()))).not.toContain("c.low_engagement");
     expect(ids(buildJevPlan(ctx(), { judges: ["low_engagement"] }))).toEqual(["c.low_engagement"]);
-    expect(ids(buildJevPlan(ctx(), { judges: "all" }))).toContain("c.low_engagement");
+    expect(ids(buildJevPlan(ctx(), { judges: ALL_JEV_JUDGES }))).toContain("c.low_engagement");
   });
 
   test("a text transport drops the three voice-only detections, keeps the rest", () => {

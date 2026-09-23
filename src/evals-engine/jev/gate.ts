@@ -1,4 +1,4 @@
-import { decide, gateFor, type JudgeGate } from "../../jev/gates.js";
+import { CUSTOM_METRIC_GATE, decide, type JudgeGate } from "../../jev/gates.js";
 import { JEV_OVERFLOW, JevError, type JevResponse } from "../../jev/types.js";
 import type { JevAxis, JevPlan } from "./plan.js";
 
@@ -55,7 +55,7 @@ export function gatePlan(
     const answered = Object.entries(probabilities);
     if (answered.length === 0) return review("unanswered");
 
-    const gate = gateFor(gates, axis.judge);
+    const gate = gates[axis.kind === "custom" ? CUSTOM_METRIC_GATE : axis.judge];
     // A judge with no gate is not Jev's to decide.
     if (!gate) return review("unanswered");
 
@@ -132,7 +132,6 @@ export function mergeChunkedAxes(gated: readonly GatedAxis[]): GatedAxis[] {
   });
 }
 
-/** Index by axis id for the merge step. */
 export function byAxisId(gated: readonly GatedAxis[]): Map<string, GatedAxis> {
   return new Map(gated.map((g) => [g.axis.id, g]));
 }

@@ -13,9 +13,6 @@
  *     --calls ../agent-observability/outputs/fresh2_dataset/calls \
  *     --tuned ../agent-observability/scripts/jev-benchmark/tuned_flags.json \
  *     --out /tmp/jev-replay.jsonl [--limit 50] [--concurrency 4]
- *
- * Untracked on purpose: it reads a local benchmark dataset that is not part of
- * the repo.
  */
 import { readdir, readFile, appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -23,7 +20,7 @@ import { eventsFromChatHistory } from "../src/evals-engine/eval-sweeper.js";
 import { buildSessionEvalInput, type AgentConfig } from "../src/evals-engine/integration/session-evals.js";
 import { buildJevPlan } from "../src/evals-engine/jev/plan.js";
 import { gatePlan, mergeChunkedAxes, type RequestResult } from "../src/evals-engine/jev/gate.js";
-import { DEFAULT_GATES, decide, gateFor } from "../src/jev/gates.js";
+import { DEFAULT_GATES, decide } from "../src/jev/gates.js";
 import { HttpJevClient } from "../src/jev/client.js";
 
 const arg = (name: string, fallback?: string): string => {
@@ -67,7 +64,7 @@ async function main(): Promise<void> {
     const sessionId: string = dossier.session_id;
     const events = eventsFromChatHistory(dossier.transcript);
     const { input } = buildSessionEvalInput(dossier.agent_config as AgentConfig, events);
-    const plan = buildJevPlan(input, { budgetTokens: 30_000 });
+    const plan = buildJevPlan(input);
     const results = new Map<string, RequestResult>();
     await Promise.all(
       plan.requests.map(async (request) => {
@@ -140,7 +137,7 @@ async function main(): Promise<void> {
       if (tunedP === undefined && mine === undefined) continue;
       if (tunedP === undefined) { s.onlyHere++; continue; }
       if (mine === undefined || mine === null) { s.onlyTuned++; continue; }
-      const gate = gateFor(DEFAULT_GATES, judge)!;
+      const gate = DEFAULT_GATES[judge]!;
       s.n++;
       if (decide(mine, gate) === decide(tunedP, gate)) s.agree++;
       const dp = Math.abs(mine - tunedP);
