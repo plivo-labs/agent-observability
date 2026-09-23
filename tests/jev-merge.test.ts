@@ -139,3 +139,28 @@ describe("attachDetectionProvenance", () => {
     expect(out.call_screening.backend).toBeUndefined();
   });
 });
+
+describe("jevCustomMetric", () => {
+  const spec = { name: "metric:hold", display_name: "Hold warning", scope: "conversation" as const, body: "Fail if held without warning.", output: "" } as any;
+  const customAxis = { kind: "custom", id: "m.metric:hold", judge: "metric:hold", scope: "conversation", requestKey: "m.metric:hold", questionKeys: ["a", "f"], applicableKey: "a", failKey: "f" } as any;
+
+  test("a metric the call never reached carries the written explanation, not an empty string", () => {
+    const g = gated({ axis: customAxis, outcome: "unknown", p: 0.05 });
+    const reasons = new Map([["m.metric:hold", { reason: "The caller was never placed on hold.", technical_reason: "no hold event in the transcript" }]]);
+    const out = merge.jevCustomMetric(spec, g, reasons);
+    expect(out.verdict).toBe("unknown");
+    expect(out.reason).toBe("The caller was never placed on hold.");
+    expect(out.technical_reason).toContain("no hold event in the transcript");
+    expect(out.backend).toBe("jev");
+  });
+
+  // The LLM judge this replaces always writes a reason for `unknown`, so losing
+  // the batched call must still leave prose behind rather than an empty field.
+  test("a metric the call never reached falls back to plain text when the writer failed", () => {
+    const g = gated({ axis: customAxis, outcome: "unknown", p: 0.05 });
+    const out = merge.jevCustomMetric(spec, g, new Map());
+    expect(out.verdict).toBe("unknown");
+    expect(out.reason).toContain("did not apply");
+    expect(out.reason).not.toBe("");
+  });
+});

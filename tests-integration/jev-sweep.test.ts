@@ -41,7 +41,7 @@ const rawReport = {
 const responder = (args: any) => {
   const system = args.system as string;
   if (system.includes("calibrated classifier")) {
-    const asked = JSON.parse(args.user as string).defects as Array<{ id: string }>;
+    const asked = JSON.parse(args.user as string).items as Array<{ id: string }>;
     return JSON.stringify({ reasons: asked.map((d) => ({ id: d.id, reason: `explained ${d.id}`, technical_reason: "t" })) });
   }
   return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
