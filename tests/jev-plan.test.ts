@@ -40,11 +40,11 @@ describe("buildJevPlan — request set", () => {
     const plan = buildJevPlan(ctx());
     expect(keys(plan)).toEqual(["c", "h0", "n0", "v0.0"]);
     expect(ids(plan)).toEqual([
-      "c.bot_detection", "c.call_screening", "c.do_not_disturb", "c.low_engagement", "c.voicemail_detection", "c.wrong_number",
+      "c.bot_detection", "c.call_screening", "c.do_not_disturb", "c.voicemail_detection", "c.wrong_number",
       "n0:hallucination", "n0:instructions_adherence", "n0:intent_identification", "n0:node_loop", "n0:variable_extraction#0",
     ]);
     const conversation = plan.requests.find((r) => r.key === "c")!;
-    expect(Object.keys(conversation.questions)).toHaveLength(6);
+    expect(Object.keys(conversation.questions)).toHaveLength(5);
     expect(conversation.state).toContain("User: order 42");
   });
 
@@ -67,12 +67,17 @@ describe("buildJevPlan — request set", () => {
 });
 
 describe("buildJevPlan — what is never asked", () => {
+  test("low engagement is not on the Jev path by default, but can be opted back in", () => {
+    expect(ids(buildJevPlan(ctx()))).not.toContain("c.low_engagement");
+    expect(ids(buildJevPlan(ctx(), { judges: ["low_engagement"] }))).toEqual(["c.low_engagement"]);
+    expect(ids(buildJevPlan(ctx(), { judges: "all" }))).toContain("c.low_engagement");
+  });
+
   test("a text transport drops the three voice-only detections, keeps the rest", () => {
     const plan = buildJevPlan(ctx({ transport: "chat" }));
     expect(ids(plan)).not.toContain("c.voicemail_detection");
     expect(ids(plan)).not.toContain("c.bot_detection");
     expect(ids(plan)).not.toContain("c.call_screening");
-    expect(ids(plan)).toContain("c.low_engagement");
     expect(ids(plan)).toContain("c.wrong_number");
   });
 
@@ -150,8 +155,9 @@ describe("buildJevPlan — budget", () => {
 
 describe("parseJevJudges", () => {
   test("'all' and empty mean every judge; a list is filtered and typos are reported", () => {
-    expect(parseJevJudges("all").judges).toBe("all");
-    expect(parseJevJudges(undefined).judges).toBe("all");
+    expect(parseJevJudges("all").judges).not.toContain("low_engagement");
+    expect(parseJevJudges("all").judges).toContain("node_loop");
+    expect(parseJevJudges(undefined).judges).toEqual(parseJevJudges("all").judges);
     const parsed = parseJevJudges("node_loop, halucination ,voicemail_detection");
     expect(parsed.judges).toEqual(["node_loop", "voicemail_detection"]);
     expect(parsed.unknown).toEqual(["halucination"]);

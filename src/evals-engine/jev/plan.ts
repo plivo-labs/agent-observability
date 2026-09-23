@@ -53,7 +53,19 @@ export const NODE_JUDGES = [
 ] as const;
 export type NodeJudgeName = (typeof NODE_JUDGES)[number];
 
+/** Every judge Jev CAN answer. */
 export const ALL_JEV_JUDGES: readonly string[] = [...CONVERSATION_JUDGES, ...NODE_JUDGES];
+
+/**
+ * What "all" means: every judge Jev answers by default.
+ *
+ * `low_engagement` is deliberately excluded. The tuning run scored it well, but
+ * replaying the shipped path over the same 300 sessions did not reproduce that
+ * (F1 46 vs 77) while the LLM judge scores 80 on the same set, so there is
+ * nothing to win here and a 3% auto-pass miss to lose. Put it in JEV_JUDGES
+ * explicitly to opt back in after re-tuning.
+ */
+export const DEFAULT_JEV_JUDGES: readonly string[] = ALL_JEV_JUDGES.filter((j) => j !== "low_engagement");
 
 export interface JevIntentQuestionRef {
   key: string;
@@ -102,7 +114,7 @@ export interface JevPlan {
 }
 
 export interface BuildJevPlanOptions {
-  /** Allow-list of default judges Jev may answer ("all" = every one). */
+  /** Allow-list of judges Jev may answer; omitted means DEFAULT_JEV_JUDGES. */
   judges?: readonly string[] | "all";
   customSpecs?: readonly CustomJudgeSpec[];
   customEnabled?: boolean;
@@ -160,15 +172,15 @@ export function jevConversationState(ctx: ConversationInput): string {
 }
 
 function judgeAllowed(judges: BuildJevPlanOptions["judges"], judge: string): boolean {
-  if (!judges || judges === "all") return true;
-  return judges.includes(judge);
+  if (judges === "all") return ALL_JEV_JUDGES.includes(judge);
+  return (judges ?? DEFAULT_JEV_JUDGES).includes(judge);
 }
 
 /** "all" or a comma-separated list; unknown names are reported so a typo in
  *  JEV_JUDGES cannot silently leave a judge on the LLM path. */
-export function parseJevJudges(raw: string | undefined): { judges: readonly string[] | "all"; unknown: string[] } {
+export function parseJevJudges(raw: string | undefined): { judges: readonly string[]; unknown: string[] } {
   const value = (raw ?? "all").trim();
-  if (!value || value === "all") return { judges: "all", unknown: [] };
+  if (!value || value === "all") return { judges: DEFAULT_JEV_JUDGES, unknown: [] };
   const names = value.split(",").map((n) => n.trim()).filter(Boolean);
   return { judges: names.filter((n) => ALL_JEV_JUDGES.includes(n)), unknown: names.filter((n) => !ALL_JEV_JUDGES.includes(n)) };
 }
