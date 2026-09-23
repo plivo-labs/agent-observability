@@ -15,6 +15,7 @@ import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } f
 import { clamp01 } from "../aggregate.js";
 import type { GatedAxis } from "./gate.js";
 import type { JevNodeAxis } from "./plan.js";
+import { INTENT_WRONG_KEY } from "../../jev/questions.js";
 
 // Turning a gated probability into the verdict blocks consumers already read.
 // Two rules hold everywhere:
@@ -92,8 +93,11 @@ export function jevIntent(g: GatedAxis, reasons: ReasonMap): IntentIdentificatio
   const fired = new Set(g.firedKeys);
   // Two distinct questions map to the two stored booleans: a declared intent
   // that should have fired and did not, versus an intent fired without support.
-  const wrong = axis.intents?.some((i) => i.intent === "" && fired.has(i.key)) ?? false;
-  const missed = axis.intents?.some((i) => i.intent !== "" && fired.has(i.key)) ?? false;
+  // Keyed, not name-matched: a config intent declared with an empty name would
+  // otherwise be mistaken for the "fired without support" question.
+  const isWrongQuestion = (key: string): boolean => key.endsWith(`.${INTENT_WRONG_KEY}`);
+  const wrong = axis.intents?.some((i) => isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
+  const missed = axis.intents?.some((i) => !isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const failed = g.outcome === "fail";
   return {
     // A fail that names neither question (no intent refs survived) is recorded
@@ -115,10 +119,12 @@ export interface JevVariableOutcome {
 
 /**
  * A fired variable question names the variable; whether it was RECORDED
- * decides missing vs incorrect. The same deterministic guards the LLM judge
- * applies afterwards run here too — an out-of-scope workflow/platform field or
- * a value still pending the call's final recording batch is not a defect,
- * whichever backend proposed it.
+ * decides missing vs incorrect. The LLM judge's two DETERMINISTIC guards run
+ * here too — an out-of-scope workflow/platform field, or a value still pending
+ * the call's final recording batch, is not a defect whichever backend proposed
+ * it. Its two LLM-side guarded reviews do NOT run: they are a second judge
+ * call, which is the cost this path exists to avoid, and the questions here
+ * already state each variable's full rule.
  */
 export function jevVariables(g: GatedAxis, node: NodeEvalInput, reasons: ReasonMap): JevVariableOutcome {
   const axis = g.axis as JevNodeAxis;

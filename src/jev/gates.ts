@@ -46,10 +46,15 @@ export const CUSTOM_METRIC_GATE = "custom_metric";
 function validGate(v: unknown): v is JudgeGate {
   if (!v || typeof v !== "object") return false;
   const g = v as Record<string, unknown>;
+  // A threshold is a probability, so it lives in [0, 1] — or is one of the two
+  // sentinels. Without the upper bound a typo like pass_below: 1.5 would
+  // silently auto-pass every session for that judge.
+  const inDomain = (v: number, sentinel: number): boolean => v === sentinel || (v >= 0 && v <= 1);
   return (
     typeof g.pass_below === "number" && typeof g.fail_above === "number" &&
     Number.isFinite(g.pass_below) && Number.isFinite(g.fail_above) &&
-    g.pass_below >= NEVER_PASS && g.fail_above <= NEVER_FAIL && g.pass_below < g.fail_above
+    inDomain(g.pass_below, NEVER_PASS) && inDomain(g.fail_above, NEVER_FAIL) &&
+    g.pass_below < g.fail_above
   );
 }
 
@@ -73,7 +78,7 @@ export function resolveGates(override?: string | null, warn: (msg: string) => vo
   }
   for (const [judge, value] of Object.entries(parsed as Record<string, unknown>)) {
     if (validGate(value)) gates[judge] = { pass_below: value.pass_below, fail_above: value.fail_above };
-    else warn(`[jev] JEV_GATES.${judge} ignored — expected {pass_below < fail_above} within [-1, 2]`);
+    else warn(`[jev] JEV_GATES.${judge} ignored — expected {pass_below < fail_above}, each in [0, 1] (or ${NEVER_PASS} / ${NEVER_FAIL})`);
   }
   return gates;
 }
