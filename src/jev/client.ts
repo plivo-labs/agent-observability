@@ -189,24 +189,43 @@ export class HttpJevClient implements JevClient {
 }
 
 let warnedMissingKey = false;
+let shared: JevClient | null | undefined;
 
-/** The process-wide client for JEV_MODE=primary, or null when Jev is off or
- *  unusable — the caller then takes today's Luna-only path. */
+/**
+ * The process-wide client for JEV_MODE=primary, or null when Jev is off or
+ * unusable — the caller then takes today's LLM-only path.
+ *
+ * Memoized deliberately: JEV_MAX_CONCURRENT is a cap ACROSS sessions, and a
+ * client per session would both uncap it and make every session pay the
+ * cold-connection cost (5-8s) that one keep-alive connection pays once.
+ */
 export function createJevClientFromConfig(): JevClient | null {
-  if ((config.JEV_MODE ?? "off") !== "primary") return null;
+  if (shared !== undefined) return shared;
+  if ((config.JEV_MODE ?? "off") !== "primary") {
+    shared = null;
+    return shared;
+  }
   const apiKey = config.JEV_API_KEY;
   if (!apiKey) {
     if (!warnedMissingKey) {
       console.warn("[jev] JEV_MODE=primary but JEV_API_KEY is unset — Jev disabled, judging on the LLM path");
       warnedMissingKey = true;
     }
-    return null;
+    shared = null;
+    return shared;
   }
-  return new HttpJevClient({
+  shared = new HttpJevClient({
     apiKey,
     baseUrl: config.JEV_BASE_URL,
     model: config.JEV_MODEL,
     timeoutMs: config.JEV_TIMEOUT_MS ?? 15_000,
     maxConcurrent: config.JEV_MAX_CONCURRENT ?? 8,
   });
+  return shared;
+}
+
+/** Test hook: forget the memoized client so a suite can change the config. */
+export function __resetJevClientForTest(): void {
+  shared = undefined;
+  warnedMissingKey = false;
 }
