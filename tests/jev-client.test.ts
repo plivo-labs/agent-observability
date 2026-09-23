@@ -117,6 +117,25 @@ describe("createJevClientFromConfig", () => {
   test("is null while JEV_MODE=off (the test fixture default)", () => {
     expect(createJevClientFromConfig()).toBeNull();
   });
+
+  test("returns ONE client for the whole process — the concurrency cap is across sessions", async () => {
+    const { __resetJevClientForTest } = await import("../src/jev/client.js");
+    const { config } = await import("../src/config.js");
+    const mutable = config as Record<string, unknown>;
+    const prior = { mode: mutable.JEV_MODE, key: mutable.JEV_API_KEY };
+    __resetJevClientForTest();
+    mutable.JEV_MODE = "primary";
+    mutable.JEV_API_KEY = "k";
+    try {
+      const first = createJevClientFromConfig();
+      expect(first).not.toBeNull();
+      expect(createJevClientFromConfig()).toBe(first);
+    } finally {
+      mutable.JEV_MODE = prior.mode;
+      mutable.JEV_API_KEY = prior.key;
+      __resetJevClientForTest();
+    }
+  });
 });
 
 describe("MockJev", () => {

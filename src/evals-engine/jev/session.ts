@@ -41,7 +41,7 @@ import {
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 import { writeFailReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
-import { buildJevPlan, parseJevJudges, type JevNodeAxis, type NodeJudgeName } from "./plan.js";
+import { buildJevPlan, parseJevJudges, type NodeJudgeName } from "./plan.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
 import {
   attachDetectionProvenance,
@@ -204,23 +204,23 @@ export async function evaluateSessionJevFirst(args: {
 
   // ── the reasons for every confident fail, in ONE call ──────────────────────
   const failing: ReasonRequestAxis[] = [];
+  // Only the nodes a defect was found on: node configs are large, and sending
+  // every node of a 30-node session would make this the most expensive call of
+  // the run — and risk truncating the very explanations it exists to produce.
+  const failingNodeIndexes = new Set<number>();
   for (const g of gated.values()) {
     if (g.outcome !== "fail") continue;
     const axis = g.axis;
-    const nodeIndex = axis.kind === "node" || (axis.kind === "custom" && axis.nodeIndex !== undefined) ? (axis as JevNodeAxis).nodeIndex : undefined;
+    const nodeIndex = axis.kind === "node" || axis.kind === "custom" ? axis.nodeIndex : undefined;
+    if (nodeIndex !== undefined) failingNodeIndexes.add(nodeIndex);
+    const detail = detailFor(g);
     failing.push({
       id: axis.id,
       judge: axis.judge,
       ...(nodeIndex !== undefined ? { node_name: input.nodes[nodeIndex]?.node_name } : {}),
-      ...(detailFor(g) ? { detail: detailFor(g)! } : {}),
+      ...(detail ? { detail } : {}),
     });
   }
-  // Only the nodes a defect was found on: node configs are large, and sending
-  // every node of a 30-node session would make this the most expensive call of
-  // the run — and risk truncating the very explanations it exists to produce.
-  const failingNodeIndexes = new Set(
-    failing.map((f) => f.id.match(/^n(\d+):/)?.[1]).filter((i): i is string => i !== undefined).map(Number),
-  );
   const reasonsPromise: Promise<ReasonMap> = failing.length
     ? writeFailReasons({
         ctx: input,
