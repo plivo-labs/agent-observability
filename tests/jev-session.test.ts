@@ -37,7 +37,7 @@ function llm() {
   return new MockLLM([(args: any) => {
     const system = args.system as string;
     if (system.includes("calibrated classifier")) {
-      const asked = JSON.parse(args.user as string).defects as Array<{ id: string }>;
+      const asked = JSON.parse(args.user as string).items as Array<{ id: string }>;
       return JSON.stringify({ reasons: asked.map((d) => ({ id: d.id, reason: `why ${d.id}`, technical_reason: `tech ${d.id}` })) });
     }
     return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
@@ -122,7 +122,7 @@ describe("confident Jev verdicts", () => {
     const reasonCall = provider.calls.find((c) => (c.system as string).includes("calibrated classifier"))!;
     const sent = JSON.parse(reasonCall.user);
     expect(sent.nodes.map((n: { node_index: number }) => n.node_index)).toEqual([1]);
-    expect(sent.defects.map((d: { id: string }) => d.id)).toEqual(["n1:node_loop"]);
+    expect(sent.items.map((d: { id: string }) => d.id)).toEqual(["n1:node_loop"]);
   });
 
   test("a fired variable question becomes a named defect, filed by whether it was recorded", async () => {

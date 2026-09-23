@@ -46,6 +46,23 @@ export function passReason(g: GatedAxis): ReasonText {
   };
 }
 
+/** A metric the call never reached rides the same batched call as the fails:
+ *  a useful N/A names the situation that was expected and what happened
+ *  instead, which is per-session evidence a template cannot carry. */
+export function naReason(g: GatedAxis, reasons: ReasonMap): ReasonText {
+  const written = reasons.get(g.axis.id);
+  if (written?.reason) {
+    return {
+      reason: written.reason,
+      technical_reason: `jev ${round(g.p ?? 0)} · ${written.technical_reason}`,
+    };
+  }
+  return {
+    reason: "This metric did not apply: the call never reached the situation it describes.",
+    technical_reason: `jev: applicability p=${round(g.p ?? 0)} at or below this judge's pass threshold; reason writer unavailable`,
+  };
+}
+
 /** A confident fail's explanation is written by the LLM in one batched call;
  *  if that call failed we still keep the verdict and say so plainly rather
  *  than inventing evidence. */
@@ -240,7 +257,7 @@ export function jevCustomMetric(
     verdict === "fail"
       ? failReason(g, reasons)
       : verdict === "unknown"
-        ? { reason: "", technical_reason: `jev: the call never reached this metric's situation (p=${round(g.p ?? 0)})` }
+        ? naReason(g, reasons)
         : passReason(g);
   return {
     judge_name: spec.name,

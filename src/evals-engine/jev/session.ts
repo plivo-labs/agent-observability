@@ -200,21 +200,31 @@ export async function evaluateSessionJevFirst(args: {
     return g && g.outcome !== "review" ? g : undefined;
   };
 
-  // ── the reasons for every confident fail, in ONE call ──────────────────────
+  // ── the reasons for every confident fail and N/A metric, in ONE call ───────
   const failing: ReasonRequestAxis[] = [];
   // Only the nodes a defect was found on: node configs are large, and sending
   // every node of a 30-node session would make this the most expensive call of
   // the run — and risk truncating the very explanations it exists to produce.
   const failingNodeIndexes = new Set<number>();
+  // Capped like the Jev question that decided it: a metric body is free text.
+  const metricBody = new Map(customJudges.map((s) => [s.name, `metric '${s.display_name}': ${s.body.slice(0, 1200)}`]));
   for (const g of gated.values()) {
-    if (g.outcome !== "fail") continue;
+    // A custom metric the call never reached needs prose too — the LLM judge it
+    // replaces writes one, and N/A is its commonest outcome, so skipping it
+    // would strip reasoning from most custom-metric verdicts.
+    const naMetric = g.outcome === "unknown" && g.axis.kind === "custom";
+    if (g.outcome !== "fail" && !naMetric) continue;
     const axis = g.axis;
     const nodeIndex = axis.kind === "node" || axis.kind === "custom" ? axis.nodeIndex : undefined;
-    if (nodeIndex !== undefined) failingNodeIndexes.add(nodeIndex);
-    const detail = detailFor(g);
+    // An N/A is explained from the metric text and the transcript, so it does
+    // not pull its node config in — that is what keeps this call small when
+    // most metrics come back not applicable.
+    if (nodeIndex !== undefined && !naMetric) failingNodeIndexes.add(nodeIndex);
+    const detail = axis.kind === "custom" ? metricBody.get(axis.judge) : detailFor(g);
     failing.push({
       id: axis.id,
       judge: axis.judge,
+      kind: naMetric ? "not_applicable" : "defect",
       ...(nodeIndex !== undefined ? { node_name: input.nodes[nodeIndex]?.node_name } : {}),
       ...(detail ? { detail } : {}),
     });
