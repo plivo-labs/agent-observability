@@ -74,6 +74,13 @@ function transcriptLines(transcript: string, prefixes: string[]): string[] {
   return transcript.split("\n").filter((l) => prefixes.some((p) => l.startsWith(p)));
 }
 
+/** What was SAID, without the speaker label. The label is not a spoken value,
+ *  and "Agent" is capitalized on every single line — tokenizing it makes the
+ *  most common word in the transcript also the most retrieved one. */
+function spokenText(lines: string[]): string {
+  return lines.map((l) => l.replace(/^[A-Za-z_]+:\s*/, "")).join(" ");
+}
+
 /** Everything a spoken value could legitimately come from: every node's
  *  instructions, the global prompt and variables, the FULL runtime system
  *  messages (the rendered prompt with this call's details filled in — the
@@ -104,6 +111,10 @@ const WINDOW_BEFORE = 220;
 const WINDOW_AFTER = 260;
 const WINDOW_MERGE_GAP = 40;
 const MAX_WINDOWS = 120;
+/** Windows one token may claim. Without it a word the config repeats — and the
+ *  speaker labels are the worst offenders — takes the whole budget and every
+ *  other spoken value is retrieved against nothing. */
+const MAX_WINDOWS_PER_TOKEN = 8;
 const MAX_EXCERPTS = 40;
 const EXCERPT_CHARS = 500;
 const LINE_CHARS = 400;
@@ -116,24 +127,32 @@ export function configExcerpts(call: ConversationInput, agentLines: string[]): s
   if (!config) return [];
   const low = config.toLowerCase();
   const windows: Array<[number, number]> = [];
-  for (const token of keyTokens(agentLines.join(" "))) {
+  for (const token of keyTokens(spokenText(agentLines))) {
     let start = 0;
-    while (windows.length < MAX_WINDOWS) {
+    let claimed = 0;
+    while (claimed < MAX_WINDOWS_PER_TOKEN && windows.length < MAX_WINDOWS) {
       const i = low.indexOf(token, start);
       if (i < 0) break;
       windows.push([Math.max(0, i - WINDOW_BEFORE), Math.min(config.length, i + token.length + WINDOW_AFTER)]);
+      claimed++;
       start = i + token.length;
     }
     if (windows.length >= MAX_WINDOWS) break;
   }
   windows.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // Merge neighbours, but never past the excerpt length: a longer block would
+  // be truncated from the front, which drops the later matches that created it
+  // — the retrieval would then return config that grounds nothing.
   const merged: Array<[number, number]> = [];
   for (const [a, b] of windows) {
     const last = merged[merged.length - 1];
-    if (last && a <= last[1] + WINDOW_MERGE_GAP) last[1] = Math.max(last[1], b);
-    else merged.push([a, b]);
+    if (last && a <= last[1] + WINDOW_MERGE_GAP && Math.max(last[1], b) - last[0] <= EXCERPT_CHARS) {
+      last[1] = Math.max(last[1], b);
+    } else {
+      merged.push([a, b]);
+    }
   }
-  return merged.slice(0, MAX_EXCERPTS).map(([a, b]) => config.slice(a, b).trim().slice(0, EXCERPT_CHARS));
+  return merged.slice(0, MAX_EXCERPTS).map(([a, b]) => config.slice(a, b).trim());
 }
 
 export interface ResidualClaim {
@@ -148,7 +167,7 @@ export function residualClaims(call: ConversationInput, transcript: string, max:
   const pool = groundingPool(call, transcript).toLowerCase();
   const poolDigits = pool.replace(/\D/g, "");
   const out: ResidualClaim[] = [];
-  for (const token of keyTokens(agentLines.join(" "))) {
+  for (const token of keyTokens(spokenText(agentLines))) {
     const t = token.replace(/^['"-]+|['"-]+$/g, "");
     if (!t || BENIGN.has(t)) continue;
     if (t.length < 3 && !/^\d+$/.test(t)) continue;
