@@ -1,8 +1,7 @@
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import type { CustomJudgeSpec } from "../judges/custom-metric.js";
 import { isVoiceChannel } from "../judges/conversation-judges.js";
-import { nodePayload } from "../judges/node-judge-payload.js";
-import { clipToolResults, estimateJevTokens } from "../../jev/tokens.js";
+import { clipToolResults, estimateRequestTokens } from "../../jev/tokens.js";
 import { buildHallucinationState, residualClaims } from "../../jev/hallucination-grounding.js";
 import {
   ADHERENCE_QUESTION,
@@ -114,26 +113,50 @@ export interface BuildJevPlanOptions {
 }
 
 export const DEFAULT_BUDGET_TOKENS = 30_000;
+/** Jev's total-context limit is twice its state limit (64k vs 32k), so the
+ *  all-questions budget scales with the configured state budget. */
+const TOTAL_BUDGET_MULTIPLE = 2;
+/** Variable questions per request (the calibrated batch size). */
+export const VARIABLE_QUESTIONS_PER_REQUEST = 8;
 
-/** The node payload Luna's node judges see, with over-long tool output clipped
- *  — the only content ever removed from a Jev state. */
+/**
+ * The node state: the complete node config (full prompt, every intent with its
+ * description and tool, every declared variable with its recording rule, the
+ * global prompt and variables) plus what the agent chose and recorded, and the
+ * conversation with over-long tool output clipped.
+ *
+ * Field names and contents are the ones the gates were calibrated against — Jev
+ * reads the state's keys, so renaming or adding a field is a behaviour change,
+ * not a refactor. Measured: adding the per-node transcript alongside the full
+ * conversation moved probabilities enough to change gate bands.
+ */
 export function jevNodeState(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
-  const payload = nodePayload(node, ctx);
+  const intents = (node.available_intents ?? []).map((raw) => {
+    const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const name = String(o.intent_name ?? o.name ?? "");
+    return { name, tool: node.intent_tools?.[name] ?? null, description: o.intent_instructions ?? o.description ?? null };
+  });
   return {
-    ...payload,
-    node_transcript: clipToolResults(String(payload.node_transcript ?? "")),
-    conversation_history: clipToolResults(String(payload.conversation_history ?? "")),
+    global_prompt: ctx.global_prompt ?? "",
+    global_variables: ctx.global_variables ?? {},
+    node_name: node.node_name,
+    node_prompt: node.node_prompt ?? "",
+    available_intents: intents,
+    declared_variables: (node.required_variables ?? []).map((name) => ({
+      name,
+      rule: node.variable_rules?.[name] ?? null,
+    })),
+    chosen_intent: node.chosen_intent,
+    extracted_variables: node.extracted_variables ?? {},
+    conversation_history: clipToolResults(ctx.full_transcript ?? ""),
   };
 }
 
-/** The speech-only state the conversation detections read (the same choice the
- *  LLM detections make: config text rendered as agent turns must not
- *  masquerade as call reality). */
-export function jevConversationState(ctx: ConversationInput): Record<string, unknown> {
-  return {
-    flow_name: ctx.flow_name,
-    conversation_history: clipToolResults(ctx.speech_transcript || ctx.full_transcript),
-  };
+/** The conversation state is the speech-only transcript itself: the detections
+ *  classify what was SAID, and wrapping it in an object was measured to change
+ *  their answers (low engagement most of all). */
+export function jevConversationState(ctx: ConversationInput): string {
+  return clipToolResults(ctx.speech_transcript || ctx.full_transcript);
 }
 
 function judgeAllowed(judges: BuildJevPlanOptions["judges"], judge: string): boolean {
@@ -161,13 +184,14 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
   // them — on the LLM path.
   const addRequest = (key: string, state: unknown, questions: Record<string, JevNoul>, pending: JevAxis[]): void => {
     if (Object.keys(questions).length === 0) return;
-    const estTokens = estimateJevTokens(state);
+    const est = estimateRequestTokens(state, questions);
     axes.push(...pending);
-    if (estTokens > budget) {
-      dropped.push({ requestKey: key, estTokens });
+    // Both of Jev's limits, with the budget expressed against the tighter one.
+    if (est.longest > budget || est.total > budget * TOTAL_BUDGET_MULTIPLE) {
+      dropped.push({ requestKey: key, estTokens: est.longest });
       return;
     }
-    requests.push({ key, state, questions, estTokens });
+    requests.push({ key, state, questions, estTokens: est.longest, estTotalTokens: est.total });
   };
 
   const hasTranscript = !!ctx.full_transcript?.trim();
@@ -232,17 +256,25 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     if (judgeAllowed(opts.judges, "variable_extraction")) {
       const vars = variableQuestions(node);
       if (vars.length > 0) {
-        const questions: Record<string, JevNoul> = {};
-        const refs: JevVariableQuestionRef[] = [];
-        for (const { key, question, variable, recorded } of vars) {
-          const full = `v${nodeIndex}.${key}`;
-          questions[full] = question;
-          refs.push({ key: full, variable, recorded });
+        // Chunked, as calibrated: a full recording rule per variable is a long
+        // question, and asking twenty of them over one state measurably dilutes
+        // the answers (and can breach the state + longest-question limit).
+        for (let start = 0; start < vars.length; start += VARIABLE_QUESTIONS_PER_REQUEST) {
+          const chunk = vars.slice(start, start + VARIABLE_QUESTIONS_PER_REQUEST);
+          const requestKey = `v${nodeIndex}.${start / VARIABLE_QUESTIONS_PER_REQUEST}`;
+          const questions: Record<string, JevNoul> = {};
+          const refs: JevVariableQuestionRef[] = [];
+          for (const { key, question, variable, recorded } of chunk) {
+            const full = `${requestKey}.${key}`;
+            questions[full] = question;
+            refs.push({ key: full, variable, recorded });
+          }
+          addRequest(requestKey, state, questions, [{
+            kind: "node", id: `${prefix}:variable_extraction#${start / VARIABLE_QUESTIONS_PER_REQUEST}`,
+            judge: "variable_extraction", nodeIndex,
+            requestKey, questionKeys: refs.map((r) => r.key), variables: refs,
+          }]);
         }
-        addRequest(`v${nodeIndex}`, state, questions, [{
-          kind: "node", id: `${prefix}:variable_extraction`, judge: "variable_extraction", nodeIndex,
-          requestKey: `v${nodeIndex}`, questionKeys: refs.map((r) => r.key), variables: refs,
-        }]);
       }
     }
 

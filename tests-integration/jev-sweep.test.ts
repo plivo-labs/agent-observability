@@ -114,7 +114,7 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     expect(raw.jev_model).toBe("jev-mock");
 
     // one Jev request per purpose, and the LLM only where the gate sent it
-    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0"]);
+    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
     const labels = provider.calls.map((c) => c.jsonSchema?.name ?? "none").sort();
     expect(labels).toEqual(["eval_instruction", "eval_jev_reason", "eval_sentiment", "eval_stt"]);
 

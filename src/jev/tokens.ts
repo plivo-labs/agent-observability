@@ -41,3 +41,26 @@ export function clipToolResults(transcript: string, max: number = TOOL_RESULT_CL
     .map((line) => (line.startsWith("Tool_Result:") && line.length > max ? line.slice(0, max) + CLIP_MARK : line))
     .join("\n");
 }
+
+/** Tokens a question costs on the wire (instructions + both criteria). */
+export function estimateQuestionTokens(q: { instructions: string; criteria: { true: string; false: string } }): number {
+  return Math.ceil((q.instructions.length + q.criteria.true.length + q.criteria.false.length + 40) * CONFIG_TOKENS_PER_CHAR);
+}
+
+/** Jev enforces two limits: state + the LONGEST question (~32k) and state +
+ *  ALL questions (~64k). Both are estimated here so a request is checked
+ *  against the same shape the API measures. */
+export function estimateRequestTokens(
+  state: unknown,
+  questions: Record<string, { instructions: string; criteria: { true: string; false: string } }>,
+): { state: number; longest: number; total: number } {
+  const stateTokens = estimateJevTokens(state);
+  let longest = 0;
+  let sum = 0;
+  for (const q of Object.values(questions)) {
+    const tokens = estimateQuestionTokens(q);
+    longest = Math.max(longest, tokens);
+    sum += tokens;
+  }
+  return { state: stateTokens, longest: stateTokens + longest, total: stateTokens + sum };
+}

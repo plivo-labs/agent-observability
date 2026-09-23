@@ -64,7 +64,7 @@ describe("confident Jev verdicts", () => {
     const { v, provider } = await run(jev);
     // adherence never auto-passes by design, so it is the one judge still called
     expect(labelsOf(provider)).toEqual(["eval_instruction", "eval_sentiment", "eval_stt"]);
-    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0"]);
+    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
 
     const node = v.node_evaluations[0]!;
     expect(node.node_loop.loop_detected).toBe(false);
