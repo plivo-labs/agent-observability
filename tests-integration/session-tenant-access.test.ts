@@ -71,4 +71,19 @@ describeDb("gateway-facing APIs with real service authentication", () => {
     expect(body.objects.map(s => s.session_id)).toEqual([ownSession]);
     expect(body.objects[0]!.account_id).toBe(accountA);
   });
+
+  // The guard on /api/sessions proves an account was asserted; it does not
+  // prove the sessions belong to it. This delete cascades to the satellites
+  // and best-effort to S3, so an unscoped one is silent and irreversible.
+  test("deleting another account's session is refused and leaves the row intact", async () => {
+    const foreign = await t.seedSession({ accountId: `${accountA}-other` });
+    const response = await fetch(`${base}/api/sessions`, {
+      method: "DELETE",
+      headers: { Authorization: serviceAuthorization(), "X-Account-Id": accountA, "Content-Type": "application/json" },
+      body: JSON.stringify({ session_ids: [foreign] }),
+    });
+    expect(response.status).toBe(404);
+    const rows = await sql`SELECT session_id FROM ao_agent_transport_sessions WHERE session_id = ${foreign}`;
+    expect(rows.length).toBe(1);
+  });
 });
