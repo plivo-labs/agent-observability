@@ -31,7 +31,10 @@ describe("provenance and reason text", () => {
     const block = merge.jevNodeLoop(gated(), NO_REASONS);
     expect(block.loop_detected).toBe(false);
     expect(block.score).toBeCloseTo(0.96, 5);
-    expect(block.reason).toBe("No defect found (Jev 0.04).");
+    expect(block.reason).toBe("No defect found.");
+    // the probability is internal-only — it stays out of the customer-facing text
+    expect(block.reason).not.toContain("Jev");
+    expect(block.technical_reason).toContain("p=0.04");
     expect(block).toMatchObject({ backend: "jev", confidence: 0.04, jev_model: "jev-1.13.0" });
   });
 
