@@ -1,4 +1,4 @@
-import { accountScope, accountScopeGuard } from "./account-scope.js";
+import { accountScope, accountScopeGuard, assertSessionAccess, SessionAccessError } from "./account-scope.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { basicAuth } from "hono/basic-auth";
@@ -656,6 +656,18 @@ app.delete("/api/sessions", async (c) => {
       buildErrorResponse("too_many", "Cannot delete more than 200 sessions at once"),
       400,
     );
+  }
+  // The guard on this path only proves an account was asserted; it does not
+  // check the sessions belong to it. Authorize the whole batch before deleting
+  // anything — this cascade is irreversible and reaches the satellites and S3.
+  const accountId = accountScope(c);
+  try {
+    await assertSessionAccess(sessionIds, accountId);
+  } catch (e) {
+    if (e instanceof SessionAccessError) {
+      return c.json(buildErrorResponse("not_found", "One or more sessions were not found"), 404);
+    }
+    throw e;
   }
   // Bun's `sql\`...\`` template stringifies a JS array as a CSV — Postgres
   // then complains the value isn't a valid array literal. Build positional
