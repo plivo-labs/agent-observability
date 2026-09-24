@@ -37,11 +37,12 @@ export function provenanceOf(g: GatedAxis): JudgeProvenance {
   return { confidence: g.p ?? undefined, backend: "jev", ...(g.jevModel ? { jev_model: g.jevModel } : {}) };
 }
 
-/** A confident pass costs no LLM call, so its text is templated — the number
- *  and the threshold that produced it, nothing invented. */
+/** A confident pass costs no LLM call, so its text is templated. The score stays
+ *  out of `reason`: that string is read by customers, to whom a bare model
+ *  probability means nothing. It lives in `technical_reason` instead. */
 export function passReason(g: GatedAxis): ReasonText {
   return {
-    reason: `No defect found (Jev ${round(g.p ?? 0)}).`,
+    reason: "No defect found.",
     technical_reason: `jev: p=${round(g.p ?? 0)} at or below this judge's pass threshold`,
   };
 }
@@ -75,7 +76,7 @@ export function failReason(g: GatedAxis, reasons: ReasonMap): ReasonText {
     };
   }
   return {
-    reason: `Jev ${round(g.p ?? 0)} — defect detected; explanation unavailable.`,
+    reason: "A defect was detected; explanation unavailable.",
     technical_reason: `jev: p=${round(g.p ?? 0)} at or above this judge's fail threshold; reason writer unavailable`,
   };
 }
