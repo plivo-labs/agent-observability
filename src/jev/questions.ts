@@ -83,7 +83,10 @@ export const ADHERENCE_QUESTION = noul(
   "Did the agent BREAK its node instructions in a way that matters? Answer TRUE only if you can NAME a specific instruction it violated: it skipped a " +
     "step the instructions require, did something the instructions forbid, or failed the objective through its own fault. Functional Completion Test: if " +
     "the objective was achieved and the caller was served, wording differences, paraphrase, and reasonable improvisation are NOT breaches. A call the caller " +
-    "cut short or declined is NOT a breach. When unsure, answer FALSE.",
+    "cut short or declined is NOT a breach. CALL ENDED EARLY: a step the agent never got a turn to perform — because the caller hung up, the call was cut " +
+    "off mid-flow, or a transfer ended the session — is UNREACHABLE, not skipped. Never answer TRUE because required questions, a read-back or a final " +
+    "confirmation are absent from the end of a transcript that simply STOPS; judge only the steps the conversation actually reached. A wrong action the " +
+    "agent DID take is still a breach however the call ended. When unsure, answer FALSE.",
   "a specific, nameable instruction was violated (skipped required step / forbidden action / failed objective)",
   "instructions followed in substance, or the shortfall was not the agent's fault",
 );
@@ -147,7 +150,9 @@ export function variableQuestions(node: NodeEvalInput): Array<{ key: string; que
           "the caller supplied the value, or the rule requires a disposition to be recorded for how this call ended (e.g. 'not offered', 'no', 'unclear' for " +
           "silence, a not-completed status), but nothing was recorded; (3) WRONG VALUE — the recorded value contradicts what the caller actually said or " +
           "corrected to, records an unclear/garbled answer literally when the rule says to leave it blank, or breaks the rule's format. It did NOT fail if the " +
-          "value was captured correctly, or the variable was not applicable on this call's path and the rule does not require a disposition.",
+          "value was captured correctly, or the variable was not applicable on this call's path and the rule does not require a disposition. CALL ENDED " +
+          "EARLY: if the transcript simply STOPS before the agent ever asked for this value — the caller hung up or the call was cut off mid-flow — the " +
+          "value is UNREACHABLE, not missing, and this variable did NOT fail. A value that WAS recorded wrongly still fails however the call ended.",
         "this variable failed (gate violation / required value missing / wrong value)",
         "captured correctly, or not applicable with nothing required",
       ),
