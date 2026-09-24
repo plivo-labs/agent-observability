@@ -182,6 +182,8 @@ function variablePayload(
       "Judge only whether applicable caller-provided information was captured correctly. " +
       "Each variable's recording rule is authoritative; do not invent prerequisites or exceptions. " +
       "Anything from an unreached or inapplicable path is not missing. " +
+      "CALL ENDED EARLY: if the transcript simply STOPS before the agent ever asked for a value — the caller hung up or the call was cut off mid-flow — " +
+      "that value is UNREACHABLE, not missing. A value recorded WRONGLY still fails however the call ended. " +
       "Absent workflow defaults and backend, platform, tool, and lookup values are not caller extraction. " +
       (batch.cutoffConfirmed
         ? "FINAL RECORDING BATCH CUTOFF CONFIRMED from structured turn order: do not mark a pending final-batch variable missing unless its own rule required earlier recording."
