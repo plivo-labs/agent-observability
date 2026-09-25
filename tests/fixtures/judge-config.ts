@@ -16,6 +16,18 @@ export const TEST_JUDGE_CONFIG = {
   EVAL_MAX_CONCURRENT_JUDGE_CALLS: 10,
   // Reference-engine parity knob read by run-llm-judge on every judge call.
   JUDGE_REASONING_EFFORT: "none",
+  // Jev first-pass judge: off by default so every existing judge test keeps
+  // today's LLM-only call sequence; jev-* suites inject a MockJev explicitly.
+  JEV_MODE: "off",
+  JEV_API_KEY: undefined,
+  JEV_BASE_URL: "https://api.typesafe.ai",
+  JEV_MODEL: "jev-1.13.0",
+  JEV_TIMEOUT_MS: 15_000,
+  JEV_MAX_CONCURRENT: 8,
+  JEV_JUDGES: "all",
+  JEV_CUSTOM_METRICS: "off",
+  JEV_GATES: undefined,
+  JEV_STATE_TOKEN_BUDGET: 30_000,
 } as const;
 
 /** Complete src/config.js module shape for Bun's process-wide module mocks.

@@ -23,6 +23,8 @@ import {
   type CustomJudgeSpec,
   type CustomMetricVerdict,
 } from "../judges/custom-metric.js";
+import type { JevClient } from "../../jev/types.js";
+import { evaluateSessionJevFirst } from "../jev/session.js";
 import type {
   ConversationInput,
   EvalTurn,
@@ -286,6 +288,10 @@ export function buildSessionEvalInput(
   // scramble the full transcript on node revisits (all A-turns then all
   // B-turns), misleading the conversation/goal judges.
   const allTurns: EvalTurn[] = [];
+  // Full runtime system/developer messages — the rendered transcript keeps
+  // only a 600-char System_Note of each, but the hallucination grounding
+  // index needs the templated details that live nowhere else.
+  const systemMessages: string[] = [];
   const pushTurn = (ref: string, turn: EvalTurn) => {
     if (!turnsByRef.has(ref)) { turnsByRef.set(ref, []); orderedRefs.push(ref); }
     turnsByRef.get(ref)!.push(turn);
@@ -342,6 +348,7 @@ export function buildSessionEvalInput(
     // dominate the judge's transcript (node instructions already arrive via
     // node_prompt).
     if (!isUser && (role === "system" || role === "developer")) {
+      systemMessages.push(text);
       const note = text.length > 600 ? `${text.slice(0, 600)}…` : text;
       pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
@@ -426,11 +433,13 @@ export function buildSessionEvalInput(
     const nodeToolCalls = toolCallsByRef.get(ref) ?? [];
     const extractedVariables = deriveExtractedVariables(def, nodeToolCalls, allToolCalls);
     const chosenIntent = deriveChosenIntent(def, nodeToolCalls);
+    const intentTools = deriveIntentTools(def);
     nodes.push({
       node_uuid: ref,
       node_name: typeof def.name === "string" && def.name ? def.name : (ref.startsWith(SYNTHETIC_REF) ? "node" : ref),
       node_prompt: typeof def.instructions === "string" ? def.instructions : "",
       available_intents: Array.isArray(def.intents) ? def.intents.map((i) => ({ intent_name: i?.name, intent_instructions: i?.description })) : [],
+      ...(intentTools ? { intent_tools: intentTools } : {}),
       chosen_intent: chosenIntent,
       required_variables: requiredVariables,
       ...(Object.keys(rules).length ? { variable_rules: rules } : {}),
@@ -490,6 +499,7 @@ export function buildSessionEvalInput(
       // Grounding evidence for the hallucination judge (omitted when empty).
       ...(globalVariables ? { global_variables: globalVariables } : {}),
       ...(pronunciationGuides ? { pronunciation_guides: pronunciationGuides } : {}),
+      ...(systemMessages.length ? { system_messages: systemMessages } : {}),
     },
     nodeRefs: judgedRefs,
   };
@@ -529,6 +539,10 @@ export async function evaluateIngestedSession(
    *  itself never touches the DB). Empty ⇒ the path is identical to before
    *  custom judges existed. */
   customJudges: readonly CustomJudgeSpec[] = [],
+  /** When present, Jev answers every gated judge first and the LLM judges run
+   *  only where its confidence gate says so. Absent (JEV_MODE=off, no key, or
+   *  a test that injects nothing) ⇒ the LLM-only path below, unchanged. */
+  jev?: JevClient,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
@@ -552,6 +566,28 @@ export async function evaluateIngestedSession(
     );
   }
 
+  // `input.nodes[i] ↔ nodeRefs[i]`: resolve the engine uuid back to the
+  // sender's opaque ref so custom per-node rows tag like default rows.
+  const refOf = (nodeUuid: string): string => {
+    const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
+    return nodeRefs[i]?.ref ?? "";
+  };
+
+  if (jev) {
+    const result = await evaluateSessionJevFirst({ input, refOf, jev, provider, customJudges: budgeted });
+    const { stats } = result;
+    console.log(
+      `[jev] judged nodes=${input.nodes.length} requests=${stats.requests} axes=${stats.axesTotal} ` +
+        `auto_pass=${stats.autoPass} auto_fail=${stats.autoFail} unknown=${stats.unknown} reviewed=${stats.reviewed} ` +
+        `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}`,
+    );
+    return {
+      node_evaluations: result.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" })),
+      conversation_metrics: result.conversation_metrics,
+      ...(result.custom_metrics.length ? { custom_metrics: result.custom_metrics } : {}),
+    };
+  }
+
   const [conversation_metrics, scored, custom_metrics] = await Promise.all([
     input.full_transcript.trim()
       ? evaluateConversationMetrics(input, provider)
@@ -563,17 +599,7 @@ export async function evaluateIngestedSession(
       ? evaluateSimulation(input, { provider })
       : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
     budgeted.length && input.full_transcript.trim()
-      ? runCustomMetricJudges(
-          budgeted,
-          input,
-          // input.nodes[i] ↔ nodeRefs[i]: resolve the engine uuid back to the
-          // sender's opaque ref so custom per-node rows tag like default rows.
-          (nodeUuid) => {
-            const i = input.nodes.findIndex((n) => n.node_uuid === nodeUuid);
-            return nodeRefs[i]?.ref ?? "";
-          },
-          provider,
-        )
+      ? runCustomMetricJudges(budgeted, input, refOf, provider)
       : Promise.resolve([] as CustomMetricVerdict[]),
   ]);
 
@@ -611,6 +637,15 @@ function deriveExtractedVariables(
     else extracted[varName] = "(recorded)";
   }
   return extracted;
+}
+
+/** Declared intent name → tool name, for intents that declare one. */
+function deriveIntentTools(def: AgentConfigNode): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const i of def.intents ?? []) {
+    if (typeof i?.name === "string" && i.name && typeof i?.tool === "string" && i.tool) out[i.name] = i.tool;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The intent the agent selected on a node: a config intent whose declared

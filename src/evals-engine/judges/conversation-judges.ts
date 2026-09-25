@@ -140,14 +140,14 @@ export type DetectionResult = { detected: boolean; reason: string; technical_rea
 
 /** A voice-only detection that did not run on this (non-voice) channel. Marked
  *  unavailable so fan-out skips it — never emitted as a real pass/fail. */
-const skippedDetection = (why: string): DetectionResult => ({ detected: false, reason: "", technical_reason: why, available: false });
+export const skippedDetection = (why: string): DetectionResult => ({ detected: false, reason: "", technical_reason: why, available: false });
 
-type SttResult = { error_count: number; recovered_count: number; available: boolean };
+export type SttResult = { error_count: number; recovered_count: number; available: boolean };
 
 /** STT metrics for a run where the STT judge did not execute (non-voice channel
  *  or a failed judge call). `available:false` so fan-out skips it — same pattern
  *  as skippedDetection, keeping the skipped shape in one place. */
-const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0, available: false });
+export const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0, available: false });
 
 /** One skeleton for every conversation judge: run the LLM call over the
  *  transcript payload, transform the validated output, and on a DETERMINISTIC
@@ -190,7 +190,7 @@ async function safeJudge<T, R>(
 }
 
 /** Run one boolean detection judge; default to `detected:false` on any failure. */
-function runDetection(judge: string, criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
+export function runDetection(judge: string, criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
   return safeJudge(
     { system: promptBody(judge, criteria) + promptOutput(judge, OUT_DETECTION), ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): DetectionResult => ({ ...data, available: true }),
@@ -198,9 +198,9 @@ function runDetection(judge: string, criteria: string, ctx: ConversationInput, p
   );
 }
 
-type SentimentResult = { sentiment: string; reason: string; technical_reason: string; available: boolean };
+export type SentimentResult = { sentiment: string; reason: string; technical_reason: string; available: boolean };
 
-function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
+export function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
   return safeJudge(
     { system: promptBody("user_sentiment", USER_SENTIMENT) + promptOutput("user_sentiment", OUT_SENTIMENT), ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): SentimentResult => ({ ...data, available: true }),
@@ -210,7 +210,7 @@ function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<S
 
 /** STT quality over the transcript. Voice-only; caller passes a skipped result on
  *  text channels. Fault-tolerant: any failure → unavailable (never a fabricated 0). */
-function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<SttResult> {
+export function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<SttResult> {
   return safeJudge(
     { system: promptBody("stt", STT) + promptOutput("stt", OUT_STT), ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
     (data): SttResult => {
@@ -238,7 +238,7 @@ function isAnswered(ctx: ConversationInput): boolean {
 /** Voice unless the transport is clearly a text channel. Unknown transport ⇒
  *  voice (the historical default: every ingested session was a voice call). */
 const TEXT_CHANNEL_RE = /chat|sms|whatsapp|messenger|web|text|email|rcs/i;
-function isVoiceChannel(transport?: string): boolean {
+export function isVoiceChannel(transport?: string): boolean {
   return !transport || !TEXT_CHANNEL_RE.test(transport);
 }
 
@@ -524,10 +524,30 @@ export async function evaluateConversationMetrics(
     voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
   ]);
 
-  const outcomes = resolveOutcomes(
-    { voicemail, bot, screening, lowEngagement: lowEng, wrongNumber: wrong, doNotDisturb: dnd },
+  return assembleConversationMetrics({
     ctx,
-  );
+    raws: { voicemail, bot, screening, lowEngagement: lowEng, wrongNumber: wrong, doNotDisturb: dnd },
+    sentiment,
+    stt,
+  });
+}
+
+/**
+ * Turn the six raw detections + sentiment + STT into the stored
+ * `SimConversationMetrics`: mutual exclusivity, the machine-answered
+ * suppression of user_never_spoke, the transfer axis, and the sentiment pass
+ * rule. Pure, and the ONLY place that assembly lives — the Jev-first path
+ * supplies its own raws and must produce byte-identical structure.
+ */
+export function assembleConversationMetrics(args: {
+  ctx: ConversationInput;
+  raws: ConversationDetectionRaws;
+  sentiment: SentimentResult;
+  stt: SttResult;
+}): SimConversationMetrics {
+  const { ctx, raws, sentiment, stt } = args;
+  const voice = isVoiceChannel(ctx.transport);
+  const outcomes = resolveOutcomes(raws, ctx);
 
   // user_never_spoke must not double-flag a machine-answered call: voicemail /
   // bot / call-screening already describe "no human spoke", so defer to them and
