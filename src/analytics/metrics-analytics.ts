@@ -72,7 +72,7 @@ export async function getMetricsAnalytics(opts: {
   // immediately before) so a single pass gives both the value and the delta.
   const winCte = `
     win AS (
-      SELECT session_id,
+      SELECT session_id, account_id,
         CASE WHEN ended_at >= NOW() - $1::interval THEN 'cur' ELSE 'prev' END AS period
       FROM ao_agent_transport_sessions
       WHERE ended_at >= NOW() - ($1::interval * 2)
@@ -84,7 +84,7 @@ export async function getMetricsAnalytics(opts: {
     sql.unsafe(
       `WITH ${winCte},
        ev AS (
-         SELECT e.judge_name, e.verdict, e.session_id, e.tag, w.period
+         SELECT e.judge_name, e.verdict, e.session_id, e.tag, w.period, w.account_id
          FROM ao_session_external_evals e
          JOIN win w ON w.session_id = e.session_id
          WHERE e.source = 'eval_sweeper'
@@ -112,6 +112,7 @@ export async function getMetricsAnalytics(opts: {
          COUNT(*) FILTER (WHERE period = 'prev' AND verdict = 'fail')::int AS prev_failed
        FROM ev
        LEFT JOIN ao_judges j ON j.name = ev.judge_name
+         AND (j.type = 'default' OR j.account_id IS NOT DISTINCT FROM ev.account_id)
        -- Only surface judges that exist in the registry (the shipped catalogue) or are real
        -- custom metrics; drop orphaned/retired verdict names (goal:*, dead_air, …) so the
        -- default count reflects the catalogue, not stale names left in the data.

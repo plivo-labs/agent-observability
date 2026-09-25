@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { accountScope, accountScopeGuard } from "../account-scope.js";
 import { buildErrorResponse, newApiId } from "../response.js";
 import { getFleetStats } from "./db.js";
 import { getMetricFailedRuns, getMetricsAnalytics } from "./metrics-analytics.js";
@@ -6,6 +7,8 @@ import { getMetricFailedRuns, getMetricsAnalytics } from "./metrics-analytics.js
 const ALLOWED_RANGES = new Set(["24h", "7d", "30d"]);
 
 export function registerAnalyticsRoutes(app: Hono) {
+  app.use("/api/analytics/metrics", accountScopeGuard);
+  app.use("/api/analytics/metric-failed-runs", accountScopeGuard);
   // ── Fleet-wide stats ──────────────────────────────────────────────────────
   //
   // Same engine as the per-agent stats route, across ALL agents in the
@@ -38,7 +41,7 @@ export function registerAnalyticsRoutes(app: Hono) {
   // agent scope narrows to one flow. Account is gateway-injected (X-Account-Id)
   // or the query param on single-tenant installs.
   app.get("/api/analytics/metrics", async (c) => {
-    const accountId = c.req.header("x-account-id") || c.req.query("account_id") || null;
+    const accountId = accountScope(c) ?? (c.req.query("account_id") || null);
     // One or more agent flows: repeated ?agent_id=a&agent_id=b or a comma list.
     const agentIds = (c.req.queries("agent_id") ?? [])
       .flatMap((v) => v.split(","))
@@ -67,7 +70,7 @@ export function registerAnalyticsRoutes(app: Hono) {
   // `metric:<slug>`) in the window, so the client can filter its runs table to
   // them. Same account/agent/range scope as the metrics route.
   app.get("/api/analytics/metric-failed-runs", async (c) => {
-    const accountId = c.req.header("x-account-id") || c.req.query("account_id") || null;
+    const accountId = accountScope(c) ?? (c.req.query("account_id") || null);
     const agentIds = (c.req.queries("agent_id") ?? [])
       .flatMap((v) => v.split(","))
       .map((s) => s.trim())
