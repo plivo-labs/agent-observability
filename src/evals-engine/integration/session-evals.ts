@@ -195,16 +195,20 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** Parses string arguments first so a serialized payload isn't rendered double-encoded. */
+export function formatToolCall(name: unknown, args: unknown): string {
+  const label = typeof name === "string" ? name : "tool";
+  const parsed = parseToolArguments(args);
+  const rendered = parsed ? JSON.stringify(parsed) : args !== undefined ? JSON.stringify(args) : "";
+  return `Tool_Call: ${label}(${rendered})`;
+}
+
 /** Render a tool/function event as a labelled evidence line the judges read as
  *  supporting evidence (a grounded value from a tool must not read as fabricated). */
 function toolEvidence(item: NonNullable<StoredEvent["item"]>): string {
   const name = typeof item.name === "string" ? item.name : "tool";
   if (item.type === "function_call") {
-    // Prefer the parsed object so string-serialized arguments don't render
-    // double-encoded (`"{\"value\": ...}"`) in the judge's transcript.
-    const parsed = parseToolArguments(item.arguments);
-    const args = parsed ? JSON.stringify(parsed) : item.arguments !== undefined ? JSON.stringify(item.arguments) : "";
-    return `Tool_Call: ${name}(${args})`;
+    return formatToolCall(item.name, item.arguments);
   }
   const out = item.output !== undefined ? (typeof item.output === "string" ? item.output : JSON.stringify(item.output)) : "";
   return `Tool_Result: ${name} -> ${out}`;

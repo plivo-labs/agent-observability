@@ -117,6 +117,19 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.score).toBe(1);
   });
 
+  test("variable extraction: no declared variables ⇒ not-applicable even when values were extracted (SER-6564)", async () => {
+    const llm = new MockLLM(); // must never be called
+    const { data } = await runVariableExtractionJudge(
+      node({ required_variables: [], extracted_variables: { dob: "1990-01-01" } }),
+      ctx(),
+      llm,
+    );
+    expect(llm.calls).toHaveLength(0);
+    expect(data.extraction_successful).toBe(true);
+    expect(data.score).toBe(1);
+    expect(data.reason).toBe("No variables declared on this node — extraction not applicable.");
+  });
+
   test("variable extraction: an unconfigured stored name remains a failure", async () => {
     const llm = new MockLLM([
       JSON.stringify({

@@ -71,6 +71,11 @@ describe("extractEmbeddedActions", () => {
   test("a node type that carries no embedded actions is skipped", () => {
     expect(extractEmbeddedActions({ nodes: [{ id: "b", type: "branch_v2", data: { config: {} } }] })).toEqual([]);
   });
+
+  test("ai_agent_v29 is treated as an embedded-action node (SER-6564)", () => {
+    const flow = { nodes: [{ id: "v29", type: "ai_agent_v29", data: { config: { name: "Collect Claim", actions: [{ action_type: "HTTP", http_tool_name: "file_claim" }] } } }] };
+    expect(extractEmbeddedActions(flow).map((e) => e.node_uuid)).toEqual(["v29"]);
+  });
 });
 
 describe("containsOutOfScopeRouteTerm", () => {

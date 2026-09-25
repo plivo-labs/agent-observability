@@ -133,7 +133,7 @@ export function containsOutOfScopeRouteTerm(...values: unknown[]): boolean {
 // ── embedded action extraction (conversational nodes) ──────────────────────────
 
 /** Node types that carry embedded `actions[]` the scenario writer can mock. */
-const EMBEDDED_ACTION_NODE_TYPES: ReadonlySet<string> = new Set(["ai_agent_v2", "agent_node"]);
+const EMBEDDED_ACTION_NODE_TYPES: ReadonlySet<string> = new Set(["ai_agent_v2", "ai_agent_v29", "agent_node"]);
 
 function actionMockKey(action: Dict): string {
   switch (action.action_type) {
