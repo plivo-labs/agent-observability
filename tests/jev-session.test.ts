@@ -77,6 +77,9 @@ describe("confident Jev verdicts", () => {
     expect(node.intent_identification.score).toBe(1);
     // adherence never auto-passes, so it is the one axis the LLM still judged
     expect(node.instructions_adherence.backend).toBe("llm");
+    // …and it still records what Jev thought, so every escalation is a sample
+    // the thresholds can be retuned from without paying for a replay
+    expect(node.instructions_adherence.confidence).toBe(0.01);
     expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
     expect(v.conversation_metrics.user_sentiment.available).toBe(true);
   });
