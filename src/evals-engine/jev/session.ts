@@ -106,6 +106,16 @@ export interface JevSessionResult {
 
 const LLM = { backend: "llm" as const };
 
+/** An escalated axis is the only place a Jev probability and an INDEPENDENT LLM
+ *  verdict exist for the same judgement, which is exactly the pair a threshold
+ *  is tuned from. Keeping it turns every escalation into a calibration sample;
+ *  dropping it means the gates can only ever be retuned by paying for a replay.
+ *  `backend` stays "llm" — Luna decided it — and the number is what Jev thought. */
+const llmProvenance = (gated: Map<string, GatedAxis>, axisId: string): JudgeProvenance => {
+  const p = gated.get(axisId)?.p;
+  return p === null || p === undefined ? LLM : { ...LLM, confidence: p };
+};
+
 /** Ask Jev everything at once. One request's failure is local to its axes. */
 async function runPlanRequests(
   jev: JevClient,
@@ -270,7 +280,7 @@ export async function evaluateSessionJevFirst(args: {
         }
         // Reviewed (or never asked): the LLM detection judge decides it, and
         // the row says so — a mixed run must be readable from the data alone.
-        provenance.set(metricKey, LLM);
+        provenance.set(metricKey, llmProvenance(gated, `c.${judge}`));
         return [rawKey, await runDetection(judge, criteria, input, provider)];
       }),
       ),
@@ -290,31 +300,31 @@ export async function evaluateSessionJevFirst(args: {
           const decision = g("instructions_adherence");
           if (decision) return jevAdherence(decision, await reasonsPromise);
           const { data } = await runInstructionAdherenceJudge(node, input, provider);
-          return { ...deriveInstructionAdherence(data), ...LLM };
+          return { ...deriveInstructionAdherence(data), ...llmProvenance(gated, `n${nodeIndex}:instructions_adherence`) };
         })(),
         (async () => {
           const decision = g("hallucination");
           if (decision) return jevHallucination(decision, await reasonsPromise);
           const { data } = await runHallucinationJudge(node, input, provider);
-          return { ...mapHallucination(data), ...LLM };
+          return { ...mapHallucination(data), ...llmProvenance(gated, `n${nodeIndex}:hallucination`) };
         })(),
         (async () => {
           const decision = g("variable_extraction");
           if (decision) return jevVariables(decision, node, await reasonsPromise).metrics;
           const { data } = await runVariableExtractionJudge(node, input, provider);
-          return { ...mapVariableExtraction(data, node.required_variables), ...LLM };
+          return { ...mapVariableExtraction(data, node.required_variables), ...llmProvenance(gated, `n${nodeIndex}:variable_extraction`) };
         })(),
         (async () => {
           const decision = g("node_loop");
           if (decision) return jevNodeLoop(decision, await reasonsPromise);
           const { data } = await runLoopJudge(node, input, provider);
-          return { ...mapNodeLoop(data), ...LLM };
+          return { ...mapNodeLoop(data), ...llmProvenance(gated, `n${nodeIndex}:node_loop`) };
         })(),
         (async () => {
           const decision = g("intent_identification");
           if (decision) return jevIntent(decision, await reasonsPromise);
           const { data } = await runIntentJudge(node, input, provider);
-          return { ...data, ...LLM };
+          return { ...data, ...llmProvenance(gated, `n${nodeIndex}:intent_identification`) };
         })(),
       ]);
       return {
