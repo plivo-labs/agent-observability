@@ -28,6 +28,7 @@ import { registerJudgeRoutes } from "./judges/routes.js";
 import { syncDefaultJudges } from "./evals-engine/judge-registry.js";
 import { startAlertSweeper, stopAlertSweeper } from "./alerts/sweeper.js";
 import { startEvalSweeper, stopEvalSweeper, kickEvalForSession, probeEvalTables } from "./evals-engine/eval-sweeper.js";
+import { startMetricsPush, stopMetricsPush } from "./prometheus.js";
 import { registerSimulationRoutes } from "./sim-engine/routes.js";
 
 // Run migrations on startup if enabled (skipped in stateless mode — no database).
@@ -903,12 +904,14 @@ const serveConfig = {
 if (import.meta.main) {
   const server = Bun.serve(serveConfig);
   console.log(`API listening on :${server.port}`);
+  startMetricsPush();
 
   const shutdown = async (signal: string) => {
     console.log(`[api] ${signal} received — draining connections`);
     stopAlertSweeper();
     stopEvalSweeper();
     await server.stop(); // stop intake, wait for in-flight requests
+    await stopMetricsPush();
     await (sql as any).close?.();
     process.exit(0);
   };
