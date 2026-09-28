@@ -116,7 +116,10 @@ describe("judge registry parity", () => {
       prompts.setJudgePromptOverrides(
         new Map([["hallucination", { body: "CUSTOM BODY", output: "CUSTOM OUT" }]]),
       );
-      expect(instructions.systemForHallucination()).toBe("CUSTOM BODY\n\nCUSTOM OUT");
+      const system = instructions.systemForHallucination();
+      expect(system).toStartWith("CUSTOM BODY\n\n");
+      expect(system).toContain("NODE EVIDENCE CONTRACT:");
+      expect(system).toEndWith("\n\nCUSTOM OUT");
     } finally {
       prompts.clearJudgePromptOverrides();
     }

@@ -97,6 +97,9 @@ export interface StoredEvent {
     name?: string; // function name (function_call / function_call_output)
     arguments?: unknown;
     output?: unknown;
+    id?: string;
+    call_id?: string;
+    is_error?: boolean;
     /** Turn the speaker was cut off mid-response. Rendered as a "[interrupted]"
      *  tag so the loop/adherence judges can exempt it (they only exempt what
      *  they can SEE). Absent until the uploader carries it. */
@@ -300,10 +303,10 @@ export function buildSessionEvalInput(
   // Tool calls per node, for extracted_variables (config variables that
   // declare the tool that records them; see AgentConfigVariable.tool) and
   // chosen intents (config intents that declare their selection tool).
-  const toolCallsByRef = new Map<string, Array<{ name: string; args: Record<string, unknown> | null }>>();
+  const toolCallsByRef = new Map<string, ToolCall[]>();
   // Session-wide tool-call list, in order — the cross-node fallback for
   // variable extraction on revisited nodes.
-  const allToolCalls: Array<{ name: string; args: Record<string, unknown> | null }> = [];
+  const allToolCalls: ToolCall[] = [];
 
   for (const ev of evs) {
     if (ev?.type !== "conversation_item_added" || !ev.item) continue;
@@ -313,11 +316,21 @@ export function buildSessionEvalInput(
     if (item.type === "function_call" || item.type === "function_call_output") {
       if (item.type === "function_call" && typeof item.name === "string" && item.name) {
         if (!toolCallsByRef.has(ref)) toolCallsByRef.set(ref, []);
-        const call = { name: item.name, args: parseToolArguments(item.arguments) };
+        const call: ToolCall = { name: item.name, args: parseToolArguments(item.arguments), ref, turnIndex: allTurns.length, id: item.call_id ?? item.id, status: "unconfirmed" };
         toolCallsByRef.get(ref)!.push(call);
         allToolCalls.push(call);
       }
-      pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item), intent: "", evidence: true });
+      if (item.type === "function_call_output") {
+        const pending = allToolCalls.filter(call => call.status === "unconfirmed" &&
+          (item.call_id ? call.id === item.call_id : call.ref === ref && call.name === item.name));
+        // Older senders have unrelated result IDs. Name fallback is safe only
+        // for a single outstanding call; never guess between concurrent writes.
+        if (pending.length === 1) {
+          pending[0]!.status = isTruthyFlag(item.is_error) ? "failed" : "succeeded";
+          pending[0]!.resultTurnIndex = allTurns.length;
+        }
+      }
+      pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item) + (isTruthyFlag(item.is_error) ? " [tool failed]" : ""), intent: "", evidence: true });
       continue;
     }
     if (item.type === "agent_handoff") {
@@ -328,7 +341,7 @@ export function buildSessionEvalInput(
         .find((v): v is string => typeof v === "string" && v.length > 0) ?? "";
       if (label) {
         if (!toolCallsByRef.has(ref)) toolCallsByRef.set(ref, []);
-        const call = { name: label, args: null };
+        const call: ToolCall = { name: label, args: null, ref, turnIndex: allTurns.length, status: "succeeded" };
         toolCallsByRef.get(ref)!.push(call);
         allToolCalls.push(call);
       }
@@ -431,7 +444,8 @@ export function buildSessionEvalInput(
     // variable judge reads "(none) extracted" and fails runs whose transcript
     // plainly shows the recording calls.
     const nodeToolCalls = toolCallsByRef.get(ref) ?? [];
-    const extractedVariables = deriveExtractedVariables(def, nodeToolCalls, allToolCalls);
+    const exit = allTurns.findLastIndex(turn => turn.node_uuid === ref);
+    const { values: extractedVariables, sources: variableSources } = deriveExtractedVariables(def, allToolCalls, exit);
     const chosenIntent = deriveChosenIntent(def, nodeToolCalls);
     const intentTools = deriveIntentTools(def);
     nodes.push({
@@ -444,6 +458,7 @@ export function buildSessionEvalInput(
       required_variables: requiredVariables,
       ...(Object.keys(rules).length ? { variable_rules: rules } : {}),
       extracted_variables: extractedVariables,
+      variable_sources: variableSources,
       turns,
       turn_count: turns.length,
     });
@@ -614,30 +629,40 @@ export async function evaluateIngestedSession(
   };
 }
 
-type ToolCall = { name: string; args: Record<string, unknown> | null };
+type ToolCall = {
+  name: string;
+  args: Record<string, unknown> | null;
+  ref: string;
+  turnIndex: number;
+  id?: string;
+  status: "succeeded" | "failed" | "unconfirmed";
+  resultTurnIndex?: number;
+};
 
 /** Variables the agent actually recorded on a node: a config variable whose
- *  declared `tool` (or its own name) matches a function_call. Prefers a call on
- *  this node, then any call in the session — a node revisit mints a fresh ref,
- *  but a variable recorded on an earlier visit must still count. */
+ *  declared `tool` (or its own name) matches a function_call. Last non-failed
+ *  write at node exit wins, including earlier nodes, never future writes. */
 function deriveExtractedVariables(
   def: AgentConfigNode,
-  nodeToolCalls: ToolCall[],
   allToolCalls: ToolCall[],
-): Record<string, unknown> {
+  exit: number,
+) {
   const extracted: Record<string, unknown> = {};
+  const sources: NonNullable<NodeEvalInput["variable_sources"]> = {};
   for (const v of def.variables ?? []) {
     const varName = typeof v?.name === "string" ? v.name : "";
     if (!varName) continue;
     const toolName = typeof v?.tool === "string" && v.tool ? v.tool : varName;
-    const call = nodeToolCalls.find((tc) => tc.name === toolName) ?? allToolCalls.find((tc) => tc.name === toolName);
+    const statusAtExit = (call: ToolCall) => call.resultTurnIndex !== undefined && call.resultTurnIndex > exit ? "unconfirmed" : call.status;
+    const call = allToolCalls.findLast(tc => tc.name === toolName && tc.turnIndex <= exit && statusAtExit(tc) !== "failed");
     if (!call) continue;
+    sources[varName] = { node_uuid: call.ref, event_index: call.turnIndex, status: statusAtExit(call) as "succeeded" | "unconfirmed" };
     const args = call.args;
     if (args && Object.keys(args).length === 1) extracted[varName] = Object.values(args)[0];
     else if (args && Object.keys(args).length > 0) extracted[varName] = args;
     else extracted[varName] = "(recorded)";
   }
-  return extracted;
+  return { values: extracted, sources };
 }
 
 /** Declared intent name → tool name, for intents that declare one. */
@@ -654,6 +679,7 @@ function deriveIntentTools(def: AgentConfigNode): Record<string, string> | undef
 function deriveChosenIntent(def: AgentConfigNode, nodeToolCalls: ToolCall[]): string {
   let chosen = "";
   for (const tc of nodeToolCalls) {
+    if (tc.status === "failed") continue;
     for (const i of def.intents ?? []) {
       const intentName = typeof i?.name === "string" ? i.name : "";
       if (!intentName) continue;

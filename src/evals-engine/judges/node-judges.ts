@@ -66,7 +66,7 @@ export async function runLoopJudge(
   const loopNode = withoutIdleTurns(node);
   const stripped = idleFreeTranscript(ctx);
   const loopCtx: ConversationInput = stripped === ctx.full_transcript ? ctx : { ...ctx, full_transcript: stripped };
-  return runLlmJudge({ system: systemForLoop(), input: nodePayload(loopNode, loopCtx), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider });
+  return runLlmJudge({ system: systemForLoop(), input: nodePayload(loopNode, loopCtx, true), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider });
 }
 
 export async function runInstructionAdherenceJudge(

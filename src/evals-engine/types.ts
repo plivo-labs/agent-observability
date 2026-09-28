@@ -51,9 +51,7 @@ export interface NodeEvalInput {
   available_intents: unknown[];
   /** Intent the agent actually chose at this node (last detected intent). */
   chosen_intent: string;
-  /** Declared intent name → the tool that fires it (config `intents[].tool`).
-   *  Kept OFF the shared node payload so the LLM judges' input is unchanged; the Jev
-   *  intent questions name the tool so "narrated but never fired" is decidable. */
+  /** Declared intent name → the tool that selects it (config `intents[].tool`). */
   intent_tools?: Record<string, string>;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
   required_variables: string[];
@@ -61,8 +59,11 @@ export interface NodeEvalInput {
    *  into the variable judge's expected-variables list so conditional rules
    *  ("leave empty unless…") are judged against, not guessed at. */
   variable_rules?: Record<string, string>;
-  /** Variables actually extracted at this node (`variables_by_node[node_uuid]`). */
+  /** Latest known values at this node's exit, including earlier node writes. */
   extracted_variables: Record<string, unknown>;
+  /** Ingest recorder evidence; absent on legacy/simulation inputs. Unconfirmed
+   * attempts are not proof of successful persistence. */
+  variable_sources?: Record<string, { node_uuid: string; event_index: number; status: "succeeded" | "unconfirmed" }>;
   /** Turns that ran at this node, in order. */
   turns: EvalTurn[];
   /** Number of turns at this node. */

@@ -4,9 +4,11 @@ import { sumUsage } from "../../llm/usage.js";
 import { z } from "zod";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { systemForVariableExtraction } from "./instructions.js";
-import { nodePayload, renderNodeTranscript } from "./node-judge-payload.js";
+import { nodePayload } from "./node-judge-payload.js";
 import { promptSub } from "./judge-prompts.js";
 import { runLlmJudge } from "./run-llm-judge.js";
+import { VARIABLE_CONTRACT } from "../judge-contracts.js";
+import { NODE_EVIDENCE_SCOPE, scopedNodeEvidence } from "../node-evidence.js";
 import { VARIABLE_EXTRACTION_JSON } from "./schemas.js";
 import { VariableExtractionRawZ, type VariableExtractionRaw } from "./types.js";
 
@@ -87,9 +89,10 @@ function variablePayload(
 ): Record<string, unknown> {
   return {
     ...nodePayload(node, ctx),
+    extracted_variables: Object.fromEntries(Object.entries(node.extracted_variables).filter(([name]) => node.required_variables.includes(name))),
     variable_rules: node.variable_rules ?? {},
     variable_recording_schedule: batch.recordingSchedule,
-    variable_judge_contract:
+    variable_judge_contract: VARIABLE_CONTRACT + " " +
       "Judge only whether applicable caller-provided information was captured correctly. " +
       "Each variable's recording rule is authoritative; do not invent prerequisites or exceptions. " +
       "Anything from an unreached or inapplicable path is not missing. " +
@@ -110,7 +113,7 @@ async function runGuardedReview(
   provider?: LlmProvider,
 ) {
   return runLlmJudge({
-    system,
+    system: `${system}\n${NODE_EVIDENCE_SCOPE}\n${VARIABLE_CONTRACT}`,
     input: { candidates, ...input },
     schema: GuardedReviewZ,
     jsonSchema: GUARDED_REVIEW_JSON,
@@ -121,8 +124,6 @@ async function runGuardedReview(
 
 function reconcileRejectedVariableIssues(
   data: VariableExtractionRaw,
-  requiredVariables: string[],
-  actualEntries: Array<[string, unknown]>,
   rejected: Set<VariableIssueKey>,
   reviewNotes: string[],
 ): VariableExtractionRaw {
@@ -130,8 +131,7 @@ function reconcileRejectedVariableIssues(
 
   const missingVariables = data.missing_variables.filter((name) => !rejected.has(`missing:${name}`));
   const incorrectVariables = data.incorrect_variables.filter((name) => !rejected.has(`incorrect:${name}`));
-  const hasExtraVariable = actualEntries.some(([name]) => !requiredVariables.includes(name));
-  const successful = !hasExtraVariable && missingVariables.length === 0 && incorrectVariables.length === 0;
+  const successful = missingVariables.length === 0 && incorrectVariables.length === 0;
   return {
     ...data,
     extraction_successful: successful,
@@ -143,13 +143,8 @@ function reconcileRejectedVariableIssues(
   };
 }
 
-function canonicalizeVariableVerdict(
-  data: VariableExtractionRaw,
-  requiredVariables: string[],
-  actualEntries: Array<[string, unknown]>,
-): VariableExtractionRaw {
-  const hasExtraVariable = actualEntries.some(([name]) => !requiredVariables.includes(name));
-  const successful = !hasExtraVariable && data.missing_variables.length === 0 && data.incorrect_variables.length === 0;
+function canonicalizeVariableVerdict(data: VariableExtractionRaw): VariableExtractionRaw {
+  const successful = data.missing_variables.length === 0 && data.incorrect_variables.length === 0;
   if (data.extraction_successful === successful) return data;
 
   return {
@@ -204,7 +199,7 @@ export async function runVariableExtractionJudge(
         })
         .join("\n")
     : "(none)";
-  const actualEntries = Object.entries(node.extracted_variables ?? {});
+  const actualEntries = Object.entries(node.extracted_variables ?? {}).filter(([name]) => node.required_variables.includes(name));
   const actual = actualEntries.length
     ? actualEntries.map(([name, value]) => `- ${name}: ${JSON.stringify(value)}`).join("\n")
     : "(none)";
@@ -218,8 +213,11 @@ export async function runVariableExtractionJudge(
     provider,
   });
 
-  const rejected = new Set<VariableIssueKey>();
-  const reviewNotes: string[] = [];
+  const rejected = new Set<VariableIssueKey>([
+    ...result.data.missing_variables.filter(name => !node.required_variables.includes(name)).map(name => `missing:${name}` as const),
+    ...result.data.incorrect_variables.filter(name => !node.required_variables.includes(name)).map(name => `incorrect:${name}` as const),
+  ]);
+  const reviewNotes: string[] = rejected.size ? ["Excluded fields outside the configured extraction metric"] : [];
   const outOfScopeKeys = [
     ...result.data.missing_variables
       .filter((name) => outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined)
@@ -279,7 +277,7 @@ export async function runVariableExtractionJudge(
       ? runGuardedReview(
           promptSub("variable_extraction", "review_config_default", CONFIG_DEFAULT_REVIEW_SYSTEM),
           defaultCandidates,
-          { node_transcript: renderNodeTranscript(node) },
+          { ...scopedNodeEvidence(node, ctx), variable_sources: node.variable_sources },
           600,
           provider,
         ).catch(() => undefined)
@@ -289,7 +287,8 @@ export async function runVariableExtractionJudge(
           promptSub("variable_extraction", "review_focused_defect", FOCUSED_DEFECT_REVIEW_SYSTEM),
           focusedCandidates,
           {
-            node_transcript: renderNodeTranscript(node),
+            ...scopedNodeEvidence(node, ctx),
+            variable_sources: node.variable_sources,
             final_recording_batch_cutoff: batch.cutoffConfirmed,
             recording_schedule: batch.recordingSchedule,
           },
@@ -320,12 +319,10 @@ export async function runVariableExtractionJudge(
 
   result.data = reconcileRejectedVariableIssues(
     result.data,
-    node.required_variables,
-    actualEntries,
     rejected,
     reviewNotes,
   );
-  result.data = canonicalizeVariableVerdict(result.data, node.required_variables, actualEntries);
+  result.data = canonicalizeVariableVerdict(result.data);
   return result;
 }
 
