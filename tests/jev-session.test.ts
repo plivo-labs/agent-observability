@@ -70,7 +70,7 @@ describe("candidates and final decisions", () => {
     expect(loop.confidence).toBeUndefined();
     expect(loop.jev?.candidate).toBe("pass");
     expect(loop.jev?.route).toBe("uncalibrated_evidence");
-    expect(loop.jev?.evidence_version).toBe("node-evidence-v2");
+    expect(loop.jev?.evidence_version).toBe("node-evidence-v3");
     expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
     expect(v.conversation_metrics.voicemail_detected.jev?.route).toBe("auto_pass");
   });

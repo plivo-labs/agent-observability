@@ -108,20 +108,16 @@ export function jevIntent(g: GatedAxis, reasons: ReasonMap): IntentIdentificatio
   const t = textFor(g, reasons);
   const axis = g.axis as JevNodeAxis;
   const fired = new Set(g.firedKeys);
-  // Two distinct questions map to the two stored booleans: a declared intent
-  // that should have fired and did not, versus an intent fired without support.
-  // Keyed, not name-matched: a config intent declared with an empty name would
-  // otherwise be mistaken for the "fired without support" question.
+  // Catalog coverage and recorded-selection correctness map to separate flags.
   const isWrongQuestion = (key: string): boolean => key.endsWith(`.${INTENT_WRONG_KEY}`);
   const wrong = axis.intents?.some((i) => isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const missed = axis.intents?.some((i) => !isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const failed = g.outcome === "fail";
   return {
-    // A fail always names at least one question, so these are exclusive in
-    // practice; the `!wrong` arm covers only the impossible case of a fail
-    // whose fired key matched no declared intent.
+    // Preserve rubric precedence even if independent questions both fire.
+    // The empty-key fallback retains compatibility with legacy gated results.
     intent_not_found: failed && (missed || (!wrong && g.firedKeys.length === 0)),
-    intent_wrongly_identified: failed && wrong,
+    intent_wrongly_identified: failed && wrong && !missed,
     score: failed ? 0 : 1,
     reason: t.reason,
     technical_reason: t.technical_reason,

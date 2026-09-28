@@ -163,5 +163,6 @@ export function fromSimTranscript({ turns, nodeIndex, flowObj, variablesByNode }
     nodes,
     goals: readGoals(flowObj),
     full_transcript: renderFullTranscript(turns),
+    timeline: turns,
   };
 }

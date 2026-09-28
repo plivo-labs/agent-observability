@@ -67,12 +67,12 @@ describe("adherence", () => {
 describe("intent", () => {
   const axis = nodeAxis({
     id: "n0:intent_identification", judge: "intent_identification",
-    questionKeys: ["n0.intent.0", "n0.intent.wrong"],
-    intents: [{ key: "n0.intent.0", intent: "opt_out" }, { key: "n0.intent.wrong", intent: "" }],
+    questionKeys: ["n0.intent.not_found", "n0.intent.wrong"],
+    intents: [{ key: "n0.intent.not_found", intent: "opt_out" }, { key: "n0.intent.wrong", intent: "" }],
   });
 
-  test("a declared intent that never fired maps to intent_not_found", () => {
-    const block = merge.jevIntent(gated({ axis, outcome: "fail", p: 0.9, firedKeys: ["n0.intent.0"] }), NO_REASONS);
+  test("a need absent from the catalog maps to intent_not_found", () => {
+    const block = merge.jevIntent(gated({ axis, outcome: "fail", p: 0.9, firedKeys: ["n0.intent.not_found"] }), NO_REASONS);
     expect(block.intent_not_found).toBe(true);
     expect(block.intent_wrongly_identified).toBe(false);
     expect(block.score).toBe(0);
@@ -87,6 +87,12 @@ describe("intent", () => {
   test("a pass sets neither flag and scores 1", () => {
     const block = merge.jevIntent(gated({ axis, outcome: "pass", p: 0.03 }), NO_REASONS);
     expect(block).toMatchObject({ intent_not_found: false, intent_wrongly_identified: false, score: 1 });
+  });
+
+  test("contradictory candidate signals still emit mutually exclusive intent flags", () => {
+    const block = merge.jevIntent(gated({ axis, outcome: "fail", p: 0.9, firedKeys: axis.questionKeys }), NO_REASONS);
+    expect(block.intent_not_found).toBe(true);
+    expect(block.intent_wrongly_identified).toBe(false);
   });
 });
 

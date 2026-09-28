@@ -1,12 +1,13 @@
 import type { NodeEvalInput } from "../evals-engine/types.js";
 import type { CustomJudgeSpec } from "../evals-engine/judges/custom-metric.js";
 import type { JevNoul } from "./types.js";
+import { INTENT_CONTRACT, ADHERENCE_CONTRACT, VARIABLE_CONTRACT } from "../evals-engine/judge-contracts.js";
 
 // The Noul question sets, one per AO judge, as tuned against blind ground truth
 // on 300 live sessions (scripts/jev-benchmark, rounds 2–11). Each `true`
 // criterion is the DEFECT, so the probability Jev returns is P(defect) — the
-// same positive class the fan-out rows and the gates use. Wording is what was
-// measured; edit it only together with a re-run of the replay gate.
+// same positive class the fan-out rows and the gates use. Conversation wording
+// stays calibrated; node v2 contracts require fresh replay and remain LLM-reviewed.
 
 // AO appends an untrusted-data fence to every LLM judge (run-llm-judge.ts).
 // Jev cannot be structurally steered (typed output), but the state's content
@@ -21,7 +22,6 @@ export const noul = (instructions: string, yes: string, no: string): JevNoul => 
   criteria: { true: yes, false: no },
 });
 
-export const MAX_INTENT_QUESTIONS = 15;
 export const MAX_VARIABLE_QUESTIONS = 20;
 export const MAX_CLAIM_QUESTIONS = 5;
 const RULE_CHARS = 1500;
@@ -80,54 +80,32 @@ export const NODE_LOOP_QUESTION = noul(
 );
 
 export const ADHERENCE_QUESTION = noul(
-  "Did the agent BREAK its node instructions in a way that matters? Answer TRUE only if you can NAME a specific instruction it violated: it skipped a " +
-    "step the instructions require, did something the instructions forbid, or failed the objective through its own fault. Functional Completion Test: if " +
-    "the objective was achieved and the caller was served, wording differences, paraphrase, and reasonable improvisation are NOT breaches. A call the caller " +
-    "cut short or declined is NOT a breach. CALL ENDED EARLY: a step the agent never got a turn to perform — because the caller hung up, the call was cut " +
-    "off mid-flow, or a transfer ended the session — is UNREACHABLE, not skipped. Never answer TRUE because required questions, a read-back or a final " +
-    "confirmation are absent from the end of a transcript that simply STOPS; judge only the steps the conversation actually reached. A wrong action the " +
-    "agent DID take is still a breach however the call ended. When unsure, answer FALSE.",
-  "a specific, nameable instruction was violated (skipped required step / forbidden action / failed objective)",
-  "instructions followed in substance, or the shortfall was not the agent's fault",
+  ADHERENCE_CONTRACT + " Did this node commit a failure under that rubric? Require a specific instruction and owned evidence; when unsure answer FALSE.",
+  "this node failed its objective, missed a critical procedure, or crossed an explicit policy boundary",
+  "no adherence failure under the rubric; minor or out-of-scope issues alone do not fail",
 );
 
+export const INTENT_NOT_FOUND_KEY = "intent.not_found";
 export const INTENT_WRONG_KEY = "intent.wrong";
 
-/** One question per declared intent ("triggered but its tool never fired") plus
- *  one for an unsupported firing. The tool name comes from the config
- *  (NodeEvalInput.intent_tools); without it the intent's own name stands in. */
+/** Two metric-level questions use the complete intent catalog in the state.
+ * Missing execution is not the meaning of intent_not_found. */
 export function intentQuestions(node: NodeEvalInput): Array<{ key: string; question: JevNoul; intent: string }> {
-  const out: Array<{ key: string; question: JevNoul; intent: string }> = [];
-  const intents = (node.available_intents ?? []).slice(0, MAX_INTENT_QUESTIONS);
-  intents.forEach((raw, i) => {
-    const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-    const name = String(o.intent_name ?? o.name ?? o.id ?? `intent_${i}`);
-    const description = String(o.intent_instructions ?? o.description ?? "").slice(0, 300);
-    const tool = node.intent_tools?.[name] ?? name;
-    out.push({
-      key: `intent.${i}`,
-      intent: name,
-      question: noul(
-        `Intent '${name}' fires when: ${description}. Did the caller CLEARLY trigger this intent during the call, AND the agent did NOT fire its tool ` +
-          `(${tool})? Only a Tool_Call fires it — narrating an action does not. Answer FALSE if the intent wasn't triggered, the tool WAS fired, or the call ` +
-          "ended before it reasonably could.",
-        `'${name}' was clearly triggered but its tool was never fired`,
-        "not triggered, or the tool was fired, or call ended first",
-      ),
-    });
-  });
-  if (out.length > 0) {
-    out.push({
-      key: INTENT_WRONG_KEY,
-      intent: "",
-      question: noul(
-        "Did the agent FIRE an intent tool (a handoff or action) that the caller's words did NOT support — for example a consent-gated transfer right after the caller declined?",
-        "fired an intent the caller did not support",
-        "no unsupported intent fired",
-      ),
-    });
-  }
-  return out;
+  if (!node.available_intents?.length) return [];
+  return [
+    {
+      key: INTENT_NOT_FOUND_KEY, intent: "",
+      question: noul(INTENT_CONTRACT + " Is intent_not_found true for this node? Compare against the complete available_intents list.",
+        "a selected non-system intent is outside the list, or with no selection a clear caller need has no matching available intent",
+        "no catalog coverage defect; a matching intent without a recorded selection is allowed"),
+    },
+    {
+      key: INTENT_WRONG_KEY, intent: "",
+      question: noul(INTENT_CONTRACT + " Is intent_wrongly_identified true for this node? Answer FALSE if intent_not_found applies.",
+        "positive evidence shows a listed intent selected contrary to the caller or without its required conversational prerequisite",
+        "supported or ambiguous selection, no selection evidence, or intent_not_found applies"),
+    },
+  ];
 }
 
 /** One question per declared variable, stating the full rule and what was
@@ -144,11 +122,10 @@ export function variableQuestions(node: NodeEvalInput): Array<{ key: string; que
       variable: name,
       recorded,
       question: noul(
-        `Variable '${name}' — ${recordedText}.\nRULE: ${rule}\n\nJudge THIS variable against its rule and the transcript. It FAILED if ANY of these holds: ` +
+        VARIABLE_CONTRACT + `\nVariable '${name}' — ${recordedText}.\nRULE: ${rule}\n\nJudge THIS variable against its rule and the transcript. It FAILED if ANY of these holds: ` +
           "(1) GATE VIOLATION — it was recorded although the rule says to record NOTHING in this situation (e.g. caller declined / opted out / was screened out, " +
           "or the required read-back was never affirmed — a bare 'yes' does not affirm a read-back that omitted a required item); (2) REQUIRED VALUE MISSING — " +
-          "the caller supplied the value, or the rule requires a disposition to be recorded for how this call ended (e.g. 'not offered', 'no', 'unclear' for " +
-          "silence, a not-completed status), but nothing was recorded; (3) WRONG VALUE — the recorded value contradicts what the caller actually said or " +
+          "the caller explicitly supplied an applicable value during this node, but nothing was recorded; (3) WRONG VALUE — the recorded value contradicts what the caller actually said or " +
           "corrected to, records an unclear/garbled answer literally when the rule says to leave it blank, or breaks the rule's format. It did NOT fail if the " +
           "value was captured correctly, or the variable was not applicable on this call's path and the rule does not require a disposition. CALL ENDED " +
           "EARLY: if the transcript simply STOPS before the agent ever asked for this value — the caller hung up or the call was cut off mid-flow — the " +
@@ -167,7 +144,7 @@ export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
     "Look only at what the agent SPOKE (agent_spoken). Did the agent assert that something HAS BEEN DONE or WILL NOT HAPPEN as a result of this call — " +
       "'you won't be contacted again', 'you're on our do-not-call list', 'I've updated your number', 'confirmation has been sent', 'it's booked/cancelled' — " +
       "with NO successful tool call that plausibly performed it? A successful tool whose PURPOSE covers the claim counts as backing even if its name differs " +
-      "a tool that registers the caller backs 'the link is being sent'; a tool that records a callback time backs 'you're set for a callback'. A " +
+      "an action result that accepts a callback request can back 'you're set for a callback'. A bookkeeping record_* call alone does not establish downstream completion. A " +
       "failed or error tool result is NOT backing. NOT a completion claim: future/intent ('I'll transfer you now', 'let me update that'), step-by-step " +
       "guidance ('open the app store'), or reading a script.",
     "asserted a completed action / guarantee with no successful tool plausibly performing it",
@@ -181,6 +158,14 @@ export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
       "supported. When unsure whether it is in the instructions, answer FALSE.",
     "stated a policy/availability/price/procedure fact with no basis in instructions or tools",
     "no unsupported policy claim",
+  ),
+  h4_capability: noul(
+    "Look only at agent_spoken. Did the agent offer or promise a concrete external action (cancel an order, book, send a link, arrange a callback) " +
+      "when no instruction, configured tool/handoff path, successful action result, or other supplied evidence establishes that capability? " +
+      "Future tense is not an exemption: 'I can arrange a callback' asserts a capability. Generic offers of help or tentative suggestions are not such claims. " +
+      "Do not demand that an authorized future action already happened. Silent bookkeeping record_* calls alone do not establish an operational path.",
+    "offered a concrete external capability unsupported by any supplied source",
+    "the capability is grounded, or no concrete capability was asserted",
   ),
   h3_false_confirm: noul(
     "Look only at what the agent SPOKE. Did the agent state that the caller had CONFIRMED, agreed to, provided, or done something, when the caller's " +
