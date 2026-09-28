@@ -21,11 +21,20 @@ Regression seams: ingest-to-ConversationInput; actual payloads passed to judge p
 ## Local validation
 
 - Regression tests first reproduced duplicate speech, stale first-write selection, and future-write borrowing before the fixes.
-- Server suite: 1,011 passed, two skipped; sandbox prevented one local server fixture from binding. That entire fixture passed all ten tests outside the sandbox.
+- Final server suite with localhost access: 1,025 passed, two existing skips, zero failures across 73 files.
 - Strict TypeScript check of changed evaluation modules and their imported dependencies passed.
 - Offline replay: all 160 calls / 338 nodes preserve target event ownership and exit boundaries. All 419 extracted value sources correlate to successful recorder results. Existing value maps are unchanged under node-exit semantics: D13/D14 keep the correct earlier 19:00 capture; later 20:00 corrections no longer appear in that earlier judge evidence. Synthetic regressions cover multiple writes within a node and later-node inheritance.
-- Replay still plans 833 requests, zero budget drops; maximum estimate 19,010 tokens. No new accuracy claim or live 32k coverage.
+- Replay still plans 833 requests, zero budget drops; maximum estimate 19,392 tokens. No new accuracy claim or live 32k coverage.
 
 ## Review follow-up
 
 Both review axes identified grounding edge cases, now covered by regressions: failure status precedes clipped tool output; full runtime notes carry event indices and are bounded at node exit; legacy full-transcript-only grounding survives; and capability questions receive the complete configured intent/tool catalog. These are code/evidence tests, not measured model verdicts.
+
+## Examples guiding the change
+
+- A02: completed read-back and explicit caller confirmation match a configured confirmed-intake intent. No recorded chosen intent is not, by itself, failed identification; actual handoff execution requires separate telemetry.
+- A03: a repeated question followed by a complete confirmed read-back is a minor interaction issue, not an adherence failure under the functional-completion rubric.
+- A14: an opening question, caller name, and then transcript cutoff do not establish that later checklist steps were deliberately skipped.
+- A01: rejecting a valid city-level service area because the agent invented a country requirement and abandoned intake remains a genuine adherence failure. Reducing false alarms must preserve this distinction.
+
+These are evidence-review references from the original audit, not newly scored model outputs. Both review axes found no remaining implementation blockers after the follow-up. Before production promotion, run paired old/new evaluator replay and a fresh held-out set with wrong selections, missing catalog coverage, critical consent/procedure violations, minor deviations, interruptions, and long calls. Report false-pass and false-fail rates separately; do not tune thresholds on the same cases used to claim improvement.
