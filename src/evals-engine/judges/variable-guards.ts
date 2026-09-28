@@ -90,4 +90,3 @@ export function outOfScopeVariableKind(
   if (WORKFLOW_RULE_EVIDENCE.test(normalizedRule)) return "workflow";
   return undefined;
 }
-
