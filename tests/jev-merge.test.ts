@@ -106,12 +106,16 @@ describe("variables", () => {
     expect(out.metrics.required_variables).toEqual(["order_id", "lead_status"]);
   });
 
-  test("the deterministic guards clear a workflow field, and clearing everything makes it a pass", () => {
-    const out = merge.jevVariables(gated({ axis, outcome: "fail", p: 0.95, firedKeys: ["v0.var.1"] }), node(), NO_REASONS);
+  test("renders the gate's completed decision without changing it after aggregation", () => {
+    const out = merge.jevVariables(gated({ axis, outcome: "pass", p: 0.02, ignoredKeys: ["v0.var.1"] }), node(), NO_REASONS);
     expect(out.cleared).toEqual(["lead_status"]);
     expect(out.metrics.extraction_successful).toBe(true);
     expect(out.metrics.missing_variables).toEqual([]);
     expect(out.metrics.technical_reason).toContain("cleared as out-of-scope");
+  });
+
+  test("unresolved variables cannot be rendered as a pass", () => {
+    expect(() => merge.jevVariables(gated({ axis, outcome: "review" }), node(), NO_REASONS)).toThrow("unresolved");
   });
 });
 
@@ -132,14 +136,16 @@ describe("attachDetectionProvenance", () => {
       ["voicemail_detected", { backend: "jev", confidence: 0.95 }],
       ["bot_detected", { backend: "jev", confidence: 0.93 }],
       ["low_engagement", { backend: "jev", confidence: 0.88 }],
-      ["call_screening", { backend: "jev", confidence: 0.2 }],
+      ["call_screening", { backend: "llm", jev: { candidate: "fail" } }],
     ]));
     expect(out.voicemail_detected).toMatchObject({ backend: "jev", confidence: 0.95 });
     expect(out.bot_detected).toMatchObject({ backend: "code" });
     expect(out.bot_detected.confidence).toBeUndefined();
     expect(out.low_engagement).toMatchObject({ backend: "code" });
-    // an unavailable axis was never judged by anyone
-    expect(out.call_screening.backend).toBeUndefined();
+    // Unavailable review keeps its candidate for audit, while fan-out still skips it.
+    expect(out.call_screening.available).toBe(false);
+    expect(out.call_screening.backend).toBe("llm");
+    expect(out.call_screening.jev?.candidate).toBe("fail");
   });
 });
 

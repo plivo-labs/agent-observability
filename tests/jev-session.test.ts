@@ -1,14 +1,15 @@
 import { describe, test, expect, mock } from "bun:test";
 import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
-mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
+const testConfig = { ...TEST_JUDGE_CONFIG_MODULE.config, JEV_CUSTOM_METRICS: "on" };
+mock.module("../src/config.js", () => ({ ...TEST_JUDGE_CONFIG_MODULE, config: testConfig }));
 
 const { MockLLM } = await import("../src/llm/index.js");
 const { MockJev } = await import("../src/jev/mock.js");
 const { JevError, JEV_OVERFLOW } = await import("../src/jev/types.js");
 const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
 const { defaultJudgeResponder } = await import("./fixtures/default-judge-responder.js");
-const { REASON_WRITER_SYSTEM } = await import("../src/evals-engine/judges/reason-writer.js");
+const { buildExternalEvalRows } = await import("../src/evals-engine/fan-out-rows.js");
 type AgentConfig = import("../src/evals-engine/integration/session-evals.js").AgentConfig;
 type StoredEvent = import("../src/evals-engine/integration/session-evals.js").StoredEvent;
 type MockJevType = InstanceType<typeof MockJev>;
@@ -58,102 +59,54 @@ describe("JEV_MODE off — the LLM path is untouched", () => {
   });
 });
 
-describe("confident Jev verdicts", () => {
-  test("all-clean: no judge call at all beyond sentiment and STT", async () => {
+describe("candidates and final decisions", () => {
+  test("clean conversation results skip review; changed node evidence stays under review", async () => {
     const jev = new MockJev([{}], 0.01);
     const { v, provider } = await run(jev);
-    // adherence never auto-passes by design, so it plus sentiment and STT are
-    // all that remain
-    expect(labelsOf(provider)).toEqual(["eval_instruction", "eval_sentiment", "eval_stt"]);
-    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
-
-    const node = v.node_evaluations[0]!;
-    expect(node.node_loop.loop_detected).toBe(false);
-    expect(node.node_loop.backend).toBe("jev");
-    expect(node.node_loop.confidence).toBe(0.01);
-    expect(node.node_loop.jev_model).toBe("jev-mock");
-    expect(node.node_loop.reason).toContain("No defect found");
-    expect(node.variable_extraction.required_variables).toEqual(["order_id"]);
-    expect(node.intent_identification.score).toBe(1);
-    // adherence never auto-passes, so it is the one axis the LLM still judged
-    expect(node.instructions_adherence.backend).toBe("llm");
+    expect(labelsOf(provider)).toEqual(["eval_hallucination", "eval_instruction", "eval_intent", "eval_loop", "eval_sentiment", "eval_stt", "eval_variable"]);
+    expect(jev.calls.map(c => c.key).sort()).toEqual(["c", "h0", "n0"]);
+    const loop = v.node_evaluations[0]!.node_loop;
+    expect(loop.backend).toBe("llm");
+    expect(loop.confidence).toBeUndefined();
+    expect(loop.jev?.candidate).toBe("pass");
+    expect(loop.jev?.route).toBe("uncalibrated_evidence");
+    expect(loop.jev?.evidence_version).toBe("node-evidence-v2");
     expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
-    expect(v.conversation_metrics.user_sentiment.available).toBe(true);
+    expect(v.conversation_metrics.voicemail_detected.jev?.route).toBe("auto_pass");
   });
 
-  test("confident fails take ONE reason call for the whole session", async () => {
-    const jev = new MockJev([(req) => {
-      const out: Record<string, number> = {};
-      for (const key of Object.keys(req.questions)) out[key] = key.includes("node_loop") || key.includes("instructions_adherence") ? 0.97 : 0.01;
-      return out;
-    }]);
-    const { v, provider } = await run(jev);
-    const reasonCalls = provider.calls.filter((c) => (c.system as string).includes("calibrated classifier"));
-    expect(reasonCalls).toHaveLength(1);
-    expect(reasonCalls[0]!.jsonSchema?.name).toBe("eval_jev_reason");
-    expect(reasonCalls[0]!.system).toContain(REASON_WRITER_SYSTEM.slice(0, 40));
-    // the transcript rides along once, not once per failing axis
-    expect((reasonCalls[0]!.user.match(/What is your order id\?/g) ?? []).length).toBe(1);
+  for (const confirmed of [false, true]) {
+    test(`the independent reviewer can ${confirmed ? "confirm" : "overturn"} a Jev failure`, async () => {
+      const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.includes("node_loop") ? 0.97 : 0.01]))]);
+      const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_loop"
+        ? JSON.stringify({ loop_detected: confirmed, score: confirmed ? 0 : 1, reason: "Review of the actual node turns.", technical_reason: "independent review" })
+        : defaultJudgeResponder(args.system)!]);
+      const { v } = await run(jev, provider);
+      const loop = v.node_evaluations[0]!.node_loop;
+      expect(loop.loop_detected).toBe(confirmed);
+      expect(loop.backend).toBe("llm");
+      expect(loop.jev?.probability).toBe(0.97);
+      expect(loop.jev?.candidate).toBe("fail");
+      expect(loop.jev?.gate).toEqual({ pass_below: 0.2, fail_above: 0.8 });
+      const call = provider.calls.find(c => c.jsonSchema?.name === "eval_loop")!;
+      expect(call.user).not.toContain("0.97");
+      expect(provider.calls.some(c => c.jsonSchema?.name === "eval_jev_reason")).toBe(false);
+      const row = buildExternalEvalRows(v).find(r => r.judgeName === "node_loop")!;
+      expect((row.raw as any).jev.candidate).toBe("fail");
+    });
+  }
 
-    const node = v.node_evaluations[0]!;
-    expect(node.node_loop.loop_detected).toBe(true);
-    expect(node.node_loop.reason).toBe("why n0:node_loop");
-    expect(node.node_loop.technical_reason).toContain("jev 0.97");
-    expect(node.instructions_adherence.adherence_passed).toBe(false);
-    expect(node.instructions_adherence.objective_progress).toBeNull();
-  });
-
-  test("the reason call carries only the nodes a defect was found on", async () => {
-    const twoNodeConfig = {
-      ...config,
-      nodes: [config.nodes![0]!, { ref: "node-B", name: "wrap_up", instructions: "Thank the caller and close.", intents: [], variables: [] }],
-    };
-    const twoNodeEvents = [
-      ...events,
-      { type: "conversation_item_added", node_ref: "node-B", item: { type: "message", role: "assistant", content: "Thanks, goodbye." } },
-    ] as StoredEvent[];
-    const jev = new MockJev([(req) => {
-      const out: Record<string, number> = {};
-      for (const key of Object.keys(req.questions)) out[key] = key.startsWith("n1.") && key.includes("node_loop") ? 0.97 : 0.01;
-      return out;
-    }]);
-    const provider = llm();
-    await evaluateIngestedSession(twoNodeConfig, twoNodeEvents, provider, "livekit", undefined, undefined, [], jev as any);
-    const reasonCall = provider.calls.find((c) => (c.system as string).includes("calibrated classifier"))!;
-    const sent = JSON.parse(reasonCall.user);
-    expect(sent.nodes.map((n: { node_index: number }) => n.node_index)).toEqual([1]);
-    expect(sent.items.map((d: { id: string }) => d.id)).toEqual(["n1:node_loop"]);
-  });
-
-  test("a fired variable question becomes a named defect, filed by whether it was recorded", async () => {
-    const jev = new MockJev([(req) => {
-      const out: Record<string, number> = {};
-      for (const key of Object.keys(req.questions)) out[key] = key.startsWith("v0.") ? 0.96 : 0.01;
-      return out;
-    }]);
-    const { v } = await run(jev);
-    const ve = v.node_evaluations[0]!.variable_extraction;
-    expect(ve.extraction_successful).toBe(false);
-    expect(ve.incorrect_variables).toEqual(["order_id"]);
-    expect(ve.missing_variables).toEqual([]);
-    expect(ve.required_variables).toEqual(["order_id"]);
-  });
-
-  test("a Jev-decided voicemail still suppresses user_never_spoke and the ladder below it", async () => {
-    const jev = new MockJev([(req) => {
-      const out: Record<string, number> = {};
-      for (const key of Object.keys(req.questions)) out[key] = key === "c.voicemail_detection" || key === "c.bot_detection" ? 0.95 : 0.01;
-      return out;
-    }]);
-    const { v } = await run(jev);
+  test("reviewed conversation detections still use the outcome priority rules", async () => {
+    const jev = new MockJev([{}], 0.97);
+    const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_detection"
+      ? JSON.stringify({ detected: true, reason: "Voicemail greeting.", technical_reason: "reviewed" })
+      : defaultJudgeResponder(args.system)!]);
+    const { v } = await run(jev, provider);
     expect(v.conversation_metrics.voicemail_detected.detected).toBe(true);
-    expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
-    // bot fired too but the ladder keeps voicemail: the suppressed axis is a
-    // CODE decision and must not carry Jev's probability as its confidence
+    expect(v.conversation_metrics.voicemail_detected.backend).toBe("llm");
     expect(v.conversation_metrics.bot_detected.detected).toBe(false);
     expect(v.conversation_metrics.bot_detected.backend).toBe("code");
     expect(v.conversation_metrics.bot_detected.confidence).toBeUndefined();
-    expect(v.conversation_metrics.user_never_spoke.available).toBe(false);
     expect(v.conversation_metrics.conversation_status.status).toBe("voicemail_detected");
   });
 });
@@ -177,7 +130,8 @@ describe("uncertain and unavailable axes fall to the LLM", () => {
     const jev = new MockJev([(req) => (req.key === "n0" ? new JevError(500, "server_error") : {})], 0.01);
     const { v, provider } = await run(jev);
     expect(v.node_evaluations[0]!.node_loop.backend).toBe("llm");
-    expect(v.node_evaluations[0]!.hallucination.backend).toBe("jev");
+    expect(v.node_evaluations[0]!.hallucination.backend).toBe("llm");
+    expect(v.node_evaluations[0]!.node_loop.jev?.fallback).toBe("error");
     expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
     expect(provider.calls.some((c) => (c.system as string).includes("repeat its own previous messages"))).toBe(true);
   });
@@ -197,37 +151,7 @@ describe("uncertain and unavailable axes fall to the LLM", () => {
     expect(v.node_evaluations[0]!.node_loop.backend).toBe("llm");
   });
 
-  test("a transient reason-writer failure retries the session instead of stamping a templated reason", async () => {
-    const provider = new MockLLM([(args: any) => {
-      const system = args.system as string;
-      if (system.includes("calibrated classifier")) throw new Error("429 rate limit exceeded");
-      return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
-    }]);
-    const jev = new MockJev([(req) => {
-      const out: Record<string, number> = {};
-      for (const key of Object.keys(req.questions)) out[key] = key.includes("node_loop") ? 0.97 : 0.01;
-      return out;
-    }]);
-    await expect(run(jev, provider)).rejects.toThrow(/429/);
-  });
 
-  test("the reason writer failing keeps the verdict with a plain explanation", async () => {
-    const provider = new MockLLM([(args: any) => {
-      const system = args.system as string;
-      if (system.includes("calibrated classifier")) return "not json at all";
-      return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
-    }]);
-    const jev = new MockJev([(req) => {
-      const out: Record<string, number> = {};
-      for (const key of Object.keys(req.questions)) out[key] = key.includes("node_loop") ? 0.97 : 0.01;
-      return out;
-    }]);
-    const { v } = await run(jev, provider);
-    const loop = v.node_evaluations[0]!.node_loop;
-    expect(loop.loop_detected).toBe(true);
-    expect(loop.reason).toContain("explanation unavailable");
-    expect(loop.confidence).toBe(0.97);
-  });
 });
 
 describe("failures never escape as unhandled rejections", () => {
@@ -259,4 +183,34 @@ describe("a text transport never gets a voice-only verdict", () => {
     const asked = jev.calls.flatMap((c) => Object.keys(c.questions));
     expect(asked.some((k) => k.includes("voicemail"))).toBe(false);
   });
+});
+
+
+test("custom applicability is independently reviewed and node provenance survives fan-out", async () => {
+  const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.endsWith("applicable") ? 0.21 : 0.01]))]);
+  const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_custom_metric"
+    ? JSON.stringify({ verdict: "unknown", reason: "The call never reached a hold.", technical_reason: "no hold evidence" })
+    : defaultJudgeResponder(args.system)!]);
+  const spec = { name: "metric:hold", display_name: "Hold", scope: "node" as const, body: "Fail when held without warning.", output: "" };
+  const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [spec], jev);
+  const row = buildExternalEvalRows(v).find(r => r.judgeName === spec.name)!;
+  expect(row.verdictText).toBe("unknown");
+  expect(row.tag).toBe("node-A");
+  expect(row.raw.backend).toBe("llm");
+  expect((row.raw.jev as any)?.candidate).toBe("review");
+  expect((row.raw.jev as any)?.probability).toBe(0.21);
+});
+
+test("unavailable independent review retains candidates without emitting a pass", async () => {
+  const provider = new MockLLM([(args: any) => ["eval_detection", "eval_custom_metric"].includes(args.jsonSchema?.name)
+    ? "invalid" : defaultJudgeResponder(args.system)!]);
+  const spec = { name: "metric:hold", display_name: "Hold", scope: "node" as const, body: "Hold warning", output: "" };
+  const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [spec], new MockJev([{}], 0.97));
+  expect(v.conversation_metrics.voicemail_detected.available).toBe(false);
+  expect(v.conversation_metrics.voicemail_detected.jev?.candidate).toBe("fail");
+  const metric = v.custom_metrics![0]!;
+  expect(metric.available).toBe(false);
+  expect(metric.per_node).toBeUndefined();
+  expect(metric.jev_node_candidates?.[0]?.jev?.candidate).toBe("fail");
+  expect(buildExternalEvalRows(v).some(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection")).toBe(false);
 });

@@ -48,7 +48,7 @@ export function withoutIdleTurns(node: NodeEvalInput): NodeEvalInput {
  *  after the first node. (Line-level filtering matches renderFullTranscript's
  *  one-line-per-role output; the IDLE_TAG suffix sits on the tagged line.) */
 const idleFreeTranscriptCache = new WeakMap<ConversationInput, string>();
-function idleFreeTranscript(ctx: ConversationInput): string {
+export function idleFreeTranscript(ctx: ConversationInput): string {
   if (!ctx.full_transcript.includes(IDLE_TAG)) return ctx.full_transcript;
   let cached = idleFreeTranscriptCache.get(ctx);
   if (cached === undefined) {

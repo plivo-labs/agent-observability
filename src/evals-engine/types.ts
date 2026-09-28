@@ -88,6 +88,8 @@ export interface ConversationInput {
   goals: GoalInput[];
   /** The whole conversation rendered as text (context for hallucination/loop/goal judges). */
   full_transcript: string;
+  /** Ordered ingest evidence, preserving ownership across node revisits. Optional for legacy/simulation callers. */
+  timeline?: EvalTurn[];
   /** Speech-only variant of full_transcript: internal evidence lines
    *  (System_Note/Tool_Call/Tool_Result/Agent_Handoff) removed. Used by the
    *  conversation-axis detection judges, which must classify what was SAID on
@@ -163,6 +165,22 @@ export interface JudgeProvenance {
   confidence?: number;
   backend?: "jev" | "llm" | "code";
   jev_model?: string;
+  /** Candidate evidence remains separate from the final judge verdict/score. */
+  jev?: {
+    candidate: "pass" | "fail" | "review" | "unknown";
+    probability: number | null;
+    probabilities: Record<string, number>;
+    question_keys: string[];
+    ignored_keys: string[];
+    missing_keys: string[];
+    truncated: boolean;
+    gate?: { pass_below: number; fail_above: number };
+    fallback?: string;
+    route: string;
+    evidence_version: string;
+    question_version: string;
+    policy_version: string;
+  };
 }
 
 export interface InteractionQualityMetrics {

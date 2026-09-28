@@ -1,7 +1,7 @@
 import { config as envConfig } from "../../config.js";
 import type { LlmProvider } from "../../llm/index.js";
 import type { JevClient, JevResponse } from "../../jev/types.js";
-import { resolveGates } from "../../jev/gates.js";
+import { CUSTOM_METRIC_GATE, resolveGates } from "../../jev/gates.js";
 import type {
   ConversationInput,
   JudgeProvenance,
@@ -31,43 +31,19 @@ import { runHallucinationJudge, runInstructionAdherenceJudge, runLoopJudge } fro
 import { runVariableExtractionJudge } from "../judges/variable-extraction.js";
 import { runIntentJudge } from "../judges/intent-judge.js";
 import {
-  judgeCustomMetricNode,
-  rollUpNodeVerdicts,
   runCustomMetricJudge,
   type CustomJudgeSpec,
-  type CustomMetricNodeVerdict,
   type CustomMetricVerdict,
 } from "../judges/custom-metric.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
-import { classifyErrorDurability } from "../../error-durability.js";
-import { writeFailReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
+import { decisionProvenance, routeAxis } from "./policy.js";
 import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type NodeJudgeName } from "./plan.js";
-import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
-import {
-  attachDetectionProvenance,
-  provenanceOf,
-  jevAdherence,
-  jevCustomMetric,
-  jevDetection,
-  jevHallucination,
-  jevIntent,
-  jevNodeLoop,
-  jevVariables,
-  type ReasonMap,
-} from "./merge.js";
+import { byAxisId, gatePlan, mergeChunkedAxes, type RequestResult } from "./gate.js";
+import { attachDetectionProvenance, jevDetection } from "./merge.js";
 
-// Jev-first judging for one session.
-//
-//   plan -> ONE round trip of purpose-built requests -> gate each axis
-//     confident      -> the verdict is Jev's; one batched LLM call writes the
-//                       reasons for the fails, passes get templated text
-//     uncertain, or
-//     anything Jev
-//     could not do   -> the judge that owns the axis runs EXACTLY as today
-//
-// Nothing here decides an axis Jev did not answer, and nothing here writes a
-// verdict shape the LLM path could not have written. That is what makes
-// JEV_MODE=off a true rollback rather than a different product.
+// Jev supplies a candidate. Only clean, complete results over unchanged
+// conversation evidence may skip review. Every suspected failure, custom
+// metric and changed node view goes to the existing independent LLM judge.
 
 /** The conversation detections Jev can answer, with everything the three
  *  layers need: the LLM criteria to fall back to, the raw key resolveOutcomes
@@ -104,8 +80,6 @@ export interface JevSessionResult {
   };
 }
 
-const LLM = { backend: "llm" as const };
-
 /** Ask Jev everything at once. One request's failure is local to its axes. */
 async function runPlanRequests(
   jev: JevClient,
@@ -126,27 +100,6 @@ async function runPlanRequests(
     }),
   );
   return new Map(entries);
-}
-
-function detailFor(g: GatedAxis): string | undefined {
-  const axis = g.axis;
-  if (axis.kind !== "node") return undefined;
-  const fired = new Set(g.firedKeys);
-  if (axis.judge === "variable_extraction") {
-    const names = (axis.variables ?? []).filter((v) => fired.has(v.key)).map((v) => `${v.variable}${v.recorded ? " (recorded)" : " (not recorded)"}`);
-    return names.length ? `variables flagged: ${names.join(", ")}` : undefined;
-  }
-  if (axis.judge === "intent_identification") {
-    const named = (axis.intents ?? []).filter((i) => fired.has(i.key) && i.intent).map((i) => i.intent);
-    const wrong = (axis.intents ?? []).some((i) => fired.has(i.key) && !i.intent);
-    const parts = [named.length ? `intents that should have fired: ${named.join(", ")}` : "", wrong ? "an intent fired without support from the caller" : ""].filter(Boolean);
-    return parts.length ? parts.join("; ") : undefined;
-  }
-  if (axis.judge === "hallucination") {
-    const claims = g.firedKeys.filter((k) => k.includes(".claim.")).length;
-    return claims ? `${claims} spoken value(s) could not be grounded` : undefined;
-  }
-  return undefined;
 }
 
 export async function evaluateSessionJevFirst(args: {
@@ -173,7 +126,7 @@ export async function evaluateSessionJevFirst(args: {
   const startedAt = Date.now();
   const results = await runPlanRequests(jev, plan.requests);
   const jevMs = Date.now() - startedAt;
-  const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, results, gates)));
+  const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, results, gates, input.nodes)));
 
   const stats: JevSessionResult["stats"] = {
     requests: plan.requests.length,
@@ -186,66 +139,17 @@ export async function evaluateSessionJevFirst(args: {
     jevMs,
   };
   for (const g of gated.values()) {
-    if (g.outcome === "pass") stats.autoPass++;
-    else if (g.outcome === "fail") stats.autoFail++;
-    else if (g.outcome === "unknown") stats.unknown++;
+    if (routeAxis(g) === "auto_pass") stats.autoPass++;
     else stats.reviewed++;
     if (g.fallback) stats.fallbacks[g.fallback] = (stats.fallbacks[g.fallback] ?? 0) + 1;
   }
 
   const voice = isVoiceChannel(input.transport);
   const hasTranscript = !!input.full_transcript?.trim();
-  const decided = (id: string): GatedAxis | undefined => {
+  const provenanceFor = (id: string): JudgeProvenance => {
     const g = gated.get(id);
-    return g && g.outcome !== "review" ? g : undefined;
+    return decisionProvenance(g, g ? gates[g.axis.kind === "custom" ? CUSTOM_METRIC_GATE : g.axis.judge] : undefined);
   };
-
-  // ── the reasons for every confident fail and N/A metric, in ONE call ───────
-  const failing: ReasonRequestAxis[] = [];
-  // Only the nodes a defect was found on: node configs are large, and sending
-  // every node of a 30-node session would make this the most expensive call of
-  // the run — and risk truncating the very explanations it exists to produce.
-  const failingNodeIndexes = new Set<number>();
-  // Capped like the Jev question that decided it: a metric body is free text.
-  const metricBody = new Map(customJudges.map((s) => [s.name, `metric '${s.display_name}': ${s.body.slice(0, 1200)}`]));
-  for (const g of gated.values()) {
-    // A custom metric the call never reached needs prose too — the LLM judge it
-    // replaces writes one, and N/A is its commonest outcome, so skipping it
-    // would strip reasoning from most custom-metric verdicts.
-    const naMetric = g.outcome === "unknown" && g.axis.kind === "custom";
-    if (g.outcome !== "fail" && !naMetric) continue;
-    const axis = g.axis;
-    const nodeIndex = axis.kind === "node" || axis.kind === "custom" ? axis.nodeIndex : undefined;
-    // An N/A is explained from the metric text and the transcript, so it does
-    // not pull its node config in — that is what keeps this call small when
-    // most metrics come back not applicable.
-    if (nodeIndex !== undefined && !naMetric) failingNodeIndexes.add(nodeIndex);
-    const detail = axis.kind === "custom" ? metricBody.get(axis.judge) : detailFor(g);
-    failing.push({
-      id: axis.id,
-      judge: axis.judge,
-      kind: naMetric ? "not_applicable" : "defect",
-      ...(nodeIndex !== undefined ? { node_name: input.nodes[nodeIndex]?.node_name } : {}),
-      ...(detail ? { detail } : {}),
-    });
-  }
-  const reasonsPromise: Promise<ReasonMap> = failing.length
-    ? writeFailReasons({
-        ctx: input,
-        nodes: input.nodes.flatMap((node, nodeIndex) => (failingNodeIndexes.has(nodeIndex) ? [{ node, nodeIndex }] : [])),
-        axes: failing,
-        provider,
-      })
-        .then((r) => r.reasons)
-        .catch((e) => {
-          // A transient provider failure must retry the whole session, exactly
-          // as it does for a judge call; a deterministic one keeps the verdicts
-          // and falls back to the templated text.
-          if (classifyErrorDurability(e) === "transient") throw e;
-          console.error(`[jev] reason writer unavailable — keeping verdicts with templated reasons: ${(e as Error).message}`);
-          return new Map();
-        })
-    : Promise.resolve(new Map());
 
   // ── conversation axis ──────────────────────────────────────────────────────
   const conversationPromise = (async (): Promise<{ metrics: SimConversationMetrics; provenance: Map<keyof SimConversationMetrics, JudgeProvenance> }> => {
@@ -263,14 +167,14 @@ export async function evaluateSessionJevFirst(args: {
       Promise.all(
       CONVERSATION_AXES.map(async ({ judge, criteria, rawKey, metricKey }): Promise<[keyof ConversationDetectionRaws, DetectionResult]> => {
         if (VOICE_ONLY.has(judge) && !voice) return [rawKey, voiceOnlySkip];
-        const g = decided(`c.${judge}`);
-        if (g) {
-          provenance.set(metricKey, provenanceOf(g));
-          return [rawKey, jevDetection(g, await reasonsPromise)];
+        const g = gated.get(`c.${judge}`);
+        if (g && routeAxis(g) === "auto_pass") {
+          provenance.set(metricKey, provenanceFor(`c.${judge}`));
+          return [rawKey, jevDetection(g, new Map())];
         }
         // Reviewed (or never asked): the LLM detection judge decides it, and
         // the row says so — a mixed run must be readable from the data alone.
-        provenance.set(metricKey, LLM);
+        provenance.set(metricKey, provenanceFor(`c.${judge}`));
         return [rawKey, await runDetection(judge, criteria, input, provider)];
       }),
       ),
@@ -284,37 +188,27 @@ export async function evaluateSessionJevFirst(args: {
   // ── node axes ──────────────────────────────────────────────────────────────
   const nodesPromise = Promise.all(
     input.nodes.map(async (node, nodeIndex): Promise<NodeEvaluation> => {
-      const g = (judge: NodeJudgeName) => decided(`n${nodeIndex}:${judge}`);
+      const provenance = (judge: NodeJudgeName) => provenanceFor(`n${nodeIndex}:${judge}`);
       const [adherence, hallucination, variable, loop, intent] = await Promise.all([
         (async () => {
-          const decision = g("instructions_adherence");
-          if (decision) return jevAdherence(decision, await reasonsPromise);
           const { data } = await runInstructionAdherenceJudge(node, input, provider);
-          return { ...deriveInstructionAdherence(data), ...LLM };
+          return { ...deriveInstructionAdherence(data), ...provenance("instructions_adherence") };
         })(),
         (async () => {
-          const decision = g("hallucination");
-          if (decision) return jevHallucination(decision, await reasonsPromise);
           const { data } = await runHallucinationJudge(node, input, provider);
-          return { ...mapHallucination(data), ...LLM };
+          return { ...mapHallucination(data), ...provenance("hallucination") };
         })(),
         (async () => {
-          const decision = g("variable_extraction");
-          if (decision) return jevVariables(decision, node, await reasonsPromise).metrics;
           const { data } = await runVariableExtractionJudge(node, input, provider);
-          return { ...mapVariableExtraction(data, node.required_variables), ...LLM };
+          return { ...mapVariableExtraction(data, node.required_variables), ...provenance("variable_extraction") };
         })(),
         (async () => {
-          const decision = g("node_loop");
-          if (decision) return jevNodeLoop(decision, await reasonsPromise);
           const { data } = await runLoopJudge(node, input, provider);
-          return { ...mapNodeLoop(data), ...LLM };
+          return { ...mapNodeLoop(data), ...provenance("node_loop") };
         })(),
         (async () => {
-          const decision = g("intent_identification");
-          if (decision) return jevIntent(decision, await reasonsPromise);
           const { data } = await runIntentJudge(node, input, provider);
-          return { ...data, ...LLM };
+          return { ...data, ...provenance("intent_identification") };
         })(),
       ]);
       return {
@@ -334,32 +228,15 @@ export async function evaluateSessionJevFirst(args: {
   const customPromise = Promise.all(
     customJudges.map(async (spec): Promise<CustomMetricVerdict | null> => {
       if (!hasTranscript) return null;
-      // Same containment the LLM path has: one broken custom judge must not
-      // blank the session's other judging, while a provider blip still retries it.
-      try {
-        if (spec.scope === "conversation") {
-          const decision = decided(`m.${spec.name}`);
-          if (decision) return jevCustomMetric(spec, decision, await reasonsPromise);
-          return await runCustomMetricJudge(spec, input, refOf, provider);
-        }
-        // Node scope: a node the gate left uncertain is re-judged on its own;
-        // the decided ones cost nothing. Roll-up is the shared rule either way.
-        const anyDecided = input.nodes.some((_, i) => decided(`m${i}.${spec.name}`));
-        if (!anyDecided) return await runCustomMetricJudge(spec, input, refOf, provider);
-        return await judgeNodeScopeCustomMetric({ spec, input, refOf, decided, reasonsPromise, provider });
-      } catch (e) {
-        if (classifyErrorDurability(e) === "transient") throw e;
-        console.error(`[jev] custom judge ${spec.name} unavailable: ${(e as Error).message}`);
-        return {
-          judge_name: spec.name,
-          display_name: spec.display_name,
-          scope: spec.scope,
-          verdict: "unknown",
-          reason: "",
-          technical_reason: `custom judge unavailable: ${(e as Error).message}`,
-          available: false,
-        };
-      }
+      // The shared judge owns roll-up and deterministic/transient failure handling.
+      const verdict = await runCustomMetricJudge(spec, input, refOf, provider);
+      if (spec.scope === "conversation") return { ...verdict, ...provenanceFor(`m.${spec.name}`) };
+      const candidates = input.nodes.map((node, i) => ({ ref: refOf(node.node_uuid), ...provenanceFor(`m${i}.${spec.name}`) }));
+      return {
+        ...verdict, backend: "llm",
+        ...(verdict.per_node ? { per_node: verdict.per_node.map((n, i) => ({ ...n, ...candidates[i] })) } : {}),
+        ...(!verdict.available ? { jev_node_candidates: candidates } : {}),
+      };
     }),
   );
 
@@ -370,47 +247,5 @@ export async function evaluateSessionJevFirst(args: {
     node_evaluations,
     custom_metrics: custom.filter((c): c is CustomMetricVerdict => c !== null),
     stats,
-  };
-}
-
-/** A node-scope custom metric the gate decided on some nodes and left uncertain
- *  on others: judge only the uncertain ones, then apply the shared roll-up. */
-async function judgeNodeScopeCustomMetric(args: {
-  spec: CustomJudgeSpec;
-  input: ConversationInput;
-  refOf: (nodeUuid: string) => string;
-  decided: (id: string) => GatedAxis | undefined;
-  reasonsPromise: Promise<ReasonMap>;
-  provider?: LlmProvider;
-}): Promise<CustomMetricVerdict> {
-  const { spec, input, refOf, decided, reasonsPromise, provider } = args;
-  const perNode: CustomMetricNodeVerdict[] = await Promise.all(
-    input.nodes.map(async (node, nodeIndex): Promise<CustomMetricNodeVerdict> => {
-      const decision = decided(`m${nodeIndex}.${spec.name}`);
-      if (!decision) return judgeCustomMetricNode(spec, node, input, refOf, provider);
-      const verdict = jevCustomMetric(spec, decision, await reasonsPromise);
-      return {
-        ref: refOf(node.node_uuid),
-        node_name: node.node_name,
-        verdict: verdict.verdict,
-        reason: verdict.reason,
-        technical_reason: verdict.technical_reason,
-      };
-    }),
-  );
-  const rolled = rollUpNodeVerdicts(perNode);
-  const decidingIndex = perNode.findIndex((n) => n.verdict === rolled);
-  const deciding = decidingIndex >= 0 ? perNode[decidingIndex] : undefined;
-  const decidingGate = decidingIndex >= 0 ? decided(`m${decidingIndex}.${spec.name}`) : undefined;
-  return {
-    judge_name: spec.name,
-    display_name: spec.display_name,
-    scope: spec.scope,
-    verdict: rolled,
-    reason: deciding?.reason ?? "",
-    technical_reason: deciding?.technical_reason ?? "",
-    available: true,
-    per_node: perNode,
-    ...(decidingGate ? provenanceOf(decidingGate) : LLM),
   };
 }

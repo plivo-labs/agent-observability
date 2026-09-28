@@ -36,9 +36,9 @@ const ids = (p: ReturnType<typeof buildJevPlan>) => p.axes.map((a) => a.id).sort
 const keys = (p: ReturnType<typeof buildJevPlan>) => p.requests.map((r) => r.key).sort();
 
 describe("buildJevPlan — request set", () => {
-  test("a one-node voice session plans the conversation, node, variable and hallucination requests", () => {
+  test("a one-node voice session plans the conversation, shared node/variable and hallucination requests", () => {
     const plan = buildJevPlan(ctx());
-    expect(keys(plan)).toEqual(["c", "h0", "n0", "v0.0"]);
+    expect(keys(plan)).toEqual(["c", "h0", "n0"]);
     expect(ids(plan)).toEqual([
       "c.bot_detection", "c.call_screening", "c.do_not_disturb", "c.low_engagement", "c.voicemail_detection", "c.wrong_number",
       "n0:hallucination", "n0:instructions_adherence", "n0:intent_identification", "n0:node_loop", "n0:variable_extraction#0",
@@ -131,7 +131,7 @@ describe("buildJevPlan — budget", () => {
     const prompt = "P".repeat(5000);
     const state = jevNodeState(node({ node_prompt: prompt }), ctx({ full_transcript: transcript })) as Record<string, string>;
     expect(state.node_prompt).toBe(prompt);
-    expect(state.node_transcript).toBeUndefined();
+    expect(state.node_transcript).toContain("Got it, order 42.");
     expect(state.conversation_history).toContain("User: hi");
     expect(state.conversation_history).toContain("Agent: hello");
     expect(state.conversation_history.length).toBeLessThan(5000);
