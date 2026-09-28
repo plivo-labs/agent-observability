@@ -9,10 +9,10 @@ export const EVIDENCE_VERSION = "node-evidence-v2";
 export function prepareEvidence(ctx: ConversationInput) {
   const history = (loop: boolean) => ctx.timeline
     ? ctx.timeline.map((turn, i) => ({ turn, i })).filter(({ turn }) => !loop || !turn.idle).map(({ turn, i }) =>
-      `[event ${i}; node ${turn.node_uuid}]\n${renderFullTranscript([turn])}`).join("\n")
-    : loop ? idleFreeTranscript(ctx) : ctx.full_transcript;
-  const conversation = clipToolResults(history(false));
-  const loopConversation = clipToolResults(history(true));
+      `[event ${i}; node ${turn.node_uuid}]\n${clipToolResults(renderFullTranscript([turn]))}`).join("\n")
+    : clipToolResults(loop ? idleFreeTranscript(ctx) : ctx.full_transcript);
+  const conversation = history(false);
+  const loopConversation = history(true);
   return {
     version: EVIDENCE_VERSION,
     fullTranscript: clipToolResults(ctx.full_transcript),

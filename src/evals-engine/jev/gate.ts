@@ -2,7 +2,7 @@ import { CUSTOM_METRIC_GATE, decide, type JudgeGate } from "../../jev/gates.js";
 import { JEV_OVERFLOW, JevError, type JevResponse } from "../../jev/types.js";
 import type { JevAxis, JevPlan } from "./plan.js";
 import type { NodeEvalInput } from "../types.js";
-import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-extraction.js";
+import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-guards.js";
 
 // Turn Jev's probabilities into a decision per axis. Pure: the caller does the
 // I/O and hands in what each request returned.

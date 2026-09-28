@@ -46,7 +46,7 @@ const longEvents: StoredEvent[] = [
 const llm = () => new MockLLM([(args: any) => defaultJudgeResponder(args.system as string) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" })]);
 
 describe("JEV_JUDGES and JEV_GATES are read at judge time", () => {
-  test("only the listed judges are asked, and the gate override decides them", async () => {
+  test("only listed judges are asked; overrides change candidates without bypassing review", async () => {
     const jev = new MockJev([{}], 0.6);
     const verdicts = await evaluateIngestedSession(config, events, llm(), "livekit", undefined, undefined, [], jev as any);
     const asked = jev.calls.flatMap((c) => Object.keys(c.questions));
@@ -57,10 +57,11 @@ describe("JEV_JUDGES and JEV_GATES are read at judge time", () => {
     expect(asked.some((k) => k.includes("intent"))).toBe(false);
     expect(asked.some((k) => k.includes("bot_detection"))).toBe(false);
 
-    // the override's fail_above of 0.5 turns a 0.6 into a fail, where the
-    // shipped gate would have reviewed it
-    expect(verdicts.node_evaluations[0]!.node_loop.loop_detected).toBe(true);
-    expect(verdicts.node_evaluations[0]!.node_loop.backend).toBe("jev");
+    const loop = verdicts.node_evaluations[0]!.node_loop;
+    expect(loop.jev?.candidate).toBe("fail");
+    expect(loop.jev?.gate?.fail_above).toBe(0.5);
+    expect(loop.loop_detected).toBe(false);
+    expect(loop.backend).toBe("llm");
     expect(verdicts.node_evaluations[0]!.hallucination.backend).toBe("llm");
   });
 
@@ -82,17 +83,21 @@ describe("JEV_CUSTOM_METRICS=on", () => {
     body: "Fail if the agent never greeted the caller.", output: "", ...over,
   });
 
-  test("a node-scope metric is decided by Jev and rolls up with its provenance", async () => {
+  test("a node-scope candidate is independently reviewed and retains its provenance", async () => {
     const jev = new MockJev([(req) => {
       const out: Record<string, number> = {};
       for (const key of Object.keys(req.questions)) out[key] = key.endsWith(".applicable") ? 0.95 : 0.93;
       return out;
     }]);
-    const verdicts = await evaluateIngestedSession(config, events, llm(), "livekit", undefined, undefined, [spec()], jev as any);
+    const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_custom_metric"
+      ? JSON.stringify({ verdict: "pass", reason: "Greeting confirmed.", technical_reason: "review" })
+      : defaultJudgeResponder(args.system)!]);
+    const verdicts = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [spec()], jev);
     const metric = verdicts.custom_metrics![0]!;
-    expect(metric.verdict).toBe("fail");
-    expect(metric.backend).toBe("jev");
+    expect(metric.verdict).toBe("pass");
+    expect(metric.backend).toBe("llm");
     expect(metric.per_node).toHaveLength(1);
+    expect(metric.per_node![0]!.jev?.candidate).toBe("fail");
   });
 
   test("a broken custom judge is contained: unknown + unavailable, the rest of the session still judged", async () => {

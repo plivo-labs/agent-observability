@@ -31,15 +31,11 @@ import { runHallucinationJudge, runInstructionAdherenceJudge, runLoopJudge } fro
 import { runVariableExtractionJudge } from "../judges/variable-extraction.js";
 import { runIntentJudge } from "../judges/intent-judge.js";
 import {
-  judgeCustomMetricNode,
-  rollUpNodeVerdicts,
   runCustomMetricJudge,
   type CustomJudgeSpec,
-  type CustomMetricNodeVerdict,
   type CustomMetricVerdict,
 } from "../judges/custom-metric.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
-import { classifyErrorDurability } from "../../error-durability.js";
 import { decisionProvenance, routeAxis } from "./policy.js";
 import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type NodeJudgeName } from "./plan.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type RequestResult } from "./gate.js";
@@ -232,27 +228,15 @@ export async function evaluateSessionJevFirst(args: {
   const customPromise = Promise.all(
     customJudges.map(async (spec): Promise<CustomMetricVerdict | null> => {
       if (!hasTranscript) return null;
-      // Same containment the LLM path has: one broken custom judge must not
-      // blank the session's other judging, while a provider blip still retries it.
-      try {
-        if (spec.scope === "conversation") {
-          const verdict = await runCustomMetricJudge(spec, input, refOf, provider);
-          return { ...verdict, ...provenanceFor(`m.${spec.name}`) };
-        }
-        return await judgeNodeScopeCustomMetric({ spec, input, refOf, provenanceFor, provider });
-      } catch (e) {
-        if (classifyErrorDurability(e) === "transient") throw e;
-        console.error(`[jev] custom judge ${spec.name} unavailable: ${(e as Error).message}`);
-        return {
-          judge_name: spec.name,
-          display_name: spec.display_name,
-          scope: spec.scope,
-          verdict: "unknown",
-          reason: "",
-          technical_reason: `custom judge unavailable: ${(e as Error).message}`,
-          available: false,
-        };
-      }
+      // The shared judge owns roll-up and deterministic/transient failure handling.
+      const verdict = await runCustomMetricJudge(spec, input, refOf, provider);
+      if (spec.scope === "conversation") return { ...verdict, ...provenanceFor(`m.${spec.name}`) };
+      const candidates = input.nodes.map((node, i) => ({ ref: refOf(node.node_uuid), ...provenanceFor(`m${i}.${spec.name}`) }));
+      return {
+        ...verdict, backend: "llm",
+        ...(verdict.per_node ? { per_node: verdict.per_node.map((n, i) => ({ ...n, ...candidates[i] })) } : {}),
+        ...(!verdict.available ? { jev_node_candidates: candidates } : {}),
+      };
     }),
   );
 
@@ -263,29 +247,5 @@ export async function evaluateSessionJevFirst(args: {
     node_evaluations,
     custom_metrics: custom.filter((c): c is CustomMetricVerdict => c !== null),
     stats,
-  };
-}
-
-/** Preserve candidate and final-judge provenance on each emitted node row. */
-async function judgeNodeScopeCustomMetric(args: {
-  spec: CustomJudgeSpec;
-  input: ConversationInput;
-  refOf: (nodeUuid: string) => string;
-  provenanceFor: (id: string) => JudgeProvenance;
-  provider?: LlmProvider;
-}): Promise<CustomMetricVerdict> {
-  const { spec, input, refOf, provenanceFor, provider } = args;
-  const perNode: CustomMetricNodeVerdict[] = await Promise.all(
-    input.nodes.map(async (node, nodeIndex) => ({
-      ...await judgeCustomMetricNode(spec, node, input, refOf, provider),
-      ...provenanceFor(`m${nodeIndex}.${spec.name}`),
-    })),
-  );
-  const rolled = rollUpNodeVerdicts(perNode);
-  const deciding = perNode.find(n => n.verdict === rolled);
-  return {
-    judge_name: spec.name, display_name: spec.display_name, scope: spec.scope,
-    verdict: rolled, reason: deciding?.reason ?? "", technical_reason: deciding?.technical_reason ?? "",
-    available: true, per_node: perNode, backend: "llm",
   };
 }

@@ -58,6 +58,8 @@ export type CustomMetricVerdict = JudgeProvenance & {
    *  skips unavailable verdicts, the same contract as CmDetection. */
   available: boolean;
   per_node?: CustomMetricNodeVerdict[];
+  /** Retain collected signals when node review is unavailable, without inventing per-node verdicts. */
+  jev_node_candidates?: Array<JudgeProvenance & { ref: string }>;
 };
 
 const CustomMetricRawZ = z.object({
