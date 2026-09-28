@@ -49,3 +49,17 @@ test("node and variable questions share one identical state and retain axis rout
     for (const key of axis.questionKeys) expect(request.questions[key]).toBeDefined();
   }
 });
+
+test("clipping a tool result retains the next event's owner and revisit order", async () => {
+  const { prepareEvidence } = await import("../src/evals-engine/jev/evidence.js");
+  const ctx = input([node("A", "Hi"), node("B", "Hello")]);
+  ctx.timeline = [
+    { node_uuid: "A", user: "", agent: `Tool_Result: lookup -> ${"x".repeat(1700)}`, intent: "", evidence: true },
+    { node_uuid: "B", user: "42", agent: "", intent: "" },
+    { node_uuid: "A", user: "", agent: "Thanks", intent: "" },
+  ];
+  const history = prepareEvidence(ctx).conversation;
+  expect(history).toContain("[tool output clipped]");
+  expect(history).toContain("[event 1; node B]\nUser: 42");
+  expect(history.indexOf("[event 2; node A]")).toBeGreaterThan(history.indexOf("[event 1; node B]"));
+});

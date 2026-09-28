@@ -200,3 +200,17 @@ test("custom applicability is independently reviewed and node provenance survive
   expect((row.raw.jev as any)?.candidate).toBe("review");
   expect((row.raw.jev as any)?.probability).toBe(0.21);
 });
+
+test("unavailable independent review retains candidates without emitting a pass", async () => {
+  const provider = new MockLLM([(args: any) => ["eval_detection", "eval_custom_metric"].includes(args.jsonSchema?.name)
+    ? "invalid" : defaultJudgeResponder(args.system)!]);
+  const spec = { name: "metric:hold", display_name: "Hold", scope: "node" as const, body: "Hold warning", output: "" };
+  const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [spec], new MockJev([{}], 0.97));
+  expect(v.conversation_metrics.voicemail_detected.available).toBe(false);
+  expect(v.conversation_metrics.voicemail_detected.jev?.candidate).toBe("fail");
+  const metric = v.custom_metrics![0]!;
+  expect(metric.available).toBe(false);
+  expect(metric.per_node).toBeUndefined();
+  expect(metric.jev_node_candidates?.[0]?.jev?.candidate).toBe("fail");
+  expect(buildExternalEvalRows(v).some(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection")).toBe(false);
+});

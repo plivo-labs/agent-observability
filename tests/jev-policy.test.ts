@@ -50,3 +50,29 @@ test("only unchanged conversation passes bypass review; failures and new evidenc
   expect(routeAxis({ ...c, axis: { kind: "node" } })).toBe("uncalibrated_evidence");
   expect(routeAxis({ ...c, axis: { kind: "custom" }, outcome: "unknown" })).toBe("verify_applicability");
 });
+
+
+for (const probability of [undefined, 0.5, 0.02]) {
+  test(`a pending final batch cannot clear an unresolved immediate field (${probability})`, () => {
+    const node = { ...input.nodes[0]!, node_prompt: "Submit lead data before any transfer.",
+      required_variables: ["order_id", "callback"],
+      variable_rules: { order_id: "Record the caller's order ID.", callback: "Record immediately when the caller states a callback time." },
+      turns: [
+        { node_uuid: "a", user: "Order 42. Call back tomorrow.", agent: "", intent: "" },
+        { node_uuid: "a", user: "", agent: "Let me transfer you now [interrupted]", intent: "" },
+        { node_uuid: "a", user: "Okay", agent: "", intent: "" },
+      ],
+    };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
+    const results = new Map<string, RequestResult>(plan.requests.map(r => [r.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(r.questions).flatMap(k => {
+        const p = k.endsWith("var.0") ? 0.96 : probability;
+        return p === undefined ? [] : [[k, { type: "noul" as const, noul: p }]];
+      })),
+    } }]));
+    const [g] = mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]));
+    expect(g!.ignoredKeys).toHaveLength(1);
+    expect(g!.outcome).toBe(probability === 0.02 ? "pass" : "review");
+  });
+}
