@@ -3,7 +3,7 @@ import type { ConversationInput, NodeEvalInput, IntentIdentificationMetrics } fr
 import { IntentIdentificationRawZ } from "./types.js";
 import { systemForIntent } from "./instructions.js";
 import { runLlmJudge } from "./run-llm-judge.js";
-import { renderNodeTranscript } from "./node-judge-payload.js";
+import { scopedNodeEvidence } from "../node-evidence.js";
 import { INTENT_JSON } from "./schemas.js";
 
 // AO Eval Engine — intent identification judge. LLM-based, matching the reference engine's MetricIntent: given the node's
@@ -53,8 +53,7 @@ export async function runIntentJudge(
       global_prompt: ctx.global_prompt,
       node_name: node.node_name,
       chosen_intent: node.chosen_intent,
-      node_transcript: renderNodeTranscript(node),
-      conversation_history: ctx.full_transcript,
+      ...scopedNodeEvidence(node, ctx),
     },
     schema: IntentIdentificationRawZ,
     jsonSchema: INTENT_JSON,
@@ -65,7 +64,7 @@ export async function runIntentJudge(
   const correct = !raw.intent_not_found && !raw.intent_wrongly_identified;
   const data: IntentIdentificationMetrics = {
     intent_not_found: raw.intent_not_found,
-    intent_wrongly_identified: raw.intent_wrongly_identified,
+    intent_wrongly_identified: raw.intent_wrongly_identified && !raw.intent_not_found,
     score: correct ? 1.0 : 0.0,
     reason: raw.reason,
     technical_reason: raw.technical_reason,

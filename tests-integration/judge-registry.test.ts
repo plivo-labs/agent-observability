@@ -1,6 +1,6 @@
-// Proves migration 024's seeded rows ARE the shipped prompts (the migration is
-// generated, but this closes the loop against hand-edits to the SQL), and that
-// the loader + override plumbing read them back verbatim from real Postgres.
+// Migration 024 is a frozen initial seed. Production reconciles defaults from
+// code at boot before judging; exercise that same path rather than requiring
+// the historical migration to change whenever a shipped prompt changes.
 import { describe, test, expect, beforeAll } from "bun:test";
 import { describeDb } from "./helpers.js";
 import { sql } from "../src/db.js";
@@ -10,15 +10,17 @@ import {
   loadJudgeRegistry,
   ensureJudgePromptOverrides,
   __resetJudgeRegistryCacheForTest,
+  syncDefaultJudges,
 } from "../src/evals-engine/judge-registry.js";
 import { promptBody, promptOutput, promptSub, clearJudgePromptOverrides } from "../src/evals-engine/judges/judge-prompts.js";
 
 describeDb("judge registry (real PG)", () => {
   beforeAll(async () => {
     await migrate(sql);
+    await syncDefaultJudges();
   });
 
-  test("seeded default rows match the catalogue field by field", async () => {
+  test("boot-reconciled default rows match the catalogue field by field", async () => {
     const rows = await loadJudgeRegistry();
     const defaults = rows.filter((r) => r.type === "default");
     expect(defaults.length).toBe(DEFAULT_JUDGE_ROWS.length);
@@ -59,8 +61,12 @@ describeDb("judge registry (real PG)", () => {
 });
 
 describeDb("default-judge boot sync (real PG)", () => {
+  beforeAll(async () => {
+    await migrate(sql);
+    await syncDefaultJudges();
+  });
+
   test("a drifted default row is reconciled to the catalogue; custom rows untouched", async () => {
-    const { syncDefaultJudges } = await import("../src/evals-engine/judge-registry.js");
     await migrate(sql);
     // no drift → no writes
     expect(await syncDefaultJudges()).toBe(0);

@@ -4,7 +4,7 @@ import type { GatedAxis } from "./gate.js";
 import { EVIDENCE_VERSION } from "./evidence.js";
 
 export const POLICY_VERSION = "verify-failures-v2";
-export const QUESTION_VERSION = "jev-questions-v1";
+export const QUESTION_VERSION = "jev-node-questions-v2";
 export type ReviewRoute = "auto_pass" | "verify_failure" | "verify_applicability" | "uncalibrated_evidence" | "uncertain_or_incomplete";
 
 /** Gates produce candidates; policy decides who may publish the final verdict.
@@ -36,7 +36,7 @@ export function decisionProvenance(g: GatedAxis | undefined, gate?: JudgeGate): 
       ...(g.fallback ? { fallback: g.fallback } : {}),
       route,
       evidence_version: g.axis.kind === "conversation" ? "speech-v1" : EVIDENCE_VERSION,
-      question_version: QUESTION_VERSION,
+      question_version: g.axis.kind === "node" ? QUESTION_VERSION : "jev-questions-v1",
       policy_version: POLICY_VERSION,
     },
   };

@@ -129,7 +129,12 @@ describe("buildJevPlan — budget", () => {
 
   test("only tool output is clipped; the transcript and the node prompt reach Jev whole", () => {
     const prompt = "P".repeat(5000);
-    const state = jevNodeState(node({ node_prompt: prompt }), ctx({ full_transcript: transcript })) as Record<string, string>;
+    const target = node({ node_prompt: prompt });
+    const prior = [
+      { node_uuid: "prior", user: "hi", agent: "hello", intent: "" },
+      { node_uuid: "prior", user: "", agent: giant, evidence: true, intent: "" },
+    ];
+    const state = jevNodeState(target, ctx({ nodes: [target], full_transcript: transcript, timeline: [...prior, ...target.turns] })) as Record<string, string>;
     expect(state.node_prompt).toBe(prompt);
     expect(state.node_transcript).toContain("Got it, order 42.");
     expect(state.conversation_history).toContain("User: hi");

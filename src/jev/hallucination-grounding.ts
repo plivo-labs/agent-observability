@@ -191,6 +191,8 @@ export interface HallucinationState {
   global_prompt: string;
   agent_persona_and_scripted_lines_from_config: string[];
   global_variables: Record<string, string>;
+  available_intents: unknown[];
+  intent_tools: Record<string, string>;
   tool_results: string[];
   caller_said: string[];
   agent_spoken: string[];
@@ -216,6 +218,10 @@ export function buildHallucinationState(
     global_prompt: call.global_prompt ?? "",
     agent_persona_and_scripted_lines_from_config: configExcerpts(call, agentLines),
     global_variables: call.global_variables ?? {},
+    // An offered handoff/callback can be grounded in the configured path even
+    // before it executes. Keep the full catalog when asking about capability.
+    available_intents: node.available_intents ?? [],
+    intent_tools: node.intent_tools ?? {},
     tool_results: transcriptLines(clipped, ["Tool_Call:", "Tool_Result:"]).map((l) => l.slice(0, 1500)),
     caller_said: transcriptLines(clipped, ["User:"]).map((l) => l.slice(0, LINE_CHARS)),
     agent_spoken: agentLines.map((l) => l.slice(0, LINE_CHARS)),

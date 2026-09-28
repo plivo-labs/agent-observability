@@ -130,7 +130,7 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.reason).toBe("No variables declared on this node — extraction not applicable.");
   });
 
-  test("variable extraction: an unconfigured stored name remains a failure", async () => {
+  test("variable extraction: an extra runtime field alone does not fail configured extraction", async () => {
     const llm = new MockLLM([
       JSON.stringify({
         extraction_successful: false,
@@ -147,7 +147,7 @@ describe("LLM node judges (MockLLM)", () => {
       llm,
     );
 
-    expect(data.extraction_successful).toBe(false);
+    expect(data.extraction_successful).toBe(true);
   });
 
   test("variable extraction: variable rules and decision boundary are repeated after the call payload", async () => {

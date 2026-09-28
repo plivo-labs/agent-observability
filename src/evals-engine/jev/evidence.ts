@@ -2,8 +2,9 @@ import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { idleFreeTranscript, withoutIdleTurns } from "../judges/node-judges.js";
 import { clipToolResults } from "../../jev/tokens.js";
+import { NODE_EVIDENCE_VERSION, scopedNodeEvidence } from "../node-evidence.js";
 
-export const EVIDENCE_VERSION = "node-evidence-v2";
+export const EVIDENCE_VERSION = NODE_EVIDENCE_VERSION;
 
 /** Prepare shared call views once; never reconstruct chronology by grouping nodes. */
 export function prepareEvidence(ctx: ConversationInput) {
@@ -14,6 +15,7 @@ export function prepareEvidence(ctx: ConversationInput) {
   const conversation = history(false);
   const loopConversation = history(true);
   return {
+    ctx,
     version: EVIDENCE_VERSION,
     fullTranscript: clipToolResults(ctx.full_transcript),
     conversation,
@@ -28,16 +30,5 @@ export function prepareEvidence(ctx: ConversationInput) {
 export type PreparedEvidence = ReturnType<typeof prepareEvidence>;
 
 export function nodeEvidence(node: NodeEvalInput, evidence: PreparedEvidence, loop = false) {
-  const view = evidence.nodes.get(node) ?? {
-    transcript: clipToolResults(renderFullTranscript(node.turns)),
-    loopTranscript: clipToolResults(renderFullTranscript(withoutIdleTurns(node).turns)),
-  };
-  return {
-    evidence_version: evidence.version,
-    target_node_uuid: node.node_uuid,
-    scope: "Judge only target node actions. Other nodes are context, not actions by this node.",
-    chronology_available: evidence.chronologyAvailable,
-    node_transcript: loop ? view.loopTranscript : view.transcript,
-    conversation_history: loop ? evidence.loopConversation : evidence.conversation,
-  };
+  return scopedNodeEvidence(node, evidence.ctx, { loop, render: clipToolResults });
 }
