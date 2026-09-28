@@ -38,3 +38,7 @@ Both review axes identified grounding edge cases, now covered by regressions: fa
 - A01: rejecting a valid city-level service area because the agent invented a country requirement and abandoned intake remains a genuine adherence failure. Reducing false alarms must preserve this distinction.
 
 These are evidence-review references from the original audit, not newly scored model outputs. Both review axes found no remaining implementation blockers after the follow-up. Before production promotion, run paired old/new evaluator replay and a fresh held-out set with wrong selections, missing catalog coverage, critical consent/procedure violations, minor deviations, interruptions, and long calls. Report false-pass and false-fail rates separately; do not tune thresholds on the same cases used to claim improvement.
+
+## Database integration verification
+
+CI exposed outdated fixtures: the frozen migration-024 seed was compared directly to current prompts without the production boot sync, and stored Jev provenance still expected evidence-v2. Integration setup now runs migrate + syncDefaultJudges, matching API/worker startup; the sweep test checks evidence-v3 and node-question-v2. The frozen migration and production boot behavior are unchanged. A fresh isolated PostgreSQL 17 run passed 114 integration tests, with 13 skips requiring Redis/queue services, and zero failures.
