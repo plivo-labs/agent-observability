@@ -136,14 +136,16 @@ describe("attachDetectionProvenance", () => {
       ["voicemail_detected", { backend: "jev", confidence: 0.95 }],
       ["bot_detected", { backend: "jev", confidence: 0.93 }],
       ["low_engagement", { backend: "jev", confidence: 0.88 }],
-      ["call_screening", { backend: "jev", confidence: 0.2 }],
+      ["call_screening", { backend: "llm", jev: { candidate: "fail" } }],
     ]));
     expect(out.voicemail_detected).toMatchObject({ backend: "jev", confidence: 0.95 });
     expect(out.bot_detected).toMatchObject({ backend: "code" });
     expect(out.bot_detected.confidence).toBeUndefined();
     expect(out.low_engagement).toMatchObject({ backend: "code" });
-    // an unavailable axis was never judged by anyone
-    expect(out.call_screening.backend).toBeUndefined();
+    // Unavailable review keeps its candidate for audit, while fan-out still skips it.
+    expect(out.call_screening.available).toBe(false);
+    expect(out.call_screening.backend).toBe("llm");
+    expect(out.call_screening.jev?.candidate).toBe("fail");
   });
 });
 
