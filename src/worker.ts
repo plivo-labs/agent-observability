@@ -30,6 +30,7 @@ import { queueDispatchEnabled, simEngineConfig } from "./sim-engine/config.js";
 import { consumeSimulationQueue } from "./sim-engine/queue/consumer.js";
 import { makeRedis, type RedisClient } from "./sim-engine/queue/redis.js";
 import { makeLiveKitSimClient } from "./sim-engine/run-engine/livekit-client.js";
+import { startMetricsPush, stopMetricsPush } from "./prometheus.js";
 
 let running = true;
 
@@ -49,6 +50,8 @@ function shutdown(signal: string) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+startMetricsPush();
 
 // Sim-persistence table probe (aodb-write.md): the worker writes ao_sim_* rows from the
 // SQS consumer, and on the managed core-DB those tables are pre-created out-of-band
@@ -160,5 +163,6 @@ await Promise.race([
   ),
 ]);
 
+await stopMetricsPush();
 console.log("[worker] stopped");
 process.exit(0);

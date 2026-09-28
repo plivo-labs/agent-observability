@@ -387,4 +387,11 @@ export const envSchema = z.object({
   // cluster ELB) gets the connection reset by peer → "Scenario generation
   // failed." Default 5000 keeps every relay connection active inside that window.
   SIM_GEN_HEARTBEAT_MS: z.coerce.number().int().positive().default(5000),
+
+  // Judge-verdict counters are pushed, not scraped: the service exposes no
+  // metrics port. Unset URL = counters stay in-process only.
+  PROMETHEUS_PUSHGATEWAY_URL: z.string().optional(),
+  PROMETHEUS_PUSH_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+  // `env` in the pushgateway grouping key (e.g. prod, qa).
+  APP_ENV: z.string().default("unknown"),
 });

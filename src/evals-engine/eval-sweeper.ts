@@ -21,6 +21,7 @@ import { buildSessionEvalInput, evaluateIngestedSession, type AgentConfig, type 
 import { ensureJudgePromptOverrides } from "./judge-registry.js";
 import type { LlmProvider } from "../llm/index.js";
 import { buildExternalEvalRows } from "./fan-out-rows.js";
+import { recordJudgedSession } from "./verdict-metrics.js";
 
 // ── Eval sweeper ──────────────────────────────────────────────────────────────
 //
@@ -241,6 +242,50 @@ export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
     });
 }
 
+/** Fan out, then mark done. Returns false when this run must not count as
+ *  the session's judgement (fenced out, fan-out failed, or claim lost). */
+export async function commitJudgedSession(
+  claim: EvalClaim,
+  verdicts: SessionEvalVerdicts,
+  observedAt: Date,
+): Promise<boolean> {
+  const sessionId = claim.sessionId;
+  // Fan out BEFORE marking the session done. fanOutExternalEvals is
+  // idempotent on identity (it clears + rewrites this session's eval_sweeper
+  // rows in one transaction), so a crash between here and completion just
+  // re-judges and re-fans on retry — no duplicate rows.
+  // Marking done first would strand these rows: 'done' is terminal and the
+  // fan-out has no retry, so a fan-out crash after completion would lose the
+  // only rows the evals tab, session drawer, and alert rules read.
+  try {
+    const fanned = await fanOutExternalEvals(claim, verdicts, observedAt);
+    if (!fanned) {
+      // The fence found our claim gone (session deleted, or adopted by
+      // another sweeper) — write nothing more; the winner (or the erasure)
+      // owns the rows now.
+      console.warn(`[evals] fan-out fenced out (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
+      return false;
+    }
+  } catch (e) {
+    // Leave the claim running so the stale-adoption retry re-fans; don't
+    // complete on top of a partial fan-out.
+    console.error(`[evals] fan-out failed (will retry) session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
+    return false;
+  }
+  const completed = await completeSessionEvalVerdicts(claim, verdicts);
+  if (!completed) {
+    // Lost the claim at the final write (stale adoption / bulk delete). The
+    // fan-out above is identity-idempotent, so the winner's re-fan clears +
+    // rewrites our rows — nothing to undo; just don't double-complete.
+    console.warn(`[evals] complete skipped (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
+    return false;
+  }
+  // running→done happens once per session (terminal, claim-fenced): retries,
+  // stale adoptions and axis re-judges can't reach this line twice.
+  recordJudgedSession(buildExternalEvalRows(verdicts));
+  return true;
+}
+
 /** Judge one claimed session end-to-end. Returns false on a terminal failure. */
 async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider }): Promise<boolean> {
   const sessionId = claim.sessionId;
@@ -355,36 +400,7 @@ async function judgeClaimed(claim: EvalClaim, opts?: { provider?: LlmProvider })
       console.warn(`[evals] claim lost mid-judge session=${sanitizeForLog(sessionId)} — discarding this run`);
       return false;
     }
-    // Fan out BEFORE marking the session done. fanOutExternalEvals is
-    // idempotent on identity (it clears + rewrites this session's eval_sweeper
-    // rows in one transaction), so a crash between here and completion just
-    // re-judges and re-fans on retry — no duplicate rows.
-    // Marking done first would strand these rows: 'done' is terminal and the
-    // fan-out has no retry, so a fan-out crash after completion would lose the
-    // only rows the evals tab, session drawer, and alert rules read.
-    try {
-      const fanned = await fanOutExternalEvals(claim, verdicts, source.sessionEndedAt ?? new Date());
-      if (!fanned) {
-        // The fence found our claim gone (session deleted, or adopted by
-        // another sweeper) — write nothing more; the winner (or the erasure)
-        // owns the rows now.
-        console.warn(`[evals] fan-out fenced out (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
-        return false;
-      }
-    } catch (e) {
-      // Leave the claim running so the stale-adoption retry re-fans; don't
-      // complete on top of a partial fan-out.
-      console.error(`[evals] fan-out failed (will retry) session=${sanitizeForLog(sessionId)}: ${(e as Error).message}`);
-      return false;
-    }
-    const completed = await completeSessionEvalVerdicts(claim, verdicts);
-    if (!completed) {
-      // Lost the claim at the final write (stale adoption / bulk delete). The
-      // fan-out above is identity-idempotent, so the winner's re-fan clears +
-      // rewrites our rows — nothing to undo; just don't double-complete.
-      console.warn(`[evals] complete skipped (claim not ours anymore) session=${sanitizeForLog(sessionId)}`);
-      return false;
-    }
+    if (!(await commitJudgedSession(claim, verdicts, source.sessionEndedAt ?? new Date()))) return false;
     const nodes = verdicts.node_evaluations.length;
     console.log(`[evals] judged session=${sanitizeForLog(sessionId)} nodes=${nodes}`);
     return true;
