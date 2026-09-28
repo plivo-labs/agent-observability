@@ -1,6 +1,6 @@
 // End-to-end Jev-first judging through the REAL event-kick path against real
 // Postgres: the verdict blob, the per-judge rows and their provenance must all
-// land, and the LLM must be called only where the gate said so.
+// land, with independent review deciding suspected failures.
 //
 // The Jev client is INJECTED rather than switched on with env: config is parsed
 // once per process and both integration suites share it, so an env flip here
@@ -75,8 +75,8 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     await sql`DELETE FROM ao_agents WHERE agent_id = ${agentId}`;
   });
 
-  test("gated verdicts and their provenance land in the blob and the rows", async () => {
-    // node_loop fails confidently, everything else is a confident pass.
+  test("reviewed verdicts and Jev candidates land in the blob and the rows", async () => {
+    // Jev flags a loop, but the independent reviewer overturns it.
     const jev = new MockJev([(req: any) => {
       const out: Record<string, number> = {};
       for (const key of Object.keys(req.questions)) out[key] = key.includes("node_loop") ? 0.97 : 0.01;
@@ -91,12 +91,13 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     const verdicts = typeof verdictRow[0].verdicts === "string" ? JSON.parse(verdictRow[0].verdicts) : verdictRow[0].verdicts;
     const node = verdicts.node_evaluations[0];
     expect(node.ref).toBe("node-A");
-    expect(node.node_loop.loop_detected).toBe(true);
-    expect(node.node_loop.backend).toBe("jev");
-    expect(node.node_loop.confidence).toBe(0.97);
-    expect(node.node_loop.reason).toBe("explained n0:node_loop");
-    expect(node.hallucination.backend).toBe("jev");
-    // adherence never auto-passes, so it is the one node judge the LLM still ran
+    expect(node.node_loop.loop_detected).toBe(false);
+    expect(node.node_loop.backend).toBe("llm");
+    expect(node.node_loop.confidence).toBeUndefined();
+    expect(node.node_loop.jev.probability).toBe(0.97);
+    expect(node.node_loop.jev.candidate).toBe("fail");
+    expect(node.hallucination.backend).toBe("llm");
+    // All changed node views remain under independent review during calibration.
     expect(node.instructions_adherence.backend).toBe("llm");
 
     const rows = await sql`
@@ -104,20 +105,22 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
       WHERE session_id = ${sessionId} AND source = 'eval_sweeper' ORDER BY judge_name
     `;
     const byName = new Map<string, any>(rows.map((r: any) => [r.judge_name as string, r]));
-    expect(byName.get("node_loop")!.verdict).toBe("fail");
+    expect(byName.get("node_loop")!.verdict).toBe("pass");
     expect(byName.get("node_loop")!.tag).toBe("node-A");
     expect(byName.get("hallucination")!.verdict).toBe("pass");
     expect(byName.get("voicemail_detection")!.verdict).toBe("pass");
     const loopRow = byName.get("node_loop")!;
     const raw = typeof loopRow.raw === "string" ? JSON.parse(loopRow.raw) : loopRow.raw;
-    expect(raw.backend).toBe("jev");
-    expect(raw.confidence).toBe(0.97);
+    expect(raw.backend).toBe("llm");
+    expect(raw.jev.probability).toBe(0.97);
+    expect(raw.jev.route).toBe("verify_failure");
+    expect(raw.jev.evidence_version).toBe("node-evidence-v2");
     expect(raw.jev_model).toBe("jev-mock");
 
-    // one Jev request per purpose, and the LLM only where the gate sent it
-    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0", "v0.0"]);
+    // Identical node/variable states share a request; the policy still reviews nodes.
+    expect(jev.calls.map((c) => c.key).sort()).toEqual(["c", "h0", "n0"]);
     const labels = provider.calls.map((c) => c.jsonSchema?.name ?? "none").sort();
-    expect(labels).toEqual(["eval_instruction", "eval_jev_reason", "eval_sentiment", "eval_stt"]);
+    expect(labels).toEqual(["eval_hallucination", "eval_instruction", "eval_intent", "eval_loop", "eval_sentiment", "eval_stt", "eval_variable"]);
 
     // idempotency: a second kick must not re-judge a done session
     const before = provider.calls.length;
