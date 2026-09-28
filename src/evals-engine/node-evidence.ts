@@ -1,12 +1,15 @@
 import { renderFullTranscript } from "./conversation-input.js";
 import type { ConversationInput, EvalTurn, NodeEvalInput } from "./types.js";
+import { IDLE_TAG } from "./types.js";
 
 export const NODE_EVIDENCE_VERSION = "node-evidence-v3";
 export const NODE_EVIDENCE_SCOPE =
   "Judge only actions owned by target_node_uuid, against its instructions. " +
   "node_transcript contains target events; conversation_history contains supporting events and references to target events, not repeated speech. " +
   "Event numbers identify one occurrence each. Other nodes are context, never accusation targets. " +
-  "Evidence and extracted_variables stop at the target node's exit; later corrections belong to later nodes. " +
+  "When chronology_available=true, evidence and extracted_variables stop at the target node's exit; later corrections belong to later nodes. " +
+  "LEGACY INPUT (chronology_available=false): views may overlap. Never count a line copied between views as another occurrence; " +
+  "only node_transcript is an accusation target. Unowned history is grounding context, with no reliable timing or attribution. " +
   "A node boundary is not proof that a particular intent tool executed.";
 
 /** Ordered supporting speech/tools available by this node's exit. Legacy
@@ -14,6 +17,20 @@ export const NODE_EVIDENCE_SCOPE =
 export function transcriptThroughNodeExit(node: NodeEvalInput, ctx: ConversationInput): string {
   const exit = ctx.timeline?.findLastIndex(t => t.node_uuid === node.node_uuid) ?? -1;
   return ctx.timeline && exit >= 0 ? renderFullTranscript(ctx.timeline.slice(0, exit + 1)) : ctx.full_transcript;
+}
+
+/** Grounding also consumes full runtime notes, beyond the shortened transcript
+ * notes. Bound those by the same event cutoff; retain legacy unindexed inputs. */
+export function contextThroughNodeExit(node: NodeEvalInput, ctx: ConversationInput): ConversationInput {
+  const exit = ctx.timeline?.findLastIndex(t => t.node_uuid === node.node_uuid) ?? -1;
+  if (!ctx.timeline || exit < 0) return ctx;
+  return {
+    ...ctx,
+    full_transcript: transcriptThroughNodeExit(node, ctx),
+    ...(ctx.system_message_events ? {
+      system_messages: ctx.system_message_events.filter(message => message.event_index <= exit).map(message => message.text),
+    } : {}),
+  };
 }
 
 /** Disjoint views of the same timeline: no duplicated speech, no future leakage.
@@ -41,14 +58,12 @@ export function scopedNodeEvidence(
       }
     });
   } else {
-    // Legacy callers do not supply inter-node order. Do not invent one, or
-    // repeat unowned full_transcript alongside node turns. Real adapters carry
-    // timeline; retain explicitly labelled context for older callers.
+    // Legacy callers can have grounding evidence ONLY in full_transcript.
+    // Preserve it rather than fabricating ownership by matching speech text.
+    // The scope contract marks this view as possibly overlapping/unordered.
     target.push(...node.turns.filter(visible).map(render));
-    for (const other of ctx.nodes) {
-      if (other.node_uuid === node.node_uuid) continue;
-      context.push(`[node ${other.node_uuid}; context only; chronology unavailable]\n${other.turns.filter(visible).map(render).join("\n")}`);
-    }
+    const history = options.loop ? ctx.full_transcript.split("\n").filter(line => !line.includes(IDLE_TAG)).join("\n") : ctx.full_transcript;
+    context.push((options.render ?? ((text: string) => text))(history));
   }
   return {
     evidence_version: NODE_EVIDENCE_VERSION,
