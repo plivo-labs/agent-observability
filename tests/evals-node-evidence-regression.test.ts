@@ -121,3 +121,53 @@ test("actual LLM provider inputs keep target speech single and retain the shared
   }
   expect(llm.calls[2].system).toContain(INTENT_CONTRACT);
 });
+
+test("capability checking retains configured paths and cannot borrow a future action result", () => {
+  const cfg: AgentConfig = { nodes: [
+    { ref: "collect", instructions: "Offer help.", intents: [{ name: "callback", tool: "schedule_callback", description: "Offer a callback if requested." }] },
+    { ref: "finish" },
+  ] };
+  const { input } = buildSessionEvalInput(cfg, [
+    speech("collect", "assistant", "I can arrange a callback."),
+    { type: "conversation_item_added", node_ref: "finish", item: { type: "function_call_output", name: "cancel_order", output: "Order cancelled", is_error: false } },
+  ]);
+  const request = buildJevPlan(input).requests.find(r => r.key === "h0")!;
+  expect(request.questions["h0.h4_capability"]).toBeDefined();
+  const state = request.state as any;
+  expect(state.available_intents).toEqual([{ intent_name: "callback", intent_instructions: "Offer a callback if requested." }]);
+  expect(state.intent_tools).toEqual({ callback: "schedule_callback" });
+  expect(state.tool_results).toEqual([]);
+});
+
+test("a future runtime note cannot ground an earlier spoken claim", () => {
+  const { input } = buildSessionEvalInput(config, [
+    speech("collect", "assistant", "Your fee is 98765."),
+    speech("finish", "system", "The fee for this customer is 98765."),
+  ]);
+  const request = buildJevPlan(input).requests.find(r => r.key === "h0")!;
+  expect((request.state as any).agent_persona_and_scripted_lines_from_config.join(" ")).not.toContain("98765");
+  expect(Object.values(request.questions).some(q => q.instructions.includes("specific value '98765'"))).toBe(true);
+});
+
+test("long failed tool results preserve their failure status in every Jev evidence view", () => {
+  const { input } = buildSessionEvalInput(config, [
+    { type: "conversation_item_added", node_ref: "collect", item: { type: "function_call_output", name: "cancel_order", output: "Cancelled. ".repeat(500), is_error: true } },
+    speech("collect", "assistant", "Your order is cancelled."),
+  ]);
+  const plan = buildJevPlan(input);
+  const nodeState = plan.requests.find(r => r.key === "n0")!.state as any;
+  const hallucinationState = plan.requests.find(r => r.key === "h0")!.state as any;
+  expect(nodeState.node_transcript).toContain("[tool failed]");
+  expect(hallucinationState.tool_results[0]).toContain("[tool failed]");
+  expect(hallucinationState.tool_results[0].length).toBeLessThanOrEqual(1500);
+});
+
+test("legacy inputs retain grounding found only in full_transcript with chronology marked unavailable", () => {
+  const { input } = buildSessionEvalInput(config, [speech("collect", "assistant", "Your balance is 42.")]);
+  delete input.timeline;
+  input.full_transcript = "Tool_Result: lookup -> balance=42\nAgent: Your balance is 42.";
+  const payload = nodePayload(input.nodes[0], input);
+  expect(payload.chronology_available).toBe(false);
+  expect(payload.conversation_history).toContain("balance=42");
+  expect(payload.node_transcript).toContain("Your balance is 42");
+});

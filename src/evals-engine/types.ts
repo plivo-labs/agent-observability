@@ -122,6 +122,8 @@ export interface ConversationInput {
    *  grounding index reads these: a lead's templated details live here and
    *  nowhere else in the config. Absent on the sim path. */
   system_messages?: string[];
+  /** Full runtime notes tied to timeline events, for grounding at node exit. */
+  system_message_events?: Array<{ event_index: number; text: string }>;
 }
 
 /** One session tag as stored: an opaque name plus optional JSON metadata. */

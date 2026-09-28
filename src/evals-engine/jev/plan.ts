@@ -17,7 +17,7 @@ import {
 } from "../../jev/questions.js";
 import { prepareEvidence, nodeEvidence, type PreparedEvidence } from "./evidence.js";
 import type { JevNoul, JevRequest } from "../../jev/types.js";
-import { transcriptThroughNodeExit } from "../node-evidence.js";
+import { contextThroughNodeExit } from "../node-evidence.js";
 
 // Plan independent questions over explicit evidence views. Only requests with
 // byte-identical states may share a batch. Changed node views stay under LLM
@@ -222,8 +222,9 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
   nodes.forEach((node, nodeIndex) => {
     const state = jevNodeState(node, ctx, evidence);
     const targetTranscript = evidence.nodes.get(node)!.transcript;
-    const groundingTranscript = clipToolResults(transcriptThroughNodeExit(node, ctx));
-    const claims = hasTranscript ? residualClaims(ctx, groundingTranscript, MAX_CLAIM_QUESTIONS, targetTranscript) : [];
+    const groundingContext = contextThroughNodeExit(node, ctx);
+    const groundingTranscript = clipToolResults(groundingContext.full_transcript);
+    const claims = hasTranscript ? residualClaims(groundingContext, groundingTranscript, MAX_CLAIM_QUESTIONS, targetTranscript) : [];
     const prefix = `n${nodeIndex}`;
 
     // loop + adherence + intents share the node state
@@ -295,7 +296,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     if (judgeAllowed(opts.judges, "hallucination")) {
       // Shed against the budget this plan is actually held to, minus the
       // longest question that will ride with the state.
-      const { state: hState, agentLines } = buildHallucinationState(ctx, node, groundingTranscript, budget - longestHallucinationQuestion, targetTranscript);
+      const { state: hState, agentLines } = buildHallucinationState(groundingContext, node, groundingTranscript, budget - longestHallucinationQuestion, targetTranscript);
       if (agentLines.length > 0) {
         const questions: Record<string, JevNoul> = {};
         const keys: string[] = [];

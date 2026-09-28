@@ -216,7 +216,8 @@ function toolEvidence(item: NonNullable<StoredEvent["item"]>): string {
     return formatToolCall(item.name, item.arguments);
   }
   const out = item.output !== undefined ? (typeof item.output === "string" ? item.output : JSON.stringify(item.output)) : "";
-  return `Tool_Result: ${name} -> ${out}`;
+  // Keep status before the body so bounded Jev views cannot clip it away.
+  return `Tool_Result: ${name}${isTruthyFlag(item.is_error) ? " [tool failed]" : ""} -> ${out}`;
 }
 
 /** Parallel to the engine's `nodes`, in the same order: the opaque ref + name
@@ -299,6 +300,7 @@ export function buildSessionEvalInput(
   // only a 600-char System_Note of each, but the hallucination grounding
   // index needs the templated details that live nowhere else.
   const systemMessages: string[] = [];
+  const systemMessageEvents: NonNullable<ConversationInput["system_message_events"]> = [];
   const pushTurn = (ref: string, turn: EvalTurn) => {
     if (!turnsByRef.has(ref)) { turnsByRef.set(ref, []); orderedRefs.push(ref); }
     turnsByRef.get(ref)!.push(turn);
@@ -334,7 +336,7 @@ export function buildSessionEvalInput(
           pending[0]!.resultTurnIndex = allTurns.length;
         }
       }
-      pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item) + (isTruthyFlag(item.is_error) ? " [tool failed]" : ""), intent: "", evidence: true });
+      pushTurn(ref, { node_uuid: ref, user: "", agent: toolEvidence(item), intent: "", evidence: true });
       continue;
     }
     if (item.type === "agent_handoff") {
@@ -366,6 +368,7 @@ export function buildSessionEvalInput(
     // node_prompt).
     if (!isUser && (role === "system" || role === "developer")) {
       systemMessages.push(text);
+      systemMessageEvents.push({ event_index: allTurns.length, text });
       const note = text.length > 600 ? `${text.slice(0, 600)}…` : text;
       pushTurn(ref, { node_uuid: ref, user: "", agent: `System_Note: ${note}`, intent: "", evidence: true });
       continue;
@@ -519,7 +522,8 @@ export function buildSessionEvalInput(
       // Grounding evidence for the hallucination judge (omitted when empty).
       ...(globalVariables ? { global_variables: globalVariables } : {}),
       ...(pronunciationGuides ? { pronunciation_guides: pronunciationGuides } : {}),
-      ...(systemMessages.length ? { system_messages: systemMessages } : {}),
+      system_messages: systemMessages,
+      system_message_events: systemMessageEvents,
     },
     nodeRefs: judgedRefs,
   };
