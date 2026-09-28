@@ -63,6 +63,10 @@ async function main() {
       jevJudges: config.JEV_JUDGES, customCandidates: config.JEV_CUSTOM_METRICS,
       gateOverrides: config.JEV_GATES, stateBudget: config.JEV_STATE_TOKEN_BUDGET,
       prompts: "shipped-code", judgeConcurrency: config.EVAL_MAX_CONCURRENT_JUDGE_CALLS,
+      maxJudgedNodes: config.EVAL_MAX_JUDGED_NODES, maxCustomJudgeCalls: config.EVAL_MAX_CUSTOM_JUDGE_CALLS,
+      llmTimeoutMs: config.LLM_TIMEOUT_MS, llmMaxRetries: config.LLM_MAX_RETRIES,
+      jevTimeoutMs: config.JEV_TIMEOUT_MS, jevConcurrency: config.JEV_MAX_CONCURRENT,
+      openaiApiMode: config.OPENAI_API_MODE,
     } });
   }
   await writeFile(path.join(out, "run.json"), JSON.stringify(run, null, 2));

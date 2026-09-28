@@ -54,7 +54,7 @@ bun scripts/eval-validation.ts --dataset /secure/calls.json --live --backend jev
 bun scripts/eval-validation.ts --dataset /secure/calls.json --live --backend llm --out /secure/llm-reference-run
 ```
 
-Run baseline and candidate checkouts against the same frozen dataset. `--backend llm` is a comparison model, **not ground truth**. Live calls use the configured judge/JeV limits and retries; cases run serially, while each case retains normal judge concurrency. The tool is stateless and uses shipped prompts, so it does not require a database or read the deployed prompt registry. This is a limitation when production registry prompts differ.
+Run baseline and candidate checkouts against the same frozen dataset. `--backend llm` is a comparison model, **not ground truth**. Live calls use the configured judge/Jev limits and retries; cases run serially, while each case retains normal judge concurrency. A session error stops the run and marks remaining cases `not_run`, preventing unfinished sibling judges from affecting the next case. The tool is stateless and uses shipped prompts, so it does not require a database or read the deployed prompt registry. This is a limitation when production registry prompts differ.
 
 Re-score an existing run without any model calls:
 
@@ -68,7 +68,7 @@ The output directory must be new. `dataset.json` snapshots the parsed inputs, `r
 - Auto-pass coverage and error on binary-labelled rows, reviewed candidate overrides when provenance is available, and unlabelled row counts. Unlabelled outputs never become implicit successes.
 - Session errors, disagreements with case/node identity, p50/p95 latency, observed tokens, model/settings/code revision and available gate/evidence/question/policy versions.
 
-A SHA-256 fingerprint binds the run to the exact parsed dataset and labels; changed labels require a new named run. A failed case remains an error with missing rows, never a clean result. The CLI exits nonzero for session errors. Disagreements are reported without an automatic promotion threshold. Token counts cover returned provider usage; failed attempts and Jev-internal retries may have unreported billed usage. Wall time includes normal retries and concurrency, so compare repeated runs before drawing latency conclusions.
+A SHA-256 fingerprint binds the run to the exact parsed dataset and labels; changed labels require a new named run. A failed case remains an error with missing rows, never a clean result. Failed cases have frozen partial usage, and failed/not-run cases are excluded from completed-case token totals and latency percentiles. Outstanding providers are asked to abort; returned partial counts can omit late sibling responses and are not billing measurements. The CLI exits nonzero for session errors. Disagreements are reported without an automatic promotion threshold. Token counts cover returned provider usage; failed attempts and Jev-internal retries may have unreported billed usage. Wall time includes normal retries and concurrency, so compare repeated runs before drawing latency conclusions.
 
 Run artifacts contain transcripts, configuration and detailed verdicts. Keep them in the same protected location as the source call dataset; do not commit real calls or credentials.
 
