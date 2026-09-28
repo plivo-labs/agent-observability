@@ -66,7 +66,7 @@ test("false passes and unknown results do not inflate auto-pass accuracy", () =>
     { judgeName: "j", tag: "d", passed: false, verdictText: "unknown", reasoning: "", raw: { backend: "llm" } },
   ];
   const run = { schemaVersion: 1 as const, datasetFingerprint: fingerprint(d), revision: "test", settings: {}, startedAt: "test",
-    cases: [{ id: "one", durationMs: 1, usage: { jevRequests: 0, llmCalls: 0, jevInputTokens: 0, jevOutputTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 }, rows }],
+    cases: [{ id: "one", status: "completed" as const, durationMs: 1, usage: { jevRequests: 0, llmCalls: 0, jevInputTokens: 0, jevOutputTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 }, rows }],
   };
   const report = summarizeValidation(d, run);
   expect(report.perJudge.j!.falsePasses).toBe(1);
@@ -99,4 +99,32 @@ test("offline CLI scores saved output without model credentials", async () => {
     expect(report.mismatches).toHaveLength(0);
     expect(report.accuracyClaimAllowed).toBe(false);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+
+test("a failed session freezes partial usage and prevents overlapping later cases", async () => {
+  const d = structuredClone(dataset);
+  d.cases.push({ ...structuredClone(d.cases[0]!), id: "two" });
+  let active = 0;
+  const provider = new MockLLM([async args => {
+    if (args.jsonSchema?.name === "eval_loop") throw new Error("429 rate limit");
+    if (args.jsonSchema?.name === "eval_sentiment") {
+      active++;
+      await Bun.sleep(1600);
+      active--;
+    }
+    return defaultJudgeResponder(args.system)!;
+  }]);
+  const run = await runValidation(d, { llm: provider, revision: "test", settings: {} });
+  expect(run.cases.map(c => c.status)).toEqual(["failed", "not_run"]);
+  const snapshot = JSON.stringify(run);
+  await Bun.sleep(500);
+  expect(active).toBe(0);
+  expect(JSON.stringify(run)).toBe(snapshot);
+  const report = summarizeValidation(d, run);
+  expect(report.latencyMs.samples).toBe(0);
+  expect(report.latencyMs.p50).toBeNull();
+  expect(report.partialUsage).toHaveLength(1);
+  expect(report.usage.llmCalls).toBe(0);
+  expect(report.notRunSessions).toEqual(["two"]);
 });

@@ -41,7 +41,7 @@ const RowSchema = z.object({ judgeName: z.string(), tag: z.string().nullable(), 
 export const RunSchema = z.object({
   schemaVersion: z.literal(1), datasetFingerprint: z.string(), revision: z.string(), settings: z.record(z.string(), z.unknown()),
   startedAt: z.string(), cases: z.array(z.object({
-    id: z.string(), durationMs: z.number(), usage: UsageSchema, rows: z.array(RowSchema),
+    id: z.string(), status: z.enum(["completed", "failed", "not_run"]), durationMs: z.number(), usage: UsageSchema, rows: z.array(RowSchema),
     // Full aggregate retains unavailable and suppressed candidates for investigation.
     aggregate: z.unknown().optional(), error: z.string().optional(),
   })),
@@ -55,11 +55,13 @@ export async function runValidation(dataset: ValidationDataset, opts: {
 }): Promise<ValidationRun> {
   const cases: ValidationRun["cases"] = [];
   const startedAt = new Date().toISOString();
-  for (const c of dataset.cases) {
+  for (const [caseIndex, c] of dataset.cases.entries()) {
+    const caseAbort = new AbortController();
     const usage = { jevRequests: 0, llmCalls: 0, jevInputTokens: 0, jevOutputTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 };
     const llm: LlmProvider = { name: opts.llm.name, async complete(args) {
+      if (caseAbort.signal.aborted) throw new Error("Validation case stopped");
       usage.llmCalls++;
-      const result = await opts.llm.complete(args);
+      const result = await opts.llm.complete({ ...args, signal: AbortSignal.any([args.signal, caseAbort.signal]) });
       usage.llmInputTokens += result.usage.promptTokens;
       usage.llmOutputTokens += result.usage.completionTokens;
       return result;
@@ -74,11 +76,18 @@ export async function runValidation(dataset: ValidationDataset, opts: {
     const start = performance.now();
     try {
       const aggregate = await evaluateIngestedSession(c.config as AgentConfig, c.events as StoredEvent[], llm, c.transport, undefined, c.tags, c.customJudges as CustomJudgeSpec[], jev);
-      cases.push({ id: c.id, durationMs: performance.now() - start, usage, rows: buildExternalEvalRows(aggregate), aggregate });
+      cases.push({ id: c.id, status: "completed", durationMs: performance.now() - start, usage: { ...usage }, rows: buildExternalEvalRows(aggregate), aggregate });
     } catch (error) {
-      // An error is missing output, never an invented pass. Continue the dataset
-      // so one provider failure does not erase the remaining evaluation results.
-      cases.push({ id: c.id, durationMs: performance.now() - start, usage, rows: [], error: String(error) });
+      // Promise.all can reject before sibling judges settle. Stop the dataset:
+      // later cases must not inherit their semaphore wait or overlap their calls.
+      // Snapshot partial usage; late completions cannot mutate the saved run.
+      caseAbort.abort();
+      cases.push({ id: c.id, status: "failed", durationMs: performance.now() - start, usage: { ...usage }, rows: [], error: String(error) });
+      for (const pending of dataset.cases.slice(caseIndex + 1)) cases.push({
+        id: pending.id, status: "not_run", durationMs: 0, rows: [], error: `Not run after failed case ${c.id}`,
+        usage: { jevRequests: 0, llmCalls: 0, jevInputTokens: 0, jevOutputTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 },
+      });
+      break;
     }
   }
   return { schemaVersion: 1, datasetFingerprint: fingerprint(dataset), revision: opts.revision, settings: opts.settings, startedAt, cases };
@@ -138,7 +147,8 @@ export function summarizeValidation(dataset: ValidationDataset, run: ValidationR
       }
     }
   }
-  const times = run.cases.map(c => c.durationMs).sort((a, b) => a - b);
+  const completed = run.cases.filter(c => c.status === "completed" && !c.error);
+  const times = completed.map(c => c.durationMs).sort((a, b) => a - b);
   const percentile = (p: number) => times[Math.max(0, Math.ceil(times.length * p) - 1)] ?? null;
   return {
     datasetId: dataset.datasetId, labelRevision: dataset.labelRevision, split: dataset.split, reviewer: dataset.reviewer,
@@ -147,14 +157,16 @@ export function summarizeValidation(dataset: ValidationDataset, run: ValidationR
     accuracyClaimAllowed: false,
     validationNote: "Inspect independent label quality, held-out groups and per-judge sample sizes before making accuracy claims.",
     sessions: run.cases.length, groups: new Set(dataset.cases.map(c => c.groupId)).size,
-    failedSessions: run.cases.filter(c => c.error).map(c => c.id), unlabelledRows, mismatches, perJudge,
+    failedSessions: run.cases.filter(c => c.status === "failed").map(c => c.id),
+    notRunSessions: run.cases.filter(c => c.status === "not_run").map(c => c.id), unlabelledRows, mismatches, perJudge,
     rates: Object.fromEntries(Object.entries(perJudge).map(([judge, c]) => [judge, {
       autoPassCoverage: rate(c.autoPasses, c.binaryLabels), autoPassError: rate(c.wrongAutoPasses, c.autoPasses),
       falsePassRate: rate(c.falsePasses, Object.entries(c.confusion).filter(([k]) => k.startsWith("fail->")).reduce((sum, [, n]) => sum + n, 0)),
       falseFailureRate: rate(c.falseFailures, Object.entries(c.confusion).filter(([k]) => k.startsWith("pass->")).reduce((sum, [, n]) => sum + n, 0)),
     }])),
-    latencyMs: { p50: percentile(0.5), p95: percentile(0.95) },
-    usage: run.cases.reduce((sum, c) => Object.fromEntries(Object.keys(sum).map(k => [k, sum[k as keyof typeof sum] + c.usage[k as keyof typeof c.usage]])) as typeof sum,
+    latencyMs: { samples: completed.length, p50: percentile(0.5), p95: percentile(0.95) },
+    partialUsage: run.cases.filter(c => c.status === "failed").map(c => ({ caseId: c.id, observedAtFailure: c.usage, complete: false })),
+    usage: completed.reduce((sum, c) => Object.fromEntries(Object.keys(sum).map(k => [k, sum[k as keyof typeof sum] + c.usage[k as keyof typeof c.usage]])) as typeof sum,
       { jevRequests: 0, llmCalls: 0, jevInputTokens: 0, jevOutputTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 }),
     versions: [...versions].map(v => JSON.parse(v)),
   };
