@@ -39,7 +39,7 @@ export interface CustomJudgeSpec {
   max_tokens?: number;
 }
 
-export type CustomMetricNodeVerdict = {
+export type CustomMetricNodeVerdict = JudgeProvenance & {
   ref: string;
   node_name: string;
   verdict: "pass" | "fail" | "unknown";

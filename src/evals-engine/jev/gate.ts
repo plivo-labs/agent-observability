@@ -1,6 +1,8 @@
 import { CUSTOM_METRIC_GATE, decide, type JudgeGate } from "../../jev/gates.js";
 import { JEV_OVERFLOW, JevError, type JevResponse } from "../../jev/types.js";
 import type { JevAxis, JevPlan } from "./plan.js";
+import type { NodeEvalInput } from "../types.js";
+import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-extraction.js";
 
 // Turn Jev's probabilities into a decision per axis. Pure: the caller does the
 // I/O and hands in what each request returned.
@@ -24,6 +26,8 @@ export interface GatedAxis {
   probabilities: Record<string, number>;
   fallback?: AxisFallback;
   jevModel?: string;
+  /** Deterministically inapplicable questions, excluded BEFORE reduction. */
+  ignoredKeys?: string[];
 }
 
 export type RequestResult = { ok: true; response: JevResponse } | { ok: false; error: unknown };
@@ -36,18 +40,21 @@ export function gatePlan(
   plan: JevPlan,
   results: ReadonlyMap<string, RequestResult>,
   gates: Readonly<Record<string, JudgeGate>>,
+  nodes: readonly NodeEvalInput[] = [],
 ): GatedAxis[] {
   const dropped = new Set(plan.dropped.map((d) => d.requestKey));
 
   return plan.axes.map((axis): GatedAxis => {
-    const review = (fallback: AxisFallback): GatedAxis => ({ axis, outcome: "review", p: null, firedKeys: [], probabilities: {}, fallback });
+    const probabilities: Record<string, number> = {};
+    let jevModel: string | undefined;
+    const review = (fallback: AxisFallback): GatedAxis => ({ axis, outcome: "review", p: null, firedKeys: [], probabilities, fallback, jevModel });
     if (dropped.has(axis.requestKey)) return review("budget");
 
     const result = results.get(axis.requestKey);
     if (!result) return review("error");
     if (!result.ok) return review(fallbackFor(result.error));
 
-    const probabilities: Record<string, number> = {};
+    jevModel = result.response.model || undefined;
     for (const key of axis.questionKeys) {
       const answer = result.response.answers[key];
       if (answer) probabilities[key] = answer.noul;
@@ -59,12 +66,10 @@ export function gatePlan(
     // A judge with no gate is not Jev's to decide.
     if (!gate) return review("unanswered");
 
-    const jevModel = result.response.model || undefined;
-
     if (axis.kind === "custom") {
       // "Did the call even reach this metric's situation?" is asked first: a
-      // metric that never applied is `unknown`, which is neither a pass nor a
-      // fail and costs no LLM call — the same contract the LLM judge has.
+      // low applicability is an unknown candidate, verified by policy before
+      // publishing a final verdict. It is neither a pass nor a fail.
       // Both questions or neither: the fail question's FALSE criterion is
       // "passes the metric OR does not apply", so a low probability alone
       // cannot tell a clean call from one the metric never reached.
@@ -72,6 +77,9 @@ export function gatePlan(
       if (applicable === undefined) return review("unanswered");
       if (applicable <= gate.pass_below) {
         return { axis, outcome: "unknown", p: applicable, firedKeys: [], probabilities, jevModel };
+      }
+      if (applicable < gate.fail_above) {
+        return { axis, outcome: "review", p: applicable, firedKeys: [], probabilities, jevModel };
       }
       const failP = probabilities[axis.failKey];
       if (failP === undefined) return review("unanswered");
@@ -81,17 +89,31 @@ export function gatePlan(
 
     // Any question firing fails the axis, so the axis's probability is the
     // highest of its questions — the same aggregation the benchmark scored.
-    let p = -1;
-    for (const [, value] of answered) p = Math.max(p, value);
+    const ignoredKeys: string[] = [];
+    if (axis.kind === "node" && axis.judge === "variable_extraction") {
+      const node = nodes[axis.nodeIndex];
+      if (node) {
+        const batch = finalBatchContext(node);
+        for (const ref of axis.variables ?? []) {
+          if (outOfScopeVariableKind(ref.variable, node.variable_rules?.[ref.variable]) !== undefined ||
+              (!ref.recorded && finalBatchCoversVariable(batch, node, ref.variable))) ignoredKeys.push(ref.key);
+        }
+      }
+    }
+    const ignored = new Set(ignoredKeys);
+    const required = axis.questionKeys.filter((key) => !ignored.has(key));
+    const applicableAnswers = answered.filter(([key]) => !ignored.has(key));
+    let p = 0;
+    for (const [, value] of applicableAnswers) p = Math.max(p, value);
     let outcome = decide(p, gate);
     // A FAIL needs one question; a PASS needs all of them. An unanswered
     // question, or one the caps never asked, was judged by nobody, so calling
     // the axis clean on the rest would be a verdict about evidence we do not
     // have.
-    const complete = answered.length === axis.questionKeys.length && !(axis.kind === "node" && axis.truncated);
+    const complete = applicableAnswers.length === required.length && !(axis.kind === "node" && axis.truncated);
     if (outcome === "pass" && !complete) outcome = "review";
-    const firedKeys = answered.filter(([, value]) => value >= gate.fail_above).map(([key]) => key);
-    return { axis, outcome, p, firedKeys, probabilities, jevModel };
+    const firedKeys = applicableAnswers.filter(([, value]) => value >= gate.fail_above).map(([key]) => key);
+    return { axis, outcome, p: applicableAnswers.length || !required.length ? p : null, firedKeys, probabilities, jevModel, ignoredKeys };
   });
 }
 
@@ -129,12 +151,14 @@ export function mergeChunkedAxes(gated: readonly GatedAxis[]): GatedAxis[] {
         ...axis,
         id,
         questionKeys: chunks.flatMap((c) => c.axis.questionKeys),
+        ...(axis.kind === "node" ? { truncated: chunks.some(c => c.axis.kind === "node" && c.axis.truncated) } : {}),
         ...(axis.kind === "node" && axis.variables ? { variables: chunks.flatMap((c) => (c.axis as typeof axis).variables ?? []) } : {}),
       },
       outcome,
       p: deciding.reduce<number | null>((max, c) => (c.p === null ? max : Math.max(max ?? -1, c.p)), null),
       firedKeys: deciding.flatMap((c) => c.firedKeys),
       probabilities: Object.assign({}, ...chunks.map((c) => c.probabilities)),
+      ignoredKeys: chunks.flatMap((c) => c.ignoredKeys ?? []),
       ...(chunks.find((c) => c.fallback) ? { fallback: chunks.find((c) => c.fallback)!.fallback } : {}),
       ...(chunks.find((c) => c.jevModel) ? { jevModel: chunks.find((c) => c.jevModel)!.jevModel } : {}),
     };

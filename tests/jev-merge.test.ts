@@ -106,12 +106,16 @@ describe("variables", () => {
     expect(out.metrics.required_variables).toEqual(["order_id", "lead_status"]);
   });
 
-  test("the deterministic guards clear a workflow field, and clearing everything makes it a pass", () => {
-    const out = merge.jevVariables(gated({ axis, outcome: "fail", p: 0.95, firedKeys: ["v0.var.1"] }), node(), NO_REASONS);
+  test("renders the gate's completed decision without changing it after aggregation", () => {
+    const out = merge.jevVariables(gated({ axis, outcome: "pass", p: 0.02, ignoredKeys: ["v0.var.1"] }), node(), NO_REASONS);
     expect(out.cleared).toEqual(["lead_status"]);
     expect(out.metrics.extraction_successful).toBe(true);
     expect(out.metrics.missing_variables).toEqual([]);
     expect(out.metrics.technical_reason).toContain("cleared as out-of-scope");
+  });
+
+  test("unresolved variables cannot be rendered as a pass", () => {
+    expect(() => merge.jevVariables(gated({ axis, outcome: "review" }), node(), NO_REASONS)).toThrow("unresolved");
   });
 });
 

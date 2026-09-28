@@ -11,7 +11,6 @@ import type {
 } from "../types.js";
 import type { DetectionResult } from "../judges/conversation-judges.js";
 import type { CustomMetricVerdict, CustomJudgeSpec, CustomMetricNodeVerdict } from "../judges/custom-metric.js";
-import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-extraction.js";
 import { clamp01 } from "../aggregate.js";
 import type { GatedAxis } from "./gate.js";
 import type { JevNodeAxis } from "./plan.js";
@@ -136,32 +135,19 @@ export interface JevVariableOutcome {
   cleared: string[];
 }
 
-/**
- * A fired variable question names the variable; whether it was RECORDED
- * decides missing vs incorrect. The LLM judge's two DETERMINISTIC guards run
- * here too — an out-of-scope workflow/platform field, or a value still pending
- * the call's final recording batch, is not a defect whichever backend proposed
- * it. Its two LLM-side guarded reviews do NOT run: they are a second judge
- * call, which is the cost this path exists to avoid, and the questions here
- * already state each variable's full rule.
- */
+/** Render a final variable decision. Applicability exclusions belong in the
+ * gate, before coverage is reduced; clearing a failure here could otherwise
+ * turn an unanswered sibling question into a clean pass. */
 export function jevVariables(g: GatedAxis, node: NodeEvalInput, reasons: ReasonMap): JevVariableOutcome {
+  if (g.outcome === "review") throw new Error("Cannot render an unresolved variable decision");
   const axis = g.axis as JevNodeAxis;
   const fired = new Set(g.firedKeys);
   const names = (axis.variables ?? []).filter((v) => fired.has(v.key));
-  const batch = finalBatchContext(node);
-  const cleared: string[] = [];
+  const ignored = new Set(g.ignoredKeys ?? []);
+  const cleared = (axis.variables ?? []).filter((v) => ignored.has(v.key)).map((v) => v.variable);
   const missing: string[] = [];
   const incorrect: string[] = [];
   for (const v of names) {
-    if (outOfScopeVariableKind(v.variable, node.variable_rules?.[v.variable]) !== undefined) {
-      cleared.push(v.variable);
-      continue;
-    }
-    if (!v.recorded && finalBatchCoversVariable(batch, node, v.variable)) {
-      cleared.push(v.variable);
-      continue;
-    }
     (v.recorded ? incorrect : missing).push(v.variable);
   }
   const failed = g.outcome === "fail" && missing.length + incorrect.length > 0;
@@ -240,7 +226,7 @@ export function attachDetectionProvenance(
     const current = out[key] as CmDetection | undefined;
     if (!current || typeof current.detected !== "boolean" || current.available === false) continue;
     const overruled = current.technical_reason === SUPERSEDED || current.technical_reason.startsWith(CODE_DERIVED);
-    (out[key] as CmDetection) = overruled ? { ...current, backend: "code" } : { ...current, ...p };
+    (out[key] as CmDetection) = overruled ? { ...current, ...(p.jev ? { jev: p.jev, jev_model: p.jev_model } : {}), backend: "code" } : { ...current, ...p };
   }
   return out;
 }

@@ -84,11 +84,12 @@ describe("gatePlan", () => {
     results.delete("n0");
     const withError = new Map<string, any>(results);
     withError.set("n0", { ok: false, error: new JevError(500, "server_error") });
-    withError.set("v0.0", { ok: false, error: new JevError(400, JEV_OVERFLOW) });
+    withError.set("h0", { ok: false, error: new JevError(400, JEV_OVERFLOW) });
     const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, withError, DEFAULT_GATES)));
     expect(gated.get("n0:node_loop")!.outcome).toBe("review");
     expect(gated.get("n0:node_loop")!.fallback).toBe("error");
-    expect(gated.get("n0:variable_extraction")!.fallback).toBe("overflow");
+    expect(gated.get("n0:variable_extraction")!.fallback).toBe("error");
+    expect(gated.get("n0:hallucination")!.fallback).toBe("overflow");
 
     const budgetPlan = buildJevPlan(ctx({ nodes: [node({ node_prompt: "P".repeat(400_000) })] }));
     const budgetGated = byAxisId(mergeChunkedAxes(gatePlan(budgetPlan, respond(budgetPlan, 0.02), DEFAULT_GATES)));
@@ -137,11 +138,11 @@ describe("gatePlan", () => {
       extracted_variables: { v0: "x" },
     });
     const plan = buildJevPlan(ctx({ nodes: [wide] }));
-    const chunkKeys = plan.requests.filter((r) => r.key.startsWith("v0.")).map((r) => r.key);
-    expect(chunkKeys).toEqual(["v0.0", "v0.1"]);
+    const chunks = plan.axes.filter(a => a.judge === "variable_extraction");
+    expect(chunks).toHaveLength(2);
 
     // clean first chunk, a fail in the second
-    const secondChunkFirstKey = Object.keys(plan.requests.find((r) => r.key === "v0.1")!.questions)[0]!;
+    const secondChunkFirstKey = chunks[1]!.questionKeys[0]!;
     const mixed = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.02, { [secondChunkFirstKey]: 0.96 }), DEFAULT_GATES)));
     const axis = mixed.get("n0:variable_extraction")!;
     expect(axis.outcome).toBe("fail");
@@ -149,7 +150,7 @@ describe("gatePlan", () => {
     expect(axis.p).toBe(0.96);
 
     // one chunk uncertain, the other clean ⇒ the whole axis is reviewed
-    const uncertainKey = Object.keys(plan.requests.find((r) => r.key === "v0.0")!.questions)[0]!;
+    const uncertainKey = chunks[0]!.questionKeys[0]!;
     const partly = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.02, { [uncertainKey]: 0.5 }), DEFAULT_GATES)));
     expect(partly.get("n0:variable_extraction")!.outcome).toBe("review");
   });
@@ -165,7 +166,7 @@ describe("gatePlan", () => {
     expect(gated.get("n0:node_loop")!.p).toBeNull();
   });
 
-  test("a custom metric that never applied is 'unknown' and costs no review", () => {
+  test("a low applicability candidate is unknown", () => {
     const spec = { name: "metric:hold", display_name: "Hold", scope: "conversation" as const, body: "Fail if held without warning.", output: "" };
     const plan = buildJevPlan(ctx(), { customSpecs: [spec], customEnabled: true });
     const axis = plan.axes.find((a) => a.id === "m.metric:hold")! as any;

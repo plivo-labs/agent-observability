@@ -162,8 +162,8 @@ export interface ResidualClaim {
 
 /** Specific values the agent SPOKE that code cannot find anywhere — the only
  *  ones worth asking Jev about individually. */
-export function residualClaims(call: ConversationInput, transcript: string, max: number): ResidualClaim[] {
-  const agentLines = transcriptLines(transcript, ["Agent:"]);
+export function residualClaims(call: ConversationInput, transcript: string, max: number, targetTranscript = transcript): ResidualClaim[] {
+  const agentLines = transcriptLines(targetTranscript, ["Agent:"]);
   const pool = groundingPool(call, transcript).toLowerCase();
   const poolDigits = pool.replace(/\D/g, "");
   const out: ResidualClaim[] = [];
@@ -207,9 +207,10 @@ export function buildHallucinationState(
   node: NodeEvalInput,
   transcript: string,
   budgetTokens: number,
+  targetTranscript = transcript,
 ): { state: HallucinationState; agentLines: string[] } {
   const clipped = clipToolResults(transcript);
-  const agentLines = transcriptLines(clipped, ["Agent:"]);
+  const agentLines = transcriptLines(targetTranscript, ["Agent:"]);
   const state: HallucinationState = {
     node_instructions_full: node.node_prompt ?? "",
     global_prompt: call.global_prompt ?? "",

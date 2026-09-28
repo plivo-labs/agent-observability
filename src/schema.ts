@@ -210,7 +210,7 @@ export const envSchema = z.object({
 
   // ── Jev (TypeSafe System One) first-pass judge ──────────────────────────────
   // "primary": Jev answers every default binary judge first and a per-judge
-  // confidence gate decides which axes the LLM judge still reviews (see
+  // gate plus decision policy decides which axes the LLM reviews (see
   // src/evals-engine/jev/). "off" (default) is byte-identical to today's path
   // and is the rollback lever. primary without JEV_API_KEY logs at boot and
   // behaves as off.

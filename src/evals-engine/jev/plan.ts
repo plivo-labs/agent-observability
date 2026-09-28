@@ -16,22 +16,12 @@ import {
   intentQuestions,
   variableQuestions,
 } from "../../jev/questions.js";
+import { prepareEvidence, nodeEvidence, type PreparedEvidence } from "./evidence.js";
 import type { JevNoul, JevRequest } from "../../jev/types.js";
 
-// What to ask Jev about one session, and over which states.
-//
-// Shape follows the benchmark exactly (spec §3): a speech-only conversation
-// request, and per node a config+transcript request (loop / adherence /
-// intents), a variables request over the same state, and a compact grounded
-// request for hallucination. They are purpose-built because that is what the
-// gates were calibrated on — merging them into one state was measured to move
-// hallucination probabilities by up to 0.46 (context rot), which the gates
-// would not survive. All requests go out together, so it is still one round trip.
-//
-// An axis the plan does NOT ask about is not a decision: the caller runs the
-// judge that owns it, exactly as today. That is how the neutral-skip paths
-// (no intents / no variables / no node prompt / empty transcript) stay
-// byte-identical — those judges return their neutral verdict with no LLM call.
+// Plan independent questions over explicit evidence views. Only requests with
+// byte-identical states may share a batch. Changed node views stay under LLM
+// review until separately calibrated (policy.ts).
 
 export const CONVERSATION_JUDGES = [
   "voicemail_detection",
@@ -124,21 +114,11 @@ export const DEFAULT_BUDGET_TOKENS = 30_000;
 /** Jev's total-context limit is twice its state limit (64k vs 32k), so the
  *  all-questions budget scales with the configured state budget. */
 const TOTAL_BUDGET_MULTIPLE = 2;
-/** Variable questions per request (the calibrated batch size). */
+/** Logical chunk size for complete-coverage reduction; packing may combine chunks. */
 export const VARIABLE_QUESTIONS_PER_REQUEST = 8;
 
-/**
- * The node state: the complete node config (full prompt, every intent with its
- * description and tool, every declared variable with its recording rule, the
- * global prompt and variables) plus what the agent chose and recorded, and the
- * conversation with over-long tool output clipped.
- *
- * Field names and contents are the ones the gates were calibrated against — Jev
- * reads the state's keys, so renaming or adding a field is a behaviour change,
- * not a refactor. Measured: adding the per-node transcript alongside the full
- * conversation moved probabilities enough to change gate bands.
- */
-export function jevNodeState(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
+/** Complete node configuration plus an explicit target and owned evidence. */
+export function jevNodeState(node: NodeEvalInput, ctx: ConversationInput, evidence: PreparedEvidence = prepareEvidence(ctx), loop = false): Record<string, unknown> {
   const intents = (node.available_intents ?? []).map((raw) => {
     const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     const name = String(o.intent_name ?? o.name ?? "");
@@ -156,7 +136,7 @@ export function jevNodeState(node: NodeEvalInput, ctx: ConversationInput): Recor
     })),
     chosen_intent: node.chosen_intent,
     extracted_variables: node.extracted_variables ?? {},
-    conversation_history: clipToolResults(ctx.full_transcript ?? ""),
+    ...nodeEvidence(node, evidence, loop),
   };
 }
 
@@ -181,6 +161,7 @@ export function parseJevJudges(raw: string | undefined): { judges: readonly stri
 }
 
 export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions = {}): JevPlan {
+  const evidence = prepareEvidence(ctx);
   const budget = opts.budgetTokens ?? DEFAULT_BUDGET_TOKENS;
   const requests: JevRequest[] = [];
   const axes: JevAxis[] = [];
@@ -198,7 +179,19 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
       dropped.push({ requestKey: key, estTokens: est.longest });
       return;
     }
-    requests.push({ key, state, questions, estTokens: est.longest, estTotalTokens: est.total });
+    // Share state tokens only when the evidence is identical and both limits fit.
+    const signature = JSON.stringify(state);
+    const sameState = requests.find(r => JSON.stringify(r.state) === signature &&
+      estimateRequestTokens(state, { ...r.questions, ...questions }).total <= budget * TOTAL_BUDGET_MULTIPLE);
+    if (sameState) {
+      Object.assign(sameState.questions, questions);
+      const combined = estimateRequestTokens(state, sameState.questions);
+      sameState.estTokens = combined.longest;
+      sameState.estTotalTokens = combined.total;
+      for (const axis of pending) axis.requestKey = sameState.key;
+    } else {
+      requests.push({ key, state, questions, estTokens: est.longest, estTotalTokens: est.total });
+    }
   };
 
   const hasTranscript = !!ctx.full_transcript?.trim();
@@ -223,13 +216,12 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
   }
 
   const nodes = ctx.nodes ?? [];
-  const clippedTranscript = clipToolResults(ctx.full_transcript ?? "");
-  // Everything the hallucination questions ground against depends on the CALL,
-  // not the node, so a multi-node session retrieves it once.
-  const claims = hasTranscript ? residualClaims(ctx, clippedTranscript, MAX_CLAIM_QUESTIONS) : [];
+  const clippedTranscript = evidence.fullTranscript;
 
   nodes.forEach((node, nodeIndex) => {
-    const state = jevNodeState(node, ctx);
+    const state = jevNodeState(node, ctx, evidence);
+    const targetTranscript = evidence.nodes.get(node)!.transcript;
+    const claims = hasTranscript ? residualClaims(ctx, clippedTranscript, MAX_CLAIM_QUESTIONS, targetTranscript) : [];
     const prefix = `n${nodeIndex}`;
 
     // loop + adherence + intents share the node state
@@ -237,8 +229,15 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     const nodeAxes: JevAxis[] = [];
     if (judgeAllowed(opts.judges, "node_loop")) {
       const key = `${prefix}.node_loop`;
-      nodeQuestions[key] = NODE_LOOP_QUESTION;
-      nodeAxes.push({ kind: "node", id: `${prefix}:node_loop`, judge: "node_loop", nodeIndex, requestKey: prefix, questionKeys: [key] });
+      const loopState = { ...state, ...nodeEvidence(node, evidence, true) };
+      if (JSON.stringify(loopState) === JSON.stringify(state)) {
+        nodeQuestions[key] = NODE_LOOP_QUESTION;
+        nodeAxes.push({ kind: "node", id: `${prefix}:node_loop`, judge: "node_loop", nodeIndex, requestKey: prefix, questionKeys: [key] });
+      } else {
+        addRequest(`l${nodeIndex}`, loopState, { [key]: NODE_LOOP_QUESTION }, [{
+          kind: "node", id: `${prefix}:node_loop`, judge: "node_loop", nodeIndex, requestKey: `l${nodeIndex}`, questionKeys: [key],
+        }]);
+      }
     }
     // An empty node prompt is a neutral skip on the LLM path (no call, no
     // verdict to disagree with) — asking Jev would invent one.
@@ -268,9 +267,8 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     if (judgeAllowed(opts.judges, "variable_extraction")) {
       const vars = variableQuestions(node);
       if (vars.length > 0) {
-        // Chunked, as calibrated: a full recording rule per variable is a long
-        // question, and asking twenty of them over one state measurably dilutes
-        // the answers (and can breach the state + longest-question limit).
+        // Logical chunks retain complete-coverage reduction even when their
+        // questions fit alongside the node questions in a shared request.
         for (let start = 0; start < vars.length; start += VARIABLE_QUESTIONS_PER_REQUEST) {
           const chunk = vars.slice(start, start + VARIABLE_QUESTIONS_PER_REQUEST);
           const requestKey = `v${nodeIndex}.${start / VARIABLE_QUESTIONS_PER_REQUEST}`;
@@ -296,7 +294,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     if (judgeAllowed(opts.judges, "hallucination")) {
       // Shed against the budget this plan is actually held to, minus the
       // longest question that will ride with the state.
-      const { state: hState, agentLines } = buildHallucinationState(ctx, node, clippedTranscript, budget - longestHallucinationQuestion);
+      const { state: hState, agentLines } = buildHallucinationState(ctx, node, clippedTranscript, budget - longestHallucinationQuestion, targetTranscript);
       if (agentLines.length > 0) {
         const questions: Record<string, JevNoul> = {};
         const keys: string[] = [];
@@ -310,7 +308,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
           questions[full] = claimQuestion(claim.token, claim.line);
           keys.push(full);
         });
-        addRequest(`h${nodeIndex}`, hState, questions, [{
+        addRequest(`h${nodeIndex}`, { ...hState, target_node_uuid: node.node_uuid, evidence_version: evidence.version }, questions, [{
           kind: "node", id: `${prefix}:hallucination`, judge: "hallucination", nodeIndex,
           requestKey: `h${nodeIndex}`, questionKeys: keys,
         }]);
@@ -348,7 +346,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
         const failKey = `${requestKey}.fail`;
         addRequest(
           requestKey,
-          { metric_name: spec.display_name, ...jevNodeState(node, ctx) },
+          { metric_name: spec.display_name, ...jevNodeState(node, ctx, evidence) },
           { [applicableKey]: applicable, [failKey]: fail },
           [{ kind: "custom", id: requestKey, judge: spec.name, scope: "node", nodeIndex, requestKey, questionKeys: [applicableKey, failKey], applicableKey, failKey }],
         );

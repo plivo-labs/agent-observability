@@ -488,6 +488,7 @@ export function buildSessionEvalInput(
       // Conversation goals are judged as custom metrics, never as a goal axis.
       goals: [],
       full_transcript: renderFullTranscript(allTurns),
+      timeline: allTurns,
       // Speech-only variant for the conversation-axis judges: drop the
       // synthetic evidence lines so config/tool text can't masquerade as
       // things said on the call.
@@ -540,7 +541,7 @@ export async function evaluateIngestedSession(
    *  custom judges existed. */
   customJudges: readonly CustomJudgeSpec[] = [],
   /** When present, Jev answers every gated judge first and the LLM judges run
-   *  only where its confidence gate says so. Absent (JEV_MODE=off, no key, or
+   *  where the gate and versioned decision policy require review. Absent (JEV_MODE=off, no key, or
    *  a test that injects nothing) ⇒ the LLM-only path below, unchanged. */
   jev?: JevClient,
 ): Promise<SessionEvalVerdicts> {
