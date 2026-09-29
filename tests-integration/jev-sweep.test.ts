@@ -115,7 +115,7 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     expect(raw.jev.probability).toBe(0.97);
     expect(raw.jev.route).toBe("verify_failure");
     expect(raw.jev.evidence_version).toBe("node-evidence-v3");
-    expect(raw.jev.question_version).toBe("jev-node-questions-v3");
+    expect(raw.jev.question_version).toBe("jev-node-questions-v4");
     expect(raw.jev_model).toBe("jev-mock");
 
     // Identical node/variable states share a request; the policy still reviews nodes.

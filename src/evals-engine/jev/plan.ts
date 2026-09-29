@@ -84,6 +84,8 @@ export interface JevNodeAxis extends JevAxisCommon {
    *  questions do not cover the whole surface: the unasked ones can never fire
    *  and must not be read as clean. */
   truncated?: boolean;
+  /** An intent tool fired in this node, so the intent may be premature. */
+  intentFired?: boolean;
 }
 export interface JevCustomAxis extends JevAxisCommon {
   kind: "custom";
@@ -276,9 +278,12 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
           questions[full] = question;
           refs.push({ key: full, intent });
         }
+        const tools = Object.values(node.intent_tools ?? {});
+        const fired = !!node.chosen_intent || tools.some((t) => String(intentState.node_transcript ?? "").includes(`Tool_Call: ${t}(`));
         addRequest(requestKey, intentState, questions, [{
           kind: "node", id: `${prefix}:intent_identification`, judge: "intent_identification", nodeIndex,
           requestKey, questionKeys: refs.map((r) => r.key), intents: refs,
+          ...(fired ? { intentFired: true } : {}),
         }]);
       }
     }
