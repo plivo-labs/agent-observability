@@ -5,7 +5,7 @@ import { EVIDENCE_VERSION } from "./evidence.js";
 import { CONVERSATION_JUDGES, NODE_JUDGES } from "./plan.js";
 
 export const POLICY_VERSION = "verify-failures-v3";
-export const QUESTION_VERSION = "jev-node-questions-v3";
+export const QUESTION_VERSION = "jev-node-questions-v4";
 export type ReviewRoute = "auto_pass" | "auto_fail" | "verify_failure" | "verify_applicability" | "uncalibrated_evidence" | "uncertain_or_incomplete";
 
 /** Which confident Jev outcomes may be published without a full LLM judge. */
@@ -40,7 +40,10 @@ export function routeAxis(g: GatedAxis, policy: RoutePolicy = REVIEW_ALL): Revie
   if (g.outcome === "unknown") return "verify_applicability";
   if (g.outcome === "review") return "uncertain_or_incomplete";
   if (g.axis.kind === "conversation") return "auto_pass";
-  return g.axis.kind === "node" && policy.nodeAutoPass.has(g.axis.judge) ? "auto_pass" : "uncalibrated_evidence";
+  if (g.axis.kind !== "node" || !policy.nodeAutoPass.has(g.axis.judge)) return "uncalibrated_evidence";
+  // Only a fired intent can be premature, and its margin is thin (real defect
+  // at 0.31 vs a 0.23 pass line), so the LLM checks those.
+  return g.axis.intentFired ? "uncalibrated_evidence" : "auto_pass";
 }
 
 export const isPublished = (route: ReviewRoute): boolean => route === "auto_pass" || route === "auto_fail";

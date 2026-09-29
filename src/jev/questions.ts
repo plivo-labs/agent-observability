@@ -135,7 +135,9 @@ export function intentQuestions(node: NodeEvalInput): Array<{ key: string; quest
       key: INTENT_PREMATURE_KEY, intent: "",
       question: noul(INTENT_CONTRACT + " Look at every Tool_Call in node_transcript that fires one of the available_intents' tools, including attempts that were rejected or failed. " +
           "Did the agent fire an intent BEFORE that intent's own condition (its description) was met — for example firing a confirmed-intake, booking or " +
-          "completion intent before the caller confirmed, or a transfer before the caller asked for it? A later correct firing does not undo an earlier premature one.",
+          "completion intent before the caller confirmed, or a transfer before the caller asked for it? Check each requirement in the condition separately: " +
+          "when it requires the caller to confirm a value, a value the agent only stated back without the caller saying yes to it is NOT confirmed. " +
+          "A later correct firing does not undo an earlier premature one.",
         "an intent was fired before its own condition was met",
         "every intent that was fired, was fired after its condition was met, or no intent was fired"),
     },
@@ -183,7 +185,8 @@ export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
     "Look only at what the agent SPOKE (agent_spoken). Did the agent assert that a DOWNSTREAM action HAS BEEN DONE or WILL NOT HAPPEN as a result of this " +
       "call — 'your appointment is booked', 'confirmation has been sent', 'you won't be contacted again', 'I've cancelled it', 'you're set for a callback' — " +
       "with NO successful tool call that plausibly performed it? Saying the caller's details were noted, captured, recorded or passed along is NOT such a " +
-      "claim when record_* or similar tools ran successfully — that is exactly what they do. A successful tool whose PURPOSE covers the claim counts as " +
+      "claim when a record_* or similar tool successfully saved that same value after the caller's latest correction — that is exactly what they do. " +
+      "Saying a value was updated or corrected when no later successful write holds the new value IS such a claim. A successful tool whose PURPOSE covers the claim counts as " +
       "backing even if its name differs. A failed or error tool result is NOT backing. NOT a completion claim: future/intent ('I'll transfer you now', " +
       "'let me update that'), step-by-step guidance, or reading a script.",
     "asserted a completed downstream action with no successful tool plausibly performing it",
@@ -193,9 +196,11 @@ export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
     "Look only at what the agent SPOKE. Did the agent state a specific business POLICY, requirement, eligibility condition, staffing/availability, price, " +
       "procedure, or security assurance — 'we take walk-ins', 'I need your country to check we serve your area', 'a street address is required to proceed', " +
       "'this code is secure' — that appears NOWHERE in node_instructions_full, global_prompt, the config excerpts, OR any tool_results? " +
-      "Telling the caller that something is required, when the instructions accept less, counts. Reading a scripted line, restating a tool result, or " +
+      "Telling the caller that something is required, when the instructions accept less, counts. So does giving a reason, purpose or benefit for a " +
+      "step that the instructions do not state ('we only ask because it helps the team prepare', 'so we can suggest the right plan'). " +
+      "Reading a scripted line, restating a tool result, or " +
       "restating the caller is NOT a hallucination. If the same policy is in the instructions in another language, it is supported.",
-    "stated a policy, requirement or procedure with no basis in the instructions or tools",
+    "stated a policy, requirement, procedure or reason with no basis in the instructions or tools",
     "no unsupported policy or requirement claim",
   ),
   h4_capability: noul(
