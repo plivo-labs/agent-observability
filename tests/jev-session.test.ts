@@ -64,7 +64,7 @@ describe("candidates and final decisions", () => {
     const jev = new MockJev([{}], 0.01);
     const { v, provider } = await run(jev);
     expect(labelsOf(provider)).toEqual(["eval_hallucination", "eval_instruction", "eval_intent", "eval_loop", "eval_sentiment", "eval_stt", "eval_variable"]);
-    expect(jev.calls.map(c => c.key).sort()).toEqual(["c", "h0", "n0"]);
+    expect(jev.calls.map(c => c.key).sort()).toEqual(["a0", "c", "h0", "i0", "n0"]);
     const loop = v.node_evaluations[0]!.node_loop;
     expect(loop.backend).toBe("llm");
     expect(loop.confidence).toBeUndefined();
@@ -87,7 +87,7 @@ describe("candidates and final decisions", () => {
       expect(loop.backend).toBe("llm");
       expect(loop.jev?.probability).toBe(0.97);
       expect(loop.jev?.candidate).toBe("fail");
-      expect(loop.jev?.gate).toEqual({ pass_below: 0.2, fail_above: 0.8 });
+      expect(loop.jev?.gate).toEqual({ pass_below: 0.28, fail_above: 0.85 });
       const call = provider.calls.find(c => c.jsonSchema?.name === "eval_loop")!;
       expect(call.user).not.toContain("0.97");
       expect(provider.calls.some(c => c.jsonSchema?.name === "eval_jev_reason")).toBe(false);
@@ -108,6 +108,79 @@ describe("candidates and final decisions", () => {
     expect(v.conversation_metrics.bot_detected.backend).toBe("code");
     expect(v.conversation_metrics.bot_detected.confidence).toBeUndefined();
     expect(v.conversation_metrics.conversation_status.status).toBe("voicemail_detected");
+  });
+});
+
+describe("published decisions", () => {
+  const withSwitches = async <T>(switches: Record<string, string>, body: () => Promise<T>): Promise<T> => {
+    const saved = Object.fromEntries(Object.keys(switches).map((k) => [k, (testConfig as any)[k]]));
+    Object.assign(testConfig, switches);
+    try {
+      return await body();
+    } finally {
+      Object.assign(testConfig, saved);
+    }
+  };
+
+  test("a named node judge's confident pass stands with no LLM judge call", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop" }, async () => {
+      const { v, provider } = await run(new MockJev([{}], 0.01));
+      const loop = v.node_evaluations[0]!.node_loop;
+      expect(loop.loop_detected).toBe(false);
+      expect(loop.backend).toBe("jev");
+      expect(loop.jev?.route).toBe("auto_pass");
+      expect(labelsOf(provider)).not.toContain("eval_loop");
+      expect(labelsOf(provider)).toContain("eval_hallucination");
+      expect(labelsOf(provider)).not.toContain("eval_jev_reason");
+    });
+  });
+
+  test("a named judge's confident fail stands, and one batched call writes its reason", async () => {
+    await withSwitches({ JEV_AUTO_FAIL: "node_loop" }, async () => {
+      const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.includes("node_loop") ? 0.97 : 0.01]))]);
+      const { v, provider } = await run(jev);
+      const loop = v.node_evaluations[0]!.node_loop;
+      expect(loop.loop_detected).toBe(true);
+      expect(loop.backend).toBe("jev");
+      expect(loop.jev?.route).toBe("auto_fail");
+      expect(loop.reason).toBe("why n0:node_loop");
+      expect(labelsOf(provider)).not.toContain("eval_loop");
+      expect(labelsOf(provider).filter(l => l === "eval_jev_reason")).toHaveLength(1);
+    });
+  });
+
+  const failingWriter = (message: string) => new MockLLM([(args: any) => {
+    if (args.jsonSchema?.name === "eval_jev_reason") throw new Error(message);
+    return defaultJudgeResponder(args.system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+  }]);
+  const loopFails = () => new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.includes("node_loop") ? 0.97 : 0.01]))]);
+
+  test("a transient reason-writer failure retries the whole session", async () => {
+    await withSwitches({ JEV_AUTO_FAIL: "node_loop" }, async () => {
+      await expect(run(loopFails(), failingWriter("429 rate limit exceeded"))).rejects.toThrow("429");
+    });
+  });
+
+  test("a deterministic reason-writer failure keeps the verdict with a plain reason", async () => {
+    await withSwitches({ JEV_AUTO_FAIL: "node_loop" }, async () => {
+      const { v } = await run(loopFails(), failingWriter("duplicate key value violates unique constraint"));
+      const loop = v.node_evaluations[0]!.node_loop;
+      expect(loop.loop_detected).toBe(true);
+      expect(loop.backend).toBe("jev");
+      expect(loop.reason).toBe("A defect was detected; explanation unavailable.");
+    });
+  });
+
+  test("pass reasons ride the same single call when asked for", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop", JEV_DECISION_REASONS: "all" }, async () => {
+      const { v, provider } = await run(new MockJev([{}], 0.01));
+      expect(v.node_evaluations[0]!.node_loop.reason).toBe("why n0:node_loop");
+      expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
+      const writer = provider.calls.filter(c => c.jsonSchema?.name === "eval_jev_reason");
+      expect(writer).toHaveLength(1);
+      const kinds = (JSON.parse(writer[0]!.user as string).items as Array<{ id: string; kind: string }>);
+      expect(kinds.find(i => i.id === "n0:node_loop")!.kind).toBe("clean");
+    });
   });
 });
 

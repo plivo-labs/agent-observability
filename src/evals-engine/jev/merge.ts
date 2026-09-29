@@ -14,7 +14,7 @@ import type { CustomMetricVerdict, CustomJudgeSpec, CustomMetricNodeVerdict } fr
 import { clamp01 } from "../aggregate.js";
 import type { GatedAxis } from "./gate.js";
 import type { JevNodeAxis } from "./plan.js";
-import { INTENT_WRONG_KEY } from "../../jev/questions.js";
+import { INTENT_PREMATURE_KEY, INTENT_WRONG_KEY } from "../../jev/questions.js";
 
 // Turning a gated probability into the verdict blocks consumers already read.
 // Two rules hold everywhere:
@@ -36,10 +36,15 @@ export function provenanceOf(g: GatedAxis): JudgeProvenance {
   return { confidence: g.p ?? undefined, backend: "jev", ...(g.jevModel ? { jev_model: g.jevModel } : {}) };
 }
 
-/** A confident pass costs no LLM call, so its text is templated. The score stays
- *  out of `reason`: that string is read by customers, to whom a bare model
- *  probability means nothing. It lives in `technical_reason` instead. */
-export function passReason(g: GatedAxis): ReasonText {
+/** A confident pass uses the batched writer's text when the session asked for
+ *  pass reasons, otherwise a template. The score stays out of `reason`: that
+ *  string is read by customers, to whom a bare model probability means nothing.
+ *  It lives in `technical_reason` instead. */
+export function passReason(g: GatedAxis, reasons: ReasonMap = new Map()): ReasonText {
+  const written = reasons.get(g.axis.id);
+  if (written?.reason) {
+    return { reason: written.reason, technical_reason: `jev ${round(g.p ?? 0)} · ${written.technical_reason}` };
+  }
   return {
     reason: "No defect found.",
     technical_reason: `jev: p=${round(g.p ?? 0)} at or below this judge's pass threshold`,
@@ -81,7 +86,7 @@ export function failReason(g: GatedAxis, reasons: ReasonMap): ReasonText {
 }
 
 export function textFor(g: GatedAxis, reasons: ReasonMap): ReasonText {
-  return g.outcome === "fail" ? failReason(g, reasons) : passReason(g);
+  return g.outcome === "fail" ? failReason(g, reasons) : passReason(g, reasons);
 }
 
 // ── node axes ────────────────────────────────────────────────────────────────
@@ -108,8 +113,9 @@ export function jevIntent(g: GatedAxis, reasons: ReasonMap): IntentIdentificatio
   const t = textFor(g, reasons);
   const axis = g.axis as JevNodeAxis;
   const fired = new Set(g.firedKeys);
-  // Catalog coverage and recorded-selection correctness map to separate flags.
-  const isWrongQuestion = (key: string): boolean => key.endsWith(`.${INTENT_WRONG_KEY}`);
+  // Catalog coverage and selection correctness map to separate flags. Firing an
+  // intent before its prerequisite is a wrong selection, not a catalog gap.
+  const isWrongQuestion = (key: string): boolean => key.endsWith(`.${INTENT_WRONG_KEY}`) || key.endsWith(`.${INTENT_PREMATURE_KEY}`);
   const wrong = axis.intents?.some((i) => isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const missed = axis.intents?.some((i) => !isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const failed = g.outcome === "fail";
@@ -149,12 +155,12 @@ export function jevVariables(g: GatedAxis, node: NodeEvalInput, reasons: ReasonM
   const failed = g.outcome === "fail" && missing.length + incorrect.length > 0;
   const t = failed
     ? failReason(g, reasons)
-    : cleared.length > 0
+    : cleared.length > 0 && !reasons.get(g.axis.id)?.reason
       ? {
           reason: "All applicable caller-provided variables were captured correctly.",
           technical_reason: `jev: p=${round(g.p ?? 0)}; cleared as out-of-scope or pending the final recording batch: ${cleared.join(", ")}`,
         }
-      : passReason(g);
+      : passReason(g, reasons);
   return {
     metrics: {
       extraction_successful: !failed,

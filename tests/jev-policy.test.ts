@@ -76,3 +76,22 @@ for (const probability of [undefined, 0.5, 0.02]) {
     expect(g!.outcome).toBe(probability === 0.02 ? "pass" : "review");
   });
 }
+
+test("named judges publish their confident outcomes; custom metrics and unnamed judges never do", async () => {
+  const { routeAxis, parseJudgeList, AUTO_FAIL_JUDGES, AUTO_PASS_JUDGES } = await import("../src/evals-engine/jev/policy.js");
+  const policy = { nodeAutoPass: new Set(["node_loop"]), autoFail: new Set(["node_loop", "bot_detection"]) };
+  const node = { axis: { kind: "node", judge: "node_loop" }, outcome: "pass", p: 0.01, probabilities: {}, firedKeys: [] } as any;
+  expect(routeAxis(node, policy)).toBe("auto_pass");
+  expect(routeAxis({ ...node, outcome: "fail" }, policy)).toBe("auto_fail");
+  expect(routeAxis({ ...node, outcome: "review" }, policy)).toBe("uncertain_or_incomplete");
+  expect(routeAxis({ ...node, axis: { kind: "node", judge: "hallucination" } }, policy)).toBe("uncalibrated_evidence");
+  expect(routeAxis({ ...node, axis: { kind: "node", judge: "hallucination" }, outcome: "fail" }, policy)).toBe("verify_failure");
+  expect(routeAxis({ ...node, axis: { kind: "conversation", judge: "bot_detection" }, outcome: "fail" }, policy)).toBe("auto_fail");
+  expect(routeAxis({ ...node, axis: { kind: "custom", judge: "node_loop" }, outcome: "fail" }, policy)).toBe("verify_failure");
+
+  expect([...parseJudgeList("all", AUTO_PASS_JUDGES).judges]).toEqual([...AUTO_PASS_JUDGES]);
+  expect(parseJudgeList("off", AUTO_FAIL_JUDGES).judges.size).toBe(0);
+  const typo = parseJudgeList("node_loop, node_lop", AUTO_PASS_JUDGES);
+  expect([...typo.judges]).toEqual(["node_loop"]);
+  expect(typo.unknown).toEqual(["node_lop"]);
+});

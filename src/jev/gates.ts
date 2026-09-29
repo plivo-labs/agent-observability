@@ -1,13 +1,16 @@
 // Per-judge confidence gates. p is Jev's probability that the defect is
-// present. Thresholds produce pass/fail/review CANDIDATES. The session policy
-// separately controls automatic acceptance and requires independent review
-// of suspected failures and changed/uncalibrated evidence views.
-//
-// Defaults come from the 295-session benchmark (spec §4): a flat 0.2/0.8 gate
-// auto-passed 6.6% of real bots and 8.9% of real intent misses and auto-failed
-// hallucination at only 67% precision, so those three judges carry their own
-// values. Sentinels: pass_below -1 = never auto-pass, fail_above 2 = never
+// present. Thresholds produce pass/fail/review CANDIDATES; the route policy
+// decides which judges' confident outcomes are published without a full LLM
+// judge. Sentinels: pass_below -1 = never auto-pass, fail_above 2 = never
 // auto-fail (a real probability is always 0..1).
+//
+// Conversation gates come from the 295-session benchmark, where a flat 0.2/0.8
+// auto-passed real bots, hence the tighter bot and low-engagement passes.
+// Node thresholds come from an 800-call replay with reviewed references.
+// Each pass threshold sits at least Jev's run-to-run noise (0.07) below the
+// lowest real defect. Intent, adherence and hallucination never auto-fail:
+// their production false alarms came from missing evidence (clipped tool
+// results, unexported exits).
 
 export interface JudgeGate {
   pass_below: number;
@@ -20,17 +23,17 @@ export const NEVER_PASS = -1;
 export const NEVER_FAIL = 2;
 
 export const DEFAULT_GATES: Readonly<Record<string, JudgeGate>> = {
-  node_loop: { pass_below: 0.2, fail_above: 0.8 },
-  intent_identification: { pass_below: 0.07, fail_above: 0.8 },
+  node_loop: { pass_below: 0.28, fail_above: 0.85 },
+  intent_identification: { pass_below: 0.23, fail_above: NEVER_FAIL },
   call_screening: { pass_below: 0.2, fail_above: 0.86 },
   low_engagement: { pass_below: 0.13, fail_above: 0.8 },
   voicemail_detection: { pass_below: 0.2, fail_above: 0.8 },
   bot_detection: { pass_below: 0.07, fail_above: 0.8 },
   wrong_number: { pass_below: 0.2, fail_above: 0.8 },
   do_not_disturb: { pass_below: 0.2, fail_above: 0.8 },
-  instructions_adherence: { pass_below: NEVER_PASS, fail_above: 0.8 },
-  variable_extraction: { pass_below: 0.2, fail_above: 0.9 },
-  hallucination: { pass_below: 0.2, fail_above: NEVER_FAIL },
+  instructions_adherence: { pass_below: 0.26, fail_above: NEVER_FAIL },
+  variable_extraction: { pass_below: 0.19, fail_above: 0.9 },
+  hallucination: { pass_below: 0.35, fail_above: NEVER_FAIL },
   // Every custom metric (metric:<slug>) shares one gate until measured per judge.
   custom_metric: { pass_below: 0.2, fail_above: 0.8 },
 };
