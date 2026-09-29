@@ -20,6 +20,8 @@
 // are filled with `fill()`.
 
 import { promptBody, promptOutput } from "./judge-prompts.js";
+import { NODE_EVIDENCE_SCOPE } from "../node-evidence.js";
+import { SYSTEM_INTENTS, INTENT_CONTRACT, ADHERENCE_CONTRACT, VARIABLE_CONTRACT } from "../judge-contracts.js";
 
 /** Replace `{key}` placeholders. Mirrors Python `.format(**vars)` for our slotted prompts. */
 export function fill(template: string, vars: Record<string, string>): string {
@@ -28,7 +30,7 @@ export function fill(template: string, vars: Record<string, string>): string {
 
 /** Platform system intents. Sourced here (not buried in prose) so the set can be
  *  kept in step with the runtime rather than drifting inside a prompt string. */
-export const SYSTEM_INTENTS = ["hangup", "error", "failed", "sent", "conversation_complete"] as const;
+export { SYSTEM_INTENTS } from "../judge-contracts.js";
 
 // ── criteria bodies ───────────────────────────────────────────────────────────────
 
@@ -101,7 +103,7 @@ C. The expected-variable list is the configured surface and does NOT mean every 
 D. Apply truncation before checking omissions. If the config schedules one final recording batch and the cutoff prevented the agent's next turn, that batch had no recording opportunity and none of its pending values are missing.
 
 Steps:
-1. For each entry in actual variables: does the name appear in the expected list? If not, fail (extra variables).
+1. Grade only configured names in the expected list. Additional runtime fields are outside this metric; an extra name alone is not a defect.
 2. Evaluate each stored value by its class. For Caller-capture variables, compare it with the caller's own words. For Rule-produced variables, apply the variable's rule and active path literally; do not require the caller to utter a configured default, status, mapping, or summary. Fabricated caller-capture values should be penalized.
 2a. Agent-composed fields are OUT OF SCOPE for this judge: summaries, remarks, outcome/status/disposition labels, language or interest classifications, and internal scores belong to instruction adherence or hallucination. NEVER place an agent-composed field in missing_variables or incorrect_variables, including workflow metadata inside a summary, even when that metadata conflicts with the transcript. This judge evaluates the caller variables captured from the applicable path, not the agent's authored narrative.
 3. A caller-capture variable is missing ONLY when the caller EXPLICITLY STATED its value in that variable's own terms during this node, the variable was applicable on the active path, and the agent did not store it (add to missing_variables). "Available in the context" is NOT the test — being derivable is not being stated. Never add an absent default, summary, status, disposition, classification, internal score, or other rule-produced workflow field to missing_variables. These are NEVER misses:
@@ -131,7 +133,7 @@ AUTHORITATIVE DECISION EXAMPLES — follow these outcomes even when a long node 
 
 Score: 1.0 all correct | 0.75 minor issues | 0.5 notable gaps | 0.25 most missing/incorrect | 0.0 complete failure.
 
-Pass if all extracted variables are valid and grounded. Fail for extra or fabricated variables, or a required value that was provided but missing/wrong. Maybe for minor issues.
+Pass if all applicable configured variables are valid and grounded. Fail for fabricated configured values, or a required value that was provided but missing/wrong. Maybe for minor issues.
 
 When ambiguous, favor extraction_successful=true if the values are approximately correct. "Approximately correct" covers normalization, reformatting, and paraphrase of what the caller actually said; it does NOT cover bucketing, thresholding, or classifying a vague utterance into a precise category the caller never expressed. This leniency applies to VALUE disputes only — never to omissions: an EMPTY extraction set is not automatically a pass. When the caller EXPLICITLY STATED a value for an expected variable during this node (including an explicit enum condition being met) and nothing was stored, that is a real failure — list it in missing_variables and fail. The omission carve-outs in steps 3-6 still apply.`;
 
@@ -308,36 +310,39 @@ const OUT_CRITERIA = `Return ONLY a JSON object with one entry per numbered crit
 // ── composed system prompts (criteria body + output section) ───────────────────────
 
 const compose = (body: string, output: string) => `${body}\n\n${output}`;
+const composeNode = (body: string, output: string, contract = "") => compose(`${body}\n\nNODE EVIDENCE CONTRACT: ${NODE_EVIDENCE_SCOPE}\n${contract}`, output);
 
 // Registry overrides: each builder resolves its body/output through the
 // override store at call time, falling back to the shipped constants. With the
 // seeded registry the two are byte-identical (proven by the parity test).
 
 export const systemForHallucination = (): string =>
-  compose(promptBody("hallucination", HALLUCINATION), promptOutput("hallucination", OUT_HALLUCINATION));
+  composeNode(promptBody("hallucination", HALLUCINATION), promptOutput("hallucination", OUT_HALLUCINATION));
 export const systemForLoop = (): string =>
-  compose(promptBody("node_loop", LOOP_DETECTION), promptOutput("node_loop", OUT_LOOP));
+  composeNode(promptBody("node_loop", LOOP_DETECTION), promptOutput("node_loop", OUT_LOOP));
 
 export const systemForVariableExtraction = (expectedVariables: string, actualVariables: string): string =>
-  compose(
+  composeNode(
     fill(promptBody("variable_extraction", VARIABLE_EXTRACTION), {
       expected_variables: expectedVariables,
       actual_variables: actualVariables,
     }),
     promptOutput("variable_extraction", OUT_VARIABLE),
+    VARIABLE_CONTRACT,
   );
 
 export const systemForInstructionAdherence = (instructions: string, objective: string): string =>
-  compose(fill(promptBody("instructions_adherence", INSTRUCTION_ADHERENCE), { instructions, objective }), promptOutput("instructions_adherence", OUT_INSTRUCTION));
+  composeNode(fill(promptBody("instructions_adherence", INSTRUCTION_ADHERENCE), { instructions, objective }), promptOutput("instructions_adherence", OUT_INSTRUCTION), ADHERENCE_CONTRACT);
 
 export const systemForIntent = (availableIntents: string, chosenIntent: string): string =>
-  compose(
+  composeNode(
     fill(promptBody("intent_identification", INTENT_IDENTIFICATION), {
       available_intents: availableIntents,
       chosen_intent: chosenIntent,
       system_intents: SYSTEM_INTENTS.join(", "),
     }),
     promptOutput("intent_identification", OUT_INTENT),
+    INTENT_CONTRACT,
   );
 
 export const systemForGoal = (goals: string, flowHistory: string, isSimulation = false): string =>

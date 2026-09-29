@@ -51,14 +51,19 @@ export interface NodeEvalInput {
   available_intents: unknown[];
   /** Intent the agent actually chose at this node (last detected intent). */
   chosen_intent: string;
+  /** Declared intent name → the tool that selects it (config `intents[].tool`). */
+  intent_tools?: Record<string, string>;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
   required_variables: string[];
   /** Per-variable recording rules (how/when each should be captured) — rendered
    *  into the variable judge's expected-variables list so conditional rules
    *  ("leave empty unless…") are judged against, not guessed at. */
   variable_rules?: Record<string, string>;
-  /** Variables actually extracted at this node (`variables_by_node[node_uuid]`). */
+  /** Latest known values at this node's exit, including earlier node writes. */
   extracted_variables: Record<string, unknown>;
+  /** Ingest recorder evidence; absent on legacy/simulation inputs. Unconfirmed
+   * attempts are not proof of successful persistence. */
+  variable_sources?: Record<string, { node_uuid: string; event_index: number; status: "succeeded" | "unconfirmed" }>;
   /** Turns that ran at this node, in order. */
   turns: EvalTurn[];
   /** Number of turns at this node. */
@@ -84,6 +89,8 @@ export interface ConversationInput {
   goals: GoalInput[];
   /** The whole conversation rendered as text (context for hallucination/loop/goal judges). */
   full_transcript: string;
+  /** Ordered ingest evidence, preserving ownership across node revisits. Optional for legacy/simulation callers. */
+  timeline?: EvalTurn[];
   /** Speech-only variant of full_transcript: internal evidence lines
    *  (System_Note/Tool_Call/Tool_Result/Agent_Handoff) removed. Used by the
    *  conversation-axis detection judges, which must classify what was SAID on
@@ -110,6 +117,13 @@ export interface ConversationInput {
    *  human_transfer judge reads this. Absent ⇒ that judge is undecidable (the
    *  sim path, or a sender that never tags) — never a clean "no transfer". */
   tags?: SessionTag[];
+  /** Runtime system/developer messages in full (the rendered transcript keeps
+   *  only the first 600 chars of each as a System_Note). The hallucination
+   *  grounding index reads these: a lead's templated details live here and
+   *  nowhere else in the config. Absent on the sim path. */
+  system_messages?: string[];
+  /** Full runtime notes tied to timeline events, for grounding at node exit. */
+  system_message_events?: Array<{ event_index: number; text: string }>;
 }
 
 /** One session tag as stored: an opaque name plus optional JSON metadata. */
@@ -147,6 +161,31 @@ export interface InteractionQualityIssue {
   reason_code: string;
   details: string;
 }
+/** Which backend decided an axis and how sure it was. Optional so stored
+ *  verdicts written before the Jev path stay readable; `confidence` is Jev's
+ *  calibrated probability of the defect for the deciding question. */
+export interface JudgeProvenance {
+  confidence?: number;
+  backend?: "jev" | "llm" | "code";
+  jev_model?: string;
+  /** Candidate evidence remains separate from the final judge verdict/score. */
+  jev?: {
+    candidate: "pass" | "fail" | "review" | "unknown";
+    probability: number | null;
+    probabilities: Record<string, number>;
+    question_keys: string[];
+    ignored_keys: string[];
+    missing_keys: string[];
+    truncated: boolean;
+    gate?: { pass_below: number; fail_above: number };
+    fallback?: string;
+    route: string;
+    evidence_version: string;
+    question_version: string;
+    policy_version: string;
+  };
+}
+
 export interface InteractionQualityMetrics {
   score: number;
   issues: InteractionQualityIssue[];
@@ -161,7 +200,7 @@ export interface PolicyBoundaryComplianceMetrics {
   reason: string;
   technical_reason: string;
 }
-export interface InstructionsAdherenceMetrics {
+export interface InstructionsAdherenceMetrics extends JudgeProvenance {
   /** Code-derived: objective.achieved ∧ procedure.passed ∧ policy.passed. */
   adherence_passed: boolean;
   /** Code-derived weighted score: .35·obj + .25·proc + .25·inter + .15·policy. */
@@ -174,14 +213,14 @@ export interface InstructionsAdherenceMetrics {
   policy_boundary_compliance: PolicyBoundaryComplianceMetrics | null;
 }
 
-export interface IntentIdentificationMetrics {
+export interface IntentIdentificationMetrics extends JudgeProvenance {
   reason: string;
   technical_reason: string;
   intent_not_found: boolean;
   intent_wrongly_identified: boolean;
   score: number;
 }
-export interface VariableExtractionMetrics {
+export interface VariableExtractionMetrics extends JudgeProvenance {
   extraction_successful: boolean;
   score: number;
   reason: string;
@@ -193,13 +232,13 @@ export interface VariableExtractionMetrics {
   /** Variables the agent extracted with a wrong/ungrounded value (LLM). */
   incorrect_variables: string[];
 }
-export interface HallucinationMetrics {
+export interface HallucinationMetrics extends JudgeProvenance {
   hallucinated: boolean;
   score: number;
   reason: string;
   technical_reason: string;
 }
-export interface NodeLoopMetrics {
+export interface NodeLoopMetrics extends JudgeProvenance {
   loop_detected: boolean;
   score: number;
   reason: string;
@@ -252,7 +291,7 @@ export interface CriteriaEvaluationResult {
 // The node/goal path leaves these zero-valued; the conversation judges populate
 // the real values when scoring the whole-transcript axis.
 
-interface CmDetection {
+export interface CmDetection extends JudgeProvenance {
   detected: boolean;
   detected_value: number;
   reason: string;
