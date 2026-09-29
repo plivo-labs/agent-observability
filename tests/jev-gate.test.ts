@@ -56,14 +56,14 @@ describe("gatePlan", () => {
     expect(mid.get("n0:node_loop")!.fallback).toBeUndefined();
   });
 
-  test("hallucination never auto-fails and adherence never auto-passes", () => {
+  test("hallucination and adherence never auto-fail, and both can auto-pass", () => {
     const plan = buildJevPlan(ctx());
     const high = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.99), DEFAULT_GATES)));
     expect(high.get("n0:hallucination")!.outcome).toBe("review");
-    expect(high.get("n0:instructions_adherence")!.outcome).toBe("fail");
+    expect(high.get("n0:instructions_adherence")!.outcome).toBe("review");
     const low = byAxisId(mergeChunkedAxes(gatePlan(plan, respond(plan, 0.01), DEFAULT_GATES)));
     expect(low.get("n0:hallucination")!.outcome).toBe("pass");
-    expect(low.get("n0:instructions_adherence")!.outcome).toBe("review");
+    expect(low.get("n0:instructions_adherence")!.outcome).toBe("pass");
   });
 
   test("an axis takes the highest of its questions, and fired keys are the ones at or above the threshold", () => {

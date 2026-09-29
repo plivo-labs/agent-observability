@@ -84,6 +84,14 @@ describe("intent", () => {
     expect(block.intent_not_found).toBe(false);
   });
 
+  test("an intent fired before its own condition maps to intent_wrongly_identified", () => {
+    const timed = nodeAxis({ ...axis, questionKeys: [...axis.questionKeys, "n0.intent.premature"],
+      intents: [...axis.intents!, { key: "n0.intent.premature", intent: "" }] });
+    const block = merge.jevIntent(gated({ axis: timed, outcome: "fail", p: 0.9, firedKeys: ["n0.intent.premature"] }), NO_REASONS);
+    expect(block.intent_wrongly_identified).toBe(true);
+    expect(block.intent_not_found).toBe(false);
+  });
+
   test("a pass sets neither flag and scores 1", () => {
     const block = merge.jevIntent(gated({ axis, outcome: "pass", p: 0.03 }), NO_REASONS);
     expect(block).toMatchObject({ intent_not_found: false, intent_wrongly_identified: false, score: 1 });

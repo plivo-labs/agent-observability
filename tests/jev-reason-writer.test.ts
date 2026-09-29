@@ -4,7 +4,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { writeFailReasons, REASON_WRITER_SYSTEM } = await import("../src/evals-engine/judges/reason-writer.js");
+const { writeDecisionReasons, REASON_WRITER_SYSTEM } = await import("../src/evals-engine/judges/reason-writer.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 type NodeEvalInput = import("../src/evals-engine/types.js").NodeEvalInput;
 
@@ -22,10 +22,10 @@ const axes = [
   { id: "c.low_engagement", judge: "low_engagement" },
 ];
 
-describe("writeFailReasons", () => {
+describe("writeDecisionReasons", () => {
   test("one strict-schema call carrying the transcript once and every failing axis", async () => {
     const provider = new MockLLM([JSON.stringify({ reasons: axes.map((a) => ({ id: a.id, reason: `r ${a.id}`, technical_reason: `t ${a.id}` })) })]);
-    const { reasons } = await writeFailReasons({ ctx, nodes: [{ node, nodeIndex: 0 }], axes, provider });
+    const { reasons } = await writeDecisionReasons({ ctx, nodes: [{ node, nodeIndex: 0 }], axes, provider });
     expect(provider.calls).toHaveLength(1);
     const call = provider.calls[0]!;
     expect(call.jsonSchema?.name).toBe("eval_jev_reason");
@@ -40,7 +40,7 @@ describe("writeFailReasons", () => {
 
   test("the schema has no dynamic keys — a strict gateway must be able to accept it", () => {
     const provider = new MockLLM(["{}"]);
-    return writeFailReasons({ ctx, nodes: [], axes, provider }).then(() => {
+    return writeDecisionReasons({ ctx, nodes: [], axes, provider }).then(() => {
       const schema = provider.calls[0]!.jsonSchema!.schema as any;
       expect(schema.additionalProperties).toBe(false);
       expect(schema.properties.reasons.type).toBe("array");
@@ -57,7 +57,7 @@ describe("writeFailReasons", () => {
         { id: "c.low_engagement", reason: "kept", technical_reason: "" },
       ],
     })]);
-    const { reasons } = await writeFailReasons({ ctx, nodes: [], axes, provider });
+    const { reasons } = await writeDecisionReasons({ ctx, nodes: [], axes, provider });
     expect([...reasons.keys()]).toEqual(["c.low_engagement"]);
   });
 });

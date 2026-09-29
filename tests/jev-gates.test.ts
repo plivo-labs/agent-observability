@@ -11,11 +11,13 @@ describe("decide", () => {
     expect(decide(0, g)).toBe("pass");
     expect(decide(1, g)).toBe("fail");
   });
-  test("hallucination never auto-fails, adherence never auto-passes", () => {
-    expect(decide(1, DEFAULT_GATES.hallucination!)).toBe("review");
-    expect(decide(0.05, DEFAULT_GATES.hallucination!)).toBe("pass");
-    expect(decide(0, DEFAULT_GATES.instructions_adherence!)).toBe("review");
-    expect(decide(0.95, DEFAULT_GATES.instructions_adherence!)).toBe("fail");
+  test("hallucination, adherence and intent never auto-fail; loop and variables can", () => {
+    for (const judge of ["hallucination", "instructions_adherence", "intent_identification"]) {
+      expect(decide(1, DEFAULT_GATES[judge]!)).toBe("review");
+      expect(decide(0.05, DEFAULT_GATES[judge]!)).toBe("pass");
+    }
+    expect(decide(0.9, DEFAULT_GATES.node_loop!)).toBe("fail");
+    expect(decide(0.95, DEFAULT_GATES.variable_extraction!)).toBe("fail");
   });
 });
 

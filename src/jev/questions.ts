@@ -79,17 +79,43 @@ export const NODE_LOOP_QUESTION = noul(
   "no excessive repetition",
 );
 
-export const ADHERENCE_QUESTION = noul(
-  ADHERENCE_CONTRACT + " Did this node commit a failure under that rubric? Require a specific instruction and owned evidence; when unsure answer FALSE.",
-  "this node failed its objective, missed a critical procedure, or crossed an explicit policy boundary",
-  "no adherence failure under the rubric; minor or out-of-scope issues alone do not fail",
-);
+/** Three failure modes asked separately, the way the LLM adherence judge grades
+ *  them; one blended question could not separate defects from clean calls. */
+export const ADHERENCE_QUESTIONS: Readonly<Record<"objective" | "procedure" | "boundary", JevNoul>> = {
+  objective: noul(
+    "Read node_prompt, the instructions this agent's author wrote for this node. Judge only what the agent did in node_transcript. " +
+      "Did the agent, by its own choice, fail or abandon this node's objective while the caller was still cooperating — for example by demanding " +
+      "information or a requirement the instructions do not ask for, rejecting an answer the instructions accept, or closing before the objective was met? " +
+      "A caller who refuses, hangs up, or goes silent is not the agent's failure. Steps never reached because the call ended are not failures. " +
+      "Reordering, paraphrase and minor omissions are not failures.",
+    "the agent itself failed or abandoned the node objective while the caller was cooperating",
+    "the objective was pursued, or it failed only because of the caller or the call ending",
+  ),
+  procedure: noul(
+    "Read node_prompt. Did the agent skip or fake a step the instructions explicitly require that protects the outcome — a required confirmation " +
+      "or read-back, a verification, a consent, a disclosure, or handling of an opt-out — at a point the conversation actually reached? " +
+      "Treating silence or no answer as a confirmation counts as skipping it. Silent recorder/tool calls and their order are bookkeeping, not steps. " +
+      "A step the call never reached is not skipped.",
+    "a required protective step was skipped or faked at a point the call reached",
+    "every required protective step that the call reached was performed",
+  ),
+  boundary: noul(
+    "Read the Boundaries and any explicit prohibitions in node_prompt. Did the agent do something those instructions forbid — for example pushing or " +
+      "persuading after the caller declined, asking again for information the caller refused, offering or promising an action the instructions say it " +
+      "cannot take, or continuing an intake after the caller asked not to be contacted?",
+    "the agent did something the node instructions explicitly forbid",
+    "no explicit boundary in the node instructions was crossed",
+  ),
+};
 
 export const INTENT_NOT_FOUND_KEY = "intent.not_found";
 export const INTENT_WRONG_KEY = "intent.wrong";
+export const INTENT_PREMATURE_KEY = "intent.premature";
 
-/** Two metric-level questions use the complete intent catalog in the state.
- * Missing execution is not the meaning of intent_not_found. */
+/** Metric-level questions over the complete intent catalog in the state.
+ * Missing execution is not the meaning of intent_not_found; the premature
+ * question catches the right intent fired before its own condition was met,
+ * which a final-selection question cannot see. */
 export function intentQuestions(node: NodeEvalInput): Array<{ key: string; question: JevNoul; intent: string }> {
   if (!node.available_intents?.length) return [];
   return [
@@ -105,33 +131,46 @@ export function intentQuestions(node: NodeEvalInput): Array<{ key: string; quest
         "positive evidence shows a listed intent selected contrary to the caller or without its required conversational prerequisite",
         "supported or ambiguous selection, no selection evidence, or intent_not_found applies"),
     },
+    {
+      key: INTENT_PREMATURE_KEY, intent: "",
+      question: noul(INTENT_CONTRACT + " Look at every Tool_Call in node_transcript that fires one of the available_intents' tools, including attempts that were rejected or failed. " +
+          "Did the agent fire an intent BEFORE that intent's own condition (its description) was met — for example firing a confirmed-intake, booking or " +
+          "completion intent before the caller confirmed, or a transfer before the caller asked for it? A later correct firing does not undo an earlier premature one.",
+        "an intent was fired before its own condition was met",
+        "every intent that was fired, was fired after its condition was met, or no intent was fired"),
+    },
   ];
 }
 
-/** One question per declared variable, stating the full rule and what was
- *  actually recorded — the input the benchmark showed lifts recall from 27%
- *  to 91%. `recorded` is what merge.ts uses to file a fired variable under
- *  missing vs incorrect. */
+/** One question per declared variable. Only a CUT-OFF call excuses a missing
+ *  value: agents that record at the end of the call would otherwise have every
+ *  normal ending read as "ended too soon". `recorded` files a fired variable
+ *  under missing vs incorrect in merge.ts. */
 export function variableQuestions(node: NodeEvalInput): Array<{ key: string; question: JevNoul; variable: string; recorded: boolean }> {
   return (node.required_variables ?? []).slice(0, MAX_VARIABLE_QUESTIONS).map((name, i) => {
     const rule = (node.variable_rules?.[name] ?? "").slice(0, RULE_CHARS);
     const recorded = Object.hasOwn(node.extracted_variables ?? {}, name);
-    const recordedText = recorded ? `RECORDED as ${JSON.stringify(node.extracted_variables[name]).slice(0, RECORDED_CHARS)}` : "NOT RECORDED (no tool call)";
+    const recordedText = recorded ? `RECORDED as ${JSON.stringify(node.extracted_variables[name]).slice(0, RECORDED_CHARS)}` : "NOT RECORDED";
     return {
       key: `var.${i}`,
       variable: name,
       recorded,
       question: noul(
-        VARIABLE_CONTRACT + `\nVariable '${name}' — ${recordedText}.\nRULE: ${rule}\n\nJudge THIS variable against its rule and the transcript. It FAILED if ANY of these holds: ` +
-          "(1) GATE VIOLATION — it was recorded although the rule says to record NOTHING in this situation (e.g. caller declined / opted out / was screened out, " +
-          "or the required read-back was never affirmed — a bare 'yes' does not affirm a read-back that omitted a required item); (2) REQUIRED VALUE MISSING — " +
-          "the caller explicitly supplied an applicable value during this node, but nothing was recorded; (3) WRONG VALUE — the recorded value contradicts what the caller actually said or " +
-          "corrected to, records an unclear/garbled answer literally when the rule says to leave it blank, or breaks the rule's format. It did NOT fail if the " +
-          "value was captured correctly, or the variable was not applicable on this call's path and the rule does not require a disposition. CALL ENDED " +
-          "EARLY: if the transcript simply STOPS before the agent ever asked for this value — the caller hung up or the call was cut off mid-flow — the " +
-          "value is UNREACHABLE, not missing, and this variable did NOT fail. A value that WAS recorded wrongly still fails however the call ended.",
-        "this variable failed (gate violation / required value missing / wrong value)",
-        "captured correctly, or not applicable with nothing required",
+        `Variable '${name}'. Its recording rule: ${rule || "(none given)"}\n` +
+          `At the end of this node it is ${recordedText}. The latest successful write before the node ended counts; variable_sources shows which writes succeeded.\n\n` +
+          "Judge only this node's own conversation (node_transcript). Is this variable WRONG at the end of the node? It is WRONG only if one of these is true: " +
+          "(1) it was recorded although the rule's own condition for recording was not met; " +
+          "(2) the rule's condition for recording WAS met — the caller gave the value and any confirmation the rule requires actually happened — but it is not recorded; " +
+          "a clear answer such as 'no', 'not interested' or 'wrong number' IS the value for a yes / no / unclear field; " +
+          "(3) the recorded value contradicts what the caller said or corrected to, or drops a part of what the caller gave — a time of day, the end of a range, or a correction — or records a refusal or non-answer as if it were the value. " +
+          "It is NOT wrong when: the value matches what the caller confirmed; it is NOT RECORDED because the rule's condition for recording " +
+          "(for example an explicit confirmation or a final read-back) never happened, or the caller never gave it; " +
+          "or the call was CUT OFF — the transcript stops mid-conversation or the caller hung up while the agent was still speaking — before the value could be recorded; " +
+          "it was recorded before the spoken confirmation and that confirmation then happened before the node ended; " +
+          "or the value is a reasonable normalisation of what the caller confirmed (date or time format, casing, a spelling the caller confirmed, or leaving out a hedge word such as 'about'). " +
+          "If the condition for recording was met and the conversation then moved on, or reached a normal end such as the agent saying goodbye, without recording it, that IS wrong.",
+        `'${name}' is wrong at the end of the node`,
+        `'${name}' is correct, or correctly left unrecorded`,
       ),
     };
   });
@@ -141,23 +180,23 @@ export function variableQuestions(node: NodeEvalInput): Array<{ key: string; que
 
 export const HALLUCINATION_QUESTIONS: Readonly<Record<string, JevNoul>> = {
   h1_completion: noul(
-    "Look only at what the agent SPOKE (agent_spoken). Did the agent assert that something HAS BEEN DONE or WILL NOT HAPPEN as a result of this call — " +
-      "'you won't be contacted again', 'you're on our do-not-call list', 'I've updated your number', 'confirmation has been sent', 'it's booked/cancelled' — " +
-      "with NO successful tool call that plausibly performed it? A successful tool whose PURPOSE covers the claim counts as backing even if its name differs " +
-      "an action result that accepts a callback request can back 'you're set for a callback'. A bookkeeping record_* call alone does not establish downstream completion. A " +
-      "failed or error tool result is NOT backing. NOT a completion claim: future/intent ('I'll transfer you now', 'let me update that'), step-by-step " +
-      "guidance ('open the app store'), or reading a script.",
-    "asserted a completed action / guarantee with no successful tool plausibly performing it",
-    "every completion claim is backed by a plausible successful tool, or none was made",
+    "Look only at what the agent SPOKE (agent_spoken). Did the agent assert that a DOWNSTREAM action HAS BEEN DONE or WILL NOT HAPPEN as a result of this " +
+      "call — 'your appointment is booked', 'confirmation has been sent', 'you won't be contacted again', 'I've cancelled it', 'you're set for a callback' — " +
+      "with NO successful tool call that plausibly performed it? Saying the caller's details were noted, captured, recorded or passed along is NOT such a " +
+      "claim when record_* or similar tools ran successfully — that is exactly what they do. A successful tool whose PURPOSE covers the claim counts as " +
+      "backing even if its name differs. A failed or error tool result is NOT backing. NOT a completion claim: future/intent ('I'll transfer you now', " +
+      "'let me update that'), step-by-step guidance, or reading a script.",
+    "asserted a completed downstream action with no successful tool plausibly performing it",
+    "every downstream completion claim is backed, or the agent only said details were noted",
   ),
   h2_policy: noul(
-    "Look only at what the agent SPOKE. Did the agent state a specific business POLICY, staffing/availability, price, procedure, or security assurance — " +
-      "'we take walk-ins', 'someone will be available during the day', 'this code is secure', 'sign in to begin' — that appears NOWHERE in " +
-      "node_instructions_full, global_prompt, the config excerpts, OR any tool_results (a knowledge-base lookup result counts as support)? Reading a scripted " +
-      "line, restating a tool result, or restating the caller is NOT a hallucination. If the same policy is in the instructions in another language, it is " +
-      "supported. When unsure whether it is in the instructions, answer FALSE.",
-    "stated a policy/availability/price/procedure fact with no basis in instructions or tools",
-    "no unsupported policy claim",
+    "Look only at what the agent SPOKE. Did the agent state a specific business POLICY, requirement, eligibility condition, staffing/availability, price, " +
+      "procedure, or security assurance — 'we take walk-ins', 'I need your country to check we serve your area', 'a street address is required to proceed', " +
+      "'this code is secure' — that appears NOWHERE in node_instructions_full, global_prompt, the config excerpts, OR any tool_results? " +
+      "Telling the caller that something is required, when the instructions accept less, counts. Reading a scripted line, restating a tool result, or " +
+      "restating the caller is NOT a hallucination. If the same policy is in the instructions in another language, it is supported.",
+    "stated a policy, requirement or procedure with no basis in the instructions or tools",
+    "no unsupported policy or requirement claim",
   ),
   h4_capability: noul(
     "Look only at agent_spoken. Did the agent offer or promise a concrete external action (cancel an order, book, send a link, arrange a callback) " +

@@ -39,11 +39,18 @@ test("loop evidence excludes idle turns without stripping other judges' evidence
   expect(JSON.stringify(plan.requests.find(r => r.key === adherence.requestKey)?.state)).toContain("Still there?");
 });
 
-test("node and variable questions share one identical state and retain axis routing", () => {
+test("node and variable questions share one identical state; adherence gets the same view minus the intent catalog", () => {
   const plan = buildJevPlan(input([node("A", "Hello.")]));
-  const n = plan.axes.find(a => a.judge === "instructions_adherence")!;
+  const n = plan.axes.find(a => a.judge === "node_loop")!;
   const v = plan.axes.find(a => a.judge === "variable_extraction")!;
+  const a = plan.axes.find(a => a.judge === "instructions_adherence")!;
   expect(v.requestKey).toBe(n.requestKey);
+  expect(a.requestKey).not.toBe(n.requestKey);
+  const nodeState = plan.requests.find(r => r.key === n.requestKey)!.state as Record<string, unknown>;
+  const adherenceState = plan.requests.find(r => r.key === a.requestKey)!.state as Record<string, unknown>;
+  expect(adherenceState.available_intents).toBeUndefined();
+  const { available_intents: _routing, ...rest } = nodeState;
+  expect(adherenceState).toEqual(rest);
   for (const axis of plan.axes) {
     const request = plan.requests.find(r => r.key === axis.requestKey)!;
     for (const key of axis.questionKeys) expect(request.questions[key]).toBeDefined();
