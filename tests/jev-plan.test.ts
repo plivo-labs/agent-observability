@@ -36,9 +36,9 @@ const ids = (p: ReturnType<typeof buildJevPlan>) => p.axes.map((a) => a.id).sort
 const keys = (p: ReturnType<typeof buildJevPlan>) => p.requests.map((r) => r.key).sort();
 
 describe("buildJevPlan — request set", () => {
-  test("a one-node voice session plans the conversation, shared node/variable and hallucination requests", () => {
+  test("a one-node voice session plans the conversation, shared node/variable, adherence, intent and hallucination requests", () => {
     const plan = buildJevPlan(ctx());
-    expect(keys(plan)).toEqual(["c", "h0", "n0"]);
+    expect(keys(plan)).toEqual(["a0", "c", "h0", "i0", "n0"]);
     expect(ids(plan)).toEqual([
       "c.bot_detection", "c.call_screening", "c.do_not_disturb", "c.low_engagement", "c.voicemail_detection", "c.wrong_number",
       "n0:hallucination", "n0:instructions_adherence", "n0:intent_identification", "n0:node_loop", "n0:variable_extraction#0",

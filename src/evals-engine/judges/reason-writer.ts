@@ -3,8 +3,8 @@ import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 
-// The one LLM call a Jev-first session makes for the verdicts that need prose:
-// its confident fails, and the custom metrics it found not applicable.
+// The one LLM call a Jev-first session makes for the verdicts Jev decided: its
+// published fails and passes, and the custom metrics it found not applicable.
 //
 // It does NOT re-judge: the verdict is already decided, and asking the model to
 // agree would reintroduce exactly the per-axis calls the gate exists to avoid.
@@ -23,11 +23,12 @@ export interface ReasonRequestAxis {
   /** What fired, in the judge's own terms (variable names, intent names). */
   detail?: string;
   /**
-   * `not_applicable` asks why a custom metric's situation never arose, which is
-   * the opposite assertion to a defect. Telling the model a defect is present
-   * when it is not invites invented evidence, so the two are labelled.
+   * `not_applicable` asks why a custom metric's situation never arose, and
+   * `clean` why a check passed — both the opposite assertion to a defect.
+   * Telling the model a defect is present when it is not invites invented
+   * evidence, so every item is labelled.
    */
-  kind?: "defect" | "not_applicable";
+  kind?: "defect" | "clean" | "not_applicable";
 }
 
 export interface ReasonWriterInput {
@@ -75,7 +76,8 @@ export const REASON_WRITER_SYSTEM =
   "A calibrated classifier has ALREADY decided every entry in `items` for this conversation. " +
   "Your job is only to EXPLAIN each one, never to re-judge it: do not dispute, soften, or overturn any verdict, and do not add entries. " +
   "Each entry carries a `kind`. For `kind: \"defect\"` the classifier found that defect present — explain what went wrong, quoting the deciding " +
-  "evidence from the transcript. For `kind: \"not_applicable\"` the classifier found that the metric's situation never arose on this call — explain " +
+  "evidence from the transcript. For `kind: \"clean\"` the classifier found NO defect — explain briefly what the agent did that satisfies this check, " +
+  "citing the transcript; do not invent a problem. For `kind: \"not_applicable\"` the classifier found that the metric's situation never arose on this call — explain " +
   "WHICH situation the metric expected and what the call did instead; do not describe it as a failure and do not invent a defect. " +
   "For every entry return an object with the SAME `id`, a `reason` (one or two sentences for the person reading the call review) and a " +
   "`technical_reason` (the internal rationale, naming the instruction, variable, intent, metric or transcript line involved). " +
@@ -89,7 +91,7 @@ export interface ReasonWriterResult {
   usage: LlmUsage;
 }
 
-export async function writeFailReasons(input: ReasonWriterInput): Promise<ReasonWriterResult> {
+export async function writeDecisionReasons(input: ReasonWriterInput): Promise<ReasonWriterResult> {
   const { ctx, nodes, axes, provider } = input;
   const { data, usage } = await runLlmJudge({
     system: REASON_WRITER_SYSTEM,

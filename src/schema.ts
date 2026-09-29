@@ -234,6 +234,15 @@ export const envSchema = z.object({
   // Custom metrics have no benchmark yet; they join the Jev path only when
   // switched on after measuring in dev.
   JEV_CUSTOM_METRICS: z.enum(["off", "on"]).default("off"),
+  // Node judges whose confident Jev PASS is published without an LLM call:
+  // "off", "all", or a comma-separated list.
+  JEV_NODE_AUTO_PASS: z.preprocess((v) => (v === "" ? undefined : v), z.string().default("off")),
+  // Judges whose confident Jev FAIL stands, with the reason written by one
+  // batched LLM call instead of a full re-judge: "off", "all", or a list.
+  JEV_AUTO_FAIL: z.preprocess((v) => (v === "" ? undefined : v), z.string().default("off")),
+  // "fails": the batched writer explains published fails only; passes get a
+  // template. "all": it also explains published passes.
+  JEV_DECISION_REASONS: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["fails", "all"]).default("fails")),
   // JSON {judge: {pass_below, fail_above}} overlaying the code defaults in
   // src/jev/gates.ts; a malformed value falls back to the defaults with a warning.
   JEV_GATES: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),

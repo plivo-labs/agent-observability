@@ -4,7 +4,7 @@ import { isVoiceChannel } from "../judges/conversation-judges.js";
 import { clipToolResults, estimateQuestionTokens, estimateRequestTokens } from "../../jev/tokens.js";
 import { buildHallucinationState, residualClaims } from "../../jev/hallucination-grounding.js";
 import {
-  ADHERENCE_QUESTION,
+  ADHERENCE_QUESTIONS,
   CONVERSATION_QUESTIONS,
   HALLUCINATION_QUESTIONS,
   MAX_CLAIM_QUESTIONS,
@@ -109,6 +109,11 @@ export interface BuildJevPlanOptions {
   customEnabled?: boolean;
   budgetTokens?: number;
 }
+
+const INTENT_STATE_KEYS = [
+  "node_name", "available_intents", "chosen_intent", "evidence_version", "target_node_uuid", "scope",
+  "chronology_available", "node_boundary", "node_transcript", "conversation_history",
+];
 
 export const DEFAULT_BUDGET_TOKENS = 30_000;
 /** Jev's total-context limit is twice its state limit (64k vs 32k), so the
@@ -227,7 +232,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     const claims = hasTranscript ? residualClaims(groundingContext, groundingTranscript, MAX_CLAIM_QUESTIONS, targetTranscript) : [];
     const prefix = `n${nodeIndex}`;
 
-    // loop + adherence + intents share the node state
+    // loop and variable questions share the node state
     const nodeQuestions: Record<string, JevNoul> = {};
     const nodeAxes: JevAxis[] = [];
     if (judgeAllowed(opts.judges, "node_loop")) {
@@ -243,25 +248,38 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
       }
     }
     // An empty node prompt is a neutral skip on the LLM path (no call, no
-    // verdict to disagree with) — asking Jev would invent one.
+    // verdict to disagree with) — asking Jev would invent one. Adherence gets
+    // its own request without the intent catalog, the same view the LLM
+    // adherence judge has: intent descriptions read as mandatory steps.
     if (judgeAllowed(opts.judges, "instructions_adherence") && (node.node_prompt ?? "").trim()) {
-      const key = `${prefix}.instructions_adherence`;
-      nodeQuestions[key] = ADHERENCE_QUESTION;
-      nodeAxes.push({ kind: "node", id: `${prefix}:instructions_adherence`, judge: "instructions_adherence", nodeIndex, requestKey: prefix, questionKeys: [key] });
+      const requestKey = `a${nodeIndex}`;
+      const { available_intents: _routingOnly, ...adherenceState } = state;
+      const questions: Record<string, JevNoul> = {};
+      for (const [name, question] of Object.entries(ADHERENCE_QUESTIONS)) questions[`${requestKey}.${name}`] = question;
+      addRequest(requestKey, adherenceState, questions, [{
+        kind: "node", id: `${prefix}:instructions_adherence`, judge: "instructions_adherence", nodeIndex,
+        requestKey, questionKeys: Object.keys(questions),
+      }]);
     }
+    // Intent gets the LLM intent judge's view: the catalog, the selection and
+    // the conversation. The node prompt and variable rules hid a premature
+    // intent (0.14 with them, 0.30 without) and kept clean calls uncertain.
     if (judgeAllowed(opts.judges, "intent_identification")) {
       const intents = intentQuestions(node);
       if (intents.length > 0) {
+        const requestKey = `i${nodeIndex}`;
+        const intentState = Object.fromEntries(INTENT_STATE_KEYS.filter((k) => k in state).map((k) => [k, state[k]]));
+        const questions: Record<string, JevNoul> = {};
         const refs: JevIntentQuestionRef[] = [];
         for (const { key, question, intent } of intents) {
-          const full = `${prefix}.${key}`;
-          nodeQuestions[full] = question;
+          const full = `${requestKey}.${key}`;
+          questions[full] = question;
           refs.push({ key: full, intent });
         }
-        nodeAxes.push({
+        addRequest(requestKey, intentState, questions, [{
           kind: "node", id: `${prefix}:intent_identification`, judge: "intent_identification", nodeIndex,
-          requestKey: prefix, questionKeys: refs.map((r) => r.key), intents: refs,
-        });
+          requestKey, questionKeys: refs.map((r) => r.key), intents: refs,
+        }]);
       }
     }
     addRequest(prefix, state, nodeQuestions, nodeAxes);

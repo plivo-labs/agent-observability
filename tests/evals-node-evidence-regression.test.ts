@@ -83,13 +83,13 @@ test("call IDs disambiguate concurrent writes and a failed handoff is not select
   expect(buildSessionEvalInput(intents, [call("one", "19:00"), output("one", true)]).input.nodes[0].chosen_intent).toBe("");
 });
 
-test("intent questions cover the full catalog, not one missing-tool question per intent", () => {
+test("intent questions cover the full catalog and timing, not one missing-tool question per intent", () => {
   const longRule = "Customer requests the special route. ".repeat(20);
   const cfg: AgentConfig = { nodes: [{ ref: "collect", intents: Array.from({ length: 20 }, (_, i) => ({ name: `route_${i}`, description: longRule })) }] };
   const { input } = buildSessionEvalInput(cfg, [speech("collect", "user", "Please send me to the special route.")]);
   const plan = buildJevPlan(input);
   const axis = plan.axes.find(a => a.judge === "intent_identification")!;
-  expect(axis.questionKeys).toEqual(["n0.intent.not_found", "n0.intent.wrong"]);
+  expect(axis.questionKeys).toEqual(["i0.intent.not_found", "i0.intent.wrong", "i0.intent.premature"]);
   expect("truncated" in axis && axis.truncated).toBeFalsy();
   const request = plan.requests.find(r => r.key === axis.requestKey)!;
   expect((request.state as any).available_intents).toHaveLength(20);
