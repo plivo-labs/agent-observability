@@ -95,3 +95,20 @@ test("named judges publish their confident outcomes; custom metrics and unnamed 
   expect([...typo.judges]).toEqual(["node_loop"]);
   expect(typo.unknown).toEqual(["node_lop"]);
 });
+
+test("an intent pass goes to the LLM when an intent fired in the node", async () => {
+  const { routeAxis } = await import("../src/evals-engine/jev/policy.js");
+  const policy = { nodeAutoPass: new Set(["intent_identification"]), autoFail: new Set<string>() };
+  const quiet = { axis: { kind: "node", judge: "intent_identification" }, outcome: "pass", p: 0.05, probabilities: {}, firedKeys: [] } as any;
+  expect(routeAxis(quiet, policy)).toBe("auto_pass");
+  expect(routeAxis({ ...quiet, axis: { ...quiet.axis, intentFired: true } }, policy)).toBe("uncalibrated_evidence");
+
+  const withIntent = (chosen: string, toolLine: string) => buildJevPlan({
+    ...input, full_transcript: `User: yes\n${toolLine}`,
+    nodes: [{ ...input.nodes[0]!, available_intents: [{ intent_name: "Done", intent_instructions: "Caller confirmed." }],
+      intent_tools: { Done: "handoff_done" }, chosen_intent: chosen,
+      turns: [{ node_uuid: "a", user: "yes", agent: toolLine, intent: "" }] }],
+  }).axes.find((a) => a.judge === "intent_identification") as any;
+  expect(withIntent("", "Agent: Thanks.").intentFired).toBeUndefined();
+  expect(withIntent("Done", "Agent: Thanks.").intentFired).toBe(true);
+});
