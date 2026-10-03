@@ -603,7 +603,7 @@ export async function evaluateIngestedSession(
     console.log(
       `[jev] judged nodes=${input.nodes.length} requests=${stats.requests} axes=${stats.axesTotal} ` +
         `auto_pass=${stats.autoPass} auto_fail=${stats.autoFail} unknown=${stats.unknown} reviewed=${stats.reviewed} ` +
-        `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}`,
+        `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}${stats.layout === "shared" ? " layout=shared" : ""}`,
     );
     return {
       node_evaluations: result.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" })),

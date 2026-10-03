@@ -112,3 +112,17 @@ test("an intent pass goes to the LLM when an intent fired in the node", async ()
   expect(withIntent("", "Agent: Thanks.").intentFired).toBeUndefined();
   expect(withIntent("Done", "Agent: Thanks.").intentFired).toBe(true);
 });
+
+test("verdicts from the per-view layout carry no layout tag", async () => {
+  const { decisionProvenance } = await import("../src/evals-engine/jev/policy.js");
+  const g = { axis: { kind: "node", judge: "node_loop", questionKeys: [] }, outcome: "pass", p: 0.05, probabilities: {}, firedKeys: [] } as any;
+  expect(decisionProvenance(g).jev).not.toHaveProperty("layout");
+  expect(decisionProvenance(g, undefined, undefined, "shared-state-v1").jev?.layout).toBe("shared-state-v1");
+});
+
+test("a fired intent asked against its own condition may be decided by Jev", async () => {
+  const { routeAxis } = await import("../src/evals-engine/jev/policy.js");
+  const policy = { nodeAutoPass: new Set(["intent_identification"]), autoFail: new Set<string>() };
+  const fired = { axis: { kind: "node", judge: "intent_identification", intentFired: true, firedChecked: true }, outcome: "pass", p: 0.05, probabilities: {}, firedKeys: [] } as any;
+  expect(routeAxis(fired, policy)).toBe("auto_pass");
+});

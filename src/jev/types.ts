@@ -5,7 +5,8 @@
 
 export interface JevNoul {
   type: "noul";
-  instructions: string;
+  /** An object carries data only this question reads (Jev "structured instructions"). */
+  instructions: string | Record<string, unknown>;
   criteria: { true: string; false: string };
 }
 

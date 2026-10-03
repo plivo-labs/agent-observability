@@ -116,7 +116,9 @@ export function jevIntent(g: GatedAxis, reasons: ReasonMap): IntentIdentificatio
   // Catalog coverage and selection correctness map to separate flags. Firing an
   // intent before its prerequisite is a wrong selection, not a catalog gap.
   const isWrongQuestion = (key: string): boolean => key.endsWith(`.${INTENT_WRONG_KEY}`) || key.endsWith(`.${INTENT_PREMATURE_KEY}`);
-  const wrong = axis.intents?.some((i) => isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
+  // A fired intent whose own condition was unmet is premature, i.e. wrong.
+  const firedEarly = g.firedKeys.some((k) => /\.fired\.\d+$/.test(k));
+  const wrong = firedEarly || (axis.intents?.some((i) => isWrongQuestion(i.key) && fired.has(i.key)) ?? false);
   const missed = axis.intents?.some((i) => !isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
   const failed = g.outcome === "fail";
   return {
