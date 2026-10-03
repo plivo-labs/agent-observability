@@ -92,6 +92,13 @@ describe("intent", () => {
     expect(block.intent_not_found).toBe(false);
   });
 
+  test("a fail raised only by a fired intent's own condition is a wrong selection", () => {
+    const fired = nodeAxis({ ...axis, questionKeys: [...axis.questionKeys, "i0.fired.0"] });
+    const block = merge.jevIntent(gated({ axis: fired, outcome: "fail", p: 0.9, firedKeys: ["i0.fired.0"] }), NO_REASONS);
+    expect(block.intent_wrongly_identified).toBe(true);
+    expect(block.intent_not_found).toBe(false);
+  });
+
   test("a pass sets neither flag and scores 1", () => {
     const block = merge.jevIntent(gated({ axis, outcome: "pass", p: 0.03 }), NO_REASONS);
     expect(block).toMatchObject({ intent_not_found: false, intent_wrongly_identified: false, score: 1 });

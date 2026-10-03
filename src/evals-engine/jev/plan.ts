@@ -86,6 +86,8 @@ export interface JevNodeAxis extends JevAxisCommon {
   truncated?: boolean;
   /** An intent tool fired in this node, so the intent may be premature. */
   intentFired?: boolean;
+  /** Each fired intent was asked against its own condition (shared layout). */
+  firedChecked?: boolean;
 }
 export interface JevCustomAxis extends JevAxisCommon {
   kind: "custom";
@@ -102,6 +104,8 @@ export interface JevPlan {
   /** Requests that were never sent because their state exceeded the budget;
    *  their axes fall back to the LLM judge. */
   dropped: Array<{ requestKey: string; estTokens: number }>;
+  /** Set by the shared-state planner; recorded on every verdict's provenance. */
+  layout?: string;
 }
 
 export interface BuildJevPlanOptions {

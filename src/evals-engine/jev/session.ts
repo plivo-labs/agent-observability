@@ -38,6 +38,7 @@ import {
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
 import { AUTO_FAIL_JUDGES, AUTO_PASS_JUDGES, decisionProvenance, isPublished, parseJudgeList, routeAxis, type RoutePolicy } from "./policy.js";
 import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type NodeJudgeName } from "./plan.js";
+import { buildSharedJevPlan } from "./plan-shared.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
 import { attachDetectionProvenance, jevAdherence, jevDetection, jevHallucination, jevIntent, jevNodeLoop, jevVariables, type ReasonMap } from "./merge.js";
 import { writeDecisionReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
@@ -72,6 +73,7 @@ export interface JevSessionResult {
   /** Counters for the one-line session log (and the dev rollout dashboards). */
   stats: {
     requests: number;
+    layout: "views" | "shared";
     axesTotal: number;
     autoPass: number;
     autoFail: number;
@@ -141,13 +143,15 @@ export async function evaluateSessionJevFirst(args: {
   const policy: RoutePolicy = { nodeAutoPass: autoPass.judges, autoFail: autoFail.judges };
   const explainPasses = (envConfig.JEV_DECISION_REASONS ?? "fails") === "all";
 
-  const plan = buildJevPlan(input, {
+  const shared = envConfig.JEV_LAYOUT === "shared";
+  const plan = (shared ? buildSharedJevPlan : buildJevPlan)(input, {
     judges,
     customSpecs: customJudges,
     customEnabled,
     budgetTokens: envConfig.JEV_STATE_TOKEN_BUDGET ?? DEFAULT_BUDGET_TOKENS,
   });
 
+  const layout = plan.layout;
   const startedAt = Date.now();
   const results = await runPlanRequests(jev, plan.requests);
   const jevMs = Date.now() - startedAt;
@@ -155,6 +159,7 @@ export async function evaluateSessionJevFirst(args: {
 
   const stats: JevSessionResult["stats"] = {
     requests: plan.requests.length,
+    layout: shared ? "shared" : "views",
     axesTotal: gated.size,
     autoPass: 0,
     autoFail: 0,
@@ -175,7 +180,7 @@ export async function evaluateSessionJevFirst(args: {
   const hasTranscript = !!input.full_transcript?.trim();
   const provenanceFor = (id: string): JudgeProvenance => {
     const g = gated.get(id);
-    return decisionProvenance(g, g ? gates[g.axis.kind === "custom" ? CUSTOM_METRIC_GATE : g.axis.judge] : undefined, policy);
+    return decisionProvenance(g, g ? gates[g.axis.kind === "custom" ? CUSTOM_METRIC_GATE : g.axis.judge] : undefined, policy, layout);
   };
   const published = (id: string): GatedAxis | undefined => {
     const g = gated.get(id);

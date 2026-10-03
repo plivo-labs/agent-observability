@@ -183,6 +183,8 @@ export interface JudgeProvenance {
     evidence_version: string;
     question_version: string;
     policy_version: string;
+    /** Request layout that produced the probabilities; absent = per-view (V1). */
+    layout?: string;
   };
 }
 

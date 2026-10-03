@@ -146,7 +146,7 @@ test("a future runtime note cannot ground an earlier spoken claim", () => {
   ]);
   const request = buildJevPlan(input).requests.find(r => r.key === "h0")!;
   expect((request.state as any).agent_persona_and_scripted_lines_from_config.join(" ")).not.toContain("98765");
-  expect(Object.values(request.questions).some(q => q.instructions.includes("specific value '98765'"))).toBe(true);
+  expect(Object.values(request.questions).some(q => (q.instructions as string).includes("specific value '98765'"))).toBe(true);
 });
 
 test("long failed tool results preserve their failure status in every Jev evidence view", () => {

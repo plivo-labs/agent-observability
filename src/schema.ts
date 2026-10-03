@@ -246,6 +246,9 @@ export const envSchema = z.object({
   // JSON {judge: {pass_below, fail_above}} overlaying the code defaults in
   // src/jev/gates.ts; a malformed value falls back to the defaults with a warning.
   JEV_GATES: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
+  // "views": one request per evidence view. "shared": the conversation request
+  // plus every node judge over one shared state — two requests per session.
+  JEV_LAYOUT: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["views", "shared"]).default("views")),
   // Per-request state budget in ESTIMATED tokens (src/jev/tokens.ts); a request
   // over budget is never sent and its axes go to the LLM judge.
   JEV_STATE_TOKEN_BUDGET: z.coerce.number().int().positive().default(30000),

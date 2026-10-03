@@ -41,14 +41,15 @@ export function routeAxis(g: GatedAxis, policy: RoutePolicy = REVIEW_ALL): Revie
   if (g.outcome === "review") return "uncertain_or_incomplete";
   if (g.axis.kind === "conversation") return "auto_pass";
   if (g.axis.kind !== "node" || !policy.nodeAutoPass.has(g.axis.judge)) return "uncalibrated_evidence";
-  // Only a fired intent can be premature, and its margin is thin (real defect
-  // at 0.31 vs a 0.23 pass line), so the LLM checks those.
-  return g.axis.intentFired ? "uncalibrated_evidence" : "auto_pass";
+  // Only a fired intent can be premature. Without a question on the fired
+  // intent's own condition its margin is thin (real defect at 0.31 vs a 0.23
+  // pass line), so the LLM checks those.
+  return g.axis.intentFired && !g.axis.firedChecked ? "uncalibrated_evidence" : "auto_pass";
 }
 
 export const isPublished = (route: ReviewRoute): boolean => route === "auto_pass" || route === "auto_fail";
 
-export function decisionProvenance(g: GatedAxis | undefined, gate?: JudgeGate, policy: RoutePolicy = REVIEW_ALL): JudgeProvenance {
+export function decisionProvenance(g: GatedAxis | undefined, gate?: JudgeGate, policy: RoutePolicy = REVIEW_ALL, layout?: string): JudgeProvenance {
   if (!g) return { backend: "llm" };
   const route = routeAxis(g, policy);
   return {
@@ -69,6 +70,7 @@ export function decisionProvenance(g: GatedAxis | undefined, gate?: JudgeGate, p
       evidence_version: g.axis.kind === "conversation" ? "speech-v1" : EVIDENCE_VERSION,
       question_version: g.axis.kind === "node" ? QUESTION_VERSION : "jev-questions-v1",
       policy_version: POLICY_VERSION,
+      ...(layout ? { layout } : {}),
     },
   };
 }
