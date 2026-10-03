@@ -23,6 +23,11 @@ const reasoningEffort = (fallback: "inherit" | "none" | "low" | "medium" | "high
     .default(fallback)
     .transform((v) => (v === "inherit" ? undefined : v));
 
+// A blank or whitespace-only env value reads as unset, so a rendered `JEV_X=`
+// cannot fail boot; values are trimmed (a trailing newline from a secret store
+// would otherwise make the auth header invalid).
+const unsetIfBlank = (v: unknown) => (typeof v === "string" ? v.trim() || undefined : v);
+
 export const envSchema = z.object({
   PORT: z.coerce.number().default(9090),
 
@@ -207,6 +212,44 @@ export const envSchema = z.object({
   // instant rollback lever for the registry cutover; behaviour is identical
   // while the seed matches source (enforced by the parity test).
   JUDGES_FROM_DB: z.enum(["on", "off"]).default("on"),
+
+  // ── Jev (TypeSafe System One) first-pass judge ──────────────────────────────
+  // "primary": Jev answers default binary judges first; gates and policy decide
+  // what the LLM reviews (src/evals-engine/jev/). Without JEV_API_KEY it acts as
+  // off. "off" makes no Jev calls but does not undo the node-judge evidence changes.
+  JEV_MODE: z.preprocess(unsetIfBlank, z.enum(["off", "primary"]).default("off")),
+  JEV_API_KEY: z.preprocess(unsetIfBlank, z.string().optional()),
+  JEV_BASE_URL: z.preprocess(unsetIfBlank, z.string().url().default("https://api.typesafe.ai")),
+  // Pinned to a version, not the "jev-latest" alias: the gates below were
+  // calibrated against this model, and an alias move would silently move them.
+  JEV_MODEL: z.preprocess(unsetIfBlank, z.string().default("jev-1.13.0")),
+  // A cold connection takes 5-8 s (warm 0.4-2 s); below ~10 s every cold session
+  // would fall back to the LLM judge.
+  JEV_TIMEOUT_MS: z.preprocess(unsetIfBlank, z.coerce.number().int().positive().default(15000)),
+  // Separate from the LLM judge semaphore (EVAL_MAX_CONCURRENT_JUDGE_CALLS).
+  JEV_MAX_CONCURRENT: z.preprocess(unsetIfBlank, z.coerce.number().int().positive().default(8)),
+  // "all" or a comma-separated allow-list; unlisted judges run on the LLM.
+  JEV_JUDGES: z.preprocess(unsetIfBlank, z.string().default("all")),
+  // Off by default: custom metrics have no benchmark yet.
+  JEV_CUSTOM_METRICS: z.preprocess(unsetIfBlank, z.enum(["off", "on"]).default("off")),
+  // Node judges whose confident Jev PASS is published without an LLM call:
+  // "off", "all", or a comma-separated list.
+  JEV_NODE_AUTO_PASS: z.preprocess(unsetIfBlank, z.string().default("off")),
+  // Judges whose confident Jev FAIL stands, with the reason written by one
+  // batched LLM call instead of a full re-judge: "off", "all", or a list.
+  JEV_AUTO_FAIL: z.preprocess(unsetIfBlank, z.string().default("off")),
+  // "fails": the batched writer explains published fails only; passes get a
+  // template. "all": it also explains published passes.
+  JEV_DECISION_REASONS: z.preprocess(unsetIfBlank, z.enum(["fails", "all"]).default("fails")),
+  // JSON {judge: {pass_below, fail_above}} overlaying the code defaults in
+  // src/jev/gates.ts; a malformed value falls back to the defaults with a warning.
+  JEV_GATES: z.preprocess(unsetIfBlank, z.string().optional()),
+  // "views": one request per evidence view. "shared": the conversation request
+  // plus every node judge over one shared state — two requests per session.
+  JEV_LAYOUT: z.preprocess(unsetIfBlank, z.enum(["views", "shared"]).default("views")),
+  // Per-request state budget in ESTIMATED tokens (src/jev/tokens.ts); a request
+  // over budget is never sent and its axes go to the LLM judge.
+  JEV_STATE_TOKEN_BUDGET: z.preprocess(unsetIfBlank, z.coerce.number().int().positive().default(30000)),
 
   // completeJSON request hardening: per-attempt timeout + retry count.
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),

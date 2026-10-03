@@ -1,5 +1,6 @@
 import { renderFullTranscript } from "../conversation-input.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
+import { scopedNodeEvidence } from "../node-evidence.js";
 
 /** Render a node's turns with the shared speech/evidence labelling rules. */
 export function renderNodeTranscript(node: NodeEvalInput): string {
@@ -7,7 +8,7 @@ export function renderNodeTranscript(node: NodeEvalInput): string {
 }
 
 /** Shared user payload for node judges. */
-export function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record<string, unknown> {
+export function nodePayload(node: NodeEvalInput, ctx: ConversationInput, loop = false): Record<string, unknown> {
   const hasEntries = (values: Record<string, unknown> | undefined): values is Record<string, unknown> =>
     !!values && Object.keys(values).length > 0;
 
@@ -17,9 +18,9 @@ export function nodePayload(node: NodeEvalInput, ctx: ConversationInput): Record
     node_prompt: node.node_prompt,
     available_intents: node.available_intents,
     chosen_intent: node.chosen_intent,
-    node_transcript: renderNodeTranscript(node),
-    conversation_history: ctx.full_transcript,
+    ...scopedNodeEvidence(node, ctx, { loop }),
     ...(hasEntries(node.extracted_variables) ? { extracted_variables: node.extracted_variables } : {}),
+    ...(node.variable_sources ? { variable_sources: node.variable_sources } : {}),
     ...(hasEntries(ctx.global_variables) ? { global_variables: ctx.global_variables } : {}),
     ...(hasEntries(ctx.pronunciation_guides) ? { pronunciation_guides: ctx.pronunciation_guides } : {}),
   };

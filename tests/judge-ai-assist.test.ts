@@ -1,5 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { generateMetrics, improveMetricDescription, summarizeFlow } from "../src/judges/ai-assist.js";
+import { describe, expect, test, mock } from "bun:test";
+import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
+
+// Bun shares module mocks across files; route tests may leave a partial config.
+// Own the judge settings so retry limits do not depend on filesystem test order.
+mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
+const { generateMetrics, improveMetricDescription, summarizeFlow } = await import("../src/judges/ai-assist.js");
 import { MockLLM } from "../src/llm/mock.js";
 
 describe("metric AI authoring", () => {
