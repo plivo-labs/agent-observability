@@ -14,7 +14,7 @@ import {
   systemForLoop,
   systemForInstructionAdherence,
 } from "./instructions.js";
-import { nodePayload, adherenceNodePayload } from "./node-judge-payload.js";
+import { nodePayload, adherenceNodePayload, renderNodeTranscript } from "./node-judge-payload.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 import { HALLUCINATION_JSON, NODE_LOOP_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
 
@@ -27,7 +27,86 @@ export async function runHallucinationJudge(
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<{ data: HallucinationRaw; usage: LlmUsage }> {
-  return runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
+  // A node ref the config doesn't know (a segment the sender never exported —
+  // e.g. a screening step — or a config snapshot gap) arrives with an empty
+  // prompt. With no configured instruction surface at all (node AND global),
+  // the judge is missing evidence source 3 entirely and reads the agent's own
+  // configured identity/campaign facts ("Maya from BrightSmile Dental") as
+  // fabricated — 10/13 dev screening calls false-fired this way (2026-08-04).
+  // Neutral pass, no LLM call — same pattern as the adherence judge's
+  // no-instructions skip. A non-empty global_prompt keeps the judge running:
+  // that is a real grounding surface, and contradictions with conversation or
+  // tool evidence are still detectable against it.
+  if (!node.node_prompt?.trim() && !ctx.global_prompt?.trim()) {
+    return {
+      data: {
+        hallucinated: false,
+        score: 1.0,
+        reason: "Node configuration was not captured for this segment — grounding cannot be assessed.",
+        technical_reason:
+          "skipped: node_prompt and global_prompt are both empty; the configured-instructions grounding surface is missing, so unsupported-claim verdicts would be unreliable",
+      },
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+  }
+  const res = await runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
+  return { ...res, data: withoutOutOfSegmentFire(res.data, node, ctx) };
+}
+
+/** Lowercase, straighten typographic quotes, collapse whitespace — so a claim
+ *  the judge quoted can be located in a rendered transcript despite quote-style
+ *  and spacing drift. */
+function normalizeForMatch(s: string): string {
+  return s
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Quoted spans from a technical_reason — the `Unsupported spoken claim: "…"`
+ *  format the prompt mandates (straight or typographic quotes). */
+function quotedClaims(technicalReason: string): string[] {
+  const out: string[] = [];
+  for (const m of technicalReason.matchAll(/"([^"]+)"|“([^“”]+)”/g)) {
+    const claim = normalizeForMatch(m[1] ?? m[2] ?? "");
+    // Short spans ("Koramangala") can't be located reliably and legitimately
+    // recur across segments — only full quoted utterance fragments count.
+    if (claim.length >= 20) out.push(claim);
+  }
+  return out;
+}
+
+/** Deterministic backstop for the SEGMENT SCOPE prompt rule (models don't
+ *  reliably honor exclusion prose — same lesson as withoutIdleTurns below).
+ *  A hallucination fire whose every quoted claim is absent from this node's
+ *  own transcript but present elsewhere in the conversation charged a line
+ *  spoken in ANOTHER node's segment — where the owning node's evaluation
+ *  judges it against the right instructions (verified live on dev session
+ *  87a57b09: the screening judge flagged the main node's grounded
+ *  "appointment in BrightSmile Dental, Koramangala" line). Neutralize it,
+ *  keeping the original verdict in technical_reason for audit. A claim found
+ *  NOWHERE (paraphrased quote) leaves the verdict untouched — the backstop
+ *  only acts when the out-of-segment origin is provable. */
+export function withoutOutOfSegmentFire(
+  data: HallucinationRaw,
+  node: NodeEvalInput,
+  ctx: ConversationInput,
+): HallucinationRaw {
+  if (!data.hallucinated) return data;
+  const claims = quotedClaims(data.technical_reason);
+  if (claims.length === 0) return data;
+  const nodeText = normalizeForMatch(renderNodeTranscript(node));
+  if (claims.some((c) => nodeText.includes(c))) return data;
+  const fullText = normalizeForMatch(ctx.full_transcript);
+  if (!claims.some((c) => fullText.includes(c))) return data;
+  return {
+    hallucinated: false,
+    score: 1.0,
+    reason: "The accused line was spoken in a different node's segment and is judged by that node's own evaluation.",
+    technical_reason: `dropped: every quoted claim was spoken in another node's segment (absent from this node's transcript, present in the conversation history); the owning node's evaluation judges it against its own instructions. Original verdict: ${data.technical_reason}`,
+  };
 }
 
 /** Strip platform idle re-prompts from the loop judge's view. Models do NOT
