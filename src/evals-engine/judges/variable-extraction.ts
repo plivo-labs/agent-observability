@@ -1,11 +1,14 @@
+import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind, type FinalBatchContext } from "./variable-guards.js";
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { sumUsage } from "../../llm/usage.js";
 import { z } from "zod";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { systemForVariableExtraction } from "./instructions.js";
-import { nodePayload, renderNodeTranscript } from "./node-judge-payload.js";
+import { nodePayload } from "./node-judge-payload.js";
 import { promptSub } from "./judge-prompts.js";
 import { runLlmJudge } from "./run-llm-judge.js";
+import { VARIABLE_CONTRACT } from "../judge-contracts.js";
+import { NODE_EVIDENCE_SCOPE, scopedNodeEvidence } from "../node-evidence.js";
 import { VARIABLE_EXTRACTION_JSON } from "./schemas.js";
 import { VariableExtractionRawZ, type VariableExtractionRaw } from "./types.js";
 
@@ -46,31 +49,6 @@ const GUARDED_REVIEW_JSON = {
   },
 } as const;
 
-const RECORDING_ACTION = String.raw`(?:submit|submission|record|extract|capture)`;
-const TERMINAL_ACTION = String.raw`(?:transfer|handoff|ending|end)`;
-const RECORDING_SCHEDULE_LINE = new RegExp(`${RECORDING_ACTION}.*${TERMINAL_ACTION}|${TERMINAL_ACTION}.*${RECORDING_ACTION}`, "i");
-const RECORDING_BEFORE_TERMINAL = new RegExp(
-  `${RECORDING_ACTION}[\\s\\S]{0,160}\\bbefore\\b[\\s\\S]{0,80}\\b${TERMINAL_ACTION}\\b|` +
-    `\\bbefore\\b[\\s\\S]{0,80}\\b${TERMINAL_ACTION}\\b[\\s\\S]{0,160}${RECORDING_ACTION}`,
-);
-const BATCH_SCOPE_AFTER_ACTION = new RegExp(
-  `${RECORDING_ACTION}[\\s\\S]{0,140}\\b(?:all|remaining|collected|captured|known)\\b[\\s\\S]{0,80}\\b(?:data|details|information|fields|variables)\\b`,
-);
-const BATCH_SCOPE_BEFORE_ACTION = new RegExp(
-  `\\b(?:all|remaining|collected|captured|known)\\b[\\s\\S]{0,80}\\b(?:data|details|information|fields|variables)\\b[\\s\\S]{0,140}${RECORDING_ACTION}`,
-);
-const BATCH_PRONOUN_SCHEDULE = new RegExp(
-  `\\brecord them\\b[\\s\\S]{0,80}\\b(?:before|prior to)\\b[\\s\\S]{0,80}\\b${TERMINAL_ACTION}\\b`,
-);
-const LEGACY_LEAD_BATCH_OBJECT = /\blead (?:data|details)\b/;
-const INTERRUPTED_TERMINAL_TURN = /\b(?:transfer|handoff|ending|end)\b/i;
-const EARLY_RECORDING_RULE = /immediately|at once|as soon as|after each|record (?:it|this|the value) (?:when|after)/;
-
-const WORKFLOW_RULE_EVIDENCE =
-  /agent-authored|workflow (?:field|status|disposition|label)|mapped (?:workflow )?(?:status|disposition|outcome)|internal score|concise summary|normalized overall (?:interest )?status|final (?:workflow )?(?:status|disposition|outcome|classification)|final outcome (?:was )?reached/;
-const PLATFORM_RULE_EVIDENCE =
-  /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/;
-
 type VariableIssueKey = `missing:${string}` | `incorrect:${string}`;
 type IssueType = "missing" | "incorrect";
 
@@ -79,71 +57,6 @@ interface GuardedCandidate {
   issue_type: IssueType;
   recording_rule: string;
   stored_value?: unknown;
-}
-
-interface FinalBatchContext {
-  cutoffConfirmed: boolean;
-  recordingSchedule: string;
-  schedulesCompleteBatch: boolean;
-}
-
-function recordingScheduleExcerpt(node: NodeEvalInput): string {
-  return node.node_prompt
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => RECORDING_SCHEDULE_LINE.test(line))
-    .slice(0, 5)
-    .join("\n")
-    .slice(0, 2000);
-}
-
-function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
-  const recordingSchedule = recordingScheduleExcerpt(node);
-  const chronological = node.turns.filter((turn) => !turn.idle && (turn.user || turn.agent));
-  const last = chronological.at(-1);
-  const previous = chronological.at(-2);
-  const hasInterruptedTerminalTail = !!(
-    last?.user &&
-    !last.agent &&
-    !last.evidence &&
-    previous?.agent.toLowerCase().includes("[interrupted]") &&
-    INTERRUPTED_TERMINAL_TURN.test(previous.agent) &&
-    !previous.evidence
-  );
-  const prompt = node.node_prompt.toLowerCase();
-  const cutoffConfirmed = hasInterruptedTerminalTail && RECORDING_BEFORE_TERMINAL.test(prompt);
-  const schedule = recordingSchedule.toLowerCase();
-  const schedulesCompleteBatch =
-    cutoffConfirmed &&
-    (BATCH_SCOPE_AFTER_ACTION.test(schedule) ||
-      BATCH_SCOPE_BEFORE_ACTION.test(schedule) ||
-      BATCH_PRONOUN_SCHEDULE.test(schedule) ||
-      LEGACY_LEAD_BATCH_OBJECT.test(schedule));
-
-  return { cutoffConfirmed, recordingSchedule, schedulesCompleteBatch };
-}
-
-function finalBatchCoversVariable(
-  batch: FinalBatchContext,
-  node: NodeEvalInput,
-  variableName: string,
-): boolean {
-  if (!batch.schedulesCompleteBatch) return false;
-  const rule = node.variable_rules?.[variableName]?.toLowerCase() ?? "";
-  return !EARLY_RECORDING_RULE.test(rule);
-}
-
-function outOfScopeVariableKind(
-  _variableName: string,
-  rule: string | undefined,
-): "platform" | "workflow" | undefined {
-  const normalizedRule = rule?.toLowerCase() ?? "";
-  if (PLATFORM_RULE_EVIDENCE.test(normalizedRule)) return "platform";
-
-  // Only the rule can establish a workflow-produced field. A workflow-shaped
-  // name alone cannot suppress caller fields such as visa_status.
-  if (WORKFLOW_RULE_EVIDENCE.test(normalizedRule)) return "workflow";
-  return undefined;
 }
 
 function judgeClassification(variableName: string, rule: string | undefined): string {
@@ -176,12 +89,15 @@ function variablePayload(
 ): Record<string, unknown> {
   return {
     ...nodePayload(node, ctx),
+    extracted_variables: Object.fromEntries(Object.entries(node.extracted_variables).filter(([name]) => node.required_variables.includes(name))),
     variable_rules: node.variable_rules ?? {},
     variable_recording_schedule: batch.recordingSchedule,
-    variable_judge_contract:
+    variable_judge_contract: VARIABLE_CONTRACT + " " +
       "Judge only whether applicable caller-provided information was captured correctly. " +
       "Each variable's recording rule is authoritative; do not invent prerequisites or exceptions. " +
       "Anything from an unreached or inapplicable path is not missing. " +
+      "CALL ENDED EARLY: if the transcript simply STOPS before the agent ever asked for a value — the caller hung up or the call was cut off mid-flow — " +
+      "that value is UNREACHABLE, not missing. A value recorded WRONGLY still fails however the call ended. " +
       "Absent workflow defaults and backend, platform, tool, and lookup values are not caller extraction. " +
       (batch.cutoffConfirmed
         ? "FINAL RECORDING BATCH CUTOFF CONFIRMED from structured turn order: do not mark a pending final-batch variable missing unless its own rule required earlier recording."
@@ -197,7 +113,7 @@ async function runGuardedReview(
   provider?: LlmProvider,
 ) {
   return runLlmJudge({
-    system,
+    system: `${system}\n${NODE_EVIDENCE_SCOPE}\n${VARIABLE_CONTRACT}`,
     input: { candidates, ...input },
     schema: GuardedReviewZ,
     jsonSchema: GUARDED_REVIEW_JSON,
@@ -208,8 +124,6 @@ async function runGuardedReview(
 
 function reconcileRejectedVariableIssues(
   data: VariableExtractionRaw,
-  requiredVariables: string[],
-  actualEntries: Array<[string, unknown]>,
   rejected: Set<VariableIssueKey>,
   reviewNotes: string[],
 ): VariableExtractionRaw {
@@ -217,8 +131,7 @@ function reconcileRejectedVariableIssues(
 
   const missingVariables = data.missing_variables.filter((name) => !rejected.has(`missing:${name}`));
   const incorrectVariables = data.incorrect_variables.filter((name) => !rejected.has(`incorrect:${name}`));
-  const hasExtraVariable = actualEntries.some(([name]) => !requiredVariables.includes(name));
-  const successful = !hasExtraVariable && missingVariables.length === 0 && incorrectVariables.length === 0;
+  const successful = missingVariables.length === 0 && incorrectVariables.length === 0;
   return {
     ...data,
     extraction_successful: successful,
@@ -230,13 +143,8 @@ function reconcileRejectedVariableIssues(
   };
 }
 
-function canonicalizeVariableVerdict(
-  data: VariableExtractionRaw,
-  requiredVariables: string[],
-  actualEntries: Array<[string, unknown]>,
-): VariableExtractionRaw {
-  const hasExtraVariable = actualEntries.some(([name]) => !requiredVariables.includes(name));
-  const successful = !hasExtraVariable && data.missing_variables.length === 0 && data.incorrect_variables.length === 0;
+function canonicalizeVariableVerdict(data: VariableExtractionRaw): VariableExtractionRaw {
+  const successful = data.missing_variables.length === 0 && data.incorrect_variables.length === 0;
   if (data.extraction_successful === successful) return data;
 
   return {
@@ -291,7 +199,7 @@ export async function runVariableExtractionJudge(
         })
         .join("\n")
     : "(none)";
-  const actualEntries = Object.entries(node.extracted_variables ?? {});
+  const actualEntries = Object.entries(node.extracted_variables ?? {}).filter(([name]) => node.required_variables.includes(name));
   const actual = actualEntries.length
     ? actualEntries.map(([name, value]) => `- ${name}: ${JSON.stringify(value)}`).join("\n")
     : "(none)";
@@ -305,8 +213,11 @@ export async function runVariableExtractionJudge(
     provider,
   });
 
-  const rejected = new Set<VariableIssueKey>();
-  const reviewNotes: string[] = [];
+  const rejected = new Set<VariableIssueKey>([
+    ...result.data.missing_variables.filter(name => !node.required_variables.includes(name)).map(name => `missing:${name}` as const),
+    ...result.data.incorrect_variables.filter(name => !node.required_variables.includes(name)).map(name => `incorrect:${name}` as const),
+  ]);
+  const reviewNotes: string[] = rejected.size ? ["Excluded fields outside the configured extraction metric"] : [];
   const outOfScopeKeys = [
     ...result.data.missing_variables
       .filter((name) => outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined)
@@ -366,7 +277,7 @@ export async function runVariableExtractionJudge(
       ? runGuardedReview(
           promptSub("variable_extraction", "review_config_default", CONFIG_DEFAULT_REVIEW_SYSTEM),
           defaultCandidates,
-          { node_transcript: renderNodeTranscript(node) },
+          { ...scopedNodeEvidence(node, ctx), variable_sources: node.variable_sources },
           600,
           provider,
         ).catch(() => undefined)
@@ -376,7 +287,8 @@ export async function runVariableExtractionJudge(
           promptSub("variable_extraction", "review_focused_defect", FOCUSED_DEFECT_REVIEW_SYSTEM),
           focusedCandidates,
           {
-            node_transcript: renderNodeTranscript(node),
+            ...scopedNodeEvidence(node, ctx),
+            variable_sources: node.variable_sources,
             final_recording_batch_cutoff: batch.cutoffConfirmed,
             recording_schedule: batch.recordingSchedule,
           },
@@ -407,11 +319,11 @@ export async function runVariableExtractionJudge(
 
   result.data = reconcileRejectedVariableIssues(
     result.data,
-    node.required_variables,
-    actualEntries,
     rejected,
     reviewNotes,
   );
-  result.data = canonicalizeVariableVerdict(result.data, node.required_variables, actualEntries);
+  result.data = canonicalizeVariableVerdict(result.data);
   return result;
 }
+
+export { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind, type FinalBatchContext } from "./variable-guards.js";

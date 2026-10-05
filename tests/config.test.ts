@@ -64,6 +64,22 @@ describe("envSchema", () => {
     }
   });
 
+  test("a blank JEV_* value reads as unset, so a rendered `JEV_X=` cannot fail boot", () => {
+    const keys = ["JEV_MODE", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL", "JEV_TIMEOUT_MS", "JEV_MAX_CONCURRENT", "JEV_JUDGES",
+      "JEV_CUSTOM_METRICS", "JEV_NODE_AUTO_PASS", "JEV_AUTO_FAIL", "JEV_DECISION_REASONS", "JEV_GATES", "JEV_LAYOUT", "JEV_STATE_TOKEN_BUDGET"];
+    const result = envSchema.safeParse({ ...validEnv, ...Object.fromEntries(keys.map((k) => [k, ""])) });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.JEV_MODE).toBe("off");
+    expect(result.data.JEV_API_KEY).toBeUndefined();
+    expect(result.data.JEV_TIMEOUT_MS).toBe(15000);
+    expect(result.data.JEV_LAYOUT).toBe("views");
+    const key = envSchema.safeParse({ ...validEnv, JEV_API_KEY: " k\n" });
+    expect(key.success && key.data.JEV_API_KEY).toBe("k");
+    const spaced = envSchema.safeParse({ ...validEnv, JEV_TIMEOUT_MS: " ", JEV_MODE: " primary" });
+    expect(spaced.success && [spaced.data.JEV_TIMEOUT_MS, spaced.data.JEV_MODE]).toEqual([15000, "primary"]);
+  });
+
   test("applies PORT default", () => {
     const result = envSchema.safeParse(validEnv);
     expect(result.success).toBe(true);
