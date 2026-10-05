@@ -296,9 +296,6 @@ export function buildSessionEvalInput(
   // scramble the full transcript on node revisits (all A-turns then all
   // B-turns), misleading the conversation/goal judges.
   const allTurns: EvalTurn[] = [];
-  // Full runtime system/developer messages — the rendered transcript keeps
-  // only a 600-char System_Note of each, but the hallucination grounding
-  // index needs the templated details that live nowhere else.
   const systemMessages: string[] = [];
   const systemMessageEvents: NonNullable<ConversationInput["system_message_events"]> = [];
   const pushTurn = (ref: string, turn: EvalTurn) => {
@@ -329,8 +326,8 @@ export function buildSessionEvalInput(
       if (item.type === "function_call_output") {
         const pending = allToolCalls.filter(call => call.status === "unconfirmed" &&
           (item.call_id ? call.id === item.call_id : call.ref === ref && call.name === item.name));
-        // Older senders have unrelated result IDs. Name fallback is safe only
-        // for a single outstanding call; never guess between concurrent writes.
+        // A result without a call_id (older senders) is matched by name, and only
+        // when one call is outstanding: never guess between concurrent writes.
         if (pending.length === 1) {
           pending[0]!.status = isTruthyFlag(item.is_error) ? "failed" : "succeeded";
           pending[0]!.resultTurnIndex = allTurns.length;
@@ -563,9 +560,8 @@ export async function evaluateIngestedSession(
    *  itself never touches the DB). Empty ⇒ the path is identical to before
    *  custom judges existed. */
   customJudges: readonly CustomJudgeSpec[] = [],
-  /** When present, Jev answers every gated judge first and the LLM judges run
-   *  where the gate and versioned decision policy require review. Absent (JEV_MODE=off, no key, or
-   *  a test that injects nothing) ⇒ the LLM-only path below, unchanged. */
+  /** When present, Jev answers gated judges first and LLM judges run where the
+   *  gate and decision policy require review. Absent ⇒ LLM-only. */
   jev?: JevClient,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
@@ -673,10 +669,9 @@ function deriveExtractedVariables(
   return { values: extracted, sources };
 }
 
-/** Declared intent name → tool name, for intents that declare one. */
 function deriveIntentTools(def: AgentConfigNode): Record<string, string> | undefined {
   const out: Record<string, string> = {};
-  for (const i of def.intents ?? []) {
+  for (const i of Array.isArray(def.intents) ? def.intents : []) {
     if (typeof i?.name === "string" && i.name && typeof i?.tool === "string" && i.tool) out[i.name] = i.tool;
   }
   return Object.keys(out).length ? out : undefined;
@@ -688,7 +683,7 @@ function deriveChosenIntent(def: AgentConfigNode, nodeToolCalls: ToolCall[]): st
   let chosen = "";
   for (const tc of nodeToolCalls) {
     if (tc.status === "failed") continue;
-    for (const i of def.intents ?? []) {
+    for (const i of Array.isArray(def.intents) ? def.intents : []) {
       const intentName = typeof i?.name === "string" ? i.name : "";
       if (!intentName) continue;
       const toolName = typeof i?.tool === "string" && i.tool ? i.tool : intentName;

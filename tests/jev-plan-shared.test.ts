@@ -53,7 +53,7 @@ const text = (q: { instructions: unknown }) => (typeof q.instructions === "strin
 const nodeState = (p: JevPlan, k = "s0", n = "n0") => ((p.requests.find((r) => r.key === k)!.state as { nodes: Record<string, Record<string, unknown>> }).nodes[n]!);
 
 describe("buildSharedJevPlan — two requests", () => {
-  test("a session sends V1's conversation request unchanged plus one request for every node judge", () => {
+  test("a session sends the per-view conversation request unchanged plus one request for every node judge", () => {
     const plan = buildSharedJevPlan(ctx());
     expect(keys(plan)).toEqual(["c", "s0"]);
     const v1 = buildJevPlan(ctx()).requests.find((r) => r.key === "c")!;
@@ -87,7 +87,7 @@ describe("buildSharedJevPlan — two requests", () => {
     }
   });
 
-  test("a call too long to carry inside a node request keeps V1's conversation request and stays at two", () => {
+  test("a call too long to carry inside a node request keeps the per-view conversation request and stays at two", () => {
     const speech = "Agent: Please tell me about your order.\nUser: " + "so the thing is ".repeat(5_000);
     const big = (id: string, ch: string) => node({ node_uuid: id, node_name: id, node_prompt: `${ch} `.repeat(20_000), turns: timeline(id) });
     const plan = buildSharedJevPlan(ctx({ nodes: [big("n1", "a"), big("n2", "b"), big("n3", "c")], timeline: [...timeline("n1"), ...timeline("n2"), ...timeline("n3")],
@@ -164,6 +164,25 @@ describe("buildSharedJevPlan — what each judge reads", () => {
     const why = plan.requests.find((r) => r.key === "s0")!.questions["h0.why.0"]!;
     expect((why.instructions as { agent_line: string }).agent_line).toBe("I need your zip code because we only ship locally.");
     expect(plan.axes.find((a) => a.id === "n0:hallucination")!.questionKeys).toContain("h0.why.0");
+  });
+
+  test("a capped hallucination question list marks the axis truncated, so a pass goes to the LLM", () => {
+    const truncated = (p: JevPlan) => { const h = p.axes.find((a) => a.judge === "hallucination")!; return h.kind === "node" && !!h.truncated; };
+    const withAgentLines = (lines: string[]) => {
+      const turns = [...timeline("n1"), ...lines.map((agent) => turn("n1", { agent }))];
+      const transcript = ["User: It is 42.", ...lines.map((l) => `Agent: ${l}`)].join("\n");
+      return ctx({ nodes: [node({ turns })], timeline: turns, full_transcript: transcript, speech_transcript: transcript });
+    };
+    // views: per-token claim questions, capped at 5
+    const claims = buildJevPlan(withAgentLines(["Your parcel ships from Zorbville via Quuxtrans, handled by Blorptek, Fnordco, Wibblecorp and Zyxwell, ref 991122."]));
+    expect(claims.axes.find((a) => a.judge === "hallucination")!.questionKeys.filter((k) => k.includes(".claim.")).length).toBe(5);
+    expect(truncated(claims)).toBe(true);
+    // shared: reason-line questions, capped at 6
+    const reasons = buildSharedJevPlan(withAgentLines(Array.from({ length: 7 }, (_, k) => `We ask because rule ${k} is required.`)));
+    expect(reasons.axes.find((a) => a.judge === "hallucination")!.questionKeys.filter((k) => k.includes(".why.")).length).toBe(6);
+    expect(truncated(reasons)).toBe(true);
+    expect(truncated(buildSharedJevPlan(ctx()))).toBe(false);
+    expect(truncated(buildJevPlan(ctx()))).toBe(false);
   });
 });
 

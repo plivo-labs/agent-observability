@@ -3,17 +3,10 @@ import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import { runLlmJudge } from "./run-llm-judge.js";
 
-// The one LLM call a Jev-first session makes for the verdicts Jev decided: its
-// published fails and passes, and the custom metrics it found not applicable.
-//
-// It does NOT re-judge: the verdict is already decided, and asking the model to
-// agree would reintroduce exactly the per-axis calls the gate exists to avoid.
-// It writes the user-facing `reason` (and the internal `technical_reason`) that
-// the console and the alert digests show, for every such axis at once.
-//
-// The transcript is sent ONCE, with per-node config listed separately — the
-// per-axis judges each embed the whole transcript, and doing that per failing
-// node would make this call the most expensive one in the session.
+// One batched LLM call that writes the reasons for every verdict Jev published.
+// It never re-judges: that would bring back the per-axis calls the gate avoids.
+// The transcript is sent once with per-node config listed separately, so the
+// call does not grow a transcript per failing node.
 
 export interface ReasonRequestAxis {
   /** The gated axis id; echoed back so the caller can map the text home. */
@@ -22,12 +15,8 @@ export interface ReasonRequestAxis {
   node_name?: string;
   /** What fired, in the judge's own terms (variable names, intent names). */
   detail?: string;
-  /**
-   * `not_applicable` asks why a custom metric's situation never arose, and
-   * `clean` why a check passed — both the opposite assertion to a defect.
-   * Telling the model a defect is present when it is not invites invented
-   * evidence, so every item is labelled.
-   */
+  /** Every item is labelled: telling the model a defect is present when it is
+   *  not invites invented evidence. */
   kind?: "defect" | "clean" | "not_applicable";
 }
 
@@ -48,9 +37,8 @@ const ReasonZ = z.object({
   ).default([]),
 });
 
-// A strict JSON schema cannot carry dynamic keys (every property must be
-// enumerated), so the axes come back as an ARRAY keyed by id — the same reason
-// this file does not build a {axisId: {...}} object schema.
+// A strict JSON schema cannot carry dynamic keys, so axes come back as an array
+// keyed by id.
 const REASON_JSON = {
   name: "eval_jev_reason",
   strict: true,
@@ -84,7 +72,11 @@ export const REASON_WRITER_SYSTEM =
   "If the transcript does not show why an entry was decided the way it was, say so plainly in `reason` rather than inventing evidence. " +
   "Return one entry per item and nothing else.";
 
-const REASON_MAX_TOKENS = 4000;
+// Scaled by item count: a fixed limit truncates the JSON on large sessions,
+// and every truncated attempt is paid for before the templated fallback.
+const REASON_MIN_TOKENS = 4000;
+const REASON_TOKENS_PER_ITEM = 150;
+const REASON_MAX_TOKENS = 16000;
 
 export interface ReasonWriterResult {
   reasons: Map<string, { reason: string; technical_reason: string }>;
@@ -113,14 +105,14 @@ export async function writeDecisionReasons(input: ReasonWriterInput): Promise<Re
     },
     schema: ReasonZ,
     jsonSchema: REASON_JSON,
-    maxTokens: REASON_MAX_TOKENS,
+    maxTokens: Math.min(REASON_MAX_TOKENS, Math.max(REASON_MIN_TOKENS, axes.length * REASON_TOKENS_PER_ITEM)),
     provider,
   });
   const asked = new Set(axes.map((a) => a.id));
   const reasons = new Map<string, { reason: string; technical_reason: string }>();
   for (const entry of data.reasons) {
-    // Ignore anything for an axis we did not ask about: the caller falls back
-    // to the templated text for a missing id rather than mis-attributing text.
+    // Unasked ids are dropped; the caller templates a missing id rather than
+    // mis-attributing text.
     if (asked.has(entry.id) && (entry.reason.trim() || entry.technical_reason.trim())) {
       reasons.set(entry.id, { reason: entry.reason.trim(), technical_reason: entry.technical_reason.trim() });
     }

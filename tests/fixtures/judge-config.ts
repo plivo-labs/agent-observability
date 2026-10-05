@@ -16,8 +16,7 @@ export const TEST_JUDGE_CONFIG = {
   EVAL_MAX_CONCURRENT_JUDGE_CALLS: 10,
   // Reference-engine parity knob read by run-llm-judge on every judge call.
   JUDGE_REASONING_EFFORT: "none",
-  // Jev first-pass judge: off by default so every existing judge test keeps
-  // today's LLM-only call sequence; jev-* suites inject a MockJev explicitly.
+  // Off so judge tests see the LLM-only call sequence; jev-* suites inject a MockJev.
   JEV_MODE: "off",
   JEV_API_KEY: undefined,
   JEV_BASE_URL: "https://api.typesafe.ai",

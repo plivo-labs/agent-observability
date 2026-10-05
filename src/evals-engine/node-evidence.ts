@@ -58,9 +58,8 @@ export function scopedNodeEvidence(
       }
     });
   } else {
-    // Legacy callers can have grounding evidence ONLY in full_transcript.
-    // Preserve it rather than fabricating ownership by matching speech text.
-    // The scope contract marks this view as possibly overlapping/unordered.
+    // Legacy callers may have grounding evidence only in full_transcript: keep it
+    // rather than fabricate ownership by matching speech text.
     target.push(...node.turns.filter(visible).map(render));
     const history = options.loop ? ctx.full_transcript.split("\n").filter(line => !line.includes(IDLE_TAG)).join("\n") : ctx.full_transcript;
     context.push((options.render ?? ((text: string) => text))(history));

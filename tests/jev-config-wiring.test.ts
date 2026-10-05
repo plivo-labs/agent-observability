@@ -68,8 +68,6 @@ describe("JEV_JUDGES and JEV_GATES are read at judge time", () => {
   test("JEV_STATE_TOKEN_BUDGET drops the requests it cannot fit, and those axes go to the LLM", async () => {
     const jev = new MockJev([{}], 0.02);
     const verdicts = await evaluateIngestedSession(config, longEvents, llm(), "livekit", undefined, undefined, [], jev as any);
-    // nothing fits 900 tokens, so nothing is sent and every axis is judged by
-    // the LLM exactly as it would be with Jev switched off
     expect(jev.calls).toHaveLength(0);
     expect(verdicts.node_evaluations[0]!.node_loop.backend).toBe("llm");
     expect(verdicts.conversation_metrics.voicemail_detected.available).toBe(true);

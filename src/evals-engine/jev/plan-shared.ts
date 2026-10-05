@@ -3,16 +3,14 @@ import { isVoiceChannel } from "../judges/conversation-judges.js";
 import { renderFullTranscript } from "../conversation-input.js";
 import { contextThroughNodeExit } from "../node-evidence.js";
 import { clipToolResults } from "../../jev/tokens.js";
-import { configExcerpts, residualClaims } from "../../jev/hallucination-grounding.js";
+import { configExcerpts } from "../../jev/hallucination-grounding.js";
 import {
   ADHERENCE_QUESTIONS,
   CONVERSATION_QUESTIONS,
   HALLUCINATION_QUESTIONS,
   JEV_FENCE,
-  MAX_CLAIM_QUESTIONS,
   MAX_VARIABLE_QUESTIONS,
   NODE_LOOP_QUESTION,
-  claimQuestion,
   customMetricQuestions,
   intentQuestions,
   variableQuestions,
@@ -29,11 +27,9 @@ import {
   type JevPlan,
 } from "./plan.js";
 
-// Every node judge over ONE shared state; the conversation judges keep their
-// own speech-only request. Data only one judge may read (intent catalog, a fired
-// intent's condition, one spoken line) rides inside that judge's question. An
-// oversized session packs by node into two requests with the conversation
-// questions inside the first, so a session never sends more than two.
+// Every node judge over ONE shared state; conversation judges keep their own
+// speech-only request. Data only one judge may read rides inside its question.
+// An oversized session packs by node into two requests, never more.
 
 export const SHARED_LAYOUT_VERSION = "shared-state-v1";
 
@@ -93,8 +89,7 @@ function intentsOf(node: NodeEvalInput): Array<{ name: string; tool: string | nu
   });
 }
 
-/** Paragraphs that 2+ nodes carry word for word are sent once. Plain text
- *  dedupe: it knows nothing about any prompt format. */
+/** Paragraphs 2+ nodes carry verbatim are sent once; format-agnostic. */
 function shareInstructions(nodes: readonly NodeEvalInput[]): { shared: string; own: string[] } | null {
   const paras = nodes.map((n) => (n.node_prompt ?? "").split(/\n\s*\n/).filter((x) => x.trim()));
   const count = new Map<string, number>();
@@ -142,8 +137,8 @@ export function buildSharedJevPlan(ctx: ConversationInput, opts: BuildJevPlanOpt
     const intents = intentsOf(node);
     const grounding = contextThroughNodeExit(node, ctx);
     const agentLines = events.split("\n").filter((l) => /^(\[e\d+\] )?Agent:/.test(l)).map((l) => l.replace(/^\[e\d+\] /, ""));
-    // Writes are addressed by state key: the internal node uuid appears nowhere
-    // else in this state, so a write in THIS node read as one made elsewhere.
+    // Name writers by state key: the node uuid appears nowhere else in this
+    // state, so a write in THIS node would read as one made elsewhere.
     const sources = Object.fromEntries(Object.entries(node.variable_sources ?? {}).map(([v, w]) => [v, {
       node: w.node_uuid === node.node_uuid ? `this node (nodes.n${i})` : keyOfNode.get(w.node_uuid) ?? "another node",
       event: w.event_index != null ? `e${w.event_index}` : "unknown",
@@ -240,9 +235,10 @@ export function buildSharedJevPlan(ctx: ConversationInput, opts: BuildJevPlanOpt
           .replace(/any tool_results/g, "any Tool_Result line of the call so far") };
         keys.push(key);
       }
-      // Code picks the lines that give a reason or requirement and asks about
-      // each one: in a whole-session state the one broad policy question went soft.
-      agentLines.map((l) => l.replace(/^Agent:\s*/, "").slice(0, LINE_CHARS)).filter((l) => REASON_WORDS.test(l)).slice(0, MAX_REASON_LINES).forEach((line, k) => {
+      // One question per reason/requirement line: a single broad policy question
+      // goes soft over a whole-session state.
+      const reasonLines = agentLines.map((l) => l.replace(/^Agent:\s*/, "").slice(0, LINE_CHARS)).filter((l) => REASON_WORDS.test(l));
+      reasonLines.slice(0, MAX_REASON_LINES).forEach((line, k) => {
         const key = `h${i}.why.${k}`;
         questions[key] = { type: "noul", instructions: { agent_line: line,
           question: scope(i, name) + "The agent said `agent_line`. Does it state a reason, purpose, benefit, requirement or policy — 'we ask because…', " +
@@ -251,19 +247,15 @@ export function buildSharedJevPlan(ctx: ConversationInput, opts: BuildJevPlanOpt
           criteria: { true: "the line states a reason, requirement or policy the instructions do not give", false: "it is backed by the instructions or tools, or states none" } };
         keys.push(key);
       });
-      residualClaims(grounding, clipToolResults(grounding.full_transcript), MAX_CLAIM_QUESTIONS, events).forEach((claim, j) => {
-        const key = `h${i}.claim.${j}`;
-        const base = claimQuestion(claim.token, claim.line);
-        questions[key] = { ...base, instructions: scope(i, name) + (base.instructions as string) };
-        keys.push(key);
-      });
-      axes.push({ kind: "node", id: `n${i}:hallucination`, judge: "hallucination", nodeIndex: i, requestKey: "", questionKeys: keys });
+      // No per-token claim questions: this layout was measured without them.
+      // Lines past the cap were never asked, so a pass needs the LLM.
+      const truncated = reasonLines.length > MAX_REASON_LINES;
+      axes.push({ kind: "node", id: `n${i}:hallucination`, judge: "hallucination", nodeIndex: i, requestKey: "", questionKeys: keys, ...(truncated ? { truncated: true } : {}) });
     }
     return { index: i, state, questions, axes };
   });
 
-  // Custom metrics are candidates only (never published by Jev): they ride the
-  // node state, pointed at the whole call or at one node.
+  // Custom metrics are candidates only, never published by Jev.
   if (opts.customEnabled && hasTranscript && parts.length) {
     for (const spec of opts.customSpecs ?? []) {
       const { applicable, fail } = customMetricQuestions(spec);
@@ -308,7 +300,7 @@ export function buildSharedJevPlan(ctx: ConversationInput, opts: BuildJevPlanOpt
   };
 
   const conversationJudges = CONVERSATION_JUDGES.filter((j) => allowed(j));
-  // V1's speech-only conversation request, byte for byte: its gates carry over.
+  // Byte-identical to the views layout's conversation request, so its gates hold.
   const conversationRequest = () => {
     const plan = buildJevPlan({ ...ctx, nodes: [] }, { judges: conversationJudges, customEnabled: false, budgetTokens: budget });
     requests.push(...plan.requests);
@@ -353,9 +345,8 @@ export function buildSharedJevPlan(ctx: ConversationInput, opts: BuildJevPlanOpt
     return { requests, axes, dropped, layout: `${SHARED_LAYOUT_VERSION}/packed` };
   }
 
-  // The speech is too long to ride inside a node request: V1's conversation
-  // request plus the nodes that fit one request. The rest go to the LLM rather
-  // than a third request.
+  // Speech too long to share a node request: the standalone conversation
+  // request plus the nodes that fit one more; the rest go to the LLM.
   conversationRequest();
   const kept: NodePart[] = [];
   const rest: NodePart[] = [];

@@ -1,4 +1,4 @@
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, mock, spyOn } from "bun:test";
 import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
@@ -96,6 +96,63 @@ describe("HttpJevClient wire shape", () => {
     expect(err.message).toContain("jev 408 timeout");
   });
 
+  test("a client-side timeout is not retried", async () => {
+    const f = fakeFetch([(call) => new Promise((_, reject) => { (call.init.signal as AbortSignal).addEventListener("abort", () => reject(new Error("aborted"))); })]);
+    const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, timeoutMs: 20, maxRetries: 2 });
+    const err = await c.systemOne(req()).catch((e) => e);
+    expect(err.errorType).toBe("timeout");
+    expect(f.calls).toHaveLength(1);
+  });
+
+  test("five consecutive service failures pause Jev; the first failure after the pause reopens it", async () => {
+    let now = 0;
+    const f = fakeFetch([() => new Response("down", { status: 503 })]);
+    const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, maxRetries: 0, now: () => now });
+    for (let i = 0; i < 5; i++) await c.systemOne(req()).catch(() => {});
+    expect(f.calls).toHaveLength(5);
+    expect((await c.systemOne(req()).catch((e) => e)).errorType).toBe("circuit_open");
+    expect(f.calls).toHaveLength(5);
+    now = 60_000;
+    await c.systemOne(req()).catch(() => {});
+    expect(f.calls).toHaveLength(6);
+    expect((await c.systemOne(req()).catch((e) => e)).errorType).toBe("circuit_open");
+  });
+
+  test("requests queued for a slot are not sent once the breaker opens", async () => {
+    const f = fakeFetch([() => new Response("down", { status: 503 })]);
+    const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, maxRetries: 0, maxConcurrent: 1 });
+    const errors = await Promise.all(Array.from({ length: 12 }, () => c.systemOne(req()).catch((e) => e)));
+    expect(f.calls).toHaveLength(5);
+    expect(errors.filter((e) => e.errorType === "circuit_open")).toHaveLength(7);
+  });
+
+  test("a rejected key is not retried, is logged once, and counts toward the breaker", async () => {
+    const { __resetJevClientForTest } = await import("../src/jev/client.js");
+    __resetJevClientForTest();
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = fakeFetch([() => json(401, { detail: { error_type: "authentication_error" } })]);
+      const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, maxRetries: 2 });
+      for (let i = 0; i < 5; i++) expect((await c.systemOne(req()).catch((e) => e)).status).toBe(401);
+      expect(f.calls).toHaveLength(5);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect((await c.systemOne(req()).catch((e) => e)).errorType).toBe("circuit_open");
+    } finally {
+      logged.mockRestore();
+      __resetJevClientForTest();
+    }
+  });
+
+  test("a success resets the failure streak, and a per-request overflow never counts", async () => {
+    const down = () => new Response("down", { status: 503 });
+    const f = fakeFetch([down, down, down, down, () => ok({}), down, down, down, down,
+      () => json(400, { detail: { error_type: JEV_OVERFLOW } }), () => ok({})]);
+    const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, maxRetries: 0 });
+    for (let i = 0; i < 10; i++) await c.systemOne(req()).catch(() => {});
+    await expect(c.systemOne(req())).resolves.toBeDefined();
+    expect(f.calls).toHaveLength(11);
+  });
+
   test("a stalled ERROR body times out instead of hanging, and frees its slot", async () => {
     // A body that never completes until the request is aborted — what a real
     // fetch does when the gateway sends headers and then stalls.
@@ -107,15 +164,13 @@ describe("HttpJevClient wire shape", () => {
           },
         }),
         { status: 500, headers: { "content-type": "application/json" } },
-      )]);
+      ), () => ok({ "n0.node_loop": { type: "noul", noul: 0.1 } })]);
     const c = new HttpJevClient({ apiKey: "k", fetchImpl: f.impl, sleep: noSleep, timeoutMs: 25, maxRetries: 0, maxConcurrent: 1 });
     const err = await c.systemOne(req()).catch((e) => e);
     expect(err).toBeInstanceOf(JevError);
     expect(err.errorType).toBe("timeout");
-    // the slot came back: a second call is served rather than queued forever
-    const ok2 = fakeFetch([() => ok({ "n0.node_loop": { type: "noul", noul: 0.1 } })]);
-    const c2 = new HttpJevClient({ apiKey: "k", fetchImpl: ok2.impl, sleep: noSleep, maxConcurrent: 1 });
-    await expect(c2.systemOne(req())).resolves.toBeDefined();
+    // the slot came back: the same client serves the next call rather than queueing it forever
+    await expect(c.systemOne(req())).resolves.toBeDefined();
   });
 
   test("an invalid 200 body is jev <status> invalid_response", async () => {
@@ -138,6 +193,23 @@ describe("HttpJevClient wire shape", () => {
 describe("createJevClientFromConfig", () => {
   test("is null while JEV_MODE=off (the test fixture default)", () => {
     expect(createJevClientFromConfig()).toBeNull();
+  });
+
+  test("is null with JEV_MODE=primary but no key, so sessions judge on the LLM", async () => {
+    const { __resetJevClientForTest } = await import("../src/jev/client.js");
+    const { config } = await import("../src/config.js");
+    const mutable = config as Record<string, unknown>;
+    const prior = { mode: mutable.JEV_MODE, key: mutable.JEV_API_KEY };
+    __resetJevClientForTest();
+    mutable.JEV_MODE = "primary";
+    mutable.JEV_API_KEY = undefined;
+    try {
+      expect(createJevClientFromConfig()).toBeNull();
+    } finally {
+      mutable.JEV_MODE = prior.mode;
+      mutable.JEV_API_KEY = prior.key;
+      __resetJevClientForTest();
+    }
   });
 
   test("returns ONE client for the whole process — the concurrency cap is across sessions", async () => {

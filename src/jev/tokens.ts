@@ -1,8 +1,6 @@
-// Jev counts state tokens itself and rejects a request whose state exceeds
-// ~32k. We decide BEFORE sending, so the estimate must not under-count: measured
-// against usage.input_tokens, spoken transcript text tokenizes at ~0.35 tok/char
-// and prompt/JSON prose at ~0.25 — a flat chars/4 under-counts transcript-heavy
-// states by up to 1.4x and was the cause of every overflow in the benchmark.
+// Jev rejects a state over ~32k tokens and we decide BEFORE sending, so the
+// estimate must not under-count. Measured against usage.input_tokens, transcript
+// runs ~0.35 tok/char and prompt/JSON ~0.25; a flat chars/4 under-counts by up to 1.4x.
 
 export const TRANSCRIPT_TOKENS_PER_CHAR = 0.35;
 export const CONFIG_TOKENS_PER_CHAR = 0.25;
@@ -17,8 +15,7 @@ export const TRANSCRIPT_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 export function estimateJevTokens(state: unknown): number {
-  // A bare-string state is always a rendered transcript (the conversation
-  // detections take one), so it takes the transcript rate.
+  // A bare-string state is always a rendered transcript.
   if (typeof state === "string") return Math.ceil(state.length * TRANSCRIPT_TOKENS_PER_CHAR);
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     return Math.ceil(JSON.stringify(state ?? "").length * CONFIG_TOKENS_PER_CHAR);
@@ -34,14 +31,12 @@ export function estimateJevTokens(state: unknown): number {
 export const TOOL_RESULT_CLIP_CHARS = 1500;
 const CLIP_MARK = " …[tool output clipped]";
 
-/** The labels the transcript renderer puts at the start of a line. A line with
- *  none of them is a continuation of the block above it — a tool that returns
- *  text spans many lines. */
+/** A line with none of these labels continues the block above it (multi-line
+ *  tool output). */
 const LINE_LABELS = ["User:", "Agent:", "Tool_Call:", "Tool_Result:", "System_Note:", "Agent_Handoff:"];
 
-/** A lookup can return >100k chars in ONE tool result, across as many lines as
- *  it likes; the judges read only its head. This is the only thing ever cut
- *  from a state — never a spoken turn, never config. */
+/** One tool result can exceed 100k chars and the judges read only its head.
+ *  Nothing else is ever cut from a state: never a spoken turn, never config. */
 export function clipToolResults(transcript: string, max: number = TOOL_RESULT_CLIP_CHARS): string {
   if (!transcript.includes("Tool_Result:")) return transcript;
   const out: string[] = [];
@@ -65,7 +60,6 @@ export function clipToolResults(transcript: string, max: number = TOOL_RESULT_CL
   return out.join("\n");
 }
 
-/** Tokens a question costs on the wire (instructions + both criteria). */
 export function estimateQuestionTokens(q: { instructions: string | Record<string, unknown>; criteria: { true: string; false: string } }): number {
   const instructions = typeof q.instructions === "string" ? q.instructions.length : JSON.stringify(q.instructions).length;
   return Math.ceil((instructions + q.criteria.true.length + q.criteria.false.length + 40) * CONFIG_TOKENS_PER_CHAR);

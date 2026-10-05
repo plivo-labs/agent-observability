@@ -29,8 +29,7 @@ async function main() {
   const live = values.has("--live"), backend = values.get("--backend");
   if (!datasetPath || !out || live === !!resultsPath || (live && backend !== "jev" && backend !== "llm") || (!live && backend)) throw new Error(help);
 
-  // Standalone tool: no database or prompt registry is needed. Provider settings
-  // still come from normal environment parsing and are recorded below.
+  // Standalone: needs no database or prompt registry.
   process.env.SIM_PERSIST = "false";
   process.env.JUDGES_FROM_DB = "off";
   const { DatasetSchema, RunSchema, runValidation, summarizeValidation } = await import("./lib/eval-validation.js");
@@ -62,6 +61,8 @@ async function main() {
       reasoningEffort: config.JUDGE_REASONING_EFFORT, jevModel: config.JEV_MODEL,
       jevJudges: config.JEV_JUDGES, customCandidates: config.JEV_CUSTOM_METRICS,
       gateOverrides: config.JEV_GATES, stateBudget: config.JEV_STATE_TOKEN_BUDGET,
+      jevLayout: config.JEV_LAYOUT, nodeAutoPass: config.JEV_NODE_AUTO_PASS, autoFail: config.JEV_AUTO_FAIL,
+      decisionReasons: config.JEV_DECISION_REASONS,
       prompts: "shipped-code", judgeConcurrency: config.EVAL_MAX_CONCURRENT_JUDGE_CALLS,
       maxJudgedNodes: config.EVAL_MAX_JUDGED_NODES, maxCustomJudgeCalls: config.EVAL_MAX_CUSTOM_JUDGE_CALLS,
       llmTimeoutMs: config.LLM_TIMEOUT_MS, llmMaxRetries: config.LLM_MAX_RETRIES,

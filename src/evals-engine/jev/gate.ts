@@ -4,17 +4,13 @@ import type { JevAxis, JevPlan } from "./plan.js";
 import type { NodeEvalInput } from "../types.js";
 import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-guards.js";
 
-// Turn Jev's probabilities into a decision per axis. Pure: the caller does the
-// I/O and hands in what each request returned.
-//
-// "review" is the safe default — a dropped request, a transport error, an
-// overflow, an answer that failed validation, or simply a probability in the
-// uncertain band all mean the judge that owns the axis runs as it does today.
-// A missing answer is NEVER read as a probability: that is how an unreachable
-// Jev degrades to today's behaviour instead of inventing passes.
+// "review" is the safe default: a dropped request, transport error, overflow,
+// invalid answer or uncertain probability hands the axis to its LLM judge. A
+// missing answer is never read as a probability, so an unreachable Jev cannot
+// invent passes.
 
 export type AxisOutcome = "pass" | "fail" | "review" | "unknown";
-export type AxisFallback = "budget" | "overflow" | "error" | "unanswered";
+export type AxisFallback = "budget" | "overflow" | "error" | "circuit_open" | "unanswered";
 
 export interface GatedAxis {
   axis: JevAxis;
@@ -33,7 +29,9 @@ export interface GatedAxis {
 export type RequestResult = { ok: true; response: JevResponse } | { ok: false; error: unknown };
 
 function fallbackFor(error: unknown): AxisFallback {
-  return error instanceof JevError && error.status === 400 && error.errorType === JEV_OVERFLOW ? "overflow" : "error";
+  if (!(error instanceof JevError)) return "error";
+  if (error.status === 400 && error.errorType === JEV_OVERFLOW) return "overflow";
+  return error.errorType === "circuit_open" ? "circuit_open" : "error";
 }
 
 export function gatePlan(
@@ -63,16 +61,11 @@ export function gatePlan(
     if (answered.length === 0) return review("unanswered");
 
     const gate = gates[axis.kind === "custom" ? CUSTOM_METRIC_GATE : axis.judge];
-    // A judge with no gate is not Jev's to decide.
     if (!gate) return review("unanswered");
 
     if (axis.kind === "custom") {
-      // "Did the call even reach this metric's situation?" is asked first: a
-      // low applicability is an unknown candidate, verified by policy before
-      // publishing a final verdict. It is neither a pass nor a fail.
-      // Both questions or neither: the fail question's FALSE criterion is
-      // "passes the metric OR does not apply", so a low probability alone
-      // cannot tell a clean call from one the metric never reached.
+      // The fail question's FALSE criterion is "passes OR does not apply", so it
+      // needs the applicability answer to tell a clean call from an N/A one.
       const applicable = probabilities[axis.applicableKey];
       if (applicable === undefined) return review("unanswered");
       if (applicable <= gate.pass_below) {
@@ -87,8 +80,6 @@ export function gatePlan(
       return { axis, outcome, p: failP, firedKeys: outcome === "fail" ? [axis.failKey] : [], probabilities, jevModel };
     }
 
-    // Any question firing fails the axis, so the axis's probability is the
-    // highest of its questions — the same aggregation the benchmark scored.
     const ignoredKeys: string[] = [];
     if (axis.kind === "node" && axis.judge === "variable_extraction") {
       const node = nodes[axis.nodeIndex];
@@ -103,13 +94,12 @@ export function gatePlan(
     const ignored = new Set(ignoredKeys);
     const required = axis.questionKeys.filter((key) => !ignored.has(key));
     const applicableAnswers = answered.filter(([key]) => !ignored.has(key));
+    // Any question firing fails the axis, so p is the max, as benchmarked.
     let p = 0;
     for (const [, value] of applicableAnswers) p = Math.max(p, value);
     let outcome = decide(p, gate);
-    // A FAIL needs one question; a PASS needs all of them. An unanswered
-    // question, or one the caps never asked, was judged by nobody, so calling
-    // the axis clean on the rest would be a verdict about evidence we do not
-    // have.
+    // A FAIL needs one question; a PASS needs all: an unanswered or capped-out
+    // question was judged by nobody.
     const complete = applicableAnswers.length === required.length && !(axis.kind === "node" && axis.truncated);
     if (outcome === "pass" && !complete) outcome = "review";
     const firedKeys = applicableAnswers.filter(([, value]) => value >= gate.fail_above).map(([key]) => key);
@@ -117,15 +107,9 @@ export function gatePlan(
   });
 }
 
-/**
- * Collapse an axis that was asked across several requests (the chunked variable
- * questions) into the one verdict the judge owns.
- *
- * Any chunk failing fails the axis — the questions are independent defects. A
- * pass needs EVERY chunk to pass: an unanswered or uncertain chunk means some
- * variable was never decided, so the axis goes to review rather than claiming a
- * clean call on partial evidence.
- */
+/** Collapse an axis asked across several requests (chunked variable questions)
+ *  into one verdict: any failing chunk fails it; a pass needs every chunk to
+ *  pass, since an undecided chunk leaves some variable unjudged. */
 export function mergeChunkedAxes(gated: readonly GatedAxis[]): GatedAxis[] {
   const groups = new Map<string, GatedAxis[]>();
   const order: string[] = [];

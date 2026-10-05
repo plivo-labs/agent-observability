@@ -117,10 +117,9 @@ export interface ConversationInput {
    *  human_transfer judge reads this. Absent ⇒ that judge is undecidable (the
    *  sim path, or a sender that never tags) — never a clean "no transfer". */
   tags?: SessionTag[];
-  /** Runtime system/developer messages in full (the rendered transcript keeps
-   *  only the first 600 chars of each as a System_Note). The hallucination
-   *  grounding index reads these: a lead's templated details live here and
-   *  nowhere else in the config. Absent on the sim path. */
+  /** Runtime system/developer messages in full: the transcript keeps only a
+   *  600-char System_Note of each, and hallucination grounding needs the
+   *  templated details that live nowhere else. Absent on the sim path. */
   system_messages?: string[];
   /** Full runtime notes tied to timeline events, for grounding at node exit. */
   system_message_events?: Array<{ event_index: number; text: string }>;
@@ -183,7 +182,7 @@ export interface JudgeProvenance {
     evidence_version: string;
     question_version: string;
     policy_version: string;
-    /** Request layout that produced the probabilities; absent = per-view (V1). */
+    /** Request layout that produced the probabilities; absent = per-view. */
     layout?: string;
   };
 }

@@ -1,15 +1,10 @@
 import type { ConversationInput, NodeEvalInput } from "../evals-engine/types.js";
 import { clipToolResults, estimateJevTokens } from "./tokens.js";
 
-// Hallucination grounding: code does the RETRIEVAL, Jev does the judgement.
-//
-// Measured on 300 live sessions: 73% of the disputed hallucination flags were
-// the agent reading its own configured content back — grounded, but buried mid-way
-// through a 20-50k-char prompt where the model stopped finding it. So the state
-// carries (a) the full node prompt, (b) compact windows of every OTHER config
-// location that mentions a token the agent actually spoke, and (c) the spoken
-// lines themselves; and any specific value code cannot ground anywhere becomes
-// its own narrow question instead of a vague "anything unsupported?".
+// Code does the RETRIEVAL, Jev the judgement: on 300 live sessions 73% of
+// disputed hallucination flags were the agent reading back config buried in a
+// 20-50k-char prompt. The state carries config windows around every token the
+// agent spoke, and each value code cannot ground becomes its own question.
 
 const STOP = new Set([
   "hi", "hello", "this", "thank", "thanks", "great", "no", "yes", "i", "is", "are", "could", "since",
@@ -46,9 +41,8 @@ const STATE_ABBREVIATIONS: Record<string, string> = {
 
 const TOKEN_RE = /[A-Za-z][A-Za-z'\-]+|\d[\d\s\-]{1,}/g;
 
-/** Specific values in a piece of agent speech: capitalized words (names,
- *  places, products) and digit runs (numbers, ids, dates), in order of first
- *  appearance so the result is deterministic. */
+/** Specific values in agent speech: capitalized words (names, places,
+ *  products) and digit runs, in first-appearance order for determinism. */
 export function keyTokens(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -59,8 +53,6 @@ export function keyTokens(text: string): string[] {
     if (/^\d/.test(raw)) {
       if (token.length < 2 || seen.has(token)) continue;
     } else {
-      // Capitalization is the signal a word is a specific value (a name, a
-      // place, a product) rather than ordinary speech.
       if (raw[0] !== raw[0]!.toUpperCase() || raw[0] === raw[0]!.toLowerCase()) continue;
       if (raw.length <= 2 || STOP.has(token) || seen.has(token)) continue;
     }
@@ -74,18 +66,14 @@ function transcriptLines(transcript: string, prefixes: string[]): string[] {
   return transcript.split("\n").filter((l) => prefixes.some((p) => l.startsWith(p)));
 }
 
-/** What was SAID, without the speaker label. The label is not a spoken value,
- *  and "Agent" is capitalized on every single line — tokenizing it makes the
- *  most common word in the transcript also the most retrieved one. */
+/** Without speaker labels: "Agent" is capitalized on every line and would
+ *  become the most retrieved token. */
 function spokenText(lines: string[]): string {
   return lines.map((l) => l.replace(/^[A-Za-z_]+:\s*/, "")).join(" ");
 }
 
-/** Everything a spoken value could legitimately come from: every node's
- *  instructions, the global prompt and variables, the FULL runtime system
- *  messages (the rendered prompt with this call's details filled in — the
- *  stored config template alone does not contain them), the caller's own
- *  words, and tool calls/results. */
+/** Everything a spoken value could legitimately come from, including the FULL
+ *  runtime system messages: only they carry this call's filled-in details. */
 function groundingPool(call: ConversationInput, transcript: string): string {
   const parts: string[] = [];
   for (const n of call.nodes ?? []) parts.push(n.node_prompt ?? "");
@@ -111,17 +99,15 @@ const WINDOW_BEFORE = 220;
 const WINDOW_AFTER = 260;
 const WINDOW_MERGE_GAP = 40;
 const MAX_WINDOWS = 120;
-/** Windows one token may claim. Without it a word the config repeats — and the
- *  speaker labels are the worst offenders — takes the whole budget and every
- *  other spoken value is retrieved against nothing. */
+/** Without a per-token cap, a word the config repeats takes the whole window
+ *  budget and every other spoken value is retrieved against nothing. */
 const MAX_WINDOWS_PER_TOKEN = 8;
 const MAX_EXCERPTS = 40;
 const EXCERPT_CHARS = 500;
 const LINE_CHARS = 400;
 
-/** Windows of config around every token the agent actually spoke, merged and
- *  capped. Window-based (not sentence-based) on purpose: a templated config
- *  line can be thousands of characters long, and a sentence splitter drops it. */
+/** Window-based, not sentence-based: a templated config line can be thousands
+ *  of characters long, and a sentence splitter drops it. */
 export function configExcerpts(call: ConversationInput, agentLines: string[]): string[] {
   const config = configPool(call);
   if (!config) return [];
@@ -140,9 +126,8 @@ export function configExcerpts(call: ConversationInput, agentLines: string[]): s
     if (windows.length >= MAX_WINDOWS) break;
   }
   windows.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  // Merge neighbours, but never past the excerpt length: a longer block would
-  // be truncated from the front, which drops the later matches that created it
-  // — the retrieval would then return config that grounds nothing.
+  // Never merge past the excerpt length: a longer block is truncated from the
+  // front, dropping the matches that created it.
   const merged: Array<[number, number]> = [];
   for (const [a, b] of windows) {
     const last = merged[merged.length - 1];
@@ -198,12 +183,8 @@ export interface HallucinationState {
   agent_spoken: string[];
 }
 
-/**
- * The compact grounded state the H1-H4 questions read. Config is never cut:
- * when the state is over budget the evidence lists shed (tool results first,
- * then config excerpts, then caller lines) — the node prompt and the agent's
- * own spoken lines, which are the subject of the judgement, always survive.
- */
+/** Over budget, only the evidence lists shed: the node prompt and the agent's
+ *  own lines, the subject of the judgement, always survive. */
 export function buildHallucinationState(
   call: ConversationInput,
   node: NodeEvalInput,
@@ -226,10 +207,8 @@ export function buildHallucinationState(
     caller_said: transcriptLines(clipped, ["User:"]).map((l) => l.slice(0, LINE_CHARS)),
     agent_spoken: agentLines.map((l) => l.slice(0, LINE_CHARS)),
   };
-  // Shed the bulkiest evidence first. There is deliberately no rung that drops
-  // tool results entirely: "was this claim backed by a successful tool call?"
-  // is unanswerable without them, so a state that still does not fit is better
-  // left to the LLM judge (the plan's budget check drops it) than asked blind.
+  // No rung drops tool results entirely: "backed by a successful tool call?" is
+  // unanswerable without them, so a state that still does not fit goes to the LLM.
   const shedding: Array<[keyof HallucinationState, number]> = [
     ["tool_results", 12],
     ["agent_persona_and_scripted_lines_from_config", 15],

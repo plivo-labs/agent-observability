@@ -1,19 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Replay gate: run the SHIPPED TypeScript path (buildSessionEvalInput ->
- * buildJevPlan -> the real Jev client -> gatePlan) over the benchmark sessions
- * and compare, per judge, with the probabilities the tuning harness measured.
+ * Replay the shipped plan -> Jev -> gate path over benchmark sessions and compare
+ * per judge with the probabilities the gates were tuned on. This checks the port,
+ * not the model: Jev's run-to-run noise is |dp| <= ~0.07, so band agreement is the
+ * metric. `--calls`/`--tuned` come from a benchmark dataset outside this repo:
  *
- * This proves the PORT, not the model: the questions, the states and the
- * aggregation must reproduce the numbers the gates were set from. Jev's own
- * run-to-run noise is |dp| <= ~0.07, so band agreement is the metric and dp is
- * reported alongside it.
- *
- * `--calls` and `--tuned` point at a benchmark dataset produced OUTSIDE this
- * repo (one session dossier per JSON file, plus the probabilities the tuning
- * harness measured), so the paths are yours to supply:
- *
- *   TYPESAFE_API_KEY=... bun scripts/jev-replay.ts \
+ *   SIM_PERSIST=false JEV_API_KEY=... bun scripts/jev-replay.ts \
  *     --calls <dir of session dossiers> \
  *     --tuned <tuned_flags.json> \
  *     --out /tmp/jev-replay.jsonl [--limit 50] [--concurrency 4]
@@ -32,7 +24,6 @@ const arg = (name: string, fallback?: string): string => {
   return i >= 0 ? process.argv[i + 1]! : (fallback ?? "");
 };
 
-/** tuned_flags.json dimension -> the judge name this code uses. */
 const DIM_TO_JUDGE: Record<string, string> = {
   node_loop: "node_loop",
   instructions_adherence: "instructions_adherence",
@@ -53,14 +44,14 @@ async function main(): Promise<void> {
   const outPath = arg("out", "/tmp/jev-replay.jsonl");
   const limit = Number(arg("limit", "0")) || Infinity;
   const concurrency = Number(arg("concurrency", "4"));
-  const apiKey = process.env.TYPESAFE_API_KEY;
-  if (!apiKey) throw new Error("TYPESAFE_API_KEY is required");
+  const apiKey = process.env.JEV_API_KEY?.trim();
+  if (!apiKey) throw new Error("JEV_API_KEY is required");
 
   const tuned: Record<string, Record<string, number>> = JSON.parse(await readFile(tunedPath, "utf8"));
   const files = (await readdir(callsDir)).filter((f) => f.endsWith(".json")).slice(0, limit === Infinity ? undefined : limit);
   await writeFile(outPath, "");
 
-  const client = new HttpJevClient({ apiKey, model: process.env.JEV_MODEL ?? "jev-1.13.0", timeoutMs: 60_000, maxConcurrent: 8 });
+  const client = new HttpJevClient({ apiKey, baseUrl: process.env.JEV_BASE_URL || undefined, model: process.env.JEV_MODEL || "jev-1.13.0", timeoutMs: 60_000, maxConcurrent: 8 });
   let done = 0;
 
   const runOne = async (file: string): Promise<void> => {
@@ -80,10 +71,8 @@ async function main(): Promise<void> {
       }),
     );
     const gated = mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES));
-    // Some axes are decided in CODE before any judge verdict is emitted (a
-    // voice call with zero caller turns IS low engagement, resolveOutcomes).
-    // Scoring the raw probability instead of the emitted verdict once produced
-    // a wrong call on low_engagement, so the flag is recorded here.
+    // resolveOutcomes decides low engagement in code for a voice call with zero
+    // caller turns, so the emitted verdict, not the raw probability, is scored.
     const speech = (input.speech_transcript || input.full_transcript).split("\n");
     const silentCall = !speech.some((l) => /^User:\s*\S/.test(l)) && speech.some((l) => l.startsWith("Agent:") && l.includes("?"));
     // tuned_flags stores ONE probability per judge per session (the max across
@@ -150,8 +139,6 @@ async function main(): Promise<void> {
       if (mine === undefined || mine === null) { s.onlyTuned++; continue; }
       const gate = DEFAULT_GATES[judge]!;
       s.n++;
-      // The code rule outranks the judge on this axis, so compare what would
-      // actually be emitted.
       const forced = judge === "low_engagement" && line.silent_call;
       if (forced || decide(mine, gate) === decide(tunedP, gate)) s.agree++;
       const dp = Math.abs(mine - tunedP);

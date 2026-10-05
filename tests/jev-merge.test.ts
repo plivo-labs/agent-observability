@@ -32,7 +32,6 @@ describe("provenance and reason text", () => {
     expect(block.loop_detected).toBe(false);
     expect(block.score).toBeCloseTo(0.96, 5);
     expect(block.reason).toBe("No defect found.");
-    // the probability is internal-only — it stays out of the customer-facing text
     expect(block.reason).not.toContain("Jev");
     expect(block.technical_reason).toContain("p=0.04");
     expect(block).toMatchObject({ backend: "jev", confidence: 0.04, jev_model: "jev-1.13.0" });
@@ -184,8 +183,6 @@ describe("jevCustomMetric", () => {
     expect(out.backend).toBe("jev");
   });
 
-  // The LLM judge this replaces always writes a reason for `unknown`, so losing
-  // the batched call must still leave prose behind rather than an empty field.
   test("a metric the call never reached falls back to plain text when the writer failed", () => {
     const g = gated({ axis: customAxis, outcome: "unknown", p: 0.05 });
     const out = merge.jevCustomMetric(spec, g, new Map());

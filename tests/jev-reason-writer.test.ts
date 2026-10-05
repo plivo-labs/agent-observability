@@ -38,6 +38,17 @@ describe("writeDecisionReasons", () => {
     expect(reasons.get("c.low_engagement")).toEqual({ reason: "r c.low_engagement", technical_reason: "t c.low_engagement" });
   });
 
+  test("the output limit grows with the item count", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ id: `c.item_${i}`, judge: "low_engagement" }));
+    const respond = (list: Array<{ id: string }>) => JSON.stringify({ reasons: list.map((a) => ({ id: a.id, reason: "r", technical_reason: "t" })) });
+    const small = new MockLLM([respond(axes)]);
+    await writeDecisionReasons({ ctx, nodes: [{ node, nodeIndex: 0 }], axes, provider: small });
+    const large = new MockLLM([respond(many)]);
+    await writeDecisionReasons({ ctx, nodes: [{ node, nodeIndex: 0 }], axes: many, provider: large });
+    expect(small.calls[0]!.maxTokens).toBe(4000);
+    expect(large.calls[0]!.maxTokens).toBe(9000);
+  });
+
   test("the schema has no dynamic keys — a strict gateway must be able to accept it", () => {
     const provider = new MockLLM(["{}"]);
     return writeDecisionReasons({ ctx, nodes: [], axes, provider }).then(() => {

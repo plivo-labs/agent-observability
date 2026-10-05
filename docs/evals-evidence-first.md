@@ -1,54 +1,103 @@
-# Evidence-first evals: initial dev rollout
+# Evidence-first evals with Jev
 
-## Problem and decision
-
-The original Jev path could turn a confident failure into a final failure before an LLM wrote its explanation. Node questions received full-call history without a separate target-node transcript. Variable exclusions applied after reduction could also turn an incomplete assessment into a pass.
-
-This change separates evidence preparation, candidate classification, decision policy, independent review, and the final saved verdict. Existing judge rubrics and persisted verdict fields remain the public contract.
+Jev (TypeSafe System One) is a fast yes/no classifier. With `JEV_MODE=primary`, every built-in binary judge is first put to Jev as one or more Noul questions, each answered with P(defect). A per-judge gate turns each probability into pass, fail or review. A decision policy then decides which confident outcomes stand. Everything else goes to the existing LLM judge, which runs exactly as it does with Jev off.
 
 ```mermaid
 flowchart LR
-  A[Ordered call evidence] --> B[Judge-specific evidence views]
-  B --> C[Jev questions grouped by identical state]
-  C --> D[Complete-coverage gates]
+  A[Session events + agent config] --> B[Planner]
+  B --> C[Jev requests]
+  C --> D[Gates: pass / fail / review]
   D --> E{Decision policy}
-  E -->|Eligible clean conversation result| F[Final pass]
-  E -->|Suspected failure, uncertainty, or new evidence view| G[Independent LLM judge]
-  G --> H[Final pass, fail, or unknown]
-  F --> I[Saved rows with candidate provenance]
-  H --> I
+  E -->|confident, judge named by policy| F[Published Jev verdict]
+  E -->|uncertain, incomplete, or not named| G[Full LLM judge]
+  F --> H[One batched LLM call writes the reasons]
+  H --> I[Saved verdicts with Jev provenance]
+  G --> I
 ```
 
-## Required behavior
+## Request layouts (`JEV_LAYOUT`)
 
-- Preserve chronological ingest turns, including node ownership on revisits. Legacy/prebuilt inputs without an ordered timeline explicitly report that limitation; never invent inter-node order from grouped nodes.
-- Prepare shared call views once. Node questions get explicit target-node identity and transcript; other nodes are context. Hallucination claim questions and agent speech belong only to the target node, while grounding can use call-wide context.
-- Exclude structured platform idle turns from loop evidence. Preserve other judges' evidence.
-- Combine questions only over identical states and only within both request budgets. Keep axis/question mapping and complete-coverage reduction across logical variable chunks. Oversized requests remain review candidates.
-- Apply deterministic variable exclusions before reducing probabilities. Missing, uncertain, or capped required evidence cannot become a pass merely because a different defect was excluded.
-- Uncertain custom applicability cannot establish a pass. Low applicability is an unknown candidate, requiring independent review.
-- Every suspected failure goes to the full existing LLM judge, which may confirm or overturn it. Do not give the reviewer Jev's accusation or probability. Remove reason-only review from the active session flow.
-- Retain candidate probabilities, question/ignored/missing keys, truncation, gates, model, evidence/question/policy versions, and review route alongside the final backend and verdict. Keep Jev probability separate from the LLM rubric score. Preserve per-node custom provenance through fan-out.
-- Preserve channel gating, conversation priority rules, custom roll-up, unavailable handling, and `JEV_MODE=off` behavior.
+**`shared`** (`shared-state-v1`, `src/evals-engine/jev/plan-shared.ts`) sends two requests per session:
 
-## Conservative first phase
+| request | state | questions |
+|---|---|---|
+| `c` | the call's speech only | the six conversation detections (voicemail, bot, screening, low engagement, wrong number, do not disturb) |
+| `s0` | `agent` (global prompt, global variables, instruction paragraphs shared by 2+ nodes) and `nodes.n<i>` (each node's instructions, variables, recorded values with their sources, exit, labelled events, and runtime excerpts) | every node judge: loop, adherence, intent, variable extraction, hallucination |
 
-The policy is `verify-failures-v2`. Only clean, complete built-in conversation candidates over the unchanged `speech-v1` view may pass automatically. Changed node views (`node-evidence-v2`) and all custom metrics run through the LLM even when Jev is confident. Gate overrides cannot bypass this restriction. Node probabilities are collected for calibration, not used to publish new automatic decisions.
+Data that only one question needs travels inside that question, not in the shared state:
 
-This phase can cost more and take longer than the previous Jev-first path because node judges now run independently. A representative clean single-node fixture makes three Jev requests (previously four) and seven LLM judge calls (previously three). These are fixture counts, not production cost or latency measurements. The intent is trustworthy decisions first, then measured automation.
+- **Intent:** the intent catalog and the chosen intent are inside the intent questions. Each fired intent also gets its own condition question.
+- **Hallucination:** besides the broad hallucination questions, there is one question for each agent line that gives a reason or requirement (at most 6). Unlike `views`, this layout asks no per-token claim questions; it was measured without them.
 
-No new deployment setting or database migration is required. `JEV_JUDGES` still selects candidate collection; `JEV_CUSTOM_METRICS` still selects custom candidate collection. `JEV_MODE=off` returns to the existing LLM-only path. Configuration changes require a process restart in the current deployment.
+If a session is too large for one state, its nodes are split across `s0` and `s1`, and the conversation questions carry the speech inside the question. If the speech itself is too long for that, the session sends `c` plus an `s0` holding the nodes that fit; the remaining nodes go to the LLM. The layout never sends more than two requests.
 
-## Validation and promotion
+**`views`** (`plan.ts`, the default) sends one request per evidence view: `c`, plus `a<i>`, `i<i>`, `n<i>`, `h<i>`, `v<i>.<chunk>` and `l<i>` for each node. Questions over an identical state share a request.
 
-Local tests prove control-flow and data-contract behavior: ownership, idle exclusion, grouping, missing answers, guarded variables, custom applicability, failure reversal/confirmation, provenance fan-out, provider errors, and rollback. Mocked probabilities do not measure model accuracy.
+## Gates and policy
 
-Before enabling node auto-pass, use fresh calls that were not used for tuning, with human-reviewed labels at judge plus node scope. Run the complete evaluator through final fan-out, retain suppressed/missing/unknown outcomes, and compare per-judge false negatives, false positives, auto-pass coverage/error, overrides, tokens, and latency. Freeze the call set and label revision; record code, model, evidence, question, gate, and policy versions. Correct disputed labels before computing accuracy. Do not count the reviewer model's own outputs as independent ground truth.
+A pass needs an answer to every question on its axis. The axis goes to review instead when any of these happens:
 
-Promotion requires an explicit follow-up policy change backed by these results. This PR makes no new accuracy, cost-saving, or production-readiness claim. Compact hallucination retrieval can still omit relevant context, and existing LLM judging is not infallible; the initial review policy limits dependence on those uncalibrated candidates.
+- an answer is missing;
+- the request is over budget, or Jev rejects it as overflowing;
+- a question list was capped (variables, claims or reason lines beyond their caps).
 
-## Manager narration
+Default gates (`src/jev/gates.ts`, overridable with `JEV_GATES`):
 
-“We already have a working evaluation pipeline in dev. We are strengthening how it reaches a decision. First, we will give each check the evidence for the exact part of the call it owns. Then we will group checks that use the same evidence to avoid sending duplicate context. The fast model will flag possible problems, and the detailed judge will verify them before we mark a call as failed. Missing information will go to review rather than silently becoming a pass.
+| judge | pass when P ≤ | fail when P ≥ |
+|---|---|---|
+| node_loop | 0.28 | 0.85 |
+| intent_identification | 0.23 | never |
+| instructions_adherence | 0.26 | never |
+| variable_extraction | 0.19 | 0.90 |
+| hallucination | 0.35 | never |
+| conversation detections | 0.07–0.20 | 0.80–0.86 |
+| custom metrics | 0.20 | 0.80 |
 
-“We will keep a record of both the initial signal and the final decision, so we can explain and audit the result. Initially, the new node checks will still receive detailed review. We will test their accuracy on fresh, independently reviewed calls before allowing them to pass automatically. This may cost more during validation; the goal is to earn the efficiency improvement with evidence.”
+Policy `verify-failures-v3` (`src/evals-engine/jev/policy.ts`):
+
+- A confident conversation pass stands.
+- A confident node pass stands only for judges named in `JEV_NODE_AUTO_PASS`. If an intent fired, its pass stands only when every fired intent was asked against its own condition, which only the `shared` layout does; under `views` a fired intent always goes to the LLM.
+- A confident fail stands only for judges named in `JEV_AUTO_FAIL`. Intent, adherence and hallucination ship with gates that never fail.
+- Custom metrics are always decided by the LLM.
+- One batched LLM call writes the reasons for published fails, and also for published passes when `JEV_DECISION_REASONS=all`.
+
+With `primary`, every check Jev was asked records:
+
+- its backend and the Jev probability;
+- the gate and question keys used;
+- the evidence, question and policy versions;
+- the layout, under `shared`.
+
+## Failure handling
+
+- When a request fails, times out, overflows or is over budget, its axes go to the LLM. If planning or gating fails, the whole session goes to the LLM. A Jev problem never fails a session.
+- After five consecutive service failures, Jev is skipped for 60 seconds, so an outage does not add a timeout to every session.
+- `JEV_MODE=off` makes no Jev calls. It does **not** undo the node-judge changes that ship alongside Jev (`node-evidence-v3`), which apply in both modes:
+  - node-scoped, event-labelled evidence;
+  - variable values as of the node's exit;
+  - `[tool failed]` markers on failed tool results;
+  - the judge contracts in `judge-contracts.ts`.
+
+## Validation
+
+**Offline.** 920 labelled sessions were replayed through both layouts at the shipped gates. On the held-out set, `shared` decided 68% of node checks against 62% for `views`, with 2 unsafe passes against 3, and no false fails.
+
+**Live.** 100 test calls ran with `JEV_LAYOUT=shared`, `JEV_NODE_AUTO_PASS=all` and `JEV_AUTO_FAIL=node_loop,variable_extraction`:
+
+- Every session sent exactly two requests, with no fallbacks; one of the 100 used the packed layout.
+- Reference labels came from blind model reviewers, and every disagreement was adjudicated by hand.
+- All 1157 checks Jev decided were correct. Of the 380 checks the LLM decided, 346 (91%) were correct.
+- 12 checks were excluded from scoring as open policy questions.
+- Jev decided 1167 of all 1630 saved checks (72%); the scored subset above excludes checks the reviewers marked unclear, borderline or not applicable.
+
+## Turning it on
+
+1. Set `JEV_MODE=primary`, `JEV_API_KEY` and `JEV_LAYOUT=shared` (the layout the live numbers above were measured on). With the default switches, only conversation passes stand.
+2. Once that is healthy, name node judges in `JEV_NODE_AUTO_PASS` and `JEV_AUTO_FAIL`.
+
+With `primary`, each session's data is sent to `JEV_BASE_URL`:
+- the transcript, including tool-call arguments and results;
+- recorded variable values;
+- node and global prompts, intent definitions and variable rules;
+- global variables and runtime system messages;
+- custom-metric definitions, when `JEV_CUSTOM_METRICS=on`.

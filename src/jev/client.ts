@@ -3,10 +3,8 @@ import { config } from "../config.js";
 import { costForTokens } from "../evals/pricing.js";
 import { JEV_OVERFLOW, JevError, type JevClient, type JevNoulAnswer, type JevRequest, type JevResponse } from "./types.js";
 
-// Thin HTTP client for POST /v1/systemone (wire shape captured from the
-// official SDK). It owns transport concerns only — timeout, retries, the
-// concurrency cap, response validation and the usage line; which questions to
-// ask and what a probability means live in src/evals-engine/jev/.
+// Transport only: what to ask and what a probability means live in
+// src/evals-engine/jev/.
 
 const SYSTEM_ONE_PATH = "/v1/systemone";
 const RETRYABLE = new Set([408, 429, 529]);
@@ -14,6 +12,10 @@ const RETRYABLE = new Set([408, 429, 529]);
 const UNUSABLE = new Set([401, 402, 403]);
 let warnedUnusable = false;
 const MAX_RETRY_AFTER_MS = 10_000;
+// Every session waits for its Jev requests before LLM judging starts, so an
+// outage would otherwise add a full timeout to every session in the backlog.
+const BREAKER_THRESHOLD = 5;
+const BREAKER_COOLDOWN_MS = 60_000;
 
 const NoulAnswerZ = z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) });
 const ResponseZ = z.object({
@@ -32,6 +34,7 @@ export interface HttpJevClientOptions {
   maxRetries?: number;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
 }
 
 function retryAfterMs(res: Response): number | null {
@@ -45,7 +48,10 @@ function retryAfterMs(res: Response): number | null {
 }
 
 async function errorTypeOf(res: Response): Promise<string> {
-  if (res.status === 529) return "overloaded";
+  if (res.status === 529) {
+    await res.body?.cancel().catch(() => {});
+    return "overloaded";
+  }
   try {
     const body = (await res.json()) as { detail?: { error_type?: string } | string; error?: { type?: string } };
     if (body && typeof body.detail === "object" && body.detail?.error_type) return body.detail.error_type;
@@ -67,8 +73,11 @@ export class HttpJevClient implements JevClient {
   private readonly maxRetries: number;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly now: () => number;
   private active = 0;
   private readonly waiters: Array<() => void> = [];
+  private consecutiveFailures = 0;
+  private openUntil = 0;
 
   constructor(opts: HttpJevClientOptions) {
     this.apiKey = opts.apiKey;
@@ -79,21 +88,45 @@ export class HttpJevClient implements JevClient {
     this.maxRetries = opts.maxRetries ?? 2;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.now = opts.now ?? Date.now;
   }
 
   async systemOne(req: JevRequest): Promise<JevResponse> {
+    if (this.now() < this.openUntil) throw new JevError(503, "circuit_open");
     await this.acquire();
+    // Re-checked: a request queued for a slot must not be sent once the breaker opened.
+    if (this.now() < this.openUntil) {
+      this.release();
+      throw new JevError(503, "circuit_open");
+    }
     const startedAt = Date.now();
     let attempts = 0;
     try {
       const res = await this.send(req, (n) => { attempts = n; });
+      this.consecutiveFailures = 0;
       this.logUsage(req, res, attempts, startedAt, "ok");
       return res;
     } catch (e) {
+      this.recordFailure(e);
       this.logUsage(req, null, attempts, startedAt, "error");
       throw e;
     } finally {
       this.release();
+    }
+  }
+
+  // Not reset when the breaker opens, so the first failure after the cooldown
+  // reopens it at once instead of paying for another full streak.
+  private recordFailure(e: unknown): void {
+    const status = e instanceof JevError ? e.status : 0;
+    const serviceDown = status === 0 || RETRYABLE.has(status) || UNUSABLE.has(status) || status >= 500;
+    if (!serviceDown) return;
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures < BREAKER_THRESHOLD) return;
+    const wasClosed = this.now() >= this.openUntil;
+    this.openUntil = this.now() + BREAKER_COOLDOWN_MS;
+    if (wasClosed) {
+      console.warn(`[jev] ${this.consecutiveFailures} consecutive failures (last: ${(e as Error).message}) — skipping Jev for ${BREAKER_COOLDOWN_MS / 1000}s, sessions judge on the LLM path`);
     }
   }
 
@@ -115,15 +148,15 @@ export class HttpJevClient implements JevClient {
         });
       } catch (e) {
         clearTimeout(timer);
-        lastError = controller.signal.aborted
-          ? new JevError(408, "timeout", `${this.timeoutMs}ms`)
-          : new JevError(0, "network", (e as Error).message);
+        // A request that already used the whole timeout is not retried: the
+        // retry would double the wait for a service that is not answering.
+        if (controller.signal.aborted) throw new JevError(408, "timeout", `${this.timeoutMs}ms`);
+        lastError = new JevError(0, "network", (e as Error).message);
         continue;
       }
       if (!res.ok) {
-        // The timeout stays armed across the ERROR body read as well: a gateway
-        // that sends headers and then stalls the body would otherwise hang this
-        // call forever and never release its concurrency slot.
+        // The timeout stays armed through the error body read: a gateway that
+        // stalls after the headers would otherwise hold the slot forever.
         let errorType: string;
         try {
           errorType = await errorTypeOf(res);
@@ -134,16 +167,15 @@ export class HttpJevClient implements JevClient {
         // the signal rather than from the error it produced.
         const timedOut = controller.signal.aborted;
         const err = new JevError(timedOut ? 408 : res.status, timedOut ? "timeout" : errorType);
-        // 401/402/403 are not a blip: the key is wrong, revoked, or out of
-        // credit, so EVERY session silently falls back to the LLM judge until
-        // someone acts. Said once, at error level, rather than per request.
+        // A wrong, revoked or out-of-credit key silently sends EVERY session to
+        // the LLM until someone acts, so it is said once, at error level.
         if (UNUSABLE.has(err.status) && !warnedUnusable) {
           warnedUnusable = true;
           console.error(`[jev] ${err.message} — Jev is unusable with this configuration; every session is judging on the LLM path until it is fixed`);
         }
-        // Overflow is deterministic for this request — retrying the same bytes
-        // cannot succeed; the orchestrator routes the request's axes to the LLM judge.
+        // Overflow is deterministic: retrying the same bytes cannot succeed.
         if (err.status === 400 && err.errorType === JEV_OVERFLOW) throw err;
+        if (timedOut) throw err;
         if (RETRYABLE.has(err.status) || err.status >= 500) {
           err.retryAfterMs = retryAfterMs(res);
           lastError = err;
@@ -153,8 +185,7 @@ export class HttpJevClient implements JevClient {
       }
       let json: unknown;
       try {
-        // The timeout stays armed until the BODY is read: a stalled response
-        // body would otherwise hold a slot open with nothing to abort it.
+        // Still armed: a stalled body must stay abortable.
         json = await res.json();
       } catch (e) {
         throw controller.signal.aborted
@@ -211,14 +242,8 @@ export class HttpJevClient implements JevClient {
 let warnedMissingKey = false;
 let shared: JevClient | null | undefined;
 
-/**
- * The process-wide client for JEV_MODE=primary, or null when Jev is off or
- * unusable — the caller then takes today's LLM-only path.
- *
- * Memoized deliberately: JEV_MAX_CONCURRENT is a cap ACROSS sessions, and a
- * client per session would both uncap it and make every session pay the
- * cold-connection cost (5-8s) that one keep-alive connection pays once.
- */
+/** Null when Jev is off or unusable. Memoized: JEV_MAX_CONCURRENT caps ACROSS
+ *  sessions, and one keep-alive connection pays the 5-8s cold-connection cost once. */
 export function createJevClientFromConfig(): JevClient | null {
   if (shared !== undefined) return shared;
   if ((config.JEV_MODE ?? "off") !== "primary") {
@@ -244,8 +269,8 @@ export function createJevClientFromConfig(): JevClient | null {
   return shared;
 }
 
-/** Test hook: forget the memoized client so a suite can change the config. */
 export function __resetJevClientForTest(): void {
   shared = undefined;
   warnedMissingKey = false;
+  warnedUnusable = false;
 }

@@ -1,6 +1,6 @@
 import { config as envConfig } from "../../config.js";
 import type { LlmProvider } from "../../llm/index.js";
-import type { JevClient, JevResponse } from "../../jev/types.js";
+import { JevError, type JevClient, type JevResponse } from "../../jev/types.js";
 import { CUSTOM_METRIC_GATE, resolveGates } from "../../jev/gates.js";
 import type {
   ConversationInput,
@@ -37,21 +37,16 @@ import {
 } from "../judges/custom-metric.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
 import { AUTO_FAIL_JUDGES, AUTO_PASS_JUDGES, decisionProvenance, isPublished, parseJudgeList, routeAxis, type RoutePolicy } from "./policy.js";
-import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type NodeJudgeName } from "./plan.js";
+import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type JevPlan, type NodeJudgeName } from "./plan.js";
 import { buildSharedJevPlan } from "./plan-shared.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
 import { attachDetectionProvenance, jevAdherence, jevDetection, jevHallucination, jevIntent, jevNodeLoop, jevVariables, type ReasonMap } from "./merge.js";
 import { writeDecisionReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 
-// Jev answers every gated question first. A confident outcome on a judge the
-// route policy names is published as Jev's verdict, and one batched LLM call
-// writes its reasoning; everything uncertain, every confident outcome not
-// named, and every custom metric gets the full independent LLM judge.
+// Jev answers every gated question first. Published verdicts get their reasons
+// from one batched LLM call; every other axis gets a full LLM judge.
 
-/** The conversation detections Jev can answer, with everything the three
- *  layers need: the LLM criteria to fall back to, the raw key resolveOutcomes
- *  reads, and the emitted metric the provenance is stamped on. */
 const CONVERSATION_AXES: ReadonlyArray<{
   judge: ConversationJudgeName;
   criteria: string;
@@ -70,7 +65,7 @@ export interface JevSessionResult {
   conversation_metrics: SimConversationMetrics;
   node_evaluations: NodeEvaluation[];
   custom_metrics: CustomMetricVerdict[];
-  /** Counters for the one-line session log (and the dev rollout dashboards). */
+  /** Counters for the one-line session log. */
   stats: {
     requests: number;
     layout: "views" | "shared";
@@ -85,6 +80,14 @@ export interface JevSessionResult {
   };
 }
 
+// Config is fixed per process, so a misconfiguration is reported once.
+const warned = new Set<string>();
+function warnOnce(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
+}
+
 /** Ask Jev everything at once. One request's failure is local to its axes. */
 async function runPlanRequests(
   jev: JevClient,
@@ -96,10 +99,12 @@ async function runPlanRequests(
         const response: JevResponse = await jev.systemOne(request);
         return [request.key, { ok: true, response }];
       } catch (error) {
-        // The only place a Jev failure is visible: without it a rotated key, a
-        // wrong base URL and an outage all look identical in the data (every
-        // axis simply says backend=llm).
-        console.warn(`[jev] request=${request.key} failed, its axes fall back to the LLM judge: ${(error as Error).message}`);
+        // The only place a Jev failure is visible: otherwise a rotated key, a wrong
+        // base URL and an outage all just read backend=llm.
+        // The breaker already logged once when it opened.
+        if (!(error instanceof JevError && error.errorType === "circuit_open")) {
+          console.warn(`[jev] request=${request.key} failed, its axes fall back to the LLM judge: ${(error as Error).message}`);
+        }
         return [request.key, { ok: false, error }];
       }
     }),
@@ -129,36 +134,46 @@ export async function evaluateSessionJevFirst(args: {
 }): Promise<JevSessionResult> {
   const { input, refOf, jev, provider } = args;
   const customJudges = args.customJudges ?? [];
-  const gates = resolveGates(envConfig.JEV_GATES);
+  const gates = resolveGates(envConfig.JEV_GATES, warnOnce);
   const { judges, unknown } = parseJevJudges(envConfig.JEV_JUDGES);
-  if (unknown.length > 0) console.warn(`[jev] JEV_JUDGES names no such judge: ${unknown.join(", ")} — those stay on the LLM path`);
+  if (unknown.length > 0) warnOnce(`[jev] JEV_JUDGES names no such judge: ${unknown.join(", ")} — those stay on the LLM path`);
   const customEnabled = (envConfig.JEV_CUSTOM_METRICS ?? "off") === "on";
   const autoPass = parseJudgeList(envConfig.JEV_NODE_AUTO_PASS, AUTO_PASS_JUDGES);
   const autoFail = parseJudgeList(envConfig.JEV_AUTO_FAIL, AUTO_FAIL_JUDGES);
   for (const [name, list] of [["JEV_NODE_AUTO_PASS", autoPass], ["JEV_AUTO_FAIL", autoFail]] as const) {
-    if (list.unknown.length > 0) console.warn(`[jev] ${name} names no such judge: ${list.unknown.join(", ")} — those stay on LLM review`);
+    if (list.unknown.length > 0) warnOnce(`[jev] ${name} names no such judge: ${list.unknown.join(", ")} — those stay on LLM review`);
   }
   const inert = [...autoFail.judges].filter((j) => (gates[j]?.fail_above ?? 2) > 1);
-  if (inert.length > 0) console.warn(`[jev] JEV_AUTO_FAIL names judges whose gate never fails: ${inert.join(", ")} — set a fail_above in JEV_GATES or they stay on LLM review`);
+  if (inert.length > 0) warnOnce(`[jev] JEV_AUTO_FAIL names judges whose gate never fails: ${inert.join(", ")} — set a fail_above in JEV_GATES or they stay on LLM review`);
   const policy: RoutePolicy = { nodeAutoPass: autoPass.judges, autoFail: autoFail.judges };
   const explainPasses = (envConfig.JEV_DECISION_REASONS ?? "fails") === "all";
 
   const shared = envConfig.JEV_LAYOUT === "shared";
-  const plan = (shared ? buildSharedJevPlan : buildJevPlan)(input, {
-    judges,
-    customSpecs: customJudges,
-    customEnabled,
-    budgetTokens: envConfig.JEV_STATE_TOKEN_BUDGET ?? DEFAULT_BUDGET_TOKENS,
-  });
+  let plan: JevPlan | undefined;
+  let gated = new Map<string, GatedAxis>();
+  let jevMs = 0;
+  // A bug in planning or gating must cost this session its Jev answers, not
+  // its verdicts: with no gated axes every judge below runs on the LLM.
+  try {
+    plan = (shared ? buildSharedJevPlan : buildJevPlan)(input, {
+      judges,
+      customSpecs: customJudges,
+      customEnabled,
+      budgetTokens: envConfig.JEV_STATE_TOKEN_BUDGET ?? DEFAULT_BUDGET_TOKENS,
+    });
+    const startedAt = Date.now();
+    const results = await runPlanRequests(jev, plan.requests);
+    jevMs = Date.now() - startedAt;
+    gated = byAxisId(mergeChunkedAxes(gatePlan(plan, results, gates, input.nodes)));
+  } catch (error) {
+    console.warn(`[jev] planning or gating failed, every judge in this session falls back to the LLM: ${(error as Error).message}`);
+    gated = new Map();
+  }
 
-  const layout = plan.layout;
-  const startedAt = Date.now();
-  const results = await runPlanRequests(jev, plan.requests);
-  const jevMs = Date.now() - startedAt;
-  const gated = byAxisId(mergeChunkedAxes(gatePlan(plan, results, gates, input.nodes)));
+  const layout = plan?.layout;
 
   const stats: JevSessionResult["stats"] = {
-    requests: plan.requests.length,
+    requests: plan?.requests.length ?? 0,
     layout: shared ? "shared" : "views",
     axesTotal: gated.size,
     autoPass: 0,
@@ -172,6 +187,7 @@ export async function evaluateSessionJevFirst(args: {
     const route = routeAxis(g, policy);
     if (route === "auto_pass") stats.autoPass++;
     else if (route === "auto_fail") stats.autoFail++;
+    else if (route === "verify_applicability") stats.unknown++;
     else stats.reviewed++;
     if (g.fallback) stats.fallbacks[g.fallback] = (stats.fallbacks[g.fallback] ?? 0) + 1;
   }
@@ -214,9 +230,8 @@ export async function evaluateSessionJevFirst(args: {
       })
         .then((r) => r.reasons)
         .catch((e) => {
-          // A transient provider failure retries the whole session, exactly as
-          // a judge call does; a deterministic one keeps the verdicts with
-          // templated reasons rather than inventing evidence.
+          // Transient failures retry the whole session like a judge call; a
+          // deterministic one keeps the verdicts with templated reasons.
           if (classifyErrorDurability(e) === "transient") throw e;
           console.error(`[jev] reason writer unavailable — keeping verdicts with templated reasons: ${(e as Error).message}`);
           return new Map();
@@ -230,11 +245,9 @@ export async function evaluateSessionJevFirst(args: {
       return { metrics: { ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }, provenance };
     }
     const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
-    // Sentiment and STT stay on the LLM in v1 (sentiment has no ground truth to
-    // calibrate a gate against, STT is a count). They ride the SAME Promise.all
-    // as the detections rather than being started separately: a detection
-    // rejecting first would otherwise leave them without a handler, and an
-    // unhandled rejection takes the whole process down.
+    // Sentiment (no ground truth to gate on) and STT (a count) stay on the LLM.
+    // They share this Promise.all: started separately, a detection rejecting first
+    // would leave them unhandled, and an unhandled rejection kills the process.
     const [rawEntries, sentiment, stt] = await Promise.all([
       Promise.all(
       CONVERSATION_AXES.map(async ({ judge, criteria, rawKey, metricKey }): Promise<[keyof ConversationDetectionRaws, DetectionResult]> => {

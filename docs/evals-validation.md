@@ -2,7 +2,7 @@
 
 This tool executes the same ingest adapter, judges, aggregation, conversation priority rules, custom roll-up and final row selection used by session evaluation. It compares **final emitted rows** with independently reviewed labels. It does not score intermediate probabilities as if they were saved verdicts.
 
-The tooling PR is independent of the evidence-first engine PR: it uses the existing evaluator API and can run against either version. Copy/cherry-pick this tooling onto each comparison checkout, keeping the same dataset and provider settings. The engine's active policy determines which model makes each decision.
+It uses the public evaluator API, so it can run against any checkout. Keep the dataset and provider settings fixed when comparing runs; the engine's active policy determines which model makes each decision.
 
 ## Dataset contract
 
