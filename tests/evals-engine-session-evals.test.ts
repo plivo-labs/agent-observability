@@ -3,6 +3,7 @@ import { describe, test, expect } from "bun:test";
 import {
   buildSessionEvalInput,
   type AgentConfig,
+  type AgentConfigNode,
 } from "../src/evals-engine/integration/session-evals.js";
 
 // Unit tests for the ingest→engine input builder. Pure logic (no LLM): verifies
@@ -151,6 +152,19 @@ describe("buildSessionEvalInput", () => {
     expect(input.nodes[0].chosen_intent).toBe("Booked");
     const agentTurns = input.nodes[0].turns.map((t) => t.agent).filter(Boolean);
     expect(agentTurns).toContain("Agent_Handoff: closing-agent");
+  });
+
+  test("a non-array intents value is ignored, never thrown on", () => {
+    for (const bad of [{}, 5, true, "Booked"]) {
+      const config: AgentConfig = {
+        nodes: [{ ref: "node-A", name: "Booking", intents: bad as unknown as AgentConfigNode["intents"] }],
+      };
+      const { input } = buildSessionEvalInput(config, [
+        ev("node-A", "user", "yes book it"),
+        { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "Booked", arguments: "{}" } },
+      ]);
+      expect(input.nodes[0].chosen_intent).toBeFalsy();
+    }
   });
 
   test("system-role messages render as truncated System_Note lines, not agent speech", () => {
@@ -468,7 +482,7 @@ describe("evaluateIngestedSession — session tags", () => {
 
 describe("inputs the gated judge path reads", () => {
   test("system messages arrive in FULL, not the 600-char note the transcript renders", () => {
-    const long = `# Initial Context\nLead is in Pontiac, Michigan. ${"x".repeat(2000)}`;
+    const long = `# Initial Context\nLead is in Testville. ${"x".repeat(2000)}`;
     const { input } = buildSessionEvalInput(
       { flow_name: "f", global_prompt: "g", nodes: [{ ref: "n", name: "n", instructions: "i" }] },
       [

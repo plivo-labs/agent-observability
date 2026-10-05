@@ -78,9 +78,8 @@ export async function runValidation(dataset: ValidationDataset, opts: {
       const aggregate = await evaluateIngestedSession(c.config as AgentConfig, c.events as StoredEvent[], llm, c.transport, undefined, c.tags, c.customJudges as CustomJudgeSpec[], jev);
       cases.push({ id: c.id, status: "completed", durationMs: performance.now() - start, usage: { ...usage }, rows: buildExternalEvalRows(aggregate), aggregate });
     } catch (error) {
-      // Promise.all can reject before sibling judges settle. Stop the dataset:
-      // later cases must not inherit their semaphore wait or overlap their calls.
-      // Snapshot partial usage; late completions cannot mutate the saved run.
+      // Promise.all rejects before sibling judges settle: stop the dataset so later
+      // cases cannot overlap those calls, and snapshot usage so they cannot mutate it.
       caseAbort.abort();
       cases.push({ id: c.id, status: "failed", durationMs: performance.now() - start, usage: { ...usage }, rows: [], error: String(error) });
       for (const pending of dataset.cases.slice(caseIndex + 1)) cases.push({
@@ -119,7 +118,7 @@ export function summarizeValidation(dataset: ValidationDataset, run: ValidationR
     unlabelledRows += result.rows.filter(r => !labelledKeys.has(rowKey(r.judgeName, r.tag))).length;
     for (const row of result.rows) {
       const j = row.raw.jev as Record<string, unknown> | undefined;
-      if (j) versions.add(JSON.stringify({ model: row.raw.jev_model, evidence: j.evidence_version, questions: j.question_version, policy: j.policy_version, gate: j.gate, judge: row.judgeName }));
+      if (j) versions.add(JSON.stringify({ model: row.raw.jev_model, evidence: j.evidence_version, questions: j.question_version, policy: j.policy_version, gate: j.gate, layout: j.layout, judge: row.judgeName }));
     }
     for (const label of c.expected) {
       const row = rows.get(rowKey(label.judgeName, label.tag));

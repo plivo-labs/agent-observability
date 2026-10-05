@@ -56,8 +56,6 @@ describe("configExcerpts", () => {
   });
 
   test("the speaker label is not a spoken value, and one repeated word cannot starve the rest", () => {
-    // A config that repeats a common word 150 times used to consume the whole
-    // window budget, leaving the values the agent actually said ungrounded.
     const prompt = Array.from({ length: 150 }, (_, i) => `STEP ${i}: the agent must greet the caller politely.`).join("\n");
     const call = ctx({ nodes: [node({ node_prompt: prompt })], system_messages: ["# Initial Context\nLead is Ada at Example Terrace, unit 42."] });
     const excerpts = configExcerpts(call, ["Agent: Hi Ada, I have you at Example Terrace unit 42."]).join(" ");

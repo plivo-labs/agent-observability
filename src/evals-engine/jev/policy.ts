@@ -30,20 +30,17 @@ export function parseJudgeList(raw: string | undefined, allowed: readonly string
 export const AUTO_PASS_JUDGES: readonly string[] = NODE_JUDGES;
 export const AUTO_FAIL_JUDGES: readonly string[] = [...CONVERSATION_JUDGES, ...NODE_JUDGES];
 
-/** Gates produce candidates; policy decides who may publish the final verdict.
- * A confident outcome is published only for the judges `policy` names —
- * conversation passes always — and custom metrics are never published by Jev.
- * Everything uncertain, and every confident outcome not named, gets a full
- * independent LLM judge. Changing gate thresholds cannot bypass this policy. */
+/** Gates produce candidates; policy decides who publishes. A confident outcome is
+ *  published only for judges `policy` names (conversation passes always), never
+ *  for custom metrics. Everything else gets a full LLM judge, whatever the gates say. */
 export function routeAxis(g: GatedAxis, policy: RoutePolicy = REVIEW_ALL): ReviewRoute {
   if (g.outcome === "fail") return g.axis.kind !== "custom" && policy.autoFail.has(g.axis.judge) ? "auto_fail" : "verify_failure";
   if (g.outcome === "unknown") return "verify_applicability";
   if (g.outcome === "review") return "uncertain_or_incomplete";
   if (g.axis.kind === "conversation") return "auto_pass";
   if (g.axis.kind !== "node" || !policy.nodeAutoPass.has(g.axis.judge)) return "uncalibrated_evidence";
-  // Only a fired intent can be premature. Without a question on the fired
-  // intent's own condition its margin is thin (real defect at 0.31 vs a 0.23
-  // pass line), so the LLM checks those.
+  // Without a question on a fired intent's own condition the premature margin is
+  // thin (real defect at 0.31 vs a 0.23 pass line).
   return g.axis.intentFired && !g.axis.firedChecked ? "uncalibrated_evidence" : "auto_pass";
 }
 

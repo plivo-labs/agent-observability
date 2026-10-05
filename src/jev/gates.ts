@@ -1,16 +1,8 @@
-// Per-judge confidence gates. p is Jev's probability that the defect is
-// present. Thresholds produce pass/fail/review CANDIDATES; the route policy
-// decides which judges' confident outcomes are published without a full LLM
-// judge. Sentinels: pass_below -1 = never auto-pass, fail_above 2 = never
-// auto-fail (a real probability is always 0..1).
-//
-// Conversation gates come from the 295-session benchmark, where a flat 0.2/0.8
-// auto-passed real bots, hence the tighter bot and low-engagement passes.
-// Node thresholds come from an 800-call replay with reviewed references.
-// Each pass threshold sits at least Jev's run-to-run noise (0.07) below the
-// lowest real defect. Intent, adherence and hallucination never auto-fail:
-// their production false alarms came from missing evidence (clipped tool
-// results, unexported exits).
+// p is Jev's probability the defect is present. Conversation gates come from a
+// 295-session benchmark (a flat 0.2 auto-passed real bots), node gates from an
+// 800-call reviewed replay; each pass threshold sits >= Jev's 0.07 run-to-run
+// noise below the lowest real defect. Intent, adherence and hallucination never
+// auto-fail: their false alarms came from missing evidence.
 
 export interface JudgeGate {
   pass_below: number;
@@ -44,15 +36,13 @@ export function decide(p: number, gate: JudgeGate): GateDecision {
   return "review";
 }
 
-/** Custom judges share one gate under this key until measured per judge. */
 export const CUSTOM_METRIC_GATE = "custom_metric";
 
 function validGate(v: unknown): v is JudgeGate {
   if (!v || typeof v !== "object") return false;
   const g = v as Record<string, unknown>;
-  // A threshold is a probability, so it lives in [0, 1] — or is one of the two
-  // sentinels. Without the upper bound a typo like pass_below: 1.5 would
-  // silently auto-pass every session for that judge.
+  // Without the [0, 1] bound a typo like pass_below: 1.5 would silently
+  // auto-pass every session for that judge.
   const inDomain = (v: number, sentinel: number): boolean => v === sentinel || (v >= 0 && v <= 1);
   return (
     typeof g.pass_below === "number" && typeof g.fail_above === "number" &&
@@ -62,10 +52,8 @@ function validGate(v: unknown): v is JudgeGate {
   );
 }
 
-/** Code defaults overlaid with the JEV_GATES env JSON ({judge: {pass_below,
- *  fail_above}}). A malformed document or entry is ignored with one loud line
- *  rather than failing boot: a bad ops edit must degrade to the shipped gates,
- *  not stop judging. */
+/** A malformed JEV_GATES document or entry is ignored with one loud line rather
+ *  than failing boot: a bad ops edit must degrade to the shipped gates. */
 export function resolveGates(override?: string | null, warn: (msg: string) => void = console.warn): Record<string, JudgeGate> {
   const gates: Record<string, JudgeGate> = { ...DEFAULT_GATES };
   if (!override || !override.trim()) return gates;

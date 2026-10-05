@@ -243,9 +243,8 @@ export function eventsFromChatHistory(chatHistory: unknown): StoredEvent[] {
     });
 }
 
-/** Test injection: a provider and/or a Jev client. Passing `jev` explicitly
- *  (even as undefined) overrides the env-resolved client, so a test can drive
- *  either path without touching process env. */
+/** Test injection. A `jev` key, even set to undefined, overrides the
+ *  env-resolved client, so a test picks either path without touching env. */
 export interface JudgeOpts {
   provider?: LlmProvider;
   jev?: JevClient;
@@ -356,8 +355,7 @@ async function judgeClaimed(claim: EvalClaim, opts?: JudgeOpts): Promise<boolean
     });
     const verdicts = await evaluateIngestedSession(
       source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges,
-      // One memoized client per process (JEV_MODE=off memoizes null), so the
-      // call below is byte-identical to before Jev existed whenever it is off.
+      // Memoized per process; null (JEV_MODE=off) means LLM-only.
       (opts && "jev" in opts ? opts.jev : createJevClientFromConfig()) ?? undefined,
     );
     // Judging is done — no more provider spend to protect. Stop the heartbeat

@@ -1,10 +1,5 @@
-// End-to-end Jev-first judging through the REAL event-kick path against real
-// Postgres: the verdict blob, the per-judge rows and their provenance must all
-// land, with independent review deciding suspected failures.
-//
-// The Jev client is INJECTED rather than switched on with env: config is parsed
-// once per process and both integration suites share it, so an env flip here
-// would silently put the other suites on the Jev path too.
+// The Jev client is INJECTED, not enabled via env: config is parsed once per
+// process, so an env flip would put the other integration suites on Jev too.
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { describeDb, testRun } from "./helpers.js";
 import { sql } from "../src/db.js";
@@ -97,7 +92,7 @@ describeDb("Jev-first judging through the real sweep (real PG)", () => {
     expect(node.node_loop.jev.probability).toBe(0.97);
     expect(node.node_loop.jev.candidate).toBe("fail");
     expect(node.hallucination.backend).toBe("llm");
-    // All changed node views remain under independent review during calibration.
+    // The default policy publishes no node verdict from Jev.
     expect(node.instructions_adherence.backend).toBe("llm");
 
     const rows = await sql`

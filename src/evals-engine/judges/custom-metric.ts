@@ -113,10 +113,6 @@ async function judgeOnce(
   return data;
 }
 
-/** One node's verdict for a node-scope custom metric. Exported so a caller that
- *  already holds verdicts for the other nodes (the Jev-first path re-judges only
- *  the nodes its gate left uncertain) can fill in a single node without
- *  re-spending the whole metric. */
 export async function judgeCustomMetricNode(
   spec: CustomJudgeSpec,
   node: NodeEvalInput,
@@ -129,10 +125,8 @@ export async function judgeCustomMetricNode(
     {
       metric_name: spec.display_name,
       flow_name: ctx.flow_name,
-      // Give a custom node metric the SAME payload the built-in node judges see
-      // (node_prompt, available_intents, chosen_intent, extracted/global variables,
-      // global_prompt, node transcript + full history) so it can judge intent- or
-      // variable-shaped criteria, not just the raw transcript text.
+      // The built-in node judges' payload, so intent- or variable-shaped criteria
+      // can be judged, not just the raw transcript.
       ...nodePayload(node, ctx),
     },
     provider,

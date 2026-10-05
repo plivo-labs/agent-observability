@@ -1,4 +1,4 @@
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, mock, spyOn } from "bun:test";
 import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 
 const testConfig = { ...TEST_JUDGE_CONFIG_MODULE.config, JEV_CUSTOM_METRICS: "on" };
@@ -10,6 +10,7 @@ const { JevError, JEV_OVERFLOW } = await import("../src/jev/types.js");
 const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
 const { defaultJudgeResponder } = await import("./fixtures/default-judge-responder.js");
 const { buildExternalEvalRows } = await import("../src/evals-engine/fan-out-rows.js");
+const planNs = await import("../src/evals-engine/jev/plan.js");
 type AgentConfig = import("../src/evals-engine/integration/session-evals.js").AgentConfig;
 type StoredEvent = import("../src/evals-engine/integration/session-evals.js").StoredEvent;
 type MockJevType = InstanceType<typeof MockJev>;
@@ -224,6 +225,19 @@ describe("uncertain and unavailable axes fall to the LLM", () => {
     expect(v.node_evaluations[0]!.node_loop.backend).toBe("llm");
   });
 
+  test("a planner error judges the whole session on the LLM, never an eval error", async () => {
+    const spy = spyOn(planNs, "buildJevPlan").mockImplementation(() => { throw new Error("planner bug"); });
+    try {
+      const jev = new MockJev([{}], 0.01);
+      const { v, provider } = await run(jev);
+      expect(jev.calls).toHaveLength(0);
+      expect(provider.calls).toHaveLength(13);
+      expect(v.node_evaluations[0]!.node_loop.backend).toBe("llm");
+      expect(v.conversation_metrics.voicemail_detected.backend).toBe("llm");
+    } finally {
+      spy.mockRestore();
+    }
+  });
 
 });
 
@@ -238,8 +252,7 @@ describe("failures never escape as unhandled rejections", () => {
     // LLM's — and it throws.
     const jev = new MockJev([{}], 0.01);
     await expect(run(jev, provider)).rejects.toThrow(/429/);
-    // sentiment and STT were started in the same batch, so their results were
-    // consumed rather than left dangling
+    // sentiment was started alongside the detections, not left dangling
     expect(provider.calls.some((c) => c.jsonSchema?.name === "eval_sentiment")).toBe(true);
   });
 });
@@ -272,6 +285,18 @@ test("custom applicability is independently reviewed and node provenance survive
   expect(row.raw.backend).toBe("llm");
   expect((row.raw.jev as any)?.candidate).toBe("review");
   expect((row.raw.jev as any)?.probability).toBe(0.21);
+});
+
+test("a custom metric Jev finds inapplicable is counted as unknown in the session log", async () => {
+  const log = spyOn(console, "log");
+  try {
+    const spec = { name: "metric:hold", display_name: "Hold", scope: "node" as const, body: "Fail when held without warning.", output: "" };
+    await evaluateIngestedSession(config, events, llm(), "livekit", undefined, undefined, [spec], new MockJev([{}], 0.01));
+    const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("[jev] judged"));
+    expect(line).toContain("unknown=1");
+  } finally {
+    log.mockRestore();
+  }
 });
 
 test("unavailable independent review retains candidates without emitting a pass", async () => {

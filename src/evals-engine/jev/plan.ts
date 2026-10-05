@@ -20,8 +20,7 @@ import type { JevNoul, JevRequest } from "../../jev/types.js";
 import { contextThroughNodeExit } from "../node-evidence.js";
 
 // Plan independent questions over explicit evidence views. Only requests with
-// byte-identical states may share a batch. Changed node views stay under LLM
-// review until separately calibrated (policy.ts).
+// byte-identical states may share a batch.
 
 export const CONVERSATION_JUDGES = [
   "voicemail_detection",
@@ -45,10 +44,8 @@ export const NODE_JUDGES = [
 ] as const;
 export type NodeJudgeName = (typeof NODE_JUDGES)[number];
 
-/** Every judge Jev CAN answer. */
 export const ALL_JEV_JUDGES: readonly string[] = [...CONVERSATION_JUDGES, ...NODE_JUDGES];
 
-/** What "all" means: every judge Jev answers by default. */
 export const DEFAULT_JEV_JUDGES: readonly string[] = ALL_JEV_JUDGES;
 
 export interface JevIntentQuestionRef {
@@ -67,7 +64,6 @@ interface JevAxisCommon {
   judge: string;
   requestKey: string;
   questionKeys: string[];
-  /** Set on the axes that belong to one node. */
   nodeIndex?: number;
 }
 export interface JevConversationAxis extends JevAxisCommon {
@@ -80,9 +76,8 @@ export interface JevNodeAxis extends JevAxisCommon {
   nodeIndex: number;
   intents?: JevIntentQuestionRef[];
   variables?: JevVariableQuestionRef[];
-  /** The node declares more intents/variables than the caps allow, so the
-   *  questions do not cover the whole surface: the unasked ones can never fire
-   *  and must not be read as clean. */
+  /** More intents/variables than the caps allow: the unasked ones can never
+   *  fire, so a pass is not clean. */
   truncated?: boolean;
   /** An intent tool fired in this node, so the intent may be premature. */
   intentFired?: boolean;
@@ -128,7 +123,6 @@ const TOTAL_BUDGET_MULTIPLE = 2;
 /** Logical chunk size for complete-coverage reduction; packing may combine chunks. */
 export const VARIABLE_QUESTIONS_PER_REQUEST = 8;
 
-/** Complete node configuration plus an explicit target and owned evidence. */
 export function jevNodeState(node: NodeEvalInput, ctx: ConversationInput, evidence: PreparedEvidence = prepareEvidence(ctx), loop = false): Record<string, unknown> {
   const intents = (node.available_intents ?? []).map((raw) => {
     const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -178,10 +172,11 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
   const requests: JevRequest[] = [];
   const axes: JevAxis[] = [];
   const dropped: Array<{ requestKey: string; estTokens: number }> = [];
+  // Parallel to `requests`: re-serializing every earlier state on each add is
+  // quadratic and blocks the event loop on many-node sessions.
+  const signatures: string[] = [];
 
-  // A request is planned once its questions exist; it is SENT only if its state
-  // fits. Axes of a dropped request stay in the plan so the caller still judges
-  // them — on the LLM path.
+  // Axes of an over-budget request stay in the plan so the LLM still judges them.
   const addRequest = (key: string, state: unknown, questions: Record<string, JevNoul>, pending: JevAxis[]): void => {
     if (Object.keys(questions).length === 0) return;
     const est = estimateRequestTokens(state, questions);
@@ -193,7 +188,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     }
     // Share state tokens only when the evidence is identical and both limits fit.
     const signature = JSON.stringify(state);
-    const sameState = requests.find(r => JSON.stringify(r.state) === signature &&
+    const sameState = requests.find((r, i) => signatures[i] === signature &&
       estimateRequestTokens(state, { ...r.questions, ...questions }).total <= budget * TOTAL_BUDGET_MULTIPLE);
     if (sameState) {
       Object.assign(sameState.questions, questions);
@@ -203,6 +198,7 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
       for (const axis of pending) axis.requestKey = sameState.key;
     } else {
       requests.push({ key, state, questions, estTokens: est.longest, estTotalTokens: est.total });
+      signatures.push(signature);
     }
   };
 
@@ -235,10 +231,11 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
     const targetTranscript = evidence.nodes.get(node)!.transcript;
     const groundingContext = contextThroughNodeExit(node, ctx);
     const groundingTranscript = clipToolResults(groundingContext.full_transcript);
-    const claims = hasTranscript ? residualClaims(groundingContext, groundingTranscript, MAX_CLAIM_QUESTIONS, targetTranscript) : [];
+    // One past the cap detects an over-cap node, whose pass must go to the LLM.
+    const found = hasTranscript ? residualClaims(groundingContext, groundingTranscript, MAX_CLAIM_QUESTIONS + 1, targetTranscript) : [];
+    const claims = found.slice(0, MAX_CLAIM_QUESTIONS);
     const prefix = `n${nodeIndex}`;
 
-    // loop and variable questions share the node state
     const nodeQuestions: Record<string, JevNoul> = {};
     const nodeAxes: JevAxis[] = [];
     if (judgeAllowed(opts.judges, "node_loop")) {
@@ -253,10 +250,8 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
         }]);
       }
     }
-    // An empty node prompt is a neutral skip on the LLM path (no call, no
-    // verdict to disagree with) — asking Jev would invent one. Adherence gets
-    // its own request without the intent catalog, the same view the LLM
-    // adherence judge has: intent descriptions read as mandatory steps.
+    // An empty prompt is a neutral skip on the LLM path, so Jev must not invent a
+    // verdict. The intent catalog is withheld: its descriptions read as mandatory steps.
     if (judgeAllowed(opts.judges, "instructions_adherence") && (node.node_prompt ?? "").trim()) {
       const requestKey = `a${nodeIndex}`;
       const { available_intents: _routingOnly, ...adherenceState } = state;
@@ -267,9 +262,8 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
         requestKey, questionKeys: Object.keys(questions),
       }]);
     }
-    // Intent gets the LLM intent judge's view: the catalog, the selection and
-    // the conversation. The node prompt and variable rules hid a premature
-    // intent (0.14 with them, 0.30 without) and kept clean calls uncertain.
+    // The LLM intent judge's view, without node prompt or variable rules: those
+    // hid a premature intent (p 0.14 with them, 0.30 without).
     if (judgeAllowed(opts.judges, "intent_identification")) {
       const intents = intentQuestions(node);
       if (intents.length > 0) {
@@ -318,11 +312,8 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
       }
     }
 
-    // hallucination: its own compact grounded state (config windows around what
-    // the agent actually said) plus one question per value code cannot ground.
     if (judgeAllowed(opts.judges, "hallucination")) {
-      // Shed against the budget this plan is actually held to, minus the
-      // longest question that will ride with the state.
+      // The plan's own budget, minus the longest question riding with the state.
       const { state: hState, agentLines } = buildHallucinationState(groundingContext, node, groundingTranscript, budget - longestHallucinationQuestion, targetTranscript);
       if (agentLines.length > 0) {
         const questions: Record<string, JevNoul> = {};
@@ -340,12 +331,13 @@ export function buildJevPlan(ctx: ConversationInput, opts: BuildJevPlanOptions =
         addRequest(`h${nodeIndex}`, { ...hState, target_node_uuid: node.node_uuid, evidence_version: evidence.version }, questions, [{
           kind: "node", id: `${prefix}:hallucination`, judge: "hallucination", nodeIndex,
           requestKey: `h${nodeIndex}`, questionKeys: keys,
+          ...(found.length > claims.length ? { truncated: true } : {}),
         }]);
       }
     }
   });
 
-  // ── custom metrics (off until measured in dev) ─────────────────────────────
+  // ── custom metrics ─────────────────────────────────────────────────────────
   if (opts.customEnabled && hasTranscript) {
     for (const spec of opts.customSpecs ?? []) {
       const { applicable, fail } = customMetricQuestions(spec);

@@ -16,13 +16,9 @@ import type { GatedAxis } from "./gate.js";
 import type { JevNodeAxis } from "./plan.js";
 import { INTENT_PREMATURE_KEY, INTENT_WRONG_KEY } from "../../jev/questions.js";
 
-// Turning a gated probability into the verdict blocks consumers already read.
-// Two rules hold everywhere:
-//   * the SHAPE is the one the LLM judges produce, so the stored blob, the
-//     fan-out `raw`, and every consumer keep working unchanged;
-//   * a Jev-decided block says so — `backend`/`confidence`/`jev_model` — because
-//     a mixed Jev/LLM dataset with no provenance is invisible in the data
-//     (the cost this repo already documents for JUDGE_MODEL_FALLBACK).
+// Jev verdicts keep the LLM judges' shape so every consumer reads them as-is,
+// and carry `backend`/`confidence`/`jev_model`: without provenance a mixed
+// Jev/LLM dataset cannot be told apart.
 
 export interface ReasonText {
   reason: string;
@@ -36,10 +32,8 @@ export function provenanceOf(g: GatedAxis): JudgeProvenance {
   return { confidence: g.p ?? undefined, backend: "jev", ...(g.jevModel ? { jev_model: g.jevModel } : {}) };
 }
 
-/** A confident pass uses the batched writer's text when the session asked for
- *  pass reasons, otherwise a template. The score stays out of `reason`: that
- *  string is read by customers, to whom a bare model probability means nothing.
- *  It lives in `technical_reason` instead. */
+/** The probability stays out of `reason`: customers read it, and a bare model
+ *  probability means nothing to them. */
 export function passReason(g: GatedAxis, reasons: ReasonMap = new Map()): ReasonText {
   const written = reasons.get(g.axis.id);
   if (written?.reason) {
@@ -51,9 +45,8 @@ export function passReason(g: GatedAxis, reasons: ReasonMap = new Map()): Reason
   };
 }
 
-/** A metric the call never reached rides the same batched call as the fails:
- *  a useful N/A names the situation that was expected and what happened
- *  instead, which is per-session evidence a template cannot carry. */
+/** A useful N/A names the expected situation and what happened instead:
+ *  per-session evidence a template cannot carry, so the writer is asked. */
 export function naReason(g: GatedAxis, reasons: ReasonMap): ReasonText {
   const written = reasons.get(g.axis.id);
   if (written?.reason) {
@@ -68,9 +61,8 @@ export function naReason(g: GatedAxis, reasons: ReasonMap): ReasonText {
   };
 }
 
-/** A confident fail's explanation is written by the LLM in one batched call;
- *  if that call failed we still keep the verdict and say so plainly rather
- *  than inventing evidence. */
+/** Without the writer's text the verdict stands with a plain notice rather
+ *  than invented evidence. */
 export function failReason(g: GatedAxis, reasons: ReasonMap): ReasonText {
   const written = reasons.get(g.axis.id);
   if (written) {
@@ -91,9 +83,8 @@ export function textFor(g: GatedAxis, reasons: ReasonMap): ReasonText {
 
 // ── node axes ────────────────────────────────────────────────────────────────
 
-/** Sub-rubrics stay null: AO did not compute them on this path, and filling
- *  them with a reason-less 1.0 would read downstream as a graded rubric.
- *  `score` carries Jev's confidence, `adherence_passed` the verdict. */
+/** Sub-rubrics stay null: a reason-less 1.0 would read downstream as a graded
+ *  rubric. */
 export function jevAdherence(g: GatedAxis, reasons: ReasonMap): InstructionsAdherenceMetrics {
   const t = textFor(g, reasons);
   return {
@@ -113,10 +104,10 @@ export function jevIntent(g: GatedAxis, reasons: ReasonMap): IntentIdentificatio
   const t = textFor(g, reasons);
   const axis = g.axis as JevNodeAxis;
   const fired = new Set(g.firedKeys);
-  // Catalog coverage and selection correctness map to separate flags. Firing an
-  // intent before its prerequisite is a wrong selection, not a catalog gap.
+  // Coverage and selection map to separate flags: an intent fired before its
+  // condition was met is a wrong selection, not a catalog gap.
   const isWrongQuestion = (key: string): boolean => key.endsWith(`.${INTENT_WRONG_KEY}`) || key.endsWith(`.${INTENT_PREMATURE_KEY}`);
-  // A fired intent whose own condition was unmet is premature, i.e. wrong.
+  // A `.fired.N` question fires when a fired intent's own condition was unmet.
   const firedEarly = g.firedKeys.some((k) => /\.fired\.\d+$/.test(k));
   const wrong = firedEarly || (axis.intents?.some((i) => isWrongQuestion(i.key) && fired.has(i.key)) ?? false);
   const missed = axis.intents?.some((i) => !isWrongQuestion(i.key) && fired.has(i.key)) ?? false;
@@ -203,8 +194,7 @@ export function jevNodeLoop(g: GatedAxis, reasons: ReasonMap): NodeLoopMetrics {
 
 // ── conversation axis ────────────────────────────────────────────────────────
 
-/** A Jev-decided detection in the raw shape resolveOutcomes consumes, so the
- *  priority ladder and every downstream rule work on it unchanged. */
+/** The raw shape resolveOutcomes consumes, so the priority ladder still applies. */
 export function jevDetection(g: GatedAxis, reasons: ReasonMap): DetectionResult {
   const t = textFor(g, reasons);
   return { detected: g.outcome === "fail", reason: t.reason, technical_reason: t.technical_reason, available: true };
@@ -213,14 +203,8 @@ export function jevDetection(g: GatedAxis, reasons: ReasonMap): DetectionResult 
 const SUPERSEDED = "superseded by a higher-priority conversation outcome";
 const CODE_DERIVED = "derived in code:";
 
-/**
- * Stamp provenance onto the emitted conversation metrics.
- *
- * Only where the emitted verdict IS the backend's verdict: a detection the
- * priority ladder overruled, or one code derived (the silent-call
- * low-engagement), is a CODE decision, and labelling it `jev 0.93` would store
- * the opposite of what happened.
- */
+/** Stamp provenance only where the emitted verdict IS the backend's: a
+ *  detection the priority ladder overruled or code derived is a `code` decision. */
 export function attachDetectionProvenance(
   metrics: SimConversationMetrics,
   provenance: ReadonlyMap<keyof SimConversationMetrics, JudgeProvenance>,

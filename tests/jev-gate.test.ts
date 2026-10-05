@@ -181,9 +181,6 @@ describe("gatePlan", () => {
     const spec = { name: "metric:hold", display_name: "Hold", scope: "conversation" as const, body: "Fail if held without warning.", output: "" };
     const plan = buildJevPlan(ctx(), { customSpecs: [spec], customEnabled: true });
     const axis = plan.axes.find((a) => a.id === "m.metric:hold")! as any;
-    // The fail question's FALSE criterion is "passes OR does not apply", so a
-    // low probability without the applicability answer is ambiguous — and N/A
-    // is the commoner reading, which would make a `pass` wrong most of the time.
     const answers = new Map(
       plan.requests.map((r) => {
         const kept = Object.fromEntries(

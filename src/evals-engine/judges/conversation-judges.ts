@@ -532,13 +532,9 @@ export async function evaluateConversationMetrics(
   });
 }
 
-/**
- * Turn the six raw detections + sentiment + STT into the stored
- * `SimConversationMetrics`: mutual exclusivity, the machine-answered
- * suppression of user_never_spoke, the transfer axis, and the sentiment pass
- * rule. Pure, and the ONLY place that assembly lives — the Jev-first path
- * supplies its own raws and must produce byte-identical structure.
- */
+/** The ONLY place raw detections, sentiment and STT become the stored
+ *  `SimConversationMetrics`; the Jev-first path supplies its own raws here so
+ *  both paths produce identical structure. */
 export function assembleConversationMetrics(args: {
   ctx: ConversationInput;
   raws: ConversationDetectionRaws;

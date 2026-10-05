@@ -17,7 +17,7 @@ const write = (node_ref: string, value: string): StoredEvent => ({
   type: "conversation_item_added", node_ref, item: { type: "function_call", name: "record_time", arguments: { value } },
 });
 
-test("node judges see each event once, preserve revisits, and exclude later-node accusations (B01/D05)", () => {
+test("node judges see each event once, preserve revisits, and exclude later-node accusations", () => {
   const { input } = buildSessionEvalInput(config, [
     speech("collect", "assistant", "What time works?"),
     speech("confirm", "user", "Seven please."),
@@ -39,7 +39,7 @@ test("node judges see each event once, preserve revisits, and exclude later-node
   expect(state.conversation_history).toBe(payload.conversation_history);
 });
 
-test("extraction uses the latest write at node exit, never a future correction (D13/D14)", () => {
+test("extraction uses the latest write at node exit, never a future correction", () => {
   const { input } = buildSessionEvalInput(config, [
     speech("collect", "user", "Six, actually seven."),
     write("collect", "18:00"), write("collect", "19:00"),

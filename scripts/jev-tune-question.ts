@@ -1,17 +1,12 @@
 #!/usr/bin/env bun
-// Score candidate wordings for ONE conversation question the way the PIPELINE
-// emits the verdict, not the way the raw probability reads.
-// AO decides some axes in code before any judge verdict exists — a voice call
-// with zero caller turns IS low engagement — so scoring the raw answer measures
-// something the product never emits. Every variant rides ONE request per
-// session over the same state, so a sweep costs one request per call, not one
-// per call per variant.
+// Score candidate wordings for ONE conversation question by the verdict the
+// pipeline emits, not the raw probability. All variants ride one request per
+// session over the same state, so a sweep costs one request per call.
 //
-//   TYPESAFE_API_KEY=... bun scripts/jev-tune-question.ts \
+//   SIM_PERSIST=false JEV_API_KEY=... bun scripts/jev-tune-question.ts \
 //     <dir of session dossiers> <gt.json> <variants.json> [out.json] [limit]
 //
-// `<dir of session dossiers>` and `<gt.json>` come from a benchmark dataset
-// produced outside this repo.
+// The dossiers and gt.json come from a benchmark dataset outside this repo.
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { eventsFromChatHistory } from "../src/evals-engine/eval-sweeper.js";
@@ -35,7 +30,9 @@ const files = (await readdir(CALLS)).filter((f) => f.endsWith(".json")).slice(0,
 const questions: Record<string, ReturnType<typeof noul>> = { baseline: CONVERSATION_QUESTIONS.low_engagement! };
 for (const v of variants) questions[`v.${v.name}`] = noul(v.instructions, v.criteria_true, v.criteria_false);
 
-const client = new HttpJevClient({ apiKey: process.env.TYPESAFE_API_KEY!, model: "jev-1.13.0", timeoutMs: 60_000, maxConcurrent: 6 });
+const apiKey = process.env.JEV_API_KEY?.trim();
+if (!apiKey) throw new Error("JEV_API_KEY is required");
+const client = new HttpJevClient({ apiKey, baseUrl: process.env.JEV_BASE_URL || undefined, model: process.env.JEV_MODEL || "jev-1.13.0", timeoutMs: 60_000, maxConcurrent: 6 });
 const rows: Array<{ id: string; silent: boolean; truth: boolean; p: Record<string, number> }> = [];
 let done = 0;
 
@@ -55,8 +52,8 @@ await Promise.all(Array.from({ length: 6 }, async () => {
       const res = await client.systemOne({ key: id.slice(0, 8), state, questions, estTokens: est.longest, estTotalTokens: est.total });
       const p: Record<string, number> = {};
       for (const k of Object.keys(questions)) if (res.answers[k]) p[k] = res.answers[k]!.noul;
-      // AO's code rule: a voice call with zero caller turns where the agent
-      // asked a question is low engagement, decided before any judge verdict.
+      // Decided in code before any judge: zero caller turns after an agent
+      // question is low engagement.
       const speech = (input.speech_transcript || input.full_transcript).split("\n");
       const answered = speech.some((l) => /^User:\s*\S/.test(l));
       const agentAsked = speech.some((l) => l.startsWith("Agent:") && l.includes("?"));

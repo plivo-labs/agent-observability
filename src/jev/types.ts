@@ -10,7 +10,6 @@ export interface JevNoul {
   criteria: { true: string; false: string };
 }
 
-/** One HTTP request: a state object and the named questions asked over it. */
 export interface JevRequest {
   /** Stable per-session identifier (e.g. "n0", "v0", "h0", "c") — for logs and
    *  for mapping answers back to axes; never sent to the model. */
