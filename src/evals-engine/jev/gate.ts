@@ -26,6 +26,12 @@ export interface GatedAxis {
   ignoredKeys?: string[];
 }
 
+const TIME_FIELD = /(^|_)(time|date|datetime|day|when)(_|$)/;
+const isTimeField = (name: string): boolean => {
+  const snake = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  return TIME_FIELD.test(snake) && !/birth|dob/.test(snake);
+};
+
 export type RequestResult = { ok: true; response: JevResponse } | { ok: false; error: unknown };
 
 function fallbackFor(error: unknown): AxisFallback {
@@ -102,7 +108,14 @@ export function gatePlan(
     // question was judged by nobody.
     const complete = applicableAnswers.length === required.length && !(axis.kind === "node" && axis.truncated);
     if (outcome === "pass" && !complete) outcome = "review";
+    // Jev reads platform idle reminders as the agent repeating itself; the
+    // LLM loop judge, which strips them, decides those nodes.
+    if (outcome === "fail" && axis.kind === "node" && axis.judge === "node_loop" &&
+        nodes[axis.nodeIndex]?.turns?.some((t) => t.idle)) outcome = "review";
     const firedKeys = applicableAnswers.filter(([, value]) => value >= gate.fail_above).map(([key]) => key);
+    // Jev has no call clock, so it cannot check "in 30 minutes" resolved to a clock value.
+    if (outcome === "fail" && axis.kind === "node" && axis.judge === "variable_extraction" && firedKeys.length > 0 &&
+        firedKeys.every((k) => isTimeField(axis.variables?.find((r) => r.key === k)?.variable ?? ""))) outcome = "review";
     return { axis, outcome, p: applicableAnswers.length || !required.length ? p : null, firedKeys, probabilities, jevModel, ignoredKeys };
   });
 }
