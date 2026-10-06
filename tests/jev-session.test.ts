@@ -275,7 +275,7 @@ describe("a text transport never gets a voice-only verdict", () => {
 test("custom applicability is independently reviewed and node provenance survives fan-out", async () => {
   const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.endsWith("applicable") ? 0.21 : 0.01]))]);
   const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_custom_metric"
-    ? JSON.stringify({ verdict: "unknown", reason: "The call never reached a hold.", technical_reason: "no hold evidence" })
+    ? JSON.stringify({ situation_reached: false, verdict: "unknown", reason: "The call never reached a hold.", technical_reason: "no hold evidence" })
     : defaultJudgeResponder(args.system)!]);
   const spec = { name: "metric:hold", display_name: "Hold", scope: "node" as const, body: "Fail when held without warning.", output: "" };
   const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [spec], jev);

@@ -88,7 +88,7 @@ describe("JEV_CUSTOM_METRICS=on", () => {
       return out;
     }]);
     const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_custom_metric"
-      ? JSON.stringify({ verdict: "pass", reason: "Greeting confirmed.", technical_reason: "review" })
+      ? JSON.stringify({ situation_reached: true, verdict: "pass", reason: "Greeting confirmed.", technical_reason: "review" })
       : defaultJudgeResponder(args.system)!]);
     const verdicts = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [spec()], jev);
     const metric = verdicts.custom_metrics![0]!;

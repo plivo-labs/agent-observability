@@ -173,7 +173,7 @@ describeDb("judge dry-run test flow (real PG)", () => {
     const source = (await getSessionEvalSource(sid))!;
     const events = eventsFromChatHistory(source.chatHistory);
     const { input, nodeRefs } = buildSessionEvalInput(source.config as any, events);
-    const llm = new MockLLM([JSON.stringify({ verdict: "fail", reason: "curt greeting", technical_reason: "t" })]);
+    const llm = new MockLLM([JSON.stringify({ situation_reached: true, verdict: "fail", reason: "curt greeting", technical_reason: "t" })]);
     const [v] = await runCustomMetricJudges([spec], input, (u) => {
       const i = input.nodes.findIndex((n) => n.node_uuid === u);
       return nodeRefs[i]?.ref ?? "";

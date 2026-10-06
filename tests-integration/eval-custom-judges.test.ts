@@ -21,8 +21,8 @@ const sessionId = t.uid("sess");
 // the custom judge fails the call.
 const responder = (args: any) => {
   const s = args.system as string;
-  if (s.includes("Fail if the caller was put on hold")) return JSON.stringify({ verdict: "fail", reason: "hold without warning", technical_reason: "t" });
-  if (s.includes("Fail if a discount")) return JSON.stringify({ verdict: "unknown", reason: "discounts never came up", technical_reason: "t" });
+  if (s.includes("Fail if the caller was put on hold")) return JSON.stringify({ situation_reached: true, verdict: "fail", reason: "hold without warning", technical_reason: "t" });
+  if (s.includes("Fail if a discount")) return JSON.stringify({ situation_reached: false, verdict: "unknown", reason: "discounts never came up", technical_reason: "t" });
   return defaultJudgeResponder(s) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
 };
 
