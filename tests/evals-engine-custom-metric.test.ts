@@ -47,7 +47,7 @@ const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
 });
 
 const verdictJson = (verdict: string, reason = "r") =>
-  JSON.stringify({ verdict, reason, technical_reason: "t" });
+  JSON.stringify({ situation_reached: verdict !== "unknown", verdict, reason, technical_reason: "t" });
 
 describe("custom metric judge", () => {
   test("slug: display name → metric:<slug>", () => {
@@ -70,6 +70,15 @@ describe("custom metric judge", () => {
     // evidence lines must be visible — a custom metric judging tool behaviour is blind on speech-only
     expect(JSON.parse(llm.calls[0]!.user).conversation_history).toBe("User: BlueCross\nTool_Call: send_sms -> {}");
   });
+
+  for (const [reached, verdict, expected] of [[false, "fail", "unknown"], [false, "pass", "pass"], [true, "fail", "fail"], [undefined, "fail", "fail"]] as const) {
+    test(`situation_reached=${reached} keeps ${verdict} as ${expected}`, async () => {
+      const llm = new MockLLM([JSON.stringify({ ...(reached === undefined ? {} : { situation_reached: reached }), verdict, reason: "r", technical_reason: "t" })]);
+      const [v] = await runCustomMetricJudges([spec()], ctx(), (u) => u, llm);
+      expect(v!.verdict).toBe(expected);
+      expect(v!).not.toHaveProperty("situation_reached");
+    });
+  }
 
   test("node scope: one call per node, per-node verdicts + rolled-up summary and fail wins", async () => {
     const llm = new MockLLM([
