@@ -40,6 +40,14 @@ const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
 });
 
 describe("LLM node judges (MockLLM)", () => {
+  for (const [claim, expected] of [["", false], ["Your refund was issued today.", true], [undefined, true]] as const) {
+    test(`hallucination: a fail with unsupported_claim=${JSON.stringify(claim)} is ${expected ? "kept" : "dropped"}`, async () => {
+      const llm = new MockLLM([JSON.stringify({ hallucinated: true, ...(claim === undefined ? {} : { unsupported_claim: claim }), score: 0.2, reason: "r", technical_reason: "t" })]);
+      const { data } = await runHallucinationJudge(node(), ctx(), llm);
+      expect(data.hallucinated).toBe(expected);
+    });
+  }
+
   test("hallucination: parses raw output; sends criteria+output system and node transcript", async () => {
     const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
     const { data } = await runHallucinationJudge(node(), ctx(), llm);
