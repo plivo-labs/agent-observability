@@ -126,3 +126,37 @@ test("a fired intent asked against its own condition may be decided by Jev", asy
   const fired = { axis: { kind: "node", judge: "intent_identification", intentFired: true, firedChecked: true }, outcome: "pass", p: 0.05, probabilities: {}, firedKeys: [] } as any;
   expect(routeAxis(fired, policy)).toBe("auto_pass");
 });
+
+for (const idle of [false, true]) {
+  test(`a confident loop failure ${idle ? "goes to review" : "stands"} when the node ${idle ? "has" : "has no"} idle reminders`, () => {
+    const reminder = { node_uuid: "a", user: "", agent: "Are you still there?", intent: "", idle };
+    const node = { ...input.nodes[0]!, turns: [reminder, reminder, reminder] };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["node_loop"] });
+    const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, { type: "noul" as const, noul: 0.95 }])),
+    } }]));
+    expect(gatePlan(plan, results, DEFAULT_GATES, [node])[0]!.outcome).toBe(idle ? "review" : "fail");
+  });
+}
+
+for (const [failing, expected] of [[["callback_time"], "review"], [["appointmentDate"], "review"], [["date_of_birth"], "fail"],
+  [["callback_time", "order_id"], "fail"]] as const) {
+  test(`a variable failure resting on ${failing.join(" + ")} ${expected === "review" ? "goes to review" : "stands"}`, () => {
+    const node = { ...input.nodes[0]!, required_variables: ["callback_time", "appointmentDate", "date_of_birth", "order_id"],
+      variable_rules: { callback_time: "Record the callback clock time.", appointmentDate: "Record the appointment date.",
+        date_of_birth: "Record the caller's date of birth.", order_id: "Record the caller's order ID." } };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
+    const axis = plan.axes[0]!;
+    const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) => {
+        const variable = axis.kind === "node" ? axis.variables?.find((r) => r.key === key)?.variable : undefined;
+        return [key, { type: "noul" as const, noul: variable && (failing as readonly string[]).includes(variable) ? 0.95 : 0.02 }];
+      })),
+    } }]));
+    const [decision] = mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]));
+    expect(decision!.firedKeys.length).toBe(failing.length);
+    expect(decision!.outcome).toBe(expected);
+  });
+}
