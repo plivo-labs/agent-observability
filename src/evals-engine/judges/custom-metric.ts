@@ -63,6 +63,8 @@ export type CustomMetricVerdict = JudgeProvenance & {
 };
 
 const CustomMetricRawZ = z.object({
+  // A provider that ignores the strict schema keeps the pre-field behaviour.
+  situation_reached: z.boolean().default(true),
   verdict: z.enum(["pass", "fail", "unknown"]),
   reason: z.string(),
   technical_reason: z.string(),
@@ -75,17 +77,26 @@ const CUSTOM_METRIC_JSON = {
   schema: {
     type: "object",
     properties: {
+      situation_reached: {
+        type: "boolean",
+        description: "Did the specific situation this metric is about actually happen on this call? For a metric about an event (the caller declines, a wrong person answers, voicemail is reached, a callback is requested), false when that event never occurred. Also false when the call never got there: no live person, or cut off first.",
+      },
       verdict: { type: "string", enum: ["pass", "fail", "unknown"] },
       reason: { type: "string" },
       technical_reason: { type: "string" },
     },
-    required: ["verdict", "reason", "technical_reason"],
+    required: ["situation_reached", "verdict", "reason", "technical_reason"],
     additionalProperties: false,
   },
   strict: true,
 } as const;
 
 const DEFAULT_CUSTOM_MAX_TOKENS = 1200;
+
+// Appended in code because each metric's prompt is stored at creation.
+const APPLICABILITY = `
+
+situation_reached: a metric about an event or outcome (the caller declines, a wrong person answers, voicemail is reached) does not apply when that event never happened on this call — answer false, not a fail.`;
 
 const unavailable = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
   judge_name: spec.name,
@@ -101,16 +112,19 @@ async function judgeOnce(
   spec: CustomJudgeSpec,
   input: Record<string, unknown>,
   provider?: LlmProvider,
-): Promise<z.infer<typeof CustomMetricRawZ>> {
+): Promise<Omit<z.infer<typeof CustomMetricRawZ>, "situation_reached">> {
   const { data } = await runLlmJudge({
-    system: spec.body + spec.output,
+    system: spec.body + spec.output + APPLICABILITY,
     input,
     schema: CustomMetricRawZ,
     jsonSchema: CUSTOM_METRIC_JSON,
     maxTokens: spec.max_tokens ?? DEFAULT_CUSTOM_MAX_TOKENS,
     provider,
   });
-  return data;
+  // Judges failed unreached situations despite the stored prompt. Only a fail is
+  // demoted: a "never do X" metric rightly passes a call where nothing happened.
+  const { situation_reached, ...verdict } = data;
+  return situation_reached || verdict.verdict !== "fail" ? verdict : { ...verdict, verdict: "unknown" };
 }
 
 export async function judgeCustomMetricNode(
