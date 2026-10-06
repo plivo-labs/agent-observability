@@ -2,7 +2,7 @@ import { CUSTOM_METRIC_GATE, decide, type JudgeGate } from "../../jev/gates.js";
 import { JEV_OVERFLOW, JevError, type JevResponse } from "../../jev/types.js";
 import type { JevAxis, JevPlan } from "./plan.js";
 import type { NodeEvalInput } from "../types.js";
-import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-guards.js";
+import { finalBatchContext, finalBatchCoversVariable, lookupBackedVariable, outOfScopeVariableKind } from "../judges/variable-guards.js";
 
 // "review" is the safe default: a dropped request, transport error, overflow,
 // invalid answer or uncertain probability hands the axis to its LLM judge. A
@@ -108,6 +108,10 @@ export function gatePlan(
     // question was judged by nobody.
     const complete = applicableAnswers.length === required.length && !(axis.kind === "node" && axis.truncated);
     if (outcome === "pass" && !complete) outcome = "review";
+    // Jev sees lookup results clipped, so an unrecorded lookup field goes to the
+    // LLM, which gets the full result.
+    if (outcome === "pass" && axis.kind === "node" && axis.judge === "variable_extraction" &&
+        axis.variables?.some((r) => !r.recorded && lookupBackedVariable(nodes[axis.nodeIndex]?.variable_rules?.[r.variable]))) outcome = "review";
     // Jev reads platform idle reminders as the agent repeating itself; the
     // LLM loop judge, which strips them, decides those nodes.
     if (outcome === "fail" && axis.kind === "node" && axis.judge === "node_loop" &&

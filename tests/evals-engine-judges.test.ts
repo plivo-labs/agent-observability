@@ -196,6 +196,27 @@ describe("LLM node judges (MockLLM)", () => {
     expect(llm.calls[0]!.system).toContain("routing_result — judge classification: WORKFLOW FIELD");
   });
 
+  test("variable extraction: a field the rule takes from a lookup result stays in scope", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        extraction_successful: false, score: 0.5, reason: "listing id not stored", technical_reason: "t",
+        missing_variables: ["listing_id"], incorrect_variables: [],
+      }),
+    ]);
+    const { data } = await runVariableExtractionJudge(
+      node({
+        required_variables: ["listing_id"],
+        variable_rules: { listing_id: "Extract the listing ID only when it is present in the lookup result for the listing the caller confirmed." },
+        extracted_variables: {},
+      }),
+      ctx(),
+      llm,
+    );
+    expect(llm.calls[0]!.system).toContain("listing_id — judge classification: LOOKUP FIELD");
+    expect(data.extraction_successful).toBe(false);
+    expect(data.missing_variables).toEqual(["listing_id"]);
+  });
+
   test("variable extraction: workflow and backend fields stay out of scope even when their rules say default", async () => {
     const llm = new MockLLM([
       JSON.stringify({

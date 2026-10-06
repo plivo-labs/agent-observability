@@ -1,4 +1,4 @@
-import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind, type FinalBatchContext } from "./variable-guards.js";
+import { finalBatchContext, finalBatchCoversVariable, lookupBackedVariable, outOfScopeVariableKind, type FinalBatchContext } from "./variable-guards.js";
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { sumUsage } from "../../llm/usage.js";
 import { z } from "zod";
@@ -62,6 +62,9 @@ interface GuardedCandidate {
 function judgeClassification(variableName: string, rule: string | undefined): string {
   const normalizedRule = rule?.toLowerCase() ?? "";
   const outOfScope = outOfScopeVariableKind(variableName, normalizedRule);
+  if (lookupBackedVariable(normalizedRule)) {
+    return "LOOKUP FIELD — taken from the lookup/tool result for the record the caller confirmed; missing when that visible result holds the value and nothing was recorded";
+  }
   if (outOfScope === "platform") return "PLATFORM/BACKEND FIELD — outside caller extraction";
   if (outOfScope === "workflow") {
     return "WORKFLOW FIELD — never missing caller information; do not place in missing_variables or incorrect_variables";
@@ -218,13 +221,11 @@ export async function runVariableExtractionJudge(
     ...result.data.incorrect_variables.filter(name => !node.required_variables.includes(name)).map(name => `incorrect:${name}` as const),
   ]);
   const reviewNotes: string[] = rejected.size ? ["Excluded fields outside the configured extraction metric"] : [];
+  const outOfScope = (name: string) =>
+    outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined && !lookupBackedVariable(node.variable_rules?.[name]);
   const outOfScopeKeys = [
-    ...result.data.missing_variables
-      .filter((name) => outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined)
-      .map((name) => `missing:${name}` as const),
-    ...result.data.incorrect_variables
-      .filter((name) => outOfScopeVariableKind(name, node.variable_rules?.[name]) !== undefined)
-      .map((name) => `incorrect:${name}` as const),
+    ...result.data.missing_variables.filter(outOfScope).map((name) => `missing:${name}` as const),
+    ...result.data.incorrect_variables.filter(outOfScope).map((name) => `incorrect:${name}` as const),
   ];
   for (const key of outOfScopeKeys) rejected.add(key);
   if (outOfScopeKeys.length > 0) reviewNotes.push("Cleared as out-of-scope workflow/platform fields");

@@ -160,3 +160,17 @@ for (const [failing, expected] of [[["callback_time"], "review"], [["appointment
     expect(decision!.outcome).toBe(expected);
   });
 }
+
+for (const recorded of [false, true]) {
+  test(`a lookup field ${recorded ? "that was recorded allows" : "left unrecorded blocks"} a Jev variable pass`, () => {
+    const node = { ...input.nodes[0]!, required_variables: ["listing_id", "order_id"],
+      variable_rules: { listing_id: "Extract the listing ID from the lookup result for the confirmed listing.", order_id: "Record the caller's order ID." },
+      extracted_variables: recorded ? { listing_id: "48899", order_id: "42" } : { order_id: "42" } };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
+    const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, { type: "noul" as const, noul: 0.02 }])),
+    } }]));
+    expect(mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]))[0]!.outcome).toBe(recorded ? "pass" : "review");
+  });
+}

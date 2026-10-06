@@ -5,7 +5,7 @@ import { EVIDENCE_VERSION } from "./evidence.js";
 import { CONVERSATION_JUDGES, NODE_JUDGES } from "./plan.js";
 
 export const POLICY_VERSION = "verify-failures-v3";
-export const QUESTION_VERSION = "jev-node-questions-v4";
+export const QUESTION_VERSION = "jev-node-questions-v5";
 export type ReviewRoute = "auto_pass" | "auto_fail" | "verify_failure" | "verify_applicability" | "uncalibrated_evidence" | "uncertain_or_incomplete";
 
 /** Which confident Jev outcomes may be published without a full LLM judge. */
