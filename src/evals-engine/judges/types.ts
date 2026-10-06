@@ -17,6 +17,7 @@ const reasonZ = z.string().default("");
 
 export const HallucinationRawZ = z.object({
   hallucinated: z.boolean(),
+  unsupported_claim: z.string().optional(),
   score: scoreZ,
   reason: reasonZ,
   technical_reason: reasonZ,
