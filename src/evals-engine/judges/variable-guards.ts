@@ -25,6 +25,8 @@ const WORKFLOW_RULE_EVIDENCE =
   /agent-authored|workflow (?:field|status|disposition|label)|mapped (?:workflow )?(?:status|disposition|outcome)|internal score|concise summary|normalized overall (?:interest )?status|final (?:workflow )?(?:status|disposition|outcome|classification)|final outcome (?:was )?reached/;
 const PLATFORM_RULE_EVIDENCE =
   /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/;
+const BACKEND_RULE_EVIDENCE = /backend|platform|initial context|runtime|internal (?:id|identifier)/;
+const LOOKUP_RULE_EVIDENCE = /tool (?:result|output)|lookup (?:result|output)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/;
 
 export interface FinalBatchContext {
   cutoffConfirmed: boolean;
@@ -76,6 +78,13 @@ export function finalBatchCoversVariable(
   if (!batch.schedulesCompleteBatch) return false;
   const rule = node.variable_rules?.[variableName]?.toLowerCase() ?? "";
   return !EARLY_RECORDING_RULE.test(rule);
+}
+
+/** A field the rule takes from a lookup or tool result shown in the transcript,
+ *  unlike a backend value no judge can see. */
+export function lookupBackedVariable(rule: string | undefined): boolean {
+  const normalizedRule = rule?.toLowerCase() ?? "";
+  return LOOKUP_RULE_EVIDENCE.test(normalizedRule) && !BACKEND_RULE_EVIDENCE.test(normalizedRule);
 }
 
 export function outOfScopeVariableKind(
