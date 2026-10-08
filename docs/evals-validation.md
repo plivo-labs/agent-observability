@@ -75,3 +75,11 @@ Run artifacts contain transcripts, configuration and detailed verdicts. Keep the
 ## Acceptance tests
 
 `bun test tests/eval-validation.test.ts` uses injected mock providers to run the real evaluator through fan-out. It checks scope mapping, mismatches, missing outputs, label fingerprints and duplicate rejection. Those synthetic tests prove tooling behavior, not model accuracy. Real held-out accuracy testing is a separate step requiring the reviewed call dataset.
+
+For the custom-metric applicability and variable-review regressions, run the real judge prompts against the synthetic cases in `tests/fixtures/judge-semantic-regressions.ts`:
+
+```sh
+JUDGE_MODEL=<deployment> JUDGE_MODEL_FALLBACK='' bun --env-file=.env scripts/validate-judge-regressions.ts --live --out /tmp/judge-regressions.json --repeat 3
+```
+
+The output file must be new. The runner disables database persistence and prompt-registry loading, records each trial, and exits nonzero for a mismatch or unavailable result. It covers unreached and reached metric situations, explicit early-termination failures, interrupted closings, unsupported qualification, and valid configured defaults. Labels are not sent to the model. Repeat against the production model before claiming model parity; this focused suite does not measure production-wide accuracy.
