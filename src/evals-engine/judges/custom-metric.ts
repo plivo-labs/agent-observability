@@ -79,7 +79,7 @@ const CUSTOM_METRIC_JSON = {
     properties: {
       situation_reached: {
         type: "boolean",
-        description: "Did the specific situation this metric is about actually happen on this call? For a metric about an event (the caller declines, a wrong person answers, voicemail is reached, a callback is requested), false when that event never occurred. Also false when the call never got there: no live person, or cut off first.",
+        description: "Did the triggering situation this metric is about actually happen on this call? For a metric about an event (the caller declines, a wrong person answers, voicemail is reached, a callback is requested), false when that event never occurred. Also false when the call never got there: no live person, or cut off first. An action the AGENT was supposed to take but did not is not a missing trigger: if the trigger happened and the agent failed to act, the situation was reached.",
       },
       verdict: { type: "string", enum: ["pass", "fail", "unknown"] },
       reason: { type: "string" },
@@ -96,7 +96,7 @@ const DEFAULT_CUSTOM_MAX_TOKENS = 1200;
 // Appended in code because each metric's prompt is stored at creation.
 const APPLICABILITY = `
 
-situation_reached: a metric about an event or outcome (the caller declines, a wrong person answers, voicemail is reached) does not apply when that event never happened on this call — answer false, not a fail.`;
+situation_reached: a metric about an event or outcome (the caller declines, a wrong person answers, voicemail is reached) does not apply when that event never happened on this call — answer false, not a fail. A required agent action that never happened is different: the trigger was reached and the agent failed it.`;
 
 const unavailable = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
   judge_name: spec.name,
@@ -124,7 +124,11 @@ async function judgeOnce(
   // Judges failed unreached situations despite the stored prompt. Only a fail is
   // demoted: a "never do X" metric rightly passes a call where nothing happened.
   const { situation_reached, ...verdict } = data;
-  return situation_reached || verdict.verdict !== "fail" ? verdict : { ...verdict, verdict: "unknown" };
+  return situation_reached || verdict.verdict !== "fail" ? verdict : {
+    verdict: "unknown",
+    reason: "The call never reached the situation this metric is about.",
+    technical_reason: `situation not reached; the judge's fail was: ${verdict.reason}`,
+  };
 }
 
 export async function judgeCustomMetricNode(

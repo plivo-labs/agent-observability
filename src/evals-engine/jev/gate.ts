@@ -26,10 +26,10 @@ export interface GatedAxis {
   ignoredKeys?: string[];
 }
 
-const TIME_FIELD = /(^|_)(time|date|datetime|day|when)(_|$)/;
+const TIME_FIELD = /(^|_)(time|date|datetime|day|when)(_|$)|_at$/;
 const isTimeField = (name: string): boolean => {
-  const snake = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-  return TIME_FIELD.test(snake) && !/birth|dob/.test(snake);
+  const snake = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().replace(/[-\s]+/g, "_");
+  return TIME_FIELD.test(snake) && !/birth|dob|zone|full_time|part_time/.test(snake);
 };
 
 export type RequestResult = { ok: true; response: JevResponse } | { ok: false; error: unknown };
