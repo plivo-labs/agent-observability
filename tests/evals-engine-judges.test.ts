@@ -45,8 +45,18 @@ describe("LLM node judges (MockLLM)", () => {
       const llm = new MockLLM([JSON.stringify({ hallucinated: true, ...(claim === undefined ? {} : { unsupported_claim: claim }), score: 0.2, reason: "r", technical_reason: "t" })]);
       const { data } = await runHallucinationJudge(node(), ctx(), llm);
       expect(data.hallucinated).toBe(expected);
+      if (!expected) expect([data.score, data.reason]).toEqual([1, "No unsupported spoken claim was identified."]);
     });
   }
+
+  test("lookup detection skips summaries, dispositions and rules that forbid using the lookup", async () => {
+    const { lookupBackedVariable } = await import("../src/evals-engine/judges/variable-guards.js");
+    expect(lookupBackedVariable("Extract the listing ID from the lookup result for the confirmed listing.")).toBe(true);
+    expect(lookupBackedVariable("Concise summary of the tool output.")).toBe(false);
+    expect(lookupBackedVariable("Final disposition mapped from the tool result.")).toBe(false);
+    expect(lookupBackedVariable("Do not use the tool output; record only what the caller says.")).toBe(false);
+    expect(lookupBackedVariable("Internal identifier returned by the listing action.")).toBe(false);
+  });
 
   test("hallucination: parses raw output; sends criteria+output system and node transcript", async () => {
     const llm = new MockLLM([JSON.stringify({ hallucinated: false, score: 1, reason: "grounded", technical_reason: "t" })]);
@@ -157,7 +167,8 @@ describe("LLM node judges (MockLLM)", () => {
     expect(sent.variable_rules).toEqual({ order_id: "Capture only when the caller explicitly states it." });
     expect(sent.variable_judge_contract).toContain("recording rule is authoritative");
     expect(sent.variable_judge_contract).toContain("unreached or inapplicable");
-    expect(sent.variable_judge_contract).toContain("backend, platform, tool, and lookup values");
+    expect(sent.variable_judge_contract).toContain("backend or platform values are not caller extraction");
+    expect(sent.variable_judge_contract).toContain("a field the rule takes from a visible lookup or tool result");
     expect(Object.keys(sent).at(-1)).toBe("variable_judge_contract");
   });
 
@@ -202,6 +213,7 @@ describe("LLM node judges (MockLLM)", () => {
         extraction_successful: false, score: 0.5, reason: "listing id not stored", technical_reason: "t",
         missing_variables: ["listing_id"], incorrect_variables: [],
       }),
+      JSON.stringify({ reviews: [{ variable_name: "listing_id", issue_type: "missing", defect_confirmed: true, evidence: "lookup holds 48899" }] }),
     ]);
     const { data } = await runVariableExtractionJudge(
       node({
@@ -213,6 +225,8 @@ describe("LLM node judges (MockLLM)", () => {
       llm,
     );
     expect(llm.calls[0]!.system).toContain("listing_id — judge classification: LOOKUP FIELD");
+    expect(llm.calls).toHaveLength(2);
+    expect(llm.calls[1]!.system).toContain("a field the rule takes from a lookup or tool result");
     expect(data.extraction_successful).toBe(false);
     expect(data.missing_variables).toEqual(["listing_id"]);
   });

@@ -26,6 +26,7 @@ const WORKFLOW_RULE_EVIDENCE =
 const PLATFORM_RULE_EVIDENCE =
   /backend|platform|initial context|tool (?:result|output)|lookup (?:result|output)|runtime|internal (?:id|identifier)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/;
 const BACKEND_RULE_EVIDENCE = /backend|platform|initial context|runtime|internal (?:id|identifier)/;
+const NEGATED_LOOKUP = /\b(?:do not|don't|never|not)\s+(?:use|take|rely on|copy)\b[^.]{0,40}\b(?:tool|lookup)\b/;
 const LOOKUP_RULE_EVIDENCE = /tool (?:result|output)|lookup (?:result|output)|returned by (?:the |a )?[^.]{0,40}(?:action|tool|lookup)/;
 
 export interface FinalBatchContext {
@@ -84,7 +85,8 @@ export function finalBatchCoversVariable(
  *  unlike a backend value no judge can see. */
 export function lookupBackedVariable(rule: string | undefined): boolean {
   const normalizedRule = rule?.toLowerCase() ?? "";
-  return LOOKUP_RULE_EVIDENCE.test(normalizedRule) && !BACKEND_RULE_EVIDENCE.test(normalizedRule);
+  return LOOKUP_RULE_EVIDENCE.test(normalizedRule) && !BACKEND_RULE_EVIDENCE.test(normalizedRule) &&
+    !WORKFLOW_RULE_EVIDENCE.test(normalizedRule) && !NEGATED_LOOKUP.test(normalizedRule);
 }
 
 export function outOfScopeVariableKind(

@@ -101,7 +101,7 @@ function variablePayload(
       "Anything from an unreached or inapplicable path is not missing. " +
       "CALL ENDED EARLY: if the transcript simply STOPS before the agent ever asked for a value — the caller hung up or the call was cut off mid-flow — " +
       "that value is UNREACHABLE, not missing. A value recorded WRONGLY still fails however the call ended. " +
-      "Absent workflow defaults and backend, platform, tool, and lookup values are not caller extraction. " +
+      "Absent workflow defaults and backend or platform values are not caller extraction; the exceptions are a value the rule names for a situation that happened and a field the rule takes from a visible lookup or tool result. " +
       (batch.cutoffConfirmed
         ? "FINAL RECORDING BATCH CUTOFF CONFIRMED from structured turn order: do not mark a pending final-batch variable missing unless its own rule required earlier recording."
         : "If an interrupted ending/transfer is followed by the caller and no later agent/tool turn, the configured final recording batch had no opportunity to run."),
@@ -167,8 +167,9 @@ export const CONFIG_DEFAULT_REVIEW_SYSTEM =
 
 export const FOCUSED_DEFECT_REVIEW_SYSTEM =
   "Verify ONLY the proposed variable defects against the exact recording rule and caller transcript. " +
-  "For missing: confirm only when the caller explicitly stated an applicable value in that variable's own terms and it was not stored. Reject inferred/derived values, absent defaults such as not_asked or no_questions, unopened paths, duplicate/sibling demands, workflow fields, and backend/platform/tool/lookup data. " +
-  "For incorrect: confirm only when the stored value materially conflicts with the caller or the exact rule. A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. " +
+  "For missing: confirm only when the caller explicitly stated an applicable value in that variable's own terms and it was not stored. Reject inferred/derived values, absent defaults the rule does not name for what happened (such as not_asked or no_questions), unopened paths, duplicate/sibling demands, workflow fields, and backend/platform data. " +
+  "Confirm a missing value the rule itself names for a situation that clearly happened (for example not_offered on an immediate transfer), and a field the rule takes from a lookup or tool result that the transcript shows holds the value. " +
+  "For incorrect: confirm only when the stored value materially conflicts with the caller or the exact rule, including an outcome or status label that plainly contradicts what the caller said. A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. " +
   "Use the supplied final-batch context for pending batch fields; preserve a defect whose exact rule separately requires immediate or earlier recording. " +
   "Do not add defects. Return one review for every candidate and cite only caller words or the exact rule.";
 

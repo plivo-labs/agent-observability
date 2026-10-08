@@ -77,6 +77,7 @@ describe("custom metric judge", () => {
       const [v] = await runCustomMetricJudges([spec()], ctx(), (u) => u, llm);
       expect(v!.verdict).toBe(expected);
       expect(v!).not.toHaveProperty("situation_reached");
+      if (expected === "unknown") expect(v!.reason).toBe("The call never reached the situation this metric is about.");
     });
   }
 
