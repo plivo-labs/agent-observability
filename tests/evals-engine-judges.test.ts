@@ -666,7 +666,7 @@ describe("LLM node judges (MockLLM)", () => {
         reviews: [
           { variable_name: "graduation_year", issue_type: "missing", defect_confirmed: false, evidence: "Only derivable." },
           { variable_name: "preferred_university", issue_type: "missing", defect_confirmed: false, evidence: "Default only." },
-          { variable_name: "callback_time", issue_type: "incorrect", defect_confirmed: false, evidence: "Rule allows counselor time." },
+          { variable_name: "callback_time", issue_type: "incorrect", defect_confirmed: false, stored_value_supported: true, evidence: "Rule allows counselor time; caller requested 4 PM." },
         ],
       }),
     ]);
@@ -721,6 +721,42 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.extraction_successful).toBe(false);
     expect(data.missing_variables).toEqual(["order_id"]);
   });
+
+  for (const [supported, evidence] of [
+    [false, "Caller never denied being qualified, but supplied no requirements."],
+    [undefined, "Caller never denied being qualified."],
+    [true, "   "],
+  ] as const) {
+    test(`variable extraction: an incorrect status needs affirmative rule support to clear (${supported}, ${JSON.stringify(evidence)})`, async () => {
+      const llm = new MockLLM([
+        JSON.stringify({
+          extraction_successful: false, score: 0.5,
+          reason: "QUALIFIED requires engagement and shared requirements; neither was established.",
+          technical_reason: "The discovery question was unanswered.",
+          missing_variables: [], incorrect_variables: ["conversation_outcome"],
+        }),
+        JSON.stringify({ reviews: [{
+          variable_name: "conversation_outcome", issue_type: "incorrect",
+          defect_confirmed: false, stored_value_supported: supported, evidence,
+        }] }),
+      ]);
+      const target = node({
+        node_prompt: "Ask what the caller needs from a website.",
+        required_variables: ["conversation_outcome"],
+        variable_rules: { conversation_outcome: "Use QUALIFIED when the caller engaged and shared requirements but did not give a final yes." },
+        extracted_variables: { conversation_outcome: "QUALIFIED" },
+        turns: [{ node_uuid: "n1", user: "", agent: "What do you need from your website?", intent: "" }],
+      });
+      const { data } = await runVariableExtractionJudge(target, ctx({
+        nodes: [target], full_transcript: "User: Yes, this is a good time.\nAgent: What do you need from your website?",
+      }), llm);
+
+      expect(llm.calls).toHaveLength(2);
+      expect(data.extraction_successful).toBe(false);
+      expect(data.incorrect_variables).toEqual(["conversation_outcome"]);
+      expect(data.technical_reason).not.toContain("Cleared by focused defect review");
+    });
+  }
 
   test("variable extraction: explicit-speech rule violations bypass leniency review", async () => {
     const llm = new MockLLM([

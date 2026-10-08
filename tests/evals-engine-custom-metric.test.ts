@@ -95,6 +95,28 @@ describe("custom metric judge", () => {
     ]);
   });
 
+  test("a reached metric cannot pass while the judge identifies unmet required criteria", async () => {
+    const llm = new MockLLM([JSON.stringify({
+      situation_reached: true, unmet_required_criteria: ["Conversation ended politely"],
+      verdict: "pass", reason: "Most steps were completed.", technical_reason: "No closing is recorded.",
+    })]);
+    const [v] = await runCustomMetricJudges([spec({
+      body: "Pass only if setup completes and the conversation ends politely. Fail without proper closure.",
+    })], ctx({ full_transcript: "User: I opened the store listing.\nAgent: Install the app and enter your code." }), (u) => u, llm);
+    expect(v!.verdict).toBe("fail");
+    expect(v!.reason).toContain("Conversation ended politely");
+    expect(v!).not.toHaveProperty("unmet_required_criteria");
+  });
+
+  test("unmet success criteria do not turn an unreached situation into a failure", async () => {
+    const llm = new MockLLM([JSON.stringify({
+      situation_reached: false, unmet_required_criteria: ["Customer acknowledges support contact"],
+      verdict: "pass", reason: "No problem observed.", technical_reason: "Only an opening.",
+    })]);
+    const [v] = await runCustomMetricJudges([spec()], ctx(), (u) => u, llm);
+    expect(v!.verdict).toBe("unknown");
+  });
+
   test("roll-up: unknowns never mask a pass; all-unknown stays unknown", () => {
     const n = (verdict: "pass" | "fail" | "unknown") =>
       ({ ref: "r", node_name: "n", verdict, reason: "", technical_reason: "" });

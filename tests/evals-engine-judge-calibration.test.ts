@@ -178,7 +178,7 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(VARIABLE_EXTRACTION).toContain("does not require an affirmative reply");
     expect(VARIABLE_EXTRACTION).toContain("NEVER mark that configured yes value incorrect");
     expect(VARIABLE_EXTRACTION).toContain("workflow metadata inside a summary");
-    expect(VARIABLE_EXTRACTION).toContain("incorrect ONLY when it plainly contradicts what the caller said");
+    expect(VARIABLE_EXTRACTION).toContain("recording-rule prerequisites are not established");
     expect(VARIABLE_EXTRACTION).toContain("variable's own recording rule is authoritative");
     expect(VARIABLE_EXTRACTION).toContain("Do not invent an identity, confirmation, or reached-question prerequisite");
     expect(VARIABLE_EXTRACTION).toContain("An exception applies only when the transcript establishes that exception");
