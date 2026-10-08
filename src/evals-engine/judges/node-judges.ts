@@ -29,7 +29,11 @@ export async function runHallucinationJudge(
 ): Promise<{ data: HallucinationRaw; usage: LlmUsage }> {
   const result = await runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
   // Judges failed nodes without naming any claim; a fail must quote the unsupported words.
-  if (result.data.hallucinated && result.data.unsupported_claim?.trim() === "") result.data = { ...result.data, hallucinated: false };
+  if (result.data.hallucinated && result.data.unsupported_claim?.trim() === "") {
+    result.data = { ...result.data, hallucinated: false, score: 1,
+      reason: "No unsupported spoken claim was identified.",
+      technical_reason: `dropped: the judge flagged a hallucination without naming the claim. ${result.data.technical_reason}` };
+  }
   return result;
 }
 

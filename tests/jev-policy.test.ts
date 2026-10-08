@@ -140,12 +140,13 @@ for (const idle of [false, true]) {
   });
 }
 
-for (const [failing, expected] of [[["callback_time"], "review"], [["appointmentDate"], "review"], [["date_of_birth"], "fail"],
-  [["callback_time", "order_id"], "fail"]] as const) {
+for (const [failing, expected] of [[["callback_time"], "review"], [["appointmentDate"], "review"], [["callback_at"], "review"],
+  [["date_of_birth"], "fail"], [["time_zone"], "fail"], [["callback_time", "order_id"], "fail"]] as const) {
   test(`a variable failure resting on ${failing.join(" + ")} ${expected === "review" ? "goes to review" : "stands"}`, () => {
-    const node = { ...input.nodes[0]!, required_variables: ["callback_time", "appointmentDate", "date_of_birth", "order_id"],
+    const node = { ...input.nodes[0]!, required_variables: ["callback_time", "appointmentDate", "callback_at", "date_of_birth", "time_zone", "order_id"],
       variable_rules: { callback_time: "Record the callback clock time.", appointmentDate: "Record the appointment date.",
-        date_of_birth: "Record the caller's date of birth.", order_id: "Record the caller's order ID." } };
+        callback_at: "Record when to call back.", date_of_birth: "Record the caller's date of birth.",
+        time_zone: "Record the caller's time zone.", order_id: "Record the caller's order ID." } };
     const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
     const axis = plan.axes[0]!;
     const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
