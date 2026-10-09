@@ -24,7 +24,8 @@ export const ADHERENCE_CONTRACT =
 export const VARIABLE_CONTRACT =
   "Evaluate configured caller-capture fields at the target node's exit, not against later corrections in another node. " +
   "Only names in the expected/declared variable list are graded; an additional runtime field alone is not a defect. " +
-  "Apply each field's exact rule and active path. Missing caller information requires a value the caller explicitly supplied during this node, not a derived value or absent workflow/backend default. " +
+  "Apply each field's exact rule and active path. Missing caller information requires a value the caller explicitly supplied during this node, not a derived value or absent workflow/backend default; " +
+  "the exceptions are a value the variable's own rule names for a situation that happened, and a field the rule takes from a visible lookup or tool result. " +
   "A prior recorded value can satisfy a field. The latest non-failed write visible at node exit is supplied; variable_sources marks unconfirmed attempts, which are not proof of persistence. " +
   "Enforce an explicit confirmation eligibility rule when required confirmation never occurred, but do not fail merely because a recorder call precedes the spoken confirmation in serialized events. " +
   "An unreached question or interrupted final recording batch is not a missing value. A wrong recorded value still fails.";

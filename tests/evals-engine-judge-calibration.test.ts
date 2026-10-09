@@ -161,13 +161,15 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(VARIABLE_EXTRACTION).toContain("Platform/backend variables");
     expect(VARIABLE_EXTRACTION).toContain("does NOT mean every variable is unconditionally required");
     expect(VARIABLE_EXTRACTION).toContain("later qualification variables are INAPPLICABLE");
-    expect(VARIABLE_EXTRACTION).toContain("An absent rule-produced default or workflow field is never a missing caller variable");
+    expect(VARIABLE_EXTRACTION).toContain("Any other absent default or workflow field is never a missing caller variable");
+    expect(VARIABLE_EXTRACTION).toContain("names the exact value for a situation that clearly happened");
+    expect(VARIABLE_EXTRACTION).toContain("visible in the transcript, holds the value");
     expect(VARIABLE_EXTRACTION).toContain("a fallback no/default for an unreached busy or not-interested branch");
   });
 
   test("variable extraction: config-directed and agent-authored values use their own grounding rules", () => {
-    expect(VARIABLE_EXTRACTION).toContain("Agent-composed fields are OUT OF SCOPE");
-    expect(VARIABLE_EXTRACTION).toContain("NEVER place an agent-composed field in missing_variables or incorrect_variables");
+    expect(VARIABLE_EXTRACTION).toContain("Agent-composed summaries, remarks and internal scores are OUT OF SCOPE");
+    expect(VARIABLE_EXTRACTION).toContain("NEVER place one in missing_variables or incorrect_variables");
     expect(VARIABLE_EXTRACTION).toContain("belong to instruction adherence");
     expect(VARIABLE_EXTRACTION).toContain("A value the config DIRECTS is correct by definition");
     expect(VARIABLE_EXTRACTION).toContain("active branch");
@@ -176,7 +178,7 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     expect(VARIABLE_EXTRACTION).toContain("does not require an affirmative reply");
     expect(VARIABLE_EXTRACTION).toContain("NEVER mark that configured yes value incorrect");
     expect(VARIABLE_EXTRACTION).toContain("workflow metadata inside a summary");
-    expect(VARIABLE_EXTRACTION).toContain("even when that metadata conflicts with the transcript");
+    expect(VARIABLE_EXTRACTION).toContain("recording-rule prerequisites are not established");
     expect(VARIABLE_EXTRACTION).toContain("variable's own recording rule is authoritative");
     expect(VARIABLE_EXTRACTION).toContain("Do not invent an identity, confirmation, or reached-question prerequisite");
     expect(VARIABLE_EXTRACTION).toContain("An exception applies only when the transcript establishes that exception");
@@ -204,7 +206,7 @@ describe("node/goal judge calibration (benchmark round-2 over-fire fixes)", () =
     const output = system.slice(system.indexOf("Return ONLY a JSON object"));
     expect(output).toContain("HARD EXCLUSIONS");
     expect(output).toContain("caller EXPLICITLY STATED");
-    expect(output).toContain("never inferred, derived, defaulted, duplicated, backend, tool, or lookup values");
+    expect(output).toContain("never inferred, derived, duplicated or backend values");
     expect(output).toContain("pending a final recording batch prevented by truncation");
     expect(output).toContain("configured yes-when-not-disputed default");
     expect(output).toContain("caller reply after an interrupted transfer");

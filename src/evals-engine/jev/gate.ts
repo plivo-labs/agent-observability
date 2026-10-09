@@ -2,7 +2,7 @@ import { CUSTOM_METRIC_GATE, decide, type JudgeGate } from "../../jev/gates.js";
 import { JEV_OVERFLOW, JevError, type JevResponse } from "../../jev/types.js";
 import type { JevAxis, JevPlan } from "./plan.js";
 import type { NodeEvalInput } from "../types.js";
-import { finalBatchContext, finalBatchCoversVariable, outOfScopeVariableKind } from "../judges/variable-guards.js";
+import { finalBatchContext, finalBatchCoversVariable, lookupBackedVariable, outOfScopeVariableKind } from "../judges/variable-guards.js";
 
 // "review" is the safe default: a dropped request, transport error, overflow,
 // invalid answer or uncertain probability hands the axis to its LLM judge. A
@@ -25,6 +25,12 @@ export interface GatedAxis {
   /** Deterministically inapplicable questions, excluded BEFORE reduction. */
   ignoredKeys?: string[];
 }
+
+const TIME_FIELD = /(^|_)(time|date|datetime|day|when)(_|$)|_at$/;
+const isTimeField = (name: string): boolean => {
+  const snake = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().replace(/[-\s]+/g, "_");
+  return TIME_FIELD.test(snake) && !/birth|dob|zone|full_time|part_time/.test(snake);
+};
 
 export type RequestResult = { ok: true; response: JevResponse } | { ok: false; error: unknown };
 
@@ -102,7 +108,18 @@ export function gatePlan(
     // question was judged by nobody.
     const complete = applicableAnswers.length === required.length && !(axis.kind === "node" && axis.truncated);
     if (outcome === "pass" && !complete) outcome = "review";
+    // Jev sees lookup results clipped, so an unrecorded lookup field goes to the
+    // LLM, which gets the full result.
+    if (outcome === "pass" && axis.kind === "node" && axis.judge === "variable_extraction" &&
+        axis.variables?.some((r) => !r.recorded && lookupBackedVariable(nodes[axis.nodeIndex]?.variable_rules?.[r.variable]))) outcome = "review";
+    // Jev reads platform idle reminders as the agent repeating itself; the
+    // LLM loop judge, which strips them, decides those nodes.
+    if (outcome === "fail" && axis.kind === "node" && axis.judge === "node_loop" &&
+        nodes[axis.nodeIndex]?.turns?.some((t) => t.idle)) outcome = "review";
     const firedKeys = applicableAnswers.filter(([, value]) => value >= gate.fail_above).map(([key]) => key);
+    // Jev has no call clock, so it cannot check "in 30 minutes" resolved to a clock value.
+    if (outcome === "fail" && axis.kind === "node" && axis.judge === "variable_extraction" && firedKeys.length > 0 &&
+        firedKeys.every((k) => isTimeField(axis.variables?.find((r) => r.key === k)?.variable ?? ""))) outcome = "review";
     return { axis, outcome, p: applicableAnswers.length || !required.length ? p : null, firedKeys, probabilities, jevModel, ignoredKeys };
   });
 }

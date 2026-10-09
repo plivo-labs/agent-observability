@@ -158,9 +158,11 @@ export function variableQuestions(node: NodeEvalInput): Array<{ key: string; que
           "(1) it was recorded although the rule's own condition for recording was not met; " +
           "(2) the rule's condition for recording WAS met — the caller gave the value and any confirmation the rule requires actually happened — but it is not recorded; " +
           "a clear answer such as 'no', 'not interested' or 'wrong number' IS the value for a yes / no / unclear field; " +
-          "(3) the recorded value contradicts what the caller said or corrected to, or drops a part of what the caller gave — a time of day, the end of a range, or a correction — or records a refusal or non-answer as if it were the value. " +
+          "(2b) the rule itself names the value for a situation that clearly happened on this call — for example 'not offered' when an immediate transfer was required, " +
+          "or 'unrecognized' when the question was asked and not answered — and the node reached a normal end without recording it; " +
+          "(3) the recorded value contradicts what the caller said or corrected to, or drops a part of what the caller gave — a time of day, the end of a range, or a correction — or records a refusal or non-answer as if it were the value, or is an outcome or status label that plainly contradicts what the caller said. " +
           "It is NOT wrong when: the value matches what the caller confirmed; it is NOT RECORDED because the rule's condition for recording " +
-          "(for example an explicit confirmation or a final read-back) never happened, or the caller never gave it; " +
+          "(for example an explicit confirmation or a final read-back) never happened, or the caller never gave it — unless the rule names a value for exactly that case (2b); " +
           "or the call was CUT OFF — the transcript stops mid-conversation or the caller hung up while the agent was still speaking — before the value could be recorded; " +
           "it was recorded before the spoken confirmation and that confirmation then happened before the node ended; " +
           "or the value is a reasonable normalisation of what the caller confirmed (date or time format, casing, a spelling the caller confirmed, or leaving out a hedge word such as 'about'). " +

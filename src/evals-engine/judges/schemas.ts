@@ -32,7 +32,7 @@ const strict = (name: string, schema: JsonSchema) => ({ name, schema, strict: tr
 // ── node judges ────────────────────────────────────────────────────────────────
 export const HALLUCINATION_JSON = strict(
   "eval_hallucination",
-  obj({ hallucinated: bool, score: num, reason: str, technical_reason: str }),
+  obj({ hallucinated: bool, unsupported_claim: str, score: num, reason: str, technical_reason: str }),
 );
 
 export const NODE_LOOP_JSON = strict(

@@ -126,3 +126,52 @@ test("a fired intent asked against its own condition may be decided by Jev", asy
   const fired = { axis: { kind: "node", judge: "intent_identification", intentFired: true, firedChecked: true }, outcome: "pass", p: 0.05, probabilities: {}, firedKeys: [] } as any;
   expect(routeAxis(fired, policy)).toBe("auto_pass");
 });
+
+for (const idle of [false, true]) {
+  test(`a confident loop failure ${idle ? "goes to review" : "stands"} when the node ${idle ? "has" : "has no"} idle reminders`, () => {
+    const reminder = { node_uuid: "a", user: "", agent: "Are you still there?", intent: "", idle };
+    const node = { ...input.nodes[0]!, turns: [reminder, reminder, reminder] };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["node_loop"] });
+    const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, { type: "noul" as const, noul: 0.95 }])),
+    } }]));
+    expect(gatePlan(plan, results, DEFAULT_GATES, [node])[0]!.outcome).toBe(idle ? "review" : "fail");
+  });
+}
+
+for (const [failing, expected] of [[["callback_time"], "review"], [["appointmentDate"], "review"], [["callback_at"], "review"],
+  [["date_of_birth"], "fail"], [["time_zone"], "fail"], [["callback_time", "order_id"], "fail"]] as const) {
+  test(`a variable failure resting on ${failing.join(" + ")} ${expected === "review" ? "goes to review" : "stands"}`, () => {
+    const node = { ...input.nodes[0]!, required_variables: ["callback_time", "appointmentDate", "callback_at", "date_of_birth", "time_zone", "order_id"],
+      variable_rules: { callback_time: "Record the callback clock time.", appointmentDate: "Record the appointment date.",
+        callback_at: "Record when to call back.", date_of_birth: "Record the caller's date of birth.",
+        time_zone: "Record the caller's time zone.", order_id: "Record the caller's order ID." } };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
+    const axis = plan.axes[0]!;
+    const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) => {
+        const variable = axis.kind === "node" ? axis.variables?.find((r) => r.key === key)?.variable : undefined;
+        return [key, { type: "noul" as const, noul: variable && (failing as readonly string[]).includes(variable) ? 0.95 : 0.02 }];
+      })),
+    } }]));
+    const [decision] = mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]));
+    expect(decision!.firedKeys.length).toBe(failing.length);
+    expect(decision!.outcome).toBe(expected);
+  });
+}
+
+for (const recorded of [false, true]) {
+  test(`a lookup field ${recorded ? "that was recorded allows" : "left unrecorded blocks"} a Jev variable pass`, () => {
+    const node = { ...input.nodes[0]!, required_variables: ["listing_id", "order_id"],
+      variable_rules: { listing_id: "Extract the listing ID from the lookup result for the confirmed listing.", order_id: "Record the caller's order ID." },
+      extracted_variables: recorded ? { listing_id: "48899", order_id: "42" } : { order_id: "42" } };
+    const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
+    const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
+      model: "test", usage: { input_tokens: 0, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, { type: "noul" as const, noul: 0.02 }])),
+    } }]));
+    expect(mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]))[0]!.outcome).toBe(recorded ? "pass" : "review");
+  });
+}

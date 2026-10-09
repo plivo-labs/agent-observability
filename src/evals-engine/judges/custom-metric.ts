@@ -63,6 +63,9 @@ export type CustomMetricVerdict = JudgeProvenance & {
 };
 
 const CustomMetricRawZ = z.object({
+  // A provider that ignores the strict schema keeps the pre-field behaviour.
+  situation_reached: z.boolean().default(true),
+  unmet_required_criteria: z.array(z.string()).default([]),
   verdict: z.enum(["pass", "fail", "unknown"]),
   reason: z.string(),
   technical_reason: z.string(),
@@ -75,17 +78,41 @@ const CUSTOM_METRIC_JSON = {
   schema: {
     type: "object",
     properties: {
+      technical_reason: {
+        type: "string",
+        description: "First identify the evidence that makes this metric applicable, before evaluating success. For a response to a conditional event (such as a problem needing human follow-up), cite the actual event or need: screening for it is not its occurrence, and an issue resolved in this call does not establish a need for later escalation. For a task-completion metric, cite a substantive caller response or an actual task action: merely asking whether it is done or offering help, followed only by hello/connectivity checks, is unreached. Explicit failure rules and obligations at the opening still apply. Then explain the outcome against only the metric's actual requirements.",
+      },
+      situation_reached: {
+        type: "boolean",
+        description: "Did the metric's triggering event or opportunity actually occur? Establish this independently of whether the required action succeeded. An opening/contact attempt or an unanswered offer to begin a later task does not reach that task. False if the call ended before the relevant trigger or opportunity. True if that trigger occurred but the required agent action was omitted, or the metric explicitly treats the observed early termination as failure.",
+      },
+      unmet_required_criteria: {
+        type: "array",
+        items: { type: "string" },
+        description: "List each required success condition the transcript establishes was not met. Do not invent requirements. A courteous wrap-up or offer of future support after the substantive stages counts as polite closure even if interrupted. A direct yes/okay/got-it response to information is an acknowledgement of it; the caller need not repeat the information unless the metric expressly requires a readback. Empty when none are unmet; genuinely insufficient evidence should produce unknown, not pass.",
+      },
       verdict: { type: "string", enum: ["pass", "fail", "unknown"] },
       reason: { type: "string" },
-      technical_reason: { type: "string" },
     },
-    required: ["verdict", "reason", "technical_reason"],
+    required: ["technical_reason", "situation_reached", "unmet_required_criteria", "verdict", "reason"],
     additionalProperties: false,
   },
   strict: true,
 } as const;
 
 const DEFAULT_CUSTOM_MAX_TOKENS = 1200;
+
+// Appended in code because each metric's prompt is stored at creation.
+const APPLICABILITY = `
+
+APPLICABILITY BEFORE SUCCESS:
+Return the structured schema fields, including technical_reason, situation_reached and unmet_required_criteria. Write technical_reason first: identify the observed applicability evidence before deciding whether required success conditions were met. This extends the output fields above.
+1. Identify the metric's triggering event or relevant opportunity separately from its success condition. Cite the observed trigger in technical_reason. The fact that an action is required does not prove there was an opportunity to perform it. For a metric about responding to a conditional event or need, the trigger is that event or need, not the opportunity to ask about it. Screening questions, a caller denying concerns, or an issue resolved during the call do not establish an outstanding need for human follow-up.
+2. An agent introduction or identity question alone does not establish a live caller or reach later information-collection, setup, or support stages. If the transcript ends at the opening with no caller response, metrics requiring later customer information or acknowledgement have situation_reached=false and verdict=unknown. The same boundary applies later in a live call: merely raising a topic, asking whether a task is already done, or offering to help does not establish engagement in that task. If the call cuts off before a substantive response or any task action, that task's completion metric is unreached. A connectivity check such as "hello?" is not a substantive task response. The absent success evidence is not a failure when that stage was never reached.
+3. Once the trigger or opportunity actually occurred, a missing required action or unsuccessful outcome is NOT an unreached situation. For example, a caller requested assistance but the agent omitted the required handoff: situation_reached=true, verdict=fail. Do not excuse a skipped obligation on a reached path by calling its missing action the trigger.
+4. The metric's own explicit failure conditions still apply, including immediate disconnection when it expressly names that as failure. A rule about the opening itself can also be judged from the opening. These have situation_reached=true even without a caller response. A generic metric about handling closure or technical cases is NOT an instruction to fail every truncated transcript: an interrupted opening alone establishes neither a closure event nor a technical problem. Do not infer an agent-caused abrupt ending solely because the transcript stops. A "never do X" metric can pass when X never occurred.
+5. Only after establishing applicability, assess success. For triggered or task-completion metrics, if the situation was unreached, return unknown with an empty unmet_required_criteria list. Preserve pass for an unconditional prohibition when the prohibited action never occurred. A pass requires evidence for ALL success conditions the metric requires. Check them individually and list unmet_required_criteria before choosing a verdict. Repeated progress through one unfinished task does not establish completion of the majority of stages. A call still in core setup with no wrap-up is not a completed welcome call. A courteous wrap-up or offer of future support AFTER the substantive stages counts as polite closure even if interrupted; no separate goodbye or fully spoken support number is required unless the metric expressly requires it. An interrupted courteous wrap-up is not an agent-caused abrupt ending. This does not excuse an unfinished core task or an explicitly required customer acknowledgement.
+6. Interpret acknowledgement in conversational context: a direct "yes", "okay", "got it", or equivalent in the caller's language after support instructions acknowledges those instructions. The caller need not repeat a phone number or say "I know where to contact" unless the metric explicitly requires a readback or those exact words. An unrelated earlier backchannel is not acknowledgement of information given later; an explicit denial of understanding is contrary evidence. If the metric explicitly defines a failure seen in the transcript, return fail. Use unknown for genuinely insufficient evidence.`;
 
 const unavailable = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict => ({
   judge_name: spec.name,
@@ -101,16 +128,34 @@ async function judgeOnce(
   spec: CustomJudgeSpec,
   input: Record<string, unknown>,
   provider?: LlmProvider,
-): Promise<z.infer<typeof CustomMetricRawZ>> {
+): Promise<Omit<z.infer<typeof CustomMetricRawZ>, "situation_reached" | "unmet_required_criteria">> {
   const { data } = await runLlmJudge({
-    system: spec.body + spec.output,
+    system: spec.body + spec.output + APPLICABILITY,
     input,
     schema: CustomMetricRawZ,
     jsonSchema: CUSTOM_METRIC_JSON,
     maxTokens: spec.max_tokens ?? DEFAULT_CUSTOM_MAX_TOKENS,
     provider,
   });
-  return data;
+  const { situation_reached, unmet_required_criteria, ...verdict } = data;
+  // Partial success cannot override a requirement the judge itself found unmet.
+  // Preserve unknown when evidence is insufficient and applicability when the
+  // opportunity never arose. A prohibition with no violation still passes.
+  if (verdict.verdict === "pass" && unmet_required_criteria.some(criterion => criterion.trim())) {
+    return {
+      verdict: situation_reached ? "fail" : "unknown",
+      reason: situation_reached
+        ? `Required metric criteria were not met: ${unmet_required_criteria.join("; ")}`
+        : "The call never reached the situation this metric is about.",
+      technical_reason: `${verdict.technical_reason} Contradictory pass corrected from applicability and unmet required criteria.`,
+    };
+  }
+  // Only a fail is demoted: a "never do X" metric can pass without its event.
+  return situation_reached || verdict.verdict !== "fail" ? verdict : {
+    verdict: "unknown",
+    reason: "The call never reached the situation this metric is about.",
+    technical_reason: `situation not reached; the judge's fail was: ${verdict.reason}`,
+  };
 }
 
 export async function judgeCustomMetricNode(
