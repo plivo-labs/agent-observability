@@ -18,6 +18,8 @@ const GuardedReviewZ = z.object({
       variable_name: z.string(),
       issue_type: z.enum(["missing", "incorrect"]),
       defect_confirmed: z.boolean(),
+      // Older/non-strict responses cannot clear an incorrect value by omission.
+      stored_value_supported: z.boolean().default(false),
       evidence: z.string().default(""),
     }),
   ),
@@ -36,11 +38,15 @@ const GUARDED_REVIEW_JSON = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["variable_name", "issue_type", "defect_confirmed", "evidence"],
+          required: ["variable_name", "issue_type", "defect_confirmed", "stored_value_supported", "evidence"],
           properties: {
             variable_name: { type: "string" },
             issue_type: { type: "string", enum: ["missing", "incorrect"] },
             defect_confirmed: { type: "boolean" },
+            stored_value_supported: {
+              type: "boolean",
+              description: "For incorrect candidates, true only when the exact rule and observed evidence authorize the stored value, including every prerequisite for that value. Absence of a caller denial is not support unless the rule defines that default. False for missing candidates or uncertain support.",
+            },
             evidence: { type: "string" },
           },
         },
@@ -168,8 +174,11 @@ export const CONFIG_DEFAULT_REVIEW_SYSTEM =
 export const FOCUSED_DEFECT_REVIEW_SYSTEM =
   "Verify ONLY the proposed variable defects against the exact recording rule and caller transcript. " +
   "For missing: confirm only when the caller explicitly stated an applicable value in that variable's own terms and it was not stored. Reject inferred/derived values, absent defaults the rule does not name for what happened (such as not_asked or no_questions), unopened paths, duplicate/sibling demands, workflow fields, and backend/platform data. " +
+  "A clear caller no to a reached yes/no/unclear question is an explicit value; an early not-interested ending does not excuse failing to record that answer after a normal close. " +
   "Confirm a missing value the rule itself names for a situation that clearly happened (for example not_offered on an immediate transfer), and a field the rule takes from a lookup or tool result that the transcript shows holds the value. " +
-  "For incorrect: confirm only when the stored value materially conflicts with the caller or the exact rule, including an outcome or status label that plainly contradicts what the caller said. A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. " +
+  "For incorrect: confirm when the stored value conflicts with the caller or the exact rule, including an outcome or status whose required conditions are not established. A caller need not explicitly deny a category for it to be unsupported. " +
+  "To clear an incorrect candidate, set stored_value_supported=true and cite the exact rule plus evidence satisfying ALL of its prerequisites. Merely agreeing to talk or confirming identity does not establish shared requirements, interest, or qualification. An early cutoff excuses pending omissions, never an unsupported value already recorded. " +
+  "A value explicitly authorized by the rule is valid, including the same caller fact stored under two variables whose rules both allow it. If support is uncertain, set stored_value_supported=false and retain the proposed defect. " +
   "Use the supplied final-batch context for pending batch fields; preserve a defect whose exact rule separately requires immediate or earlier recording. " +
   "Do not add defects. Return one review for every candidate and cite only caller words or the exact rule.";
 
@@ -301,8 +310,8 @@ export async function runVariableExtractionJudge(
   ]);
 
   for (const review of [
-    { result: defaultReview, candidates: defaultCandidates, note: "Cleared by focused config-default review" },
-    { result: focusedReview, candidates: focusedCandidates, note: "Cleared by focused defect review" },
+    { result: defaultReview, candidates: defaultCandidates, requireValueSupport: false, note: "Cleared by focused config-default review" },
+    { result: focusedReview, candidates: focusedCandidates, requireValueSupport: true, note: "Cleared by focused defect review" },
   ]) {
     if (!review.result) continue;
     // sumUsage (llm/usage.ts) is the one place usage arithmetic lives. The local
@@ -313,7 +322,9 @@ export async function runVariableExtractionJudge(
       review.candidates.map((candidate) => `${candidate.issue_type}:${candidate.variable_name}`),
     );
     const cleared = review.result.data.reviews
-      .filter((entry) => candidateKeys.has(`${entry.issue_type}:${entry.variable_name}`) && !entry.defect_confirmed)
+      .filter((entry) => candidateKeys.has(`${entry.issue_type}:${entry.variable_name}`) && !entry.defect_confirmed &&
+        (!review.requireValueSupport || entry.issue_type !== "incorrect" ||
+          (entry.stored_value_supported && entry.evidence.trim().length > 0)))
       .map((entry) => `${entry.issue_type}:${entry.variable_name}` as VariableIssueKey);
     for (const key of cleared) rejected.add(key);
     if (cleared.length > 0) reviewNotes.push(review.note);
