@@ -212,6 +212,8 @@ export interface InstructionsAdherenceMetrics extends JudgeProvenance {
   procedure_compliance: ProcedureComplianceMetrics | null;
   interaction_quality: InteractionQualityMetrics | null;
   policy_boundary_compliance: PolicyBoundaryComplianceMetrics | null;
+  /** Lines of the agent's own instructions that contradict each other on something the agent did. */
+  config_conflicts?: Array<{ forbidding_line: string; permitting_line: string; behaviour: string }>;
 }
 
 export interface IntentIdentificationMetrics extends JudgeProvenance {

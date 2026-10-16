@@ -883,6 +883,21 @@ describe("LLM node judges (MockLLM)", () => {
     expect(data.procedure_compliance.missed_steps[0]!.severity).toBe("minor");
     expect(deriveInstructionAdherence(data).procedure_compliance.passed).toBe(true);
   });
+
+  test("instruction adherence: reported config conflicts reach the stored metrics; a reply without them stores none", async () => {
+    const base = {
+      objective_progress: { achieved: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+      procedure_compliance: { score: 1, reason_code: "", missed_steps: [], reason: "", technical_reason: "" },
+      interaction_quality: { score: 1, reason_code: "", issues: [], reason: "", technical_reason: "" },
+      policy_boundary_compliance: { passed: true, score: 1, reason_code: "", reason: "", technical_reason: "" },
+    };
+    const conflict = { forbidding_line: "never ask who you are speaking with", permitting_line: "ask 'Is this <name>?'", behaviour: "asked for the contact by name" };
+    const llm = new MockLLM([JSON.stringify({ ...base, config_conflicts: [conflict] }), JSON.stringify(base)]);
+    const reported = deriveInstructionAdherence((await runInstructionAdherenceJudge(node(), ctx(), llm)).data);
+    expect(reported.adherence_passed).toBe(true);
+    expect(reported.config_conflicts).toEqual([conflict]);
+    expect(deriveInstructionAdherence((await runInstructionAdherenceJudge(node(), ctx(), llm)).data).config_conflicts).toEqual([]);
+  });
 });
 
 describe("intent judge (LLM, cx-sqs MetricIntent)", () => {

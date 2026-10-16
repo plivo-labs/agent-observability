@@ -71,6 +71,12 @@ const InteractionIssueZ = z.object({
   reason_code: reasonZ,
   details: reasonZ,
 });
+const ConfigConflictZ = z.object({
+  forbidding_line: reasonZ,
+  permitting_line: reasonZ,
+  behaviour: reasonZ,
+});
+export type ConfigConflict = z.infer<typeof ConfigConflictZ>;
 export const InstructionAdherenceRawZ = z.object({
   objective_progress: z.object({
     achieved: z.boolean(),
@@ -100,6 +106,7 @@ export const InstructionAdherenceRawZ = z.object({
     reason: reasonZ,
     technical_reason: reasonZ,
   }),
+  config_conflicts: z.array(ConfigConflictZ).default([]),
 });
 export type InstructionAdherenceRaw = z.infer<typeof InstructionAdherenceRawZ>;
 
