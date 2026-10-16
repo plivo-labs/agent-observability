@@ -67,6 +67,7 @@ export const INSTRUCTION_ADHERENCE_JSON = strict(
     procedure_compliance: obj({ score: num, reason_code: str, missed_steps: arrayOf(MISSED_STEP), reason: str, technical_reason: str }),
     interaction_quality: obj({ score: num, reason_code: str, issues: arrayOf(ISSUE), reason: str, technical_reason: str }),
     policy_boundary_compliance: obj({ passed: bool, score: num, reason_code: str, reason: str, technical_reason: str }),
+    config_conflicts: arrayOf(obj({ forbidding_line: str, permitting_line: str, behaviour: str })),
   }),
 );
 
