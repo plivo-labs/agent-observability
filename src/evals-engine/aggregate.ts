@@ -90,5 +90,6 @@ export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): Instru
     procedure_compliance: procedure,
     interaction_quality: interaction,
     policy_boundary_compliance: policy,
+    config_conflicts: raw.config_conflicts ?? [],
   };
 }
