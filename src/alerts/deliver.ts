@@ -67,7 +67,8 @@ async function sendWebhook(req: WebhookRequest): Promise<DeliveryResult> {
     let res: Response;
     for (let hop = 0; ; hop++) {
       await assertPublicUrl(url);
-      res = await fetch(url, { method: req.method, headers: hopHeaders, body: req.body, redirect: "manual", signal });
+      // The response body is never read, so don't decompress it.
+      res = await fetch(url, { method: req.method, headers: hopHeaders, body: req.body, redirect: "manual", signal, decompress: false });
       if (res.status < 300 || res.status >= 400) break;
       const location = res.headers.get("location");
       if (!location) break; // 3xx without a target — treat as the final response
