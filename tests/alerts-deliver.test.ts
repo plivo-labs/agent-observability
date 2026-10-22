@@ -80,6 +80,12 @@ describe("alerts/deliver", () => {
     globalThis.fetch = realFetch;
   });
 
+  test("delivery request does not decompress the response", async () => {
+    mockFetch(200);
+    await deliverFiring(baseDue);
+    expect((fetchCalls[0].init as any).decompress).toBe(false);
+  });
+
   test("2xx delivery is ok and records an audit row", async () => {
     mockFetch(204);
     const result = await deliverFiring(baseDue);
