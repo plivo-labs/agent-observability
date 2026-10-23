@@ -57,6 +57,8 @@ export interface TestRun {
     verdict: string,
     judge?: string,
     createdMinutesAgo?: number,
+    /** Omitted leaves observed_at NULL. */
+    observedMinutesAgo?: number,
   ) => Promise<void>;
   seedOutcome: (sessionId: string, outcome: string, updatedMinutesAgo?: number) => Promise<void>;
   createRule: (over: Partial<AlertRuleCreate>) => Promise<AlertRuleRow>;
@@ -110,10 +112,12 @@ export function testRun(prefix: string): TestRun {
         ON CONFLICT (session_id, name, source) DO NOTHING
       `;
     },
-    async seedEval(sessionId, verdict, judge = "it_judge", createdMinutesAgo = 0) {
+    async seedEval(sessionId, verdict, judge = "it_judge", createdMinutesAgo = 0, observedMinutesAgo) {
+      const observedAgo = observedMinutesAgo === undefined ? null : String(observedMinutesAgo);
       await sql`
-        INSERT INTO ao_session_external_evals (session_id, source, judge_name, verdict, created_at)
+        INSERT INTO ao_session_external_evals (session_id, source, judge_name, verdict, observed_at, created_at)
         VALUES (${sessionId}, ${run}, ${judge}, ${verdict},
+                NOW() - (${observedAgo}::text || ' minutes')::interval,
                 NOW() - (${String(createdMinutesAgo)} || ' minutes')::interval)
       `;
     },

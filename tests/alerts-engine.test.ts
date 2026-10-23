@@ -94,6 +94,16 @@ describe("alerts/engine evaluateRules", () => {
     expect(params[1]).toBe("task_completion");
   });
 
+  test("eval_fail_rate windows on call time, falling back to insert time", async () => {
+    mockSql.mockResolvedValueOnce([failRateRule]);
+    metricQueue.push([{ total: 0, matched: 0, session_ids: [] }]);
+
+    await evaluateRules();
+    const query = metricCalls()[0][0];
+    expect(query).toContain("COALESCE(e.observed_at, e.created_at) > NOW() -");
+    expect(query).toContain("AND e.created_at > NOW() -");
+  });
+
   test("eval_fail_rate stays quiet under min_samples", async () => {
     mockSql.mockResolvedValueOnce([failRateRule]);
     metricQueue.push([{ total: 3, matched: 3, session_ids: [] }]);
