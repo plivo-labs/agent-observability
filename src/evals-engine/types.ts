@@ -68,6 +68,9 @@ export interface NodeEvalInput {
   turns: EvalTurn[];
   /** Number of turns at this node. */
   turn_count: number;
+  /** The agent config has no entry for this node, so its empty instructions,
+   *  intents and variables are unknown rather than declared empty. */
+  config_missing?: boolean;
 }
 
 /** A configured conversation goal (from `agent_settings.conversation_goals`). */
@@ -187,6 +190,19 @@ export interface JudgeProvenance {
   };
 }
 
+/** Set on an axis the judge skipped without a verdict. Fan-out writes it as
+ *  verdict `unknown`, which pass/fail rates exclude. The axis's success booleans
+ *  keep their old values because existing readers use them directly, so read
+ *  this marker, not the booleans, to tell a skip from a pass. */
+export interface AxisSkip {
+  /** The node declares nothing this judge grades. */
+  not_applicable?: true;
+  /** The node is missing from the agent config, so the evidence to judge it is missing. */
+  not_judged?: true;
+}
+
+export const isSkippedAxis = (m: AxisSkip): boolean => m.not_applicable === true || m.not_judged === true;
+
 export interface InteractionQualityMetrics {
   score: number;
   issues: InteractionQualityIssue[];
@@ -201,7 +217,7 @@ export interface PolicyBoundaryComplianceMetrics {
   reason: string;
   technical_reason: string;
 }
-export interface InstructionsAdherenceMetrics extends JudgeProvenance {
+export interface InstructionsAdherenceMetrics extends JudgeProvenance, AxisSkip {
   /** Code-derived: objective.achieved ∧ procedure.passed ∧ policy.passed. */
   adherence_passed: boolean;
   /** Code-derived weighted score: .35·obj + .25·proc + .25·inter + .15·policy. */
@@ -216,14 +232,14 @@ export interface InstructionsAdherenceMetrics extends JudgeProvenance {
   config_conflicts?: Array<{ forbidding_line: string; permitting_line: string; behaviour: string }>;
 }
 
-export interface IntentIdentificationMetrics extends JudgeProvenance {
+export interface IntentIdentificationMetrics extends JudgeProvenance, AxisSkip {
   reason: string;
   technical_reason: string;
   intent_not_found: boolean;
   intent_wrongly_identified: boolean;
   score: number;
 }
-export interface VariableExtractionMetrics extends JudgeProvenance {
+export interface VariableExtractionMetrics extends JudgeProvenance, AxisSkip {
   extraction_successful: boolean;
   score: number;
   reason: string;

@@ -905,6 +905,11 @@
         {
           "path": "registry/new-york/session-evaluations-drawer/session-evaluations-drawer.tsx",
           "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/session-evaluations-drawer/verdict-counts.ts",
+          "type": "registry:lib",
+          "target": "lib/verdict-counts.ts"
         }
       ]
     },
@@ -1284,6 +1289,11 @@
           "path": "registry/new-york/session-evaluations-drawer/session-evaluations-drawer.tsx",
           "type": "registry:component",
           "target": "components/session-evaluations-drawer.tsx"
+        },
+        {
+          "path": "registry/new-york/session-evaluations-drawer/verdict-counts.ts",
+          "type": "registry:lib",
+          "target": "lib/verdict-counts.ts"
         },
         {
           "path": "registry/new-york/session-config/session-config.tsx",

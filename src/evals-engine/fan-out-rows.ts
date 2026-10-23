@@ -1,13 +1,14 @@
 import type { SessionEvalVerdicts } from "./integration/session-evals.js";
 import { sentimentPassed } from "./judges/conversation-judges.js";
+import { isSkippedAxis, type AxisSkip } from "./types.js";
 
 export type ExternalEvalRow = {
   judgeName: string;
   tag: string | null;
   passed: boolean;
-  /** Overrides the pass/fail verdict text — custom metrics write 'unknown'
-   *  for calls that never reached the judged situation, which must count as
-   *  neither a pass nor a fail. */
+  /** Overrides the pass/fail verdict text — 'unknown' for a custom metric
+   *  whose situation never arose, or a node axis the judge skipped; it must
+   *  count as neither a pass nor a fail. */
   verdictText?: string;
   reasoning: string;
   raw: Record<string, unknown>;
@@ -39,14 +40,19 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
       cm.call_screening?.detected === true)
   );
 
+  const unknown = (m: AxisSkip) => (isSkippedAxis(m) ? { passed: false, verdictText: "unknown" } : {});
   for (const ne of verdicts.node_evaluations) {
     const tag = ne.ref || null;
     const ia = ne.instructions_adherence;
-    if (ia && !machineAnswered) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia as any });
+    if (ia && !machineAnswered) {
+      // A skip's stored top-level reason still reads as a pass for existing readers; its own reason is on objective_progress.
+      const reasoning = isSkippedAxis(ia) ? ia.objective_progress?.reason || ia.reason : ia.reason;
+      rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, ...unknown(ia), reasoning, raw: ia as any });
+    }
     const ii = ne.intent_identification;
-    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii as any });
+    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), ...unknown(ii), reasoning: ii.reason, raw: ii as any });
     const ve = ne.variable_extraction;
-    if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve as any });
+    if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, ...unknown(ve), reasoning: ve.reason, raw: ve as any });
     const ha = ne.hallucination;
     if (ha) rows.push({ judgeName: "hallucination", tag, passed: !ha.hallucinated, reasoning: ha.reason, raw: ha as any });
     const lo = ne.node_loop;

@@ -14,6 +14,7 @@
       "@/lib/observability-api": ["./registry/new-york/observability-api/api.ts"],
       "@/lib/observability-provider": ["./registry/new-york/observability-provider/provider.tsx"],
       "@/lib/observability-hooks": ["./registry/new-york/observability-hooks/hooks.ts"],
+      "@/lib/verdict-counts": ["./registry/new-york/session-evaluations-drawer/verdict-counts.ts"],
       "@/components/observability-chart-shared": ["./registry/new-york/observability-chart-shared/chart-shared.tsx"],
       "@/components/*": ["./registry/new-york/*"]
     }

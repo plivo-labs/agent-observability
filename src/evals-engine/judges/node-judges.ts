@@ -1,6 +1,6 @@
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { IDLE_TAG } from "../types.js";
-import type { ConversationInput, NodeEvalInput } from "../types.js";
+import type { AxisSkip, ConversationInput, NodeEvalInput } from "../types.js";
 import {
   HallucinationRawZ,
   NodeLoopRawZ,
@@ -80,21 +80,26 @@ export async function runInstructionAdherenceJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: InstructionAdherenceRaw; usage: LlmUsage }> {
+): Promise<{ data: InstructionAdherenceRaw & AxisSkip; usage: LlmUsage }> {
   // No instructions configured → there is nothing to adhere to. Judging
   // against "(none)" makes the model invent an objective and often fail it —
-  // a false adherence fail on routing/greeting nodes. Neutral pass, no LLM
-  // call (same pattern as the intent judge's empty-intents skip).
-  if (!node.node_prompt || !node.node_prompt.trim()) {
-    const sub = (reason: string) => ({ score: 1.0, reason_code: "not_applicable", reason, technical_reason: "skipped: node has no instructions" });
+  // a false adherence fail on routing/greeting nodes. Skipped without a
+  // verdict, no LLM call (same pattern as the intent judge's empty-intents skip).
+  if (node.config_missing || !node.node_prompt || !node.node_prompt.trim()) {
+    const missing = node.config_missing === true;
+    const skip: AxisSkip = missing ? { not_judged: true } : { not_applicable: true };
+    const sub = (reason: string) => missing
+      ? { score: 1.0, reason_code: "not_judged", reason: "This node is missing from the agent config — adherence not judged.", technical_reason: "skipped: node ref missing from the agent config" }
+      : { score: 1.0, reason_code: "not_applicable", reason, technical_reason: "skipped: node has no instructions" };
     return {
       data: {
+        ...skip,
         objective_progress: { achieved: true, ...sub("No instructions configured on this node — adherence not applicable.") },
         procedure_compliance: { ...sub("No procedure defined."), missed_steps: [] },
         interaction_quality: { ...sub("Not evaluated."), issues: [] },
         policy_boundary_compliance: { passed: true, ...sub("No policy boundaries defined.") },
         config_conflicts: [],
-      } as InstructionAdherenceRaw,
+      },
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     };
   }
