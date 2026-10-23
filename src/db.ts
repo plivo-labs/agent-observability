@@ -92,9 +92,9 @@ interface LiveKitEvaluationInput {
    *  erasing cast at every fan-out call site. */
   raw: object;
   /** Row insert time override. Default (absent/null) = NOW(). A re-fan of an
-   *  already-judged session passes the rows' ORIGINAL created_at: alert rules
-   *  window on created_at, so rewriting months-old verdicts with NOW() would
-   *  stuff them into the current alert window. */
+   *  already-judged session passes the rows' ORIGINAL created_at: readers that
+   *  report by verdict time window on created_at, so rewriting months-old
+   *  verdicts with NOW() would stuff them into the current window. */
   createdAt?: Date | null;
 }
 

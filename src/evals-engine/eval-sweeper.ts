@@ -169,8 +169,9 @@ async function rewriteFanOutRows(
  *  "everything else is byte-identical" promise holds for the rows too, and
  *  the replication churn is one row per session, not ~ten. The rewritten rows take
  *  the session's ORIGINAL created_at (the earliest existing eval_sweeper row,
- *  else the call time): alert rules window on created_at, so re-inserting
- *  months-old verdicts with NOW() would page on history. Returns false when
+ *  else the call time): readers that report by verdict time window on
+ *  created_at, so re-inserting months-old verdicts with NOW() would surface
+ *  history as new. Returns false when
  *  there is no done row. */
 export const TRANSFER_AXIS_JUDGES = ["human_transfer"] as const;
 

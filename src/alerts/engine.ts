@@ -86,7 +86,11 @@ async function evaluateEvalFailRate(rule: RuleToEvaluate): Promise<WindowResult>
                FILTER (WHERE LOWER(COALESCE(e.verdict, '')) = 'fail'))[1:20] AS session_ids
      FROM ao_session_external_evals e
      LEFT JOIN ao_agent_transport_sessions s ON s.session_id = e.session_id
-     WHERE e.created_at > NOW() - ${WINDOW_SQL}
+     -- Call time, not judge time, so a drained judging backlog cannot flood the
+     -- current window. A verdict is recorded after its call, so the created_at
+     -- bound drops no in-window call and lets the scan use its index.
+     WHERE COALESCE(e.observed_at, e.created_at) > NOW() - ${WINDOW_SQL}
+       AND e.created_at > NOW() - ${WINDOW_SQL}
        -- 'unknown' is a custom-metric non-decision (call never reached the judged
        -- situation): it is neither a pass nor a fail, so it leaves the rate entirely.
        AND LOWER(COALESCE(e.verdict, '')) <> 'unknown'

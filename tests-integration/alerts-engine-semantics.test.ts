@@ -92,6 +92,45 @@ describeDb("alert evaluation semantics against real Postgres", () => {
     expect(await t.firingsFor(rule.id)).toHaveLength(0);
   });
 
+  test("evals window on call time: an old call judged now does not count", async () => {
+    const acct = t.uid("acct");
+    const recentCall = await t.seedSession({ accountId: acct, endedMinutesAgo: 5 });
+    const oldCall = await t.seedSession({ accountId: acct, endedMinutesAgo: 120 });
+    await t.seedEval(recentCall, "fail", "it_judge", 0, 5);
+    await t.seedEval(oldCall, "fail", "it_judge", 0, 120);
+
+    const rule = await t.createRule({
+      metric: "eval_fail_rate",
+      account_id: acct,
+      threshold_value: 0.5,
+      min_samples: 1,
+    });
+    await evaluateRules();
+    const [firing] = await t.firingsFor(rule.id);
+    expect(firing.total_count).toBe(1);
+    const ids = typeof firing.sample_session_ids === "string"
+      ? JSON.parse(firing.sample_session_ids)
+      : firing.sample_session_ids;
+    expect(ids).toEqual([recentCall]);
+  });
+
+  test("an eval without observed_at windows on when it was recorded", async () => {
+    const acct = t.uid("acct");
+    const sessionId = await t.seedSession({ accountId: acct });
+    await t.seedEval(sessionId, "fail", "it_judge", 0);
+    await t.seedEval(sessionId, "fail", "it_judge", 20);
+
+    const rule = await t.createRule({
+      metric: "eval_fail_rate",
+      account_id: acct,
+      threshold_value: 0.5,
+      min_samples: 1,
+    });
+    await evaluateRules();
+    const [firing] = await t.firingsFor(rule.id);
+    expect(firing.total_count).toBe(1);
+  });
+
   test("latency windows on session ended_at — sessions ended before the window are invisible", async () => {
     const acct = t.uid("acct");
     await t.seedSession({
