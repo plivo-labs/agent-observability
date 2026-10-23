@@ -175,3 +175,18 @@ for (const recorded of [false, true]) {
     expect(mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]))[0]!.outcome).toBe(recorded ? "pass" : "review");
   });
 }
+
+test("audit sampling is stable per session, judge and node and follows the configured rate", async () => {
+  const { shouldAudit } = await import("../src/evals-engine/jev/policy.js");
+  const sample = (judge = "node_loop", node = "node-A") =>
+    Array.from({ length: 10_000 }, (_, i) => shouldAudit(`session-${i}`, judge, node, 0.1));
+  const selected = sample();
+  expect(sample()).toEqual(selected);
+  expect(selected.filter(Boolean).length).toBeGreaterThan(850);
+  expect(selected.filter(Boolean).length).toBeLessThan(1150);
+  expect(sample("hallucination")).not.toEqual(selected);
+  expect(sample("node_loop", "node-B")).not.toEqual(selected);
+  expect(shouldAudit("session-1", "node_loop", "node-A", 0)).toBe(false);
+  expect(shouldAudit("session-1", "node_loop", "node-A", 1)).toBe(true);
+  expect(shouldAudit(undefined, "node_loop", "node-A", 1)).toBe(false);
+});

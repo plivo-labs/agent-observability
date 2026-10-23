@@ -167,6 +167,12 @@ export interface JudgeProvenance {
   confidence?: number;
   backend?: "jev" | "llm" | "code";
   jev_model?: string;
+  audit?: {
+    backend: "llm";
+    verdict: "pass" | "fail" | "unknown";
+    reason: string;
+    technical_reason: string;
+  };
   /** Candidate evidence remains separate from the final judge verdict/score. */
   jev?: {
     candidate: "pass" | "fail" | "review" | "unknown";

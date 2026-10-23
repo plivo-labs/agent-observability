@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { JudgeGate } from "../../jev/gates.js";
 import type { JudgeProvenance } from "../types.js";
 import type { GatedAxis } from "./gate.js";
@@ -45,6 +46,13 @@ export function routeAxis(g: GatedAxis, policy: RoutePolicy = REVIEW_ALL): Revie
 }
 
 export const isPublished = (route: ReviewRoute): boolean => route === "auto_pass" || route === "auto_fail";
+
+export function shouldAudit(sessionId: string | undefined, judge: string, node: string | undefined, rate: number): boolean {
+  // Without a session identity, unrelated calls would share one sampling bucket.
+  if (!sessionId || !(rate > 0)) return false;
+  const hash = createHash("sha256").update(JSON.stringify([sessionId, judge, node ?? null])).digest();
+  return hash.readUInt32BE(0) / 0x1_0000_0000 < rate;
+}
 
 export function decisionProvenance(g: GatedAxis | undefined, gate?: JudgeGate, policy: RoutePolicy = REVIEW_ALL, layout?: string): JudgeProvenance {
   if (!g) return { backend: "llm" };

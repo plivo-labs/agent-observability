@@ -1,5 +1,5 @@
 import { config as envConfig } from "../../config.js";
-import type { LlmProvider } from "../../llm/index.js";
+import { resolveProvider, type LlmProvider } from "../../llm/index.js";
 import { JevError, type JevClient, type JevResponse } from "../../jev/types.js";
 import { CUSTOM_METRIC_GATE, resolveGates } from "../../jev/gates.js";
 import type {
@@ -36,11 +36,11 @@ import {
   type CustomMetricVerdict,
 } from "../judges/custom-metric.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "../aggregate.js";
-import { AUTO_FAIL_JUDGES, AUTO_PASS_JUDGES, decisionProvenance, isPublished, parseJudgeList, routeAxis, type RoutePolicy } from "./policy.js";
+import { AUTO_FAIL_JUDGES, AUTO_PASS_JUDGES, decisionProvenance, isPublished, parseJudgeList, routeAxis, shouldAudit, type RoutePolicy } from "./policy.js";
 import { DEFAULT_BUDGET_TOKENS, VOICE_ONLY, buildJevPlan, parseJevJudges, type ConversationJudgeName, type JevPlan, type NodeJudgeName } from "./plan.js";
 import { buildSharedJevPlan } from "./plan-shared.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
-import { attachDetectionProvenance, jevAdherence, jevDetection, jevHallucination, jevIntent, jevNodeLoop, jevVariables, type ReasonMap } from "./merge.js";
+import { attachDetectionProvenance, jevAdherence, jevDetection, jevHallucination, jevIntent, jevNodeLoop, jevVariables, type ReasonMap, type ReasonText } from "./merge.js";
 import { writeDecisionReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 
@@ -131,6 +131,7 @@ export async function evaluateSessionJevFirst(args: {
   jev: JevClient;
   provider?: LlmProvider;
   customJudges?: readonly CustomJudgeSpec[];
+  sessionId?: string;
 }): Promise<JevSessionResult> {
   const { input, refOf, jev, provider } = args;
   const customJudges = args.customJudges ?? [];
@@ -203,6 +204,48 @@ export async function evaluateSessionJevFirst(args: {
     return g && isPublished(routeAxis(g, policy)) ? g : undefined;
   };
 
+  const audits: Array<() => Promise<void>> = [];
+  const audit = <T extends JudgeProvenance, R extends ReasonText>(
+    g: GatedAxis, primary: T, run: (auditProvider: LlmProvider) => Promise<R>, passed: (result: R) => boolean | undefined,
+  ): T => {
+    const node = g.axis.kind === "node" ? input.nodes[g.axis.nodeIndex]?.node_uuid : undefined;
+    if (routeAxis(g, policy) === "auto_pass" && shouldAudit(args.sessionId, g.axis.judge, node, envConfig.JEV_AUDIT_RATE ?? 0)) {
+      audits.push(async () => {
+        const controller = new AbortController();
+        const timeout = new Error("Audit timed out");
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const deadline = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { controller.abort(timeout); reject(timeout); }, envConfig.LLM_TIMEOUT_MS ?? 30_000);
+        });
+        try {
+          const work = (async () => {
+            const source = provider ?? await resolveProvider();
+            const auditProvider: LlmProvider = {
+              name: source.name,
+              complete: (call) => {
+                controller.signal.throwIfAborted();
+                // Racing bounds the wait even if a provider ignores abort; retries still
+                // run before the slot frees, so a timed-out audit logs as a judge error.
+                return Promise.race([source.complete({ ...call, signal: AbortSignal.any([call.signal, controller.signal]) }), deadline]);
+              },
+            };
+            return run(auditProvider);
+          })();
+          const result = await Promise.race([work, deadline]);
+          const pass = passed(result);
+          primary.audit = { backend: "llm", verdict: pass === undefined ? "unknown" : pass ? "pass" : "fail",
+            reason: result.reason, technical_reason: result.technical_reason };
+        } catch (error) {
+          primary.audit = { backend: "llm", verdict: "unknown", reason: `Audit unavailable: ${error instanceof Error ? error.message : String(error)}`,
+            technical_reason: "audit failed; primary verdict retained" };
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+    }
+    return primary;
+  };
+
   // ── the reasoning for every published verdict, in ONE call ────────────────
   const reasonAxes: ReasonRequestAxis[] = [];
   const reasonNodeIndexes = new Set<number>();
@@ -254,7 +297,8 @@ export async function evaluateSessionJevFirst(args: {
         if (VOICE_ONLY.has(judge) && !voice) return [rawKey, voiceOnlySkip];
         const g = published(`c.${judge}`);
         if (g) {
-          provenance.set(metricKey, provenanceFor(`c.${judge}`));
+          provenance.set(metricKey, audit(g, provenanceFor(`c.${judge}`),
+            (auditProvider) => runDetection(judge, criteria, input, auditProvider), (r) => r.available ? !r.detected : undefined));
           return [rawKey, jevDetection(g, await reasonsPromise)];
         }
         // Reviewed (or never asked): the LLM detection judge decides it, and
@@ -278,31 +322,36 @@ export async function evaluateSessionJevFirst(args: {
       const [adherence, hallucination, variable, loop, intent] = await Promise.all([
         (async () => {
           const g = decidedByJev("instructions_adherence");
-          if (g) return { ...jevAdherence(g, await reasonsPromise), ...provenance("instructions_adherence") };
+          if (g) return audit(g, { ...jevAdherence(g, await reasonsPromise), ...provenance("instructions_adherence") },
+            async (auditProvider) => deriveInstructionAdherence((await runInstructionAdherenceJudge(node, input, auditProvider)).data), (r) => r.adherence_passed);
           const { data } = await runInstructionAdherenceJudge(node, input, provider);
           return { ...deriveInstructionAdherence(data), ...provenance("instructions_adherence") };
         })(),
         (async () => {
           const g = decidedByJev("hallucination");
-          if (g) return { ...jevHallucination(g, await reasonsPromise), ...provenance("hallucination") };
+          if (g) return audit(g, { ...jevHallucination(g, await reasonsPromise), ...provenance("hallucination") },
+            async (auditProvider) => (await runHallucinationJudge(node, input, auditProvider)).data, (r) => !r.hallucinated);
           const { data } = await runHallucinationJudge(node, input, provider);
           return { ...mapHallucination(data), ...provenance("hallucination") };
         })(),
         (async () => {
           const g = decidedByJev("variable_extraction");
-          if (g) return { ...jevVariables(g, node, await reasonsPromise).metrics, ...provenance("variable_extraction") };
+          if (g) return audit(g, { ...jevVariables(g, node, await reasonsPromise).metrics, ...provenance("variable_extraction") },
+            async (auditProvider) => (await runVariableExtractionJudge(node, input, auditProvider)).data, (r) => r.extraction_successful);
           const { data } = await runVariableExtractionJudge(node, input, provider);
           return { ...mapVariableExtraction(data, node.required_variables), ...provenance("variable_extraction") };
         })(),
         (async () => {
           const g = decidedByJev("node_loop");
-          if (g) return { ...jevNodeLoop(g, await reasonsPromise), ...provenance("node_loop") };
+          if (g) return audit(g, { ...jevNodeLoop(g, await reasonsPromise), ...provenance("node_loop") },
+            async (auditProvider) => (await runLoopJudge(node, input, auditProvider)).data, (r) => !r.loop_detected);
           const { data } = await runLoopJudge(node, input, provider);
           return { ...mapNodeLoop(data), ...provenance("node_loop") };
         })(),
         (async () => {
           const g = decidedByJev("intent_identification");
-          if (g) return { ...jevIntent(g, await reasonsPromise), ...provenance("intent_identification") };
+          if (g) return audit(g, { ...jevIntent(g, await reasonsPromise), ...provenance("intent_identification") },
+            async (auditProvider) => (await runIntentJudge(node, input, auditProvider)).data, (r) => !(r.intent_not_found || r.intent_wrongly_identified));
           const { data } = await runIntentJudge(node, input, provider);
           return { ...data, ...provenance("intent_identification") };
         })(),
@@ -337,6 +386,8 @@ export async function evaluateSessionJevFirst(args: {
   );
 
   const [conversation, node_evaluations, custom] = await Promise.all([conversationPromise, nodesPromise, customPromise]);
+  // This session's primary judges take their slots first, so its audits cannot starve them.
+  await Promise.all(audits.map((run) => run()));
 
   return {
     conversation_metrics: attachDetectionProvenance(conversation.metrics, conversation.provenance),
