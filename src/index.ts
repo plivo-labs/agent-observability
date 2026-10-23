@@ -520,6 +520,7 @@ const TS_HEADLINE_OPTIONS =
   'StartSel=\u0001, StopSel=\u0002, MaxFragments=2, MaxWords=12, MinWords=6, FragmentDelimiter=" … "';
 
 app.use("/api/sessions", accountScopeGuard);
+app.use("/api/sessions/*", accountScopeGuard);
 app.get("/api/sessions", async (c) => {
   const trustedAccount = accountScope(c);
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20));
@@ -730,12 +731,16 @@ app.delete("/api/sessions", async (c) => {
 
 app.get("/api/sessions/:id", async (c) => {
   const sessionId = c.req.param("id");
+  const trustedAccount = accountScope(c);
+  // Filtered in the lookup so another account's session 404s exactly like a
+  // missing one and its existence can't be probed.
   const rows = await sql`
     SELECT id, session_id, account_id, agent_id, agent_name, transport, state, started_at, ended_at, duration_ms,
            turn_count, has_stt, has_llm, has_tts,
            chat_history, session_metrics, raw_report, record_url, estimated_cost_usd, created_at
     FROM ao_agent_transport_sessions
     WHERE session_id = ${sessionId}
+      AND (${trustedAccount}::text IS NULL OR account_id = ${trustedAccount})
     LIMIT 1
   `;
 
@@ -868,12 +873,10 @@ app.get("/api/sessions/:id", async (c) => {
 // the newest matches with their eval status so a consumer can fetch verdicts.
 app.get("/api/sessions/by-tag/:tag", async (c) => {
   const tag = c.req.param("tag");
-  // Optional result filter: when the caller passes account_id, only that
-  // account's sessions are returned. This narrows results, it does NOT isolate
-  // tenants — /api auth is a single global credential and the caller supplies
-  // the account_id itself, so it can't enforce an access boundary. Omitting it
-  // returns matches across all accounts (single-tenant behavior).
-  const accountId = c.req.query("account_id") ?? null;
+  // The gateway-asserted account confines matches and overrides the query
+  // param. The param alone only narrows results — the caller picks it, so it is
+  // no access boundary. With neither, matches span all accounts.
+  const accountId = accountScope(c) ?? c.req.query("account_id") ?? null;
   // One query for both scoped and unscoped: the account predicate is a no-op
   // when account_id is absent (single-tenant), and filters to the account
   // otherwise (a LEFT-joined session with no matching account is excluded).

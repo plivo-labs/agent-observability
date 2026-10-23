@@ -53,7 +53,8 @@ describeDb("gateway-facing APIs with real service authentication", () => {
 
   test("service authentication and account context are both required", async () => {
     expect((await fetch(`${base}/api/sessions`, { headers: { "X-Account-Id": accountA } })).status).toBe(401);
-    for (const path of ["/api/sessions", "/api/judges", "/api/agents/unknown/judges",
+    for (const path of ["/api/sessions", `/api/sessions/${ownSession}`, "/api/sessions/by-tag/any",
+      "/api/judges", "/api/agents/unknown/judges",
       "/api/analytics/metrics", "/api/analytics/metric-failed-runs?metric=hallucination"]) {
       expect((await fetch(base + path, { headers: { Authorization: serviceAuthorization() } })).status).toBe(401);
     }
@@ -85,5 +86,34 @@ describeDb("gateway-facing APIs with real service authentication", () => {
     expect(response.status).toBe(404);
     const rows = await sql`SELECT session_id FROM ao_agent_transport_sessions WHERE session_id = ${foreign}`;
     expect(rows.length).toBe(1);
+  });
+
+  test("session detail serves the caller's own session and answers another account's exactly like a missing one", async () => {
+    const foreign = await t.seedSession({ accountId: `${accountA}-other` });
+    const headers = { Authorization: serviceAuthorization(), "X-Account-Id": accountA };
+    const own = await fetch(`${base}/api/sessions/${ownSession}`, { headers });
+    expect(own.status).toBe(200);
+    expect((await own.json() as { session_id: string }).session_id).toBe(ownSession);
+    const crossAccount = await fetch(`${base}/api/sessions/${foreign}`, { headers });
+    const missing = await fetch(`${base}/api/sessions/${t.uid("missing")}`, { headers });
+    expect(crossAccount.status).toBe(404);
+    expect(missing.status).toBe(404);
+    const errorOf = async (r: Response) => (await r.json() as { error: unknown }).error;
+    expect(await errorOf(crossAccount)).toEqual(await errorOf(missing));
+  });
+
+  test("tag lookup returns only the trusted account's sessions, even when the query names another", async () => {
+    const tag = t.uid("tag");
+    const foreign = await t.seedSession({ accountId: `${accountA}-other` });
+    await t.seedTag(ownSession, tag);
+    await t.seedTag(foreign, tag);
+    for (const query of ["", `?account_id=${accountA}-other`]) {
+      const response = await fetch(`${base}/api/sessions/by-tag/${encodeURIComponent(tag)}${query}`, {
+        headers: { Authorization: serviceAuthorization(), "X-Account-Id": accountA },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { objects: Array<{ session_id: string }> };
+      expect(body.objects.map(s => s.session_id)).toEqual([ownSession]);
+    }
   });
 });
