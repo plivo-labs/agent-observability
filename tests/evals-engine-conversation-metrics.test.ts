@@ -5,7 +5,7 @@ import { TEST_JUDGE_CONFIG_MODULE } from "./fixtures/judge-config.js";
 mock.module("../src/config.js", () => TEST_JUDGE_CONFIG_MODULE);
 
 const { MockLLM } = await import("../src/llm/index.js");
-const { evaluateConversationMetrics, resolveOutcomes, evaluateUserNeverSpoke, evaluateHumanTransfer } = await import("../src/evals-engine/judges/conversation-judges.js");
+const { evaluateConversationMetrics, resolveOutcomes, assembleConversationMetrics, evaluateUserNeverSpoke, evaluateHumanTransfer } = await import("../src/evals-engine/judges/conversation-judges.js");
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
 const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
@@ -104,6 +104,18 @@ describe("user_never_spoke — the caller produced no turn", () => {
     expect(result.available).toBe(false);
     expect(result.detected).toBe(false);
   });
+
+  test("a tool-only transcript is unavailable: no agent speech, nothing for the caller to answer", async () => {
+    const llm = new MockLLM([responder({})]);
+    for (const full_transcript of ['Tool_Call: lookup({"query":"order"})', 'Agent: Tool_Call: lookup({"query":"order"})']) {
+      const cm = await evaluateConversationMetrics(
+        ctx({ transport: "livekit", full_transcript, speech_transcript: "" }),
+        llm,
+      );
+      expect(cm.user_never_spoke.available).toBe(false);
+      expect(cm.user_never_spoke.detected).toBe(false);
+    }
+  });
 });
 
 describe("evaluateConversationMetrics — anti-over-fire logic", () => {
@@ -140,17 +152,15 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     "Agent: Are you still there? I'm happy to assist whenever you're ready\n" +
     "Agent: Are you still there? I'm happy to assist whenever you're ready";
 
-  test("silent call: fires low_engagement even though the judge says not-detected", async () => {
-    // The LLM is told to report detected:false — exactly what prod does on these calls.
-    const llm = new MockLLM([responder({ low: false })]);
+  test("silent call raises user_never_spoke alone, even when the low_engagement judge flags it too", async () => {
+    const llm = new MockLLM([responder({ low: true })]);
     const cm = await evaluateConversationMetrics(
       ctx({ transport: "livekit", full_transcript: SILENT, speech_transcript: SILENT }),
       llm,
     );
-    expect(cm.low_engagement.detected).toBe(true);
-    expect(cm.low_engagement.available).toBe(true);
-    // Synthesized, not det() re-reading the raw verdict — otherwise this silently no-ops.
-    expect(cm.low_engagement.reason).toContain("never spoke");
+    expect(cm.user_never_spoke.available).toBe(true);
+    expect(cm.user_never_spoke.detected).toBe(true);
+    expect(cm.low_engagement.detected).toBe(false);
     expect(cm.answered).toBe(false);
     expect(cm.silent_call).toBe(true);
     expect(cm.customer_engaged).toBe(false);
@@ -182,9 +192,21 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
       ctx({ transport: "livekit", full_transcript: SILENT, speech_transcript: SILENT }),
       llm,
     );
-    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.user_never_spoke.detected).toBe(true);
     expect(cm.voicemail_detected.detected).toBe(false);
     expect(cm.call_screening.detected).toBe(false);
+  });
+
+  test("silent call whose human can't be confirmed keeps the derived low_engagement as its one signal", () => {
+    const cm = assembleConversationMetrics({
+      ctx: ctx({ transport: "livekit", full_transcript: SILENT, speech_transcript: SILENT }),
+      raws: raws({ voicemail: { ...detection(), available: false } }),
+      sentiment: { sentiment: "", reason: "", technical_reason: "", available: false },
+      stt: { error_count: 0, recovered_count: 0, available: false },
+    });
+    expect(cm.user_never_spoke.available).toBe(false);
+    expect(cm.low_engagement.detected).toBe(true);
+    expect(cm.low_engagement.reason).toContain("never spoke");
   });
 
   test("silent call with no question asked stays clean (opportunity gate)", async () => {
@@ -227,6 +249,7 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     const llm2 = new MockLLM([responder({ low: true })]);
     const cm2 = await evaluateConversationMetrics(ctx({ transport: "livekit" }), llm2);
     expect(cm2.low_engagement.detected).toBe(true);
+    expect(cm2.user_never_spoke).toMatchObject({ available: true, detected: false });
     expect(cm2.customer_engaged).toBe(false);
     expect(cm2.conversation_status.status).toBe("low_engagement");
   });
