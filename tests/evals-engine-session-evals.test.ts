@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 
 import {
   buildSessionEvalInput,
@@ -504,5 +504,73 @@ describe("inputs the gated judge path reads", () => {
       [{ type: "conversation_item_added", node_ref: "n", item: { type: "message", role: "user", content: "hi" } }],
     );
     expect(input.nodes[0]!.intent_tools).toEqual({ opt_out: "handoff_opt_out" });
+  });
+});
+
+describe("evaluateIngestedSession — a failing judge costs only its own axis", () => {
+  const events = () => [ev("node-A", "assistant", "How can I help today?"), ev("node-A", "user", "I need to change my booking.")];
+  const failingWhen = async (fails: (system: string) => boolean) => {
+    const { MockLLM } = await import("../src/llm/index.js");
+    const { defaultJudgeResponder } = await import("./fixtures/default-judge-responder.js");
+    return new MockLLM([(args: { system: string }) => (fails(args.system) ? "not json" : defaultJudgeResponder(args.system) ?? "{}")]);
+  };
+
+  test("a node judge that keeps failing leaves its axis unknown and every other verdict standing", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const llm = await failingWhen((s) => s.includes("fabricated information"));
+    const verdicts = await evaluateIngestedSession(cfg(), events(), llm, "livekit");
+    const ne = verdicts.node_evaluations[0]!;
+    expect(ne.hallucination).toMatchObject({ available: false, judge_error: "invalid_json", reason: "judge error: invalid_json" });
+    expect(ne.hallucination.hallucinated).toBeUndefined();
+    expect(ne.instructions_adherence.adherence_passed).toBe(true);
+    expect(ne.node_loop.loop_detected).toBe(false);
+    expect(ne.intent_identification.intent_not_found).toBe(false);
+    expect(ne.variable_extraction.required_variables).toEqual(["caller_name", "callback"]);
+    expect(verdicts.conversation_metrics.low_engagement.available).toBe(true);
+  });
+
+  test("a session in which no model call succeeds is still an error, whatever was decided in code", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const sparse: AgentConfig = { flow_name: "f", global_prompt: "g", nodes: [{ ref: "n", name: "n", instructions: "Greet the caller." }] };
+    const llm = await failingWhen(() => true);
+    await expect(
+      evaluateIngestedSession(sparse, [ev("n", "assistant", "Hi there"), ev("n", "user", "hello")], llm, "chat"),
+    ).rejects.toThrow(/invalid JSON/);
+  });
+
+  test("a silent call in which no model call succeeds is still an error, though low engagement is derived in code", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const llm = await failingWhen(() => true);
+    await expect(
+      evaluateIngestedSession(cfg(), [ev("node-A", "assistant", "Hello, can you hear me?")], llm, "livekit"),
+    ).rejects.toThrow(/invalid JSON/);
+  });
+
+  test("a failing conversation judge fans out as unknown; a judge skipped on a text channel fans out nothing", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const { buildExternalEvalRows } = await import("../src/evals-engine/fan-out-rows.js");
+    const llm = await failingWhen((s) => s.includes("Classify the user's sentiment") || s.includes("not the intended recipient"));
+    const rows = buildExternalEvalRows(await evaluateIngestedSession(cfg(), events(), llm, "chat"));
+    const row = (name: string) => rows.find((r) => r.judgeName === name);
+    expect(row("user_sentiment")).toMatchObject({ verdictText: "unknown", reasoning: "judge error: invalid_json" });
+    expect(row("wrong_number")).toMatchObject({ verdictText: "unknown", reasoning: "judge error: invalid_json" });
+    expect(row("low_engagement")!.passed).toBe(true);
+    expect(row("voicemail_detection")).toBeUndefined();
+  });
+
+  test("a failure assembling the conversation axes keeps the node verdicts", async () => {
+    const { evaluateIngestedSession } = await import("../src/evals-engine/integration/session-evals.js");
+    const conversationJudges = await import("../src/evals-engine/judges/conversation-judges.js");
+    const spy = spyOn(conversationJudges, "evaluateConversationMetrics").mockImplementation(async () => {
+      throw new Error("detections could not be assembled");
+    });
+    try {
+      const verdicts = await evaluateIngestedSession(cfg(), events(), await failingWhen(() => false), "livekit");
+      expect(verdicts.node_evaluations[0]!.hallucination.hallucinated).toBe(false);
+      expect(verdicts.node_evaluations[0]!.instructions_adherence.adherence_passed).toBe(true);
+      expect(verdicts.conversation_metrics.low_engagement.available).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -1,5 +1,6 @@
 import type { SessionEvalVerdicts } from "./integration/session-evals.js";
 import { sentimentPassed } from "./judges/conversation-judges.js";
+import { isJudgeError, type JudgeErrorMarker } from "./judge-error.js";
 
 export type ExternalEvalRow = {
   judgeName: string;
@@ -18,11 +19,14 @@ export type ExternalEvalRow = {
  *
  * Pure (no DB) so the row-SELECTION logic is unit-testable in isolation;
  * `fanOutExternalEvals` persists exactly what this returns. Detections read as
- * fail when they fire; judge-unavailable fallbacks (available===false) are
- * SKIPPED, never written as passes, so a provider outage can't bias fail rates.
+ * fail when they fire; skipped or undecidable axes (available===false) are
+ * SKIPPED, never written as passes; an axis whose judge failed is written as
+ * `unknown`, neither. So a judge failure can't bias fail rates.
  */
 export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEvalRow[] {
   const rows: ExternalEvalRow[] = [];
+  const judgeErrorRow = (judgeName: string, tag: string | null, axis: { reason: string }): ExternalEvalRow =>
+    ({ judgeName, tag, passed: false, verdictText: "unknown", reasoning: axis.reason, raw: axis as any });
 
   // SER-6035 (#3): machine-answered sessions (voicemail / bot / call-screening)
   // have no human conversation, so the node-level instruction-adherence judge
@@ -41,16 +45,16 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
 
   for (const ne of verdicts.node_evaluations) {
     const tag = ne.ref || null;
-    const ia = ne.instructions_adherence;
-    if (ia && !machineAnswered) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia as any });
-    const ii = ne.intent_identification;
-    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii as any });
-    const ve = ne.variable_extraction;
-    if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve as any });
-    const ha = ne.hallucination;
-    if (ha) rows.push({ judgeName: "hallucination", tag, passed: !ha.hallucinated, reasoning: ha.reason, raw: ha as any });
-    const lo = ne.node_loop;
-    if (lo) rows.push({ judgeName: "node_loop", tag, passed: !lo.loop_detected, reasoning: lo.reason, raw: lo as any });
+    const push = <T extends { reason: string }>(judgeName: string, axis: T | undefined, passed: (a: Exclude<T, JudgeErrorMarker>) => boolean) => {
+      if (!axis) return;
+      if (isJudgeError(axis)) rows.push(judgeErrorRow(judgeName, tag, axis));
+      else rows.push({ judgeName, tag, passed: passed(axis as Exclude<T, JudgeErrorMarker>), reasoning: axis.reason, raw: axis as any });
+    };
+    if (!machineAnswered) push("instructions_adherence", ne.instructions_adherence, (ia) => ia.adherence_passed);
+    push("intent_identification", ne.intent_identification, (ii) => !(ii.intent_not_found || ii.intent_wrongly_identified));
+    push("variable_extraction", ne.variable_extraction, (ve) => ve.extraction_successful);
+    push("hallucination", ne.hallucination, (ha) => !ha.hallucinated);
+    push("node_loop", ne.node_loop, (lo) => !lo.loop_detected);
   }
 
   if (cm) {
@@ -71,14 +75,18 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
     ];
     for (const [judgeName, det] of detections) {
       if (!det || typeof det.detected !== "boolean") continue;
-      // Skip a judge that couldn't run (provider outage) — never fan an
-      // unavailable detection out as a `pass`.
+      if (isJudgeError(det)) {
+        rows.push(judgeErrorRow(judgeName, null, det));
+        continue;
+      }
+      // A skipped or undecidable detection fans out nothing — never a `pass`.
       if (det.available === false) continue;
       rows.push({ judgeName, tag: null, passed: !det.detected, reasoning: det.reason, raw: det as any });
     }
     const sentiment = cm.user_sentiment;
     const sentimentValue = sentiment?.sentiment ?? "";
-    if (sentimentValue && sentimentValue !== "unknown" && sentiment?.available !== false) {
+    if (isJudgeError(sentiment)) rows.push(judgeErrorRow("user_sentiment", null, sentiment));
+    else if (sentimentValue && sentimentValue !== "unknown" && sentiment?.available !== false) {
       rows.push({
         judgeName: "user_sentiment",
         tag: null,
@@ -92,7 +100,8 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
   }
 
   for (const cm of verdicts.custom_metrics ?? []) {
-    if (!cm.available) continue; // unavailable ⇒ skipped, same contract as detections
+    // A skipped judge fans out nothing; a failed one reaches the unknown row below.
+    if (!cm.available && !isJudgeError(cm)) continue;
     if (cm.scope === "node" && cm.per_node) {
       for (const n of cm.per_node) {
         rows.push({

@@ -1,5 +1,6 @@
-import type { LlmProvider } from "../llm/index.js";
+import type { LlmProvider, LlmUsage } from "../llm/index.js";
 import type { ConversationInput, NodeEvaluation, NodeGoalEvaluation } from "./types.js";
+import { modelAnswered, settleAxis, type JudgeTally, type SessionNodeEvaluation } from "./judge-error.js";
 import {
   runHallucinationJudge,
   runLoopJudge,
@@ -33,28 +34,63 @@ export interface EvaluateSimulationOpts {
   simulationMode?: string;
 }
 
+const judged = <R, T>(run: Promise<{ data: R; usage: LlmUsage }>, map: (data: R) => T) =>
+  run.then(({ data, usage }) => ({ value: map(data), modelVerdict: modelAnswered(usage) }));
+
+function runNodeJudges(node: ConversationInput["nodes"][number], ctx: ConversationInput, provider?: LlmProvider) {
+  return {
+    adherence: judged(runInstructionAdherenceJudge(node, ctx, provider), deriveInstructionAdherence),
+    hallucination: judged(runHallucinationJudge(node, ctx, provider), mapHallucination),
+    variable: judged(runVariableExtractionJudge(node, ctx, provider), (data) => mapVariableExtraction(data, node.required_variables)),
+    loop: judged(runLoopJudge(node, ctx, provider), mapNodeLoop),
+    intent: judged(runIntentJudge(node, ctx, provider), (data) => data),
+  };
+}
+
 async function evaluateNode(
   node: ConversationInput["nodes"][number],
   ctx: ConversationInput,
   provider?: LlmProvider,
 ): Promise<NodeEvaluation> {
-  const [adherence, hallucination, variable, loop, intent] = await Promise.all([
-    runInstructionAdherenceJudge(node, ctx, provider),
-    runHallucinationJudge(node, ctx, provider),
-    runVariableExtractionJudge(node, ctx, provider),
-    runLoopJudge(node, ctx, provider),
-    runIntentJudge(node, ctx, provider),
-  ]);
+  const j = runNodeJudges(node, ctx, provider);
+  const [adherence, hallucination, variable, loop, intent] = await Promise.all([j.adherence, j.hallucination, j.variable, j.loop, j.intent]);
   return {
     node_uuid: node.node_uuid,
     node_name: node.node_name,
     turn_count: node.turn_count,
-    instructions_adherence: deriveInstructionAdherence(adherence.data),
-    intent_identification: intent.data,
-    variable_extraction: mapVariableExtraction(variable.data, node.required_variables),
-    hallucination: mapHallucination(hallucination.data),
-    node_loop: mapNodeLoop(loop.data),
+    instructions_adherence: adherence.value,
+    intent_identification: intent.value,
+    variable_extraction: variable.value,
+    hallucination: hallucination.value,
+    node_loop: loop.value,
   };
+}
+
+/** The session path's node axes: a judge failing for good costs only its own
+ *  axis. The simulation path keeps evaluateSimulation's all-or-nothing contract. */
+export function evaluateSessionNodes(input: ConversationInput, provider: LlmProvider | undefined, tally: JudgeTally): Promise<SessionNodeEvaluation[]> {
+  return Promise.all(
+    input.nodes.map(async (node): Promise<SessionNodeEvaluation> => {
+      const j = runNodeJudges(node, input, provider);
+      const [adherence, hallucination, variable, loop, intent] = await Promise.all([
+        settleAxis(tally, j.adherence),
+        settleAxis(tally, j.hallucination),
+        settleAxis(tally, j.variable),
+        settleAxis(tally, j.loop),
+        settleAxis(tally, j.intent),
+      ]);
+      return {
+        node_uuid: node.node_uuid,
+        node_name: node.node_name,
+        turn_count: node.turn_count,
+        instructions_adherence: adherence,
+        intent_identification: intent,
+        variable_extraction: variable,
+        hallucination,
+        node_loop: loop,
+      };
+    }),
+  );
 }
 
 /** Score one scenario (node + goal axes). Throws on judge failure; the caller converts that to eval_error. */

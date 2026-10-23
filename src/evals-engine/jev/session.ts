@@ -5,9 +5,9 @@ import { CUSTOM_METRIC_GATE, resolveGates } from "../../jev/gates.js";
 import type {
   ConversationInput,
   JudgeProvenance,
-  NodeEvaluation,
   SimConversationMetrics,
 } from "../types.js";
+import { modelAnswered, settle, settleAxis, type JudgeTally, type SessionNodeEvaluation } from "../judge-error.js";
 import {
   assembleConversationMetrics,
   isVoiceChannel,
@@ -63,7 +63,7 @@ const CONVERSATION_AXES: ReadonlyArray<{
 
 export interface JevSessionResult {
   conversation_metrics: SimConversationMetrics;
-  node_evaluations: NodeEvaluation[];
+  node_evaluations: SessionNodeEvaluation[];
   custom_metrics: CustomMetricVerdict[];
   /** Counters for the one-line session log. */
   stats: {
@@ -131,8 +131,9 @@ export async function evaluateSessionJevFirst(args: {
   jev: JevClient;
   provider?: LlmProvider;
   customJudges?: readonly CustomJudgeSpec[];
+  tally: JudgeTally;
 }): Promise<JevSessionResult> {
-  const { input, refOf, jev, provider } = args;
+  const { input, refOf, jev, provider, tally } = args;
   const customJudges = args.customJudges ?? [];
   const gates = resolveGates(envConfig.JEV_GATES, warnOnce);
   const { judges, unknown } = parseJevJudges(envConfig.JEV_JUDGES);
@@ -255,16 +256,18 @@ export async function evaluateSessionJevFirst(args: {
         const g = published(`c.${judge}`);
         if (g) {
           provenance.set(metricKey, provenanceFor(`c.${judge}`));
-          return [rawKey, jevDetection(g, await reasonsPromise)];
+          const detection = jevDetection(g, await reasonsPromise);
+          tally.modelVerdicts++;
+          return [rawKey, detection];
         }
         // Reviewed (or never asked): the LLM detection judge decides it, and
         // the row says so — a mixed run must be readable from the data alone.
         provenance.set(metricKey, provenanceFor(`c.${judge}`));
-        return [rawKey, await runDetection(judge, criteria, input, provider)];
+        return [rawKey, await runDetection(judge, criteria, input, provider, tally)];
       }),
       ),
-      runSentiment(input, provider),
-      voice ? runStt(input, provider) : Promise.resolve(skippedStt()),
+      runSentiment(input, provider, tally),
+      voice ? runStt(input, provider, tally) : Promise.resolve(skippedStt()),
     ]);
     const raws = Object.fromEntries(rawEntries) as unknown as ConversationDetectionRaws;
     return { metrics: assembleConversationMetrics({ ctx: input, raws, sentiment, stt }), provenance };
@@ -272,40 +275,40 @@ export async function evaluateSessionJevFirst(args: {
 
   // ── node axes ──────────────────────────────────────────────────────────────
   const nodesPromise = Promise.all(
-    input.nodes.map(async (node, nodeIndex): Promise<NodeEvaluation> => {
+    input.nodes.map(async (node, nodeIndex): Promise<SessionNodeEvaluation> => {
       const provenance = (judge: NodeJudgeName) => provenanceFor(`n${nodeIndex}:${judge}`);
       const decidedByJev = (judge: NodeJudgeName) => published(`n${nodeIndex}:${judge}`);
       const [adherence, hallucination, variable, loop, intent] = await Promise.all([
-        (async () => {
+        settleAxis(tally, (async () => {
           const g = decidedByJev("instructions_adherence");
-          if (g) return { ...jevAdherence(g, await reasonsPromise), ...provenance("instructions_adherence") };
-          const { data } = await runInstructionAdherenceJudge(node, input, provider);
-          return { ...deriveInstructionAdherence(data), ...provenance("instructions_adherence") };
-        })(),
-        (async () => {
+          if (g) return { value: { ...jevAdherence(g, await reasonsPromise), ...provenance("instructions_adherence") }, modelVerdict: true };
+          const { data, usage } = await runInstructionAdherenceJudge(node, input, provider);
+          return { value: { ...deriveInstructionAdherence(data), ...provenance("instructions_adherence") }, modelVerdict: modelAnswered(usage) };
+        })()),
+        settleAxis(tally, (async () => {
           const g = decidedByJev("hallucination");
-          if (g) return { ...jevHallucination(g, await reasonsPromise), ...provenance("hallucination") };
-          const { data } = await runHallucinationJudge(node, input, provider);
-          return { ...mapHallucination(data), ...provenance("hallucination") };
-        })(),
-        (async () => {
+          if (g) return { value: { ...jevHallucination(g, await reasonsPromise), ...provenance("hallucination") }, modelVerdict: true };
+          const { data, usage } = await runHallucinationJudge(node, input, provider);
+          return { value: { ...mapHallucination(data), ...provenance("hallucination") }, modelVerdict: modelAnswered(usage) };
+        })()),
+        settleAxis(tally, (async () => {
           const g = decidedByJev("variable_extraction");
-          if (g) return { ...jevVariables(g, node, await reasonsPromise).metrics, ...provenance("variable_extraction") };
-          const { data } = await runVariableExtractionJudge(node, input, provider);
-          return { ...mapVariableExtraction(data, node.required_variables), ...provenance("variable_extraction") };
-        })(),
-        (async () => {
+          if (g) return { value: { ...jevVariables(g, node, await reasonsPromise).metrics, ...provenance("variable_extraction") }, modelVerdict: true };
+          const { data, usage } = await runVariableExtractionJudge(node, input, provider);
+          return { value: { ...mapVariableExtraction(data, node.required_variables), ...provenance("variable_extraction") }, modelVerdict: modelAnswered(usage) };
+        })()),
+        settleAxis(tally, (async () => {
           const g = decidedByJev("node_loop");
-          if (g) return { ...jevNodeLoop(g, await reasonsPromise), ...provenance("node_loop") };
-          const { data } = await runLoopJudge(node, input, provider);
-          return { ...mapNodeLoop(data), ...provenance("node_loop") };
-        })(),
-        (async () => {
+          if (g) return { value: { ...jevNodeLoop(g, await reasonsPromise), ...provenance("node_loop") }, modelVerdict: true };
+          const { data, usage } = await runLoopJudge(node, input, provider);
+          return { value: { ...mapNodeLoop(data), ...provenance("node_loop") }, modelVerdict: modelAnswered(usage) };
+        })()),
+        settleAxis(tally, (async () => {
           const g = decidedByJev("intent_identification");
-          if (g) return { ...jevIntent(g, await reasonsPromise), ...provenance("intent_identification") };
-          const { data } = await runIntentJudge(node, input, provider);
-          return { ...data, ...provenance("intent_identification") };
-        })(),
+          if (g) return { value: { ...jevIntent(g, await reasonsPromise), ...provenance("intent_identification") }, modelVerdict: true };
+          const { data, usage } = await runIntentJudge(node, input, provider);
+          return { value: { ...data, ...provenance("intent_identification") }, modelVerdict: modelAnswered(usage) };
+        })()),
       ]);
       return {
         node_uuid: node.node_uuid,
@@ -325,7 +328,7 @@ export async function evaluateSessionJevFirst(args: {
     customJudges.map(async (spec): Promise<CustomMetricVerdict | null> => {
       if (!hasTranscript) return null;
       // The shared judge owns roll-up and deterministic/transient failure handling.
-      const verdict = await runCustomMetricJudge(spec, input, refOf, provider);
+      const verdict = await runCustomMetricJudge(spec, input, refOf, provider, tally);
       if (spec.scope === "conversation") return { ...verdict, ...provenanceFor(`m.${spec.name}`) };
       const candidates = input.nodes.map((node, i) => ({ ref: refOf(node.node_uuid), ...provenanceFor(`m${i}.${spec.name}`) }));
       return {
@@ -336,7 +339,14 @@ export async function evaluateSessionJevFirst(args: {
     }),
   );
 
-  const [conversation, node_evaluations, custom] = await Promise.all([conversationPromise, nodesPromise, customPromise]);
+  const [conversation, node_evaluations, custom] = await Promise.all([
+    settle(tally, conversationPromise, () => ({
+      metrics: { ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) },
+      provenance: new Map<keyof SimConversationMetrics, JudgeProvenance>(),
+    })),
+    nodesPromise,
+    settle(tally, customPromise, () => []),
+  ]);
 
   return {
     conversation_metrics: attachDetectionProvenance(conversation.metrics, conversation.provenance),

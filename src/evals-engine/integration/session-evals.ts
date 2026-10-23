@@ -15,7 +15,8 @@
 import { config as envConfig } from "../../config.js";
 import type { LlmProvider } from "../../llm/index.js";
 import { renderFullTranscript } from "../conversation-input.js";
-import { evaluateSimulation } from "../evaluator.js";
+import { evaluateSessionNodes } from "../evaluator.js";
+import { assertSomethingJudged, newJudgeTally, settle, type SessionNodeEvaluation } from "../judge-error.js";
 import { evaluateConversationMetrics, evaluateHumanTransferMetric, zeroConversationMetrics } from "../judges/conversation-judges.js";
 import { IDLE_TAG } from "../types.js";
 import {
@@ -29,8 +30,6 @@ import type {
   ConversationInput,
   EvalTurn,
   NodeEvalInput,
-  NodeEvaluation,
-  NodeGoalEvaluation,
   SimConversationMetrics,
   SessionTag,
 } from "../types.js";
@@ -529,7 +528,7 @@ export function buildSessionEvalInput(
 /** The verdict object the sweeper stores. Node evaluations are keyed by the
  *  caller's opaque `ref`; conversation_metrics + goals are whole-transcript. */
 export interface SessionEvalVerdicts {
-  node_evaluations: Array<NodeEvaluation & { ref: string }>;
+  node_evaluations: Array<SessionNodeEvaluation & { ref: string }>;
   conversation_metrics: SimConversationMetrics;
   /** Verdicts from the agent's mapped custom judges; absent when none ran. */
   custom_metrics?: CustomMetricVerdict[];
@@ -538,8 +537,9 @@ export interface SessionEvalVerdicts {
 /**
  * Judge one ingested session. Runs the node/goal engine and the conversation
  * judges over the built input, and re-attaches each node's opaque `ref`.
- * Throws on a node-judge failure (the caller records that as a terminal eval
- * error); the conversation judges are internally fault-tolerant.
+ * A node judge that fails for good leaves its axis a JudgeErrorMarker. Throws
+ * on a transient failure (the caller retries the session) and when no model
+ * produced any verdict (the caller records a terminal eval error).
  */
 export async function evaluateIngestedSession(
   config: AgentConfig,
@@ -593,14 +593,16 @@ export async function evaluateIngestedSession(
     return nodeRefs[i]?.ref ?? "";
   };
 
+  const tally = newJudgeTally();
   if (jev) {
-    const result = await evaluateSessionJevFirst({ input, refOf, jev, provider, customJudges: budgeted });
+    const result = await evaluateSessionJevFirst({ input, refOf, jev, provider, customJudges: budgeted, tally });
     const { stats } = result;
     console.log(
       `[jev] judged nodes=${input.nodes.length} requests=${stats.requests} axes=${stats.axesTotal} ` +
         `auto_pass=${stats.autoPass} auto_fail=${stats.autoFail} unknown=${stats.unknown} reviewed=${stats.reviewed} ` +
         `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}${stats.layout === "shared" ? " layout=shared" : ""}`,
     );
+    assertSomethingJudged(tally);
     return {
       node_evaluations: result.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" })),
       conversation_metrics: result.conversation_metrics,
@@ -608,23 +610,23 @@ export async function evaluateIngestedSession(
     };
   }
 
+  // No transcript: nothing for the LLM axes to judge — but the transfer
+  // FACT is a tag, not a transcript, and "a transfer executed with zero
+  // conversation" is the worst case the axis exists to record. Keep it.
+  const codeOnlyMetrics = (): SimConversationMetrics => ({ ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) });
   const [conversation_metrics, scored, custom_metrics] = await Promise.all([
-    input.full_transcript.trim()
-      ? evaluateConversationMetrics(input, provider)
-      // No transcript: nothing for the LLM axes to judge — but the transfer
-      // FACT is a tag, not a transcript, and "a transfer executed with zero
-      // conversation" is the worst case the axis exists to record. Keep it.
-      : Promise.resolve({ ...zeroConversationMetrics(), human_transfer: evaluateHumanTransferMetric(input) }),
-    input.nodes.length
-      ? evaluateSimulation(input, { provider })
-      : Promise.resolve({ node_evaluations: [] } as NodeGoalEvaluation),
-    budgeted.length && input.full_transcript.trim()
-      ? runCustomMetricJudges(budgeted, input, refOf, provider)
-      : Promise.resolve([] as CustomMetricVerdict[]),
+    settle(tally, input.full_transcript.trim() ? evaluateConversationMetrics(input, provider, tally) : Promise.resolve(codeOnlyMetrics()), codeOnlyMetrics),
+    input.nodes.length ? evaluateSessionNodes(input, provider, tally) : Promise.resolve([]),
+    settle(
+      tally,
+      budgeted.length && input.full_transcript.trim() ? runCustomMetricJudges(budgeted, input, refOf, provider, tally) : Promise.resolve([] as CustomMetricVerdict[]),
+      () => [],
+    ),
   ]);
+  assertSomethingJudged(tally);
 
-  // evaluateSimulation preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
-  const node_evaluations = scored.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" }));
+  // evaluateSessionNodes preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
+  const node_evaluations = scored.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" }));
 
   return {
     node_evaluations,
