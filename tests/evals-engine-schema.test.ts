@@ -16,6 +16,7 @@ import {
   systemForInstructionAdherence,
   systemForGoal,
 } from "../src/evals-engine/judges/instructions.js";
+import { INSTRUCTION_ADHERENCE_JSON } from "../src/evals-engine/judges/schemas.js";
 
 // E0 — the contract + schemas parse, and prompt composition fills slots + appends the output section.
 
@@ -123,3 +124,12 @@ describe("prompt composition", () => {
     expect(sim).toContain("Success proxy rule");
   });
 });
+
+describe("structured-output schemas", () => {
+  test("a missed step's severity can only be minor or critical", () => {
+    const procedure = (INSTRUCTION_ADHERENCE_JSON.schema as any).properties.procedure_compliance;
+    const severity = procedure.properties.missed_steps.items.properties.severity;
+    expect(severity).toEqual({ type: "string", enum: ["minor", "critical"] });
+  });
+});
+
