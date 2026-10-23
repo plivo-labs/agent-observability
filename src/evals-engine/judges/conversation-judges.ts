@@ -110,11 +110,11 @@ Rules: evaluate every user turn; at most one error per turn; recovered_count mus
 Default bias: CONSERVATIVE — when unsure whether a turn is an STT error or genuine user speech, do NOT flag it; when unsure about recovery, count it as not recovered.`;
 
 export const OUT_DETECTION =
-  '\n\nReturn ONLY a JSON object: {"detected": boolean, "reason": string, "technical_reason": string}. `reason` is a short human explanation; `technical_reason` is the internal rationale.';
+  '\n\nReturn ONLY a JSON object: {"technical_reason": string, "reason": string, "detected": boolean}. `technical_reason` is the internal rationale; `reason` is a short human explanation.';
 export const OUT_SENTIMENT =
-  '\n\nReturn ONLY a JSON object: {"sentiment": "positive"|"neutral"|"negative"|"confused"|"not_applicable", "reason": string, "technical_reason": string}.';
+  '\n\nReturn ONLY a JSON object: {"technical_reason": string, "reason": string, "sentiment": "positive"|"neutral"|"negative"|"confused"|"not_applicable"}.';
 export const OUT_STT =
-  '\n\nReturn ONLY a JSON object: {"error_count": integer (>=0), "recovered_count": integer (0..error_count), "reason": string, "technical_reason": string}.';
+  '\n\nReturn ONLY a JSON object: {"technical_reason": string, "reason": string, "error_count": integer (>=0), "recovered_count": integer (0..error_count)}.';
 
 // ── Zod validation (the strict JSON schemas live in schemas.ts with the node/goal ones) ──
 const DetectionRawZ = z.object({ detected: z.boolean(), reason: z.string(), technical_reason: z.string() });
