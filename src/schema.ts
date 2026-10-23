@@ -83,6 +83,13 @@ export const envSchema = z.object({
   // Global cap on simultaneous LLM judge calls across ALL sessions — the real
   // throughput ceiling. Raise this TOGETHER with the session/kick caps.
   EVAL_MAX_CONCURRENT_JUDGE_CALLS: z.coerce.number().int().positive().default(10),
+  // Match the stale-claim window so a hung session can be retried.
+  EVAL_SESSION_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
+  // Bound claim reads too: they run outside the session deadline. Raised at boot to fit a full sweep of healthy sessions.
+  EVAL_SWEEP_TIMEOUT_MS: z.coerce.number().int().positive().default(7_200_000),
+  // Per statement inside sweeper transactions; backlog scans grow with table size.
+  EVAL_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  EVAL_KICK_TIMEOUT_MS: z.coerce.number().int().positive().default(960_000),
   // Max sessions claimed per poll tick (bounds one sweep's work).
   EVAL_MAX_PER_SWEEP: z.coerce.number().int().positive().default(20),
   // Poll interval (ms) between eval sweeps.
