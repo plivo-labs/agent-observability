@@ -170,11 +170,10 @@ export const envSchema = z.object({
   // bulk of this service's token volume (~71% of a measured run), so once JUDGE_MODEL
   // is on Luna they are also the workload most likely to exhaust its 2,500K and take
   // this path. When they do:
-  //   1. Verdict rows do not record which model judged them, so a run whose judges
-  //      switched mid-way yields a MIXED verdict set that is invisible in the data.
-  //      Judges are calibrated against gpt-5.5 at effort "low", so a Luna verdict and
-  //      a 5.5 verdict are not the same measurement. The real fix is persisting the
-  //      model per verdict (a DB column); nothing does that today.
+  //   1. A run whose judges switched mid-way yields a MIXED verdict set. Each verdict
+  //      records its judge_model, so the mix is visible, but judges are calibrated
+  //      against gpt-5.5 at effort "low", so a Luna verdict and a 5.5 verdict are not
+  //      the same measurement.
   //   2. The savings shrink: a fallen-back judge call is billed at gpt-5.5 rates.
   // Judges also have a recovery path that loses nothing — eval-sweeper.ts treats a 429
   // as transient, keeps the claim, and re-runs the whole session later — so setting
@@ -199,6 +198,10 @@ export const envSchema = z.object({
   // explicit value can be REJECTED by a deployment ("none" is not universally
   // valid across gpt-5.x deployments) and a rejected enum 400s every judge call.
   JUDGE_REASONING_EFFORT: reasoningEffort("none"),
+
+  // Stamped on LLM verdicts as code_rev, so a verdict can be traced to the code
+  // that judged it. Unset ⇒ omitted.
+  GIT_SHA: z.string().optional(),
 
   // Per-session ceiling on custom-judge LLM calls (a node-scope judge costs one
   // call per judged node). EVAL_MAX_JUDGED_NODES bounds the DEFAULT judges'

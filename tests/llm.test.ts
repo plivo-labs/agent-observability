@@ -117,6 +117,16 @@ describe("completeJSON — truncation escalation", () => {
     expect(llm.calls[0].reasoningEffort).toBe("medium");
     expect(llm.calls[1].maxTokens).toBe(3000);
     expect(llm.calls[1].reasoningEffort).toBe("low");
+    expect(res.reasoningEffort).toBe("low");
+  });
+
+  test("reports the effort the provider applied, not the one requested", async () => {
+    const ignoresEffort: LlmProvider = {
+      name: "no-effort",
+      complete: async () => ({ text: ok, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }),
+    };
+    const res = await completeJSON({ schema: Verdict, prompt: "x", provider: ignoresEffort, reasoningEffort: "high" });
+    expect(res.reasoningEffort).toBeUndefined();
   });
 
   test("escalation is bounded to 4x the caller's cap; effort never drops below low", async () => {
@@ -512,6 +522,15 @@ describe("rate-limit model fallback", () => {
     expect(res.attempts).toBe(3);
     // Primary keeps every retry it was going to get; only the final attempt switches.
     expect(models).toEqual(["luna", "luna", FALLBACK]);
+    expect(res.model).toBe(FALLBACK);
+  });
+
+  test("reports the primary model when no switch happened", async () => {
+    const { p } = provider(0, rateLimit);
+    const res = await withFallback("JUDGE_MODEL_FALLBACK", () =>
+      completeJSON({ schema: Ok, prompt: "x", provider: p, role: "judge", model: "luna", maxRetries: 2 }),
+    );
+    expect(res.model).toBe("luna");
   });
 
   test("attributes the call to the model that answered, so cost is priced right", async () => {

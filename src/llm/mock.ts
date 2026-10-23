@@ -36,6 +36,10 @@ export class MockLLM implements LlmProvider {
     if (args.onText && args.stream) {
       for (let i = 0; i < text.length; i += 16) args.onText(text.slice(i, i + 16));
     }
-    return { text, usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } };
+    return {
+      text,
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
+    };
   }
 }

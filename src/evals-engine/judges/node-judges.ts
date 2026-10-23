@@ -1,4 +1,4 @@
-import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import type { LlmProvider } from "../../llm/index.js";
 import { IDLE_TAG } from "../types.js";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
 import {
@@ -13,9 +13,10 @@ import {
   systemForHallucination,
   systemForLoop,
   systemForInstructionAdherence,
+  instructionAdherenceTemplate,
 } from "./instructions.js";
 import { nodePayload, adherenceNodePayload } from "./node-judge-payload.js";
-import { runLlmJudge } from "./run-llm-judge.js";
+import { runLlmJudge, type JudgeResult } from "./run-llm-judge.js";
 import { HALLUCINATION_JSON, NODE_LOOP_JSON, INSTRUCTION_ADHERENCE_JSON } from "./schemas.js";
 
 // AO Eval Engine — the four LLM node judges (per AI node). Each returns its RAW output (Zod-validated);
@@ -26,8 +27,8 @@ export async function runHallucinationJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: HallucinationRaw; usage: LlmUsage }> {
-  const result = await runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider });
+): Promise<JudgeResult<HallucinationRaw>> {
+  const result = await runLlmJudge({ system: systemForHallucination(), input: nodePayload(node, ctx), schema: HallucinationRawZ, jsonSchema: HALLUCINATION_JSON, maxTokens: 1500, provider, correlationId: ctx.correlation_id });
   // Judges failed nodes without naming any claim; a fail must quote the unsupported words.
   if (result.data.hallucinated && result.data.unsupported_claim?.trim() === "") {
     result.data = { ...result.data, hallucinated: false, score: 1,
@@ -69,18 +70,18 @@ export async function runLoopJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: NodeLoopRaw; usage: LlmUsage }> {
+): Promise<JudgeResult<NodeLoopRaw>> {
   const loopNode = withoutIdleTurns(node);
   const stripped = idleFreeTranscript(ctx);
   const loopCtx: ConversationInput = stripped === ctx.full_transcript ? ctx : { ...ctx, full_transcript: stripped };
-  return runLlmJudge({ system: systemForLoop(), input: nodePayload(loopNode, loopCtx, true), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider });
+  return runLlmJudge({ system: systemForLoop(), input: nodePayload(loopNode, loopCtx, true), schema: NodeLoopRawZ, jsonSchema: NODE_LOOP_JSON, maxTokens: 1500, provider, correlationId: ctx.correlation_id });
 }
 
 export async function runInstructionAdherenceJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: InstructionAdherenceRaw; usage: LlmUsage }> {
+): Promise<JudgeResult<InstructionAdherenceRaw>> {
   // No instructions configured → there is nothing to adhere to. Judging
   // against "(none)" makes the model invent an objective and often fail it —
   // a false adherence fail on routing/greeting nodes. Neutral pass, no LLM
@@ -96,12 +97,14 @@ export async function runInstructionAdherenceJudge(
         config_conflicts: [],
       } as InstructionAdherenceRaw,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      calls: [],
     };
   }
   // AO has no per-node scenario "objective", so leave that slot "(none)" (the prompt marks it Optional).
   // Filling it with a copy of the instructions would tell the model objective==instructions — noise.
   return runLlmJudge({
     system: systemForInstructionAdherence(node.node_prompt, "(none)"),
+    template: instructionAdherenceTemplate(),
     // adherenceNodePayload drops available_intents — intent descriptions are the
     // intent judge's job, not procedure/policy (SER-6035 #2). Adherence-only:
     // the other node judges keep the shared payload.
@@ -110,5 +113,6 @@ export async function runInstructionAdherenceJudge(
     jsonSchema: INSTRUCTION_ADHERENCE_JSON,
     maxTokens: 5000,
     provider,
+    correlationId: ctx.correlation_id,
   });
 }

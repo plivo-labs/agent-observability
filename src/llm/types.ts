@@ -32,6 +32,8 @@ export interface LlmUsage {
 export interface RawCompletion {
   text: string;
   usage: LlmUsage;
+  /** The effort the provider put on the wire; absent when it applied none. */
+  reasoningEffort?: WireReasoningEffort;
 }
 
 export interface ProviderCompleteArgs {
@@ -189,6 +191,10 @@ export interface LlmResult<T> {
   raw: string;
   /** 1-based count of provider calls made. */
   attempts: number;
+  /** The model that produced `data` — the fallback when one was spent. */
+  model: string;
+  /** The provider-applied effort of the answering attempt (truncation retries lower it). */
+  reasoningEffort?: WireReasoningEffort;
 }
 
 export class LlmError extends Error {

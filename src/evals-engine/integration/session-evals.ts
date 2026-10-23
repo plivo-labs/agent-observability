@@ -563,10 +563,13 @@ export async function evaluateIngestedSession(
   /** When present, Jev answers gated judges first and LLM judges run where the
    *  gate and decision policy require review. Absent ⇒ LLM-only. */
   jev?: JevClient,
+  /** The session id, for the usage log. */
+  correlationId?: string,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
   if (tags) input.tags = tags;
+  if (correlationId) input.correlation_id = correlationId;
 
   // Per-session custom-judge spend ceiling: a node-scope judge costs one call
   // per judged node. Specs arrive in name order (getAgentCustomJudges), so the
