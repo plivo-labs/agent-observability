@@ -17,8 +17,9 @@ const TRANSCRIPT_DATA_FENCE =
 // Every judge emits `reason` / `technical_reason`; downstream (console, alerts)
 // assumes English. The transcript may be in any language, so pin the OUTPUT
 // language here at the one choke point rather than in each criteria body.
+// agent_quote is exempt: code matches it against the transcript text.
 const OUTPUT_LANGUAGE_DIRECTIVE =
-  "\n\nOUTPUT LANGUAGE: write every reasoning field (reason, technical_reason, and any other free-text field) in English, even when the conversation transcript is in another language. This is a strict requirement.";
+  "\n\nOUTPUT LANGUAGE: write every reasoning field (reason, technical_reason, and any other free-text field) in English, even when the conversation transcript is in another language. This is a strict requirement. The one exception: agent_quote is copied verbatim in the transcript's original language and script, never translated or transliterated.";
 
 export interface RunLlmJudgeArgs<T> {
   /** System prompt: SDK criteria body + our JSON output section (from instructions.ts). */

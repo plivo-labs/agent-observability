@@ -85,7 +85,7 @@ async function run() {
     // The judge returns the RAW 4 sub-metrics; run them through the canonical
     // aggregate rule rather than re-deriving it here, so this harness can't
     // drift from the production adherence_passed logic it exists to guard.
-    const adherence = deriveInstructionAdherence(data);
+    const adherence = deriveInstructionAdherence(data, node);
     check("adherence: wording deviation on a met objective is NOT critical", adherence.adherence_passed,
       `objective_achieved=${adherence.objective_progress?.achieved} procedure_passed=${adherence.procedure_compliance?.passed} policy_passed=${adherence.policy_boundary_compliance?.passed}`);
   }

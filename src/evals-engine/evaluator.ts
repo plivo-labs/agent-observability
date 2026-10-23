@@ -49,7 +49,7 @@ async function evaluateNode(
     node_uuid: node.node_uuid,
     node_name: node.node_name,
     turn_count: node.turn_count,
-    instructions_adherence: deriveInstructionAdherence(adherence.data),
+    instructions_adherence: deriveInstructionAdherence(adherence.data, node),
     intent_identification: intent.data,
     variable_extraction: mapVariableExtraction(variable.data, node.required_variables),
     hallucination: mapHallucination(hallucination.data),
