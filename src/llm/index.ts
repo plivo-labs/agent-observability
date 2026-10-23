@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+import { withAbort } from "../deadline.js";
 import { config } from "../config.js";
 import { costForTokens } from "../evals/pricing.js";
 import { isRateLimitError, isServerError, retryAfterMsFromError } from "./retry-after.js";
@@ -318,11 +320,18 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
     // mistaken value cannot outlast the per-attempt timeout.
     if (attempt > 1) {
       const hinted = retryAfterMsFromError(lastError);
-      await Bun.sleep(hinted ?? Math.min(4000, 400 * 2 ** (attempt - 2)));
+      try {
+        await sleep(hinted ?? Math.min(4000, 400 * 2 ** (attempt - 2)), undefined, { signal: opts.signal });
+      } catch (e) {
+        if (!opts.signal?.aborted) throw e;
+        account(attempt - 1, "aborted");
+        throw new LlmError("completeJSON aborted by caller", opts.signal.reason, usage);
+      }
     }
     let raw: { text: string; usage: LlmUsage };
     try {
-      raw = await provider.complete({
+      const signal = opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+      raw = await withAbort(signal, () => provider.complete({
         system,
         user,
         model: req.model,
@@ -340,9 +349,13 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
         // deterministic consumer bug — instead it's disabled for the attempt.
         onText: guardOnText(opts.makeOnText?.(attempt)),
         // Per-attempt timeout, raced with the caller's abort when one is supplied.
-        signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
-      });
+        signal,
+      }));
     } catch (e) {
+      if (opts.signal?.aborted) {
+        account(attempt, "aborted");
+        throw new LlmError("completeJSON aborted by caller", opts.signal.reason, usage);
+      }
       // Network error / timeout / non-2xx (e.g. a 404 from a misconfigured LLM endpoint).
       // Log it on AO's own stdout so failures are visible here, not only in the caller that
       // re-raises the streamed error. No secret/api-key is in the message; the prompt is omitted.
