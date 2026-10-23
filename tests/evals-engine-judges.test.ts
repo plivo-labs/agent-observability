@@ -12,6 +12,8 @@ const { runVariableExtractionJudge } = await import("../src/evals-engine/judges/
 const { runIntentJudge } = await import("../src/evals-engine/judges/intent-judge.js");
 const { runGoalJudge } = await import("../src/evals-engine/judges/goal-judge.js");
 const { deriveInstructionAdherence } = await import("../src/evals-engine/aggregate.js");
+const { buildExternalEvalRows } = await import("../src/evals-engine/fan-out-rows.js");
+const { buildSessionEvalInput } = await import("../src/evals-engine/integration/session-evals.js");
 type NodeEvalInput = import("../src/evals-engine/types.js").NodeEvalInput;
 type ConversationInput = import("../src/evals-engine/types.js").ConversationInput;
 
@@ -920,6 +922,74 @@ describe("intent judge (LLM, cx-sqs MetricIntent)", () => {
     const { data } = await runIntentJudge(node(), ctx(), llm);
     expect(data.score).toBe(0);
     expect(data.intent_not_found).toBe(true);
+  });
+
+  const intentRow = (ii: unknown) =>
+    buildExternalEvalRows({ node_evaluations: [{ ref: "n1", intent_identification: ii }] } as any).find(
+      (r) => r.judgeName === "intent_identification",
+    )!;
+
+  test("a caller need missing from the intent list, with nothing selected, fans out as unknown", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({ intent_not_found: true, intent_wrongly_identified: false, reason_code: "catalogue_gap", reason: "caller asked for a refund" }),
+    ]);
+    const { data } = await runIntentJudge(node({ chosen_intent: "" }), ctx(), llm);
+    expect((llm.calls[0]!.jsonSchema!.schema as any).required).toContain("reason_code");
+    expect(llm.calls[0]!.system).toContain("catalogue_gap");
+    expect(data.reason_code).toBe("catalogue_gap");
+    const row = intentRow(data);
+    expect(row.verdictText).toBe("unknown");
+    expect(row.passed).toBe(false);
+    expect(row.reasoning).toBe("Caller's need is not in the intent list: caller asked for a refund");
+  });
+
+  test("a selected intent outside the list fails even when the judge labels it a catalogue gap", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({ intent_not_found: true, intent_wrongly_identified: false, reason_code: "catalogue_gap", reason: "refund is not listed" }),
+    ]);
+    const { data } = await runIntentJudge(node({ chosen_intent: "refund" }), ctx(), llm);
+    expect(data.reason_code).toBe("unlisted_intent");
+    const row = intentRow(data);
+    expect(row.verdictText).toBeUndefined();
+    expect(row.passed).toBe(false);
+  });
+
+  test("both flags set: the wrong identification wins and the row fails", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({ intent_not_found: true, intent_wrongly_identified: true, reason_code: "catalogue_gap", reason: "contradictory handoff" }),
+    ]);
+    const { data } = await runIntentJudge(node({ chosen_intent: "" }), ctx(), llm);
+    expect(data).toMatchObject({ intent_not_found: false, intent_wrongly_identified: true, reason_code: "wrong_intent", score: 0 });
+    const row = intentRow(data);
+    expect(row.verdictText).toBeUndefined();
+    expect(row.passed).toBe(false);
+  });
+
+  describe("from ingested events", () => {
+    const config = { nodes: [{ ref: "node-A", name: "Support", intents: [{ name: "order_status", description: "caller asks where an order is" }] }] };
+    const said = (role: string, content: string) => ({ type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role, content } });
+    const gapReply = JSON.stringify({ intent_not_found: true, intent_wrongly_identified: false, reason_code: "catalogue_gap", reason: "refund is not listed" });
+    const judgeIngested = async (events: unknown[]) => {
+      const { input } = buildSessionEvalInput(config, events as any);
+      const n = input.nodes[0]!;
+      expect(n.chosen_intent).toBe("");
+      return intentRow((await runIntentJudge(n, input, new MockLLM([gapReply]))).data);
+    };
+
+    test("a handoff to an intent outside the list fails even with no recorded selection", async () => {
+      const row = await judgeIngested([
+        said("user", "I want a refund"),
+        { type: "conversation_item_added", node_ref: "node-A", item: { type: "agent_handoff", name: "refund" } },
+      ]);
+      expect(row.verdictText).toBeUndefined();
+      expect(row.passed).toBe(false);
+      expect((row.raw as any).reason_code).toBe("unlisted_intent");
+    });
+
+    test("with no selection and no handoff the missing need fans out as unknown", async () => {
+      const row = await judgeIngested([said("user", "I want a refund"), said("assistant", "I can only help with order status.")]);
+      expect(row.verdictText).toBe("unknown");
+    });
   });
 });
 

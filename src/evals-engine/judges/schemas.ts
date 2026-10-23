@@ -52,9 +52,16 @@ export const VARIABLE_EXTRACTION_JSON = strict(
   }),
 );
 
+const INTENT_REASON_CODES = ["no_defect", "wrong_intent", "unlisted_intent", "catalogue_gap"] as const;
 export const INTENT_JSON = strict(
   "eval_intent",
-  obj({ intent_not_found: bool, intent_wrongly_identified: bool, reason: str, technical_reason: str }),
+  obj({
+    intent_not_found: bool,
+    intent_wrongly_identified: bool,
+    reason_code: { type: "string", enum: INTENT_REASON_CODES },
+    reason: str,
+    technical_reason: str,
+  }),
 );
 
 // instruction adherence — the 4 sub-metrics (mirror cx-sqs node/instruction/config.go exactly).

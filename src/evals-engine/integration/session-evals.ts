@@ -310,6 +310,7 @@ export function buildSessionEvalInput(
   // Session-wide tool-call list, in order — the cross-node fallback for
   // variable extraction on revisited nodes.
   const allToolCalls: ToolCall[] = [];
+  const handoffRefs = new Set<string>();
 
   for (const ev of evs) {
     if (ev?.type !== "conversation_item_added" || !ev.item) continue;
@@ -342,6 +343,7 @@ export function buildSessionEvalInput(
       // line and count the handoff name as a tool signal for intent matching.
       const label = [item.name, (item as Record<string, unknown>).new_agent, (item as Record<string, unknown>).target]
         .find((v): v is string => typeof v === "string" && v.length > 0) ?? "";
+      handoffRefs.add(ref);
       if (label) {
         if (!toolCallsByRef.has(ref)) toolCallsByRef.set(ref, []);
         const call: ToolCall = { name: label, args: null, ref, turnIndex: allTurns.length, status: "succeeded" };
@@ -459,6 +461,7 @@ export function buildSessionEvalInput(
       available_intents: Array.isArray(def.intents) ? def.intents.map((i) => ({ intent_name: i?.name, intent_instructions: i?.description })) : [],
       ...(intentTools ? { intent_tools: intentTools } : {}),
       chosen_intent: chosenIntent,
+      ...(handoffRefs.has(ref) ? { handed_off: true } : {}),
       required_variables: requiredVariables,
       ...(Object.keys(rules).length ? { variable_rules: rules } : {}),
       extracted_variables: extractedVariables,
