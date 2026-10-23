@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { formatDate } from '@/lib/observability-format'
+import { countVerdicts, resultTone } from '@/lib/verdict-counts'
 import {
   useSessionEvaluations,
   useSessionOutcome,
@@ -37,20 +38,6 @@ interface SessionEvaluationsDrawerProps {
 function labelFor(value: string | null | undefined, fallback = 'Unknown') {
   if (!value) return fallback
   return value.replace(/[_-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
-
-function resultTone(value: string | null | undefined) {
-  const normalized = value?.toLowerCase()
-  if (normalized === 'pass' || normalized === 'passed' || normalized === 'success') {
-    return 'success'
-  }
-  if (normalized === 'fail' || normalized === 'failed' || normalized === 'failure') {
-    return 'fail'
-  }
-  if (normalized === 'maybe' || normalized === 'warning') {
-    return 'maybe'
-  }
-  return 'neutral'
 }
 
 export function ResultBadge({ value }: { value: string | null | undefined }) {
@@ -226,9 +213,7 @@ export function SessionEvaluationsDrawer({
 
         <div className="flex flex-col gap-4 p-5">
           {(() => {
-            const passCount = evaluations.filter((e) => resultTone(e.verdict) === 'success').length
-            const failCount = evaluations.filter((e) => resultTone(e.verdict) === 'fail').length
-            const maybeCount = evaluations.filter((e) => resultTone(e.verdict) === 'maybe').length
+            const counts = countVerdicts(evaluations)
             return (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <SummaryTile
@@ -252,14 +237,15 @@ export function SessionEvaluationsDrawer({
                   label="Verdicts"
                   value={
                     <span className="tabular-nums">
-                      {passCount + failCount + maybeCount}
+                      {counts.total}
                     </span>
                   }
                 >
                   <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                    <span>pass {passCount}</span>
-                    <span>fail {failCount}</span>
-                    <span>maybe {maybeCount}</span>
+                    <span>pass {counts.pass}</span>
+                    <span>fail {counts.fail}</span>
+                    <span>maybe {counts.maybe}</span>
+                    <span>unknown {counts.unknown}</span>
                   </div>
                 </SummaryTile>
               </div>

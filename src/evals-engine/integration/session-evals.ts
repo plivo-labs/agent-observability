@@ -259,7 +259,7 @@ export function buildSessionEvalInput(
   // transcript is ref-less (single-node sender). In a mixed session a missing
   // ref means the sender failed to attribute that turn (e.g. a config capture
   // race) — bucketing it under node 0 would judge it against the wrong node,
-  // so it goes to a synthetic unknown bucket (empty config -> neutral skips)
+  // so it goes to a synthetic unknown bucket (no config -> not judged)
   // while still appearing in the full transcript.
   const anyEventHasRef = evs.some((e) => typeof e?.node_ref === "string" && e.node_ref);
   const fallbackRef = anyEventHasRef
@@ -431,10 +431,11 @@ export function buildSessionEvalInput(
     if (turns.length === 0) continue;
     // A ref the config doesn't know (config snapshot gap, or a sender whose
     // transcript and config refs come from different id spaces) gets an EMPTY
-    // def — the judges' neutral-skip paths then apply. Borrowing another
-    // node's config here would produce confidently-wrong verdicts attributed
-    // to a node that was never configured that way.
-    const def: AgentConfigNode = byRef.get(ref) ?? {};
+    // def marked config_missing — the config axes are then not judged.
+    // Borrowing another node's config here would produce confidently-wrong
+    // verdicts attributed to a node that was never configured that way.
+    const known = byRef.get(ref);
+    const def: AgentConfigNode = known ?? {};
     const requiredVariables = (def.variables ?? [])
       .map((v) => v?.name)
       .filter((n): n is string => typeof n === "string" && n.length > 0);
@@ -465,6 +466,7 @@ export function buildSessionEvalInput(
       variable_sources: variableSources,
       turns,
       turn_count: turns.length,
+      ...(known ? {} : { config_missing: true }),
     });
     // Synthetic grouping keys are internal — echo the sender's original
     // (empty) ref, never the NUL-prefixed key.
