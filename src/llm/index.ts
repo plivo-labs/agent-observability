@@ -40,7 +40,7 @@ let warnedMissingRoleModel = false;
 
 // Lazily import the provider SDK only for the configured provider, so unit
 // tests (which inject MockLLM) never load @anthropic-ai/sdk or openai.
-async function resolveProvider(): Promise<LlmProvider> {
+export async function resolveProvider(): Promise<LlmProvider> {
   if (config.LLM_PROVIDER === "openai") {
     return (await import("./providers/openai.js")).openaiProvider;
   }
