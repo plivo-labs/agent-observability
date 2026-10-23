@@ -210,14 +210,14 @@ Chosen intent:
 
 Evaluation order (stop at the first that applies):
 1. If the chosen intent is a system intent (in the list above) → intent_not_found=false AND intent_wrongly_identified=false. Stop.
-2. If there is no user input, or the chosen intent is null/empty/"(none)" → the framework did not RECORD one; that is NOT a wrong identification. Judge from the conversation and Tool_Call/handoff evidence: set intent_wrongly_identified=true ONLY when the evidence shows an intent that contradicts the user's actual request, and intent_not_found=true ONLY when the user expressed a clear need absent from the available list. Otherwise both false. Stop.
-3. If the chosen intent is not in the available list → intent_not_found=true, intent_wrongly_identified=false. Stop.
+2. If there is no user input, or the chosen intent is null/empty/"(none)" → the framework did not RECORD one; that is NOT a wrong identification. Judge from the conversation and Tool_Call/handoff evidence: set intent_wrongly_identified=true ONLY when the evidence shows an intent that contradicts the user's actual request, and intent_not_found=true ONLY when the user expressed a clear need absent from the available list, with reason_code unlisted_intent when the evidence shows the agent selected or handed off to an intent outside the list, otherwise catalogue_gap. Otherwise both false. Stop.
+3. If the chosen intent is not in the available list → intent_not_found=true, intent_wrongly_identified=false, reason_code unlisted_intent. Stop.
 4. Context establishment: if the intent presupposes that the agent asked a specific question or made a specific statement, verify that prerequisite was ACTUALLY delivered as a complete, comprehensible message in the transcript (or conversation history). An incomplete/cut-off message does NOT count — do not infer it from the node name or instructions. If the prerequisite was required but never delivered → intent_wrongly_identified=true.
 5. Semantic match: does the user's message satisfy the intent's conditions? Acknowledgment = appropriate response — when an intent mentions "acknowledges"/"responds", any appropriate reply to the agent's question IS an acknowledgment regardless of the exact words. Examples after "OR" in an intent's instructions are illustrative, not required wording. If satisfied → both false; if not → intent_wrongly_identified=true.
 
-intent_not_found and intent_wrongly_identified are mutually exclusive.
+intent_not_found and intent_wrongly_identified are mutually exclusive. reason_code ∈ {no_defect, wrong_intent, unlisted_intent, catalogue_gap}: wrong_intent whenever intent_wrongly_identified=true, no_defect when both are false.
 
-Pass when the chosen intent is supported and correct. Fail when not found or wrongly identified. Maybe when the user input is ambiguous.
+Pass when the chosen intent is supported and correct. Fail when wrongly identified or when an intent outside the list was selected. A catalogue_gap is not a fail: the list lacks the caller's need, which is not the agent's error. Maybe when the user input is ambiguous.
 
 When ambiguous (and context was established in step 4), favor the framework's chosen intent if the user's response could reasonably satisfy its conditions.`;
 
@@ -305,8 +305,8 @@ export const OUT_INSTRUCTION = `Return ONLY a JSON object with the four sub-metr
   "config_conflicts": [{"forbidding_line": string, "permitting_line": string, "behaviour": string}] (empty when no instruction conflict touches what the agent did)
 }`;
 
-export const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the caller derives it):
-{"intent_not_found": boolean, "intent_wrongly_identified": boolean, "reason": string, "technical_reason": string}`;
+export const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the caller derives it). Use ONLY the reason_code values enumerated in the rubric above:
+{"intent_not_found": boolean, "intent_wrongly_identified": boolean, "reason_code": string, "reason": string, "technical_reason": string}`;
 
 const OUT_GOAL = `Return ONLY a JSON object with one entry per goal (use the exact goal_name given):
 {"goals": [{"goal_name": string, "achieved": boolean, "reason": string, "technical_reason": string}]}`;

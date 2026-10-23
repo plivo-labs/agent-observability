@@ -51,6 +51,9 @@ export interface NodeEvalInput {
   available_intents: unknown[];
   /** Intent the agent actually chose at this node (last detected intent). */
   chosen_intent: string;
+  /** An agent handoff ran at this node. It is routing evidence even when it
+   *  matched no declared intent and chosen_intent stayed empty. */
+  handed_off?: boolean;
   /** Declared intent name → the tool that selects it (config `intents[].tool`). */
   intent_tools?: Record<string, string>;
   /** Variable names the node is configured to extract (`config.extract_variables[].variable_name`). */
@@ -222,6 +225,8 @@ export interface IntentIdentificationMetrics extends JudgeProvenance {
   intent_not_found: boolean;
   intent_wrongly_identified: boolean;
   score: number;
+  /** Absent on Jev, skipped and older verdicts. */
+  reason_code?: string;
 }
 export interface VariableExtractionMetrics extends JudgeProvenance {
   extraction_successful: boolean;
