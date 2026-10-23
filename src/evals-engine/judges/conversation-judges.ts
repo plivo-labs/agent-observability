@@ -20,8 +20,9 @@
 //     can't false-positive on a text transcript.
 //   - MUTUAL EXCLUSIVITY is enforced on the EMITTED booleans (not just the derived
 //     status): voicemail/screening suppress bot + low-engagement; otherwise the
-//     priority bot > wrong_number > do_not_disturb > low_engagement resolves
-//     conflicts. This stops two outcomes co-firing into alerts.
+//     priority bot > {wrong_number, do_not_disturb} > low_engagement resolves
+//     conflicts. This stops two outcomes co-firing into alerts; only the tied
+//     pair can fire together.
 //   - conversation_status is derived in code from the finalized booleans.
 
 import { z } from "zod";
@@ -463,9 +464,9 @@ export function resolveOutcomes(raws: ConversationDetectionRaws, ctx: Conversati
     lowFired = false;
   } else if (botFired) {
     wrongFired = false; dndFired = false; lowFired = false;
-  } else if (wrongFired) {
-    dndFired = false; lowFired = false;
-  } else if (dndFired) {
+  } else if (wrongFired || dndFired) {
+    // Not ranked against each other: a wrong-number caller can still opt out,
+    // and that opt-out is the only no-contact record the call produces.
     lowFired = false;
   }
 
