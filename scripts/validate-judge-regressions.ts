@@ -25,6 +25,7 @@ const { config } = await import("../src/config.js");
 if (!config.JUDGE_MODEL || config.JUDGE_MODEL_FALLBACK) throw new Error("Pin JUDGE_MODEL and unset JUDGE_MODEL_FALLBACK");
 const { runCustomMetricJudge, CUSTOM_METRIC_OUT } = await import("../src/evals-engine/judges/custom-metric.js");
 const { runVariableExtractionJudge } = await import("../src/evals-engine/judges/variable-extraction.js");
+const { runHallucinationJudge } = await import("../src/evals-engine/judges/node-judges.js");
 const results: Array<{ id: string; trial: number; expected: string; actual: string; reason: string }> = [];
 const report = { model: config.JUDGE_MODEL, provider: config.LLM_PROVIDER, startedAt: new Date().toISOString(), results };
 for (let trial = 1; trial <= repeats; trial++) {
@@ -39,6 +40,10 @@ for (let trial = 1; trial <= repeats; trial++) {
         }, c.input, (ref) => ref);
         actual = result.available ? result.verdict : "unavailable";
         reason = result.reason || result.technical_reason;
+      } else if (c.kind === "hallucination") {
+        const { data } = await runHallucinationJudge(c.node, c.input);
+        actual = data.unverifiable ? "unknown" : data.hallucinated ? "fail" : "pass";
+        reason = data.reason;
       } else {
         const { data } = await runVariableExtractionJudge(c.node, c.input);
         actual = data.extraction_successful ? "pass" : "fail";
