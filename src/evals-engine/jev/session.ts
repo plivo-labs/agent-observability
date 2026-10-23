@@ -280,7 +280,7 @@ export async function evaluateSessionJevFirst(args: {
           const g = decidedByJev("instructions_adherence");
           if (g) return { ...jevAdherence(g, await reasonsPromise), ...provenance("instructions_adherence") };
           const { data } = await runInstructionAdherenceJudge(node, input, provider);
-          return { ...deriveInstructionAdherence(data), ...provenance("instructions_adherence") };
+          return { ...deriveInstructionAdherence(data, node), ...provenance("instructions_adherence") };
         })(),
         (async () => {
           const g = decidedByJev("hallucination");
