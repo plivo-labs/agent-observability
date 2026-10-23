@@ -58,7 +58,9 @@ export const INTENT_JSON = strict(
 );
 
 // instruction adherence — the 4 sub-metrics (mirror cx-sqs node/instruction/config.go exactly).
-const MISSED_STEP = obj({ step: str, severity: str, reason_code: str, details: str });
+// Only "critical" fails a step, so a third value such as "major" would pass silently.
+const SEVERITY = { type: "string", enum: ["minor", "critical"] } as const;
+const MISSED_STEP = obj({ step: str, severity: SEVERITY, reason_code: str, details: str });
 const ISSUE = obj({ category: str, reason_code: str, details: str });
 export const INSTRUCTION_ADHERENCE_JSON = strict(
   "eval_instruction",
