@@ -237,6 +237,10 @@ export interface VariableExtractionMetrics extends JudgeProvenance {
 }
 export interface HallucinationMetrics extends JudgeProvenance {
   hallucinated: boolean;
+  /** The deciding evidence is absent (e.g. an empty tool result): neither a pass nor a fail. */
+  unverifiable?: boolean;
+  /** The agent's words behind a fail or an unverifiable verdict, verbatim. */
+  unsupported_claim?: string;
   score: number;
   reason: string;
   technical_reason: string;

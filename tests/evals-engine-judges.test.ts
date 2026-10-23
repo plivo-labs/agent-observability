@@ -40,12 +40,20 @@ const ctx = (over: Partial<ConversationInput> = {}): ConversationInput => ({
 });
 
 describe("LLM node judges (MockLLM)", () => {
-  for (const [claim, expected] of [["", false], ["Your refund was issued today.", true], [undefined, true]] as const) {
-    test(`hallucination: a fail with unsupported_claim=${JSON.stringify(claim)} is ${expected ? "kept" : "dropped"}`, async () => {
-      const llm = new MockLLM([JSON.stringify({ hallucinated: true, ...(claim === undefined ? {} : { unsupported_claim: claim }), score: 0.2, reason: "r", technical_reason: "t" })]);
+  // [claim, judge's unverifiable, expected verdict]
+  for (const [claim, unverifiable, expected] of [
+    ["", false, "unknown"],
+    ["  ", false, "unknown"],
+    ["Your refund was issued today.", false, "fail"],
+    [undefined, false, "unknown"],
+    ["Your refund was issued today.", true, "fail"],
+  ] as const) {
+    test(`hallucination: a flag with unsupported_claim=${JSON.stringify(claim)}, unverifiable=${unverifiable} is ${expected}`, async () => {
+      const llm = new MockLLM([JSON.stringify({ hallucinated: true, unverifiable, ...(claim === undefined ? {} : { unsupported_claim: claim }), score: 0.2, reason: "r", technical_reason: "t" })]);
       const { data } = await runHallucinationJudge(node(), ctx(), llm);
-      expect(data.hallucinated).toBe(expected);
-      if (!expected) expect([data.score, data.reason]).toEqual([1, "No unsupported spoken claim was identified."]);
+      expect({ hallucinated: data.hallucinated, unverifiable: data.unverifiable ?? false })
+        .toEqual(expected === "fail" ? { hallucinated: true, unverifiable: false } : { hallucinated: false, unverifiable: true });
+      if (expected === "unknown") expect(data.technical_reason).toStartWith("unverified: the judge flagged a hallucination without naming the claim.");
     });
   }
 

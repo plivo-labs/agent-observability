@@ -5,9 +5,9 @@ export type ExternalEvalRow = {
   judgeName: string;
   tag: string | null;
   passed: boolean;
-  /** Overrides the pass/fail verdict text — custom metrics write 'unknown'
-   *  for calls that never reached the judged situation, which must count as
-   *  neither a pass nor a fail. */
+  /** Overrides the pass/fail verdict text — 'unknown' (a custom metric whose
+   *  situation never arose, a hallucination claim the evidence cannot settle)
+   *  must count as neither a pass nor a fail. */
   verdictText?: string;
   reasoning: string;
   raw: Record<string, unknown>;
@@ -48,7 +48,10 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
     const ve = ne.variable_extraction;
     if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve as any });
     const ha = ne.hallucination;
-    if (ha) rows.push({ judgeName: "hallucination", tag, passed: !ha.hallucinated, reasoning: ha.reason, raw: ha as any });
+    if (ha) rows.push({
+      judgeName: "hallucination", tag, passed: !ha.hallucinated && !ha.unverifiable,
+      ...(ha.unverifiable ? { verdictText: "unknown" } : {}), reasoning: ha.reason, raw: ha as any,
+    });
     const lo = ne.node_loop;
     if (lo) rows.push({ judgeName: "node_loop", tag, passed: !lo.loop_detected, reasoning: lo.reason, raw: lo as any });
   }
