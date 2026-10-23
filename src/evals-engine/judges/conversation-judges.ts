@@ -27,7 +27,7 @@
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, SimConversationMetrics } from "../types.js";
-import { classifyErrorDurability } from "../../error-durability.js";
+import { judgeErrorFields, newJudgeTally, settle, type JudgeTally } from "../judge-error.js";
 import { promptBody, promptOutput } from "./judge-prompts.js";
 import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
 import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON } from "./schemas.js";
@@ -136,13 +136,13 @@ function payload(ctx: ConversationInput): Record<string, unknown> {
   return { flow_name: ctx.flow_name, conversation_history: ctx.speech_transcript || ctx.full_transcript };
 }
 
-export type DetectionResult = { detected: boolean; reason: string; technical_reason: string; available: boolean };
+export type DetectionResult = { detected: boolean; reason: string; technical_reason: string; available: boolean; judge_error?: string };
 
 /** A voice-only detection that did not run on this (non-voice) channel. Marked
  *  unavailable so fan-out skips it — never emitted as a real pass/fail. */
 export const skippedDetection = (why: string): DetectionResult => ({ detected: false, reason: "", technical_reason: why, available: false });
 
-export type SttResult = { error_count: number; recovered_count: number; available: boolean };
+export type SttResult = { error_count: number; recovered_count: number; available: boolean; judge_error?: string };
 
 /** STT metrics for a run where the STT judge did not execute (non-voice channel
  *  or a failed judge call). `available:false` so fan-out skips it — same pattern
@@ -152,16 +152,17 @@ export const skippedStt = (): SttResult => ({ error_count: 0, recovered_count: 0
 /** One skeleton for every conversation judge: run the LLM call over the
  *  transcript payload, transform the validated output, and on a DETERMINISTIC
  *  failure (schema/content policy — identical on retry) return the judge's
- *  unavailable-shaped fallback. The module invariant ("a flaky supplementary
- *  signal must not blank the whole evaluation") lives here, once — not
- *  copy-pasted per judge.
+ *  unavailable-shaped fallback, marked with the judge error so it fans out as
+ *  unknown rather than vanishing like a skip. The module invariant ("a flaky
+ *  supplementary signal must not blank the whole evaluation") lives here,
+ *  once — not copy-pasted per judge.
  *
  *  TRANSIENT failures (timeout/429/5xx/network) RETHROW instead: swallowing
  *  them would permanently drop that verdict while the session still completes
  *  'done' — a provider burst mid-judging must retry the session (the thrown
  *  error reaches judgeClaimed, which keeps the claim running for stale
  *  adoption), matching the node judges' behavior. */
-async function safeJudge<T, R>(
+function safeJudge<T, R>(
   call: {
     system: string;
     ctx: ConversationInput;
@@ -172,45 +173,47 @@ async function safeJudge<T, R>(
   },
   transform: (data: T) => R,
   fallback: R,
+  tally: JudgeTally,
 ): Promise<R> {
-  try {
-    const { data } = await runLlmJudge({
-      system: call.system,
-      input: payload(call.ctx),
-      schema: call.schema,
-      jsonSchema: call.jsonSchema,
-      maxTokens: call.maxTokens,
-      provider: call.provider,
-    });
-    return transform(data);
-  } catch (e) {
-    if (classifyErrorDurability(e) === "transient") throw e;
-    return fallback;
-  }
+  const judged = runLlmJudge({
+    system: call.system,
+    input: payload(call.ctx),
+    schema: call.schema,
+    jsonSchema: call.jsonSchema,
+    maxTokens: call.maxTokens,
+    provider: call.provider,
+  }).then(({ data }) => {
+    const result = transform(data);
+    tally.modelVerdicts++;
+    return result;
+  });
+  return settle(tally, judged, (e) => ({ ...fallback, ...judgeErrorFields(e) }));
 }
 
 /** Run one boolean detection judge; default to `detected:false` on any failure. */
-export function runDetection(judge: string, criteria: string, ctx: ConversationInput, provider?: LlmProvider): Promise<DetectionResult> {
+export function runDetection(judge: string, criteria: string, ctx: ConversationInput, provider?: LlmProvider, tally: JudgeTally = newJudgeTally()): Promise<DetectionResult> {
   return safeJudge(
     { system: promptBody(judge, criteria) + promptOutput(judge, OUT_DETECTION), ctx, schema: DetectionRawZ, jsonSchema: DETECTION_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): DetectionResult => ({ ...data, available: true }),
     { detected: false, reason: "", technical_reason: "conversation judge unavailable", available: false },
+    tally,
   );
 }
 
-export type SentimentResult = { sentiment: string; reason: string; technical_reason: string; available: boolean };
+export type SentimentResult = { sentiment: string; reason: string; technical_reason: string; available: boolean; judge_error?: string };
 
-export function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
+export function runSentiment(ctx: ConversationInput, provider?: LlmProvider, tally: JudgeTally = newJudgeTally()): Promise<SentimentResult> {
   return safeJudge(
     { system: promptBody("user_sentiment", USER_SENTIMENT) + promptOutput("user_sentiment", OUT_SENTIMENT), ctx, schema: SentimentRawZ, jsonSchema: SENTIMENT_JSON, maxTokens: DETECTION_MAX_TOKENS, provider },
     (data): SentimentResult => ({ ...data, available: true }),
     { sentiment: "", reason: "", technical_reason: "sentiment judge unavailable", available: false },
+    tally,
   );
 }
 
 /** STT quality over the transcript. Voice-only; caller passes a skipped result on
  *  text channels. Fault-tolerant: any failure → unavailable (never a fabricated 0). */
-export function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<SttResult> {
+export function runStt(ctx: ConversationInput, provider?: LlmProvider, tally: JudgeTally = newJudgeTally()): Promise<SttResult> {
   return safeJudge(
     { system: promptBody("stt", STT) + promptOutput("stt", OUT_STT), ctx, schema: SttRawZ, jsonSchema: STT_JSON, maxTokens: STT_MAX_TOKENS, provider },
     (data): SttResult => {
@@ -220,6 +223,7 @@ export function runStt(ctx: ConversationInput, provider?: LlmProvider): Promise<
       return { error_count: errors, recovered_count: recovered, available: true };
     },
     skippedStt(),
+    tally,
   );
 }
 
@@ -248,6 +252,7 @@ const det = (v: DetectionResult) => ({
   reason: v.reason,
   technical_reason: v.technical_reason,
   available: v.available !== false,
+  ...(v.judge_error ? { judge_error: v.judge_error } : {}),
 });
 
 /** Build a code-derived detection in the same raw shape as an LLM verdict so
@@ -509,19 +514,20 @@ export function resolveOutcomes(raws: ConversationDetectionRaws, ctx: Conversati
 export async function evaluateConversationMetrics(
   ctx: ConversationInput,
   provider?: LlmProvider,
+  tally: JudgeTally = newJudgeTally(),
 ): Promise<SimConversationMetrics> {
   const voice = isVoiceChannel(ctx.transport);
   const voiceOnlySkip = skippedDetection("not applicable on non-voice channel");
 
   const [voicemail, bot, screening, lowEng, wrong, dnd, sentiment, stt] = await Promise.all([
-    voice ? runDetection("voicemail_detection", VOICEMAIL, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection("bot_detection", BOT, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    voice ? runDetection("call_screening", CALL_SCREENING, ctx, provider) : Promise.resolve(voiceOnlySkip),
-    runDetection("low_engagement", LOW_ENGAGEMENT, ctx, provider),
-    runDetection("wrong_number", WRONG_NUMBER, ctx, provider),
-    runDetection("do_not_disturb", DO_NOT_DISTURB, ctx, provider),
-    runSentiment(ctx, provider),
-    voice ? runStt(ctx, provider) : Promise.resolve(skippedStt()),
+    voice ? runDetection("voicemail_detection", VOICEMAIL, ctx, provider, tally) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection("bot_detection", BOT, ctx, provider, tally) : Promise.resolve(voiceOnlySkip),
+    voice ? runDetection("call_screening", CALL_SCREENING, ctx, provider, tally) : Promise.resolve(voiceOnlySkip),
+    runDetection("low_engagement", LOW_ENGAGEMENT, ctx, provider, tally),
+    runDetection("wrong_number", WRONG_NUMBER, ctx, provider, tally),
+    runDetection("do_not_disturb", DO_NOT_DISTURB, ctx, provider, tally),
+    runSentiment(ctx, provider, tally),
+    voice ? runStt(ctx, provider, tally) : Promise.resolve(skippedStt()),
   ]);
 
   return assembleConversationMetrics({
@@ -580,11 +586,12 @@ export function assembleConversationMetrics(args: {
       technical_reason: sentiment.technical_reason,
       available: sentiment.available,
       passed: sentiment.available ? sentimentPassed(sentiment.sentiment) : undefined,
+      ...(sentiment.judge_error ? { judge_error: sentiment.judge_error } : {}),
     },
     // Platform-neutral: the ingest path makes no runtime claim (was hardcoded
     // true here and overridden to false by the only caller).
     is_livekit: false,
     is_agent_runner: false,
-    stt: { error_count: stt.error_count, recovered_count: stt.recovered_count, available: stt.available },
+    stt: { error_count: stt.error_count, recovered_count: stt.recovered_count, available: stt.available, ...(stt.judge_error ? { judge_error: stt.judge_error } : {}) },
   };
 }

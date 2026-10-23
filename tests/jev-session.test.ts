@@ -257,6 +257,27 @@ describe("failures never escape as unhandled rejections", () => {
   });
 });
 
+describe("a failing judge costs only its own axis", () => {
+  test("a reviewed node judge that keeps failing leaves its axis unknown; Jev's and the other judges' verdicts stand", async () => {
+    const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.includes("node_loop") ? 0.97 : 0.01]))]);
+    const provider = new MockLLM([(args: any) => args.jsonSchema?.name === "eval_loop" ? "not json" : defaultJudgeResponder(args.system)!]);
+    const { v } = await run(jev, provider);
+    const ne = v.node_evaluations[0]!;
+    expect(ne.node_loop).toMatchObject({ available: false, judge_error: "invalid_json" });
+    expect(ne.hallucination.hallucinated).toBe(false);
+    expect(ne.instructions_adherence.adherence_passed).toBe(true);
+    expect(v.conversation_metrics.voicemail_detected.backend).toBe("jev");
+  });
+
+  test("a silent call in which neither Jev nor any LLM judge answers is still an error", async () => {
+    const silent: StoredEvent[] = [events[0]!];
+    const provider = new MockLLM(["not json"]);
+    await expect(
+      evaluateIngestedSession(config, silent, provider, "livekit", undefined, undefined, [], new MockJev([new Error("jev unreachable")]) as any),
+    ).rejects.toThrow(/invalid JSON/);
+  });
+});
+
 describe("a text transport never gets a voice-only verdict", () => {
   test("voicemail, bot and screening are unavailable and unasked", async () => {
     const jev = new MockJev([{}], 0.01);
@@ -310,5 +331,6 @@ test("unavailable independent review retains candidates without emitting a pass"
   expect(metric.available).toBe(false);
   expect(metric.per_node).toBeUndefined();
   expect(metric.jev_node_candidates?.[0]?.jev?.candidate).toBe("fail");
-  expect(buildExternalEvalRows(v).some(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection")).toBe(false);
+  const rows = buildExternalEvalRows(v).filter(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection");
+  expect(rows.map(r => r.verdictText)).toEqual(["unknown", "unknown"]);
 });
