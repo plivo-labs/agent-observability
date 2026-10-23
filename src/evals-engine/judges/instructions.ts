@@ -352,6 +352,11 @@ export const systemForIntent = (availableIntents: string, chosenIntent: string):
     INTENT_CONTRACT,
   );
 
+// Each slot filled with its own placeholder: the unfilled composition.
+export const instructionAdherenceTemplate = (): string => systemForInstructionAdherence("{instructions}", "{objective}");
+export const intentTemplate = (): string => systemForIntent("{available_intents}", "{chosen_intent}");
+export const variableExtractionTemplate = (): string => systemForVariableExtraction("{expected_variables}", "{actual_variables}");
+
 export const systemForGoal = (goals: string, flowHistory: string, isSimulation = false): string =>
   compose(
     fill(GOAL_EVALUATION, { goals, flow_history: flowHistory, sim_rules: isSimulation ? GOAL_SIM_RULES : "" }),

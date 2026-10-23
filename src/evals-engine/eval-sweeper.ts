@@ -357,6 +357,7 @@ async function judgeClaimed(claim: EvalClaim, opts?: JudgeOpts): Promise<boolean
       source.config as AgentConfig, events, opts?.provider, source.transport ?? undefined, built, source.tags, customJudges,
       // Memoized per process; null (JEV_MODE=off) means LLM-only.
       (opts && "jev" in opts ? opts.jev : createJevClientFromConfig()) ?? undefined,
+      sanitizeForLog(sessionId),
     );
     // Judging is done — no more provider spend to protect. Stop the heartbeat
     // and drain any in-flight beat so the fan-out + completion below read a

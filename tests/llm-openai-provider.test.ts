@@ -88,6 +88,13 @@ describe("openaiProvider — Responses API mode", () => {
     expect(body.reasoning).toEqual({ effort: "none" });
   });
 
+  test("reports the effort it sent, and none when unset", async () => {
+    stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
+    expect((await openaiProvider.complete({ ...baseArgs, reasoningEffort: "high" })).reasoningEffort).toBe("high");
+    stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
+    expect("reasoningEffort" in (await openaiProvider.complete(baseArgs))).toBe(false);
+  });
+
   test("omits the reasoning key entirely when unset (not reasoning:{} or reasoning:undefined)", async () => {
     stubFetch(new Response(JSON.stringify({ status: "completed", output_text: "{}" }), { status: 200 }));
     await openaiProvider.complete(baseArgs);
@@ -215,11 +222,12 @@ describe("openaiProvider — Chat Completions mode", () => {
     // Sending the nested form here would be silently ignored by the gateway, which is
     // indistinguishable from the pre-fix behavior of dropping it entirely.
     stubChatFetch();
-    await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA, reasoningEffort: "low" });
+    const res = await openaiProvider.complete({ ...chatArgs, jsonSchema: SCHEMA, reasoningEffort: "low" });
 
     const body = JSON.parse(String(lastReq?.init.body));
     expect(body.reasoning_effort).toBe("low");
     expect(body.reasoning).toBeUndefined();
+    expect(res.reasoningEffort).toBe("low");
   });
 
   test('forwards the truthy-but-falsy-looking "none" rather than treating it as unset', async () => {

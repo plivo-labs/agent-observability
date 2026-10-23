@@ -118,7 +118,9 @@ export function summarizeValidation(dataset: ValidationDataset, run: ValidationR
     unlabelledRows += result.rows.filter(r => !labelledKeys.has(rowKey(r.judgeName, r.tag))).length;
     for (const row of result.rows) {
       const j = row.raw.jev as Record<string, unknown> | undefined;
-      if (j) versions.add(JSON.stringify({ model: row.raw.jev_model, evidence: j.evidence_version, questions: j.question_version, policy: j.policy_version, gate: j.gate, layout: j.layout, judge: row.judgeName }));
+      const calls = (row.raw.judge_calls ?? (row.raw.judge_model ? [{ model: row.raw.judge_model }] : [])) as Array<{ model: string }>;
+      const judgeModels = calls.length ? [...new Set(calls.map(c => c.model))] : undefined;
+      if (j || judgeModels) versions.add(JSON.stringify({ model: row.raw.jev_model, evidence: j?.evidence_version, questions: j?.question_version, policy: j?.policy_version, gate: j?.gate, layout: j?.layout, judge: row.judgeName, judgeModels, promptVersion: row.raw.prompt_version }));
     }
     for (const label of c.expected) {
       const row = rows.get(rowKey(label.judgeName, label.tag));

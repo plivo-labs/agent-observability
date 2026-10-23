@@ -26,10 +26,10 @@
 
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
-import type { ConversationInput, SimConversationMetrics } from "../types.js";
+import type { ConversationInput, JudgeProvenance, SimConversationMetrics } from "../types.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 import { promptBody, promptOutput } from "./judge-prompts.js";
-import { runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
+import { llmProvenance, runLlmJudge, type RunLlmJudgeArgs } from "./run-llm-judge.js";
 import { DETECTION_JSON, SENTIMENT_JSON, SENTIMENT_VALUES, STT_JSON } from "./schemas.js";
 
 // ── criteria bodies ──────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ function payload(ctx: ConversationInput): Record<string, unknown> {
   return { flow_name: ctx.flow_name, conversation_history: ctx.speech_transcript || ctx.full_transcript };
 }
 
-export type DetectionResult = { detected: boolean; reason: string; technical_reason: string; available: boolean };
+export type DetectionResult = JudgeProvenance & { detected: boolean; reason: string; technical_reason: string; available: boolean };
 
 /** A voice-only detection that did not run on this (non-voice) channel. Marked
  *  unavailable so fan-out skips it — never emitted as a real pass/fail. */
@@ -174,15 +174,16 @@ async function safeJudge<T, R>(
   fallback: R,
 ): Promise<R> {
   try {
-    const { data } = await runLlmJudge({
+    const { data, calls } = await runLlmJudge({
       system: call.system,
       input: payload(call.ctx),
       schema: call.schema,
       jsonSchema: call.jsonSchema,
       maxTokens: call.maxTokens,
       provider: call.provider,
+      correlationId: call.ctx.correlation_id,
     });
-    return transform(data);
+    return { ...transform(data), ...llmProvenance(calls) };
   } catch (e) {
     if (classifyErrorDurability(e) === "transient") throw e;
     return fallback;
@@ -198,7 +199,7 @@ export function runDetection(judge: string, criteria: string, ctx: ConversationI
   );
 }
 
-export type SentimentResult = { sentiment: string; reason: string; technical_reason: string; available: boolean };
+export type SentimentResult = JudgeProvenance & { sentiment: string; reason: string; technical_reason: string; available: boolean };
 
 export function runSentiment(ctx: ConversationInput, provider?: LlmProvider): Promise<SentimentResult> {
   return safeJudge(
@@ -242,12 +243,13 @@ export function isVoiceChannel(transport?: string): boolean {
   return !transport || !TEXT_CHANNEL_RE.test(transport);
 }
 
-const det = (v: DetectionResult) => ({
-  detected: v.detected,
-  detected_value: v.detected ? 1 : 0,
-  reason: v.reason,
-  technical_reason: v.technical_reason,
-  available: v.available !== false,
+const det = ({ detected, reason, technical_reason, available, ...provenance }: DetectionResult) => ({
+  detected,
+  detected_value: detected ? 1 : 0,
+  reason,
+  technical_reason,
+  available: available !== false,
+  ...provenance,
 });
 
 /** Build a code-derived detection in the same raw shape as an LLM verdict so
@@ -264,7 +266,7 @@ const derivedDetection = (reason: string, technicalReason: string): DetectionRes
  *  clean "not this outcome" rather than co-firing with the winner. */
 const suppressed = (raw: DetectionResult) =>
   raw.detected
-    ? { detected: false, detected_value: 0, reason: "", technical_reason: "superseded by a higher-priority conversation outcome", available: true }
+    ? { ...det(raw), detected: false, detected_value: 0, reason: "", technical_reason: "superseded by a higher-priority conversation outcome", available: true }
     : det(raw);
 
 /**
@@ -575,10 +577,8 @@ export function assembleConversationMetrics(args: {
     user_never_spoke: det(userNeverSpoke),
     ...transferAxis,
     user_sentiment: {
+      ...sentiment,
       sentiment: sentiment.sentiment || "unknown",
-      reason: sentiment.reason,
-      technical_reason: sentiment.technical_reason,
-      available: sentiment.available,
       passed: sentiment.available ? sentimentPassed(sentiment.sentiment) : undefined,
     },
     // Platform-neutral: the ingest path makes no runtime claim (was hardcoded

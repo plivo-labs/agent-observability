@@ -10,6 +10,7 @@ import { runIntentJudge } from "./judges/intent-judge.js";
 import { runGoalJudge } from "./judges/goal-judge.js";
 import { runCriteriaJudge } from "./judges/criteria-judge.js";
 import { deriveInstructionAdherence, mapHallucination, mapNodeLoop, mapVariableExtraction } from "./aggregate.js";
+import { llmProvenance } from "./judges/run-llm-judge.js";
 
 // AO Eval Engine — the orchestrator (port of cx-sqs ConversationEvaluator, node + goal axes only =
 // SkipConversationEval). Per AI node: the 4 LLM judges run in PARALLEL + the programmatic intent judge;
@@ -49,11 +50,11 @@ async function evaluateNode(
     node_uuid: node.node_uuid,
     node_name: node.node_name,
     turn_count: node.turn_count,
-    instructions_adherence: deriveInstructionAdherence(adherence.data),
-    intent_identification: intent.data,
-    variable_extraction: mapVariableExtraction(variable.data, node.required_variables),
-    hallucination: mapHallucination(hallucination.data),
-    node_loop: mapNodeLoop(loop.data),
+    instructions_adherence: { ...deriveInstructionAdherence(adherence.data), ...llmProvenance(adherence.calls) },
+    intent_identification: { ...intent.data, ...llmProvenance(intent.calls) },
+    variable_extraction: { ...mapVariableExtraction(variable.data, node.required_variables), ...llmProvenance(variable.calls) },
+    hallucination: { ...mapHallucination(hallucination.data), ...llmProvenance(hallucination.calls) },
+    node_loop: { ...mapNodeLoop(loop.data), ...llmProvenance(loop.calls) },
   };
 }
 

@@ -123,6 +123,9 @@ export interface ConversationInput {
   system_messages?: string[];
   /** Full runtime notes tied to timeline events, for grounding at node exit. */
   system_message_events?: Array<{ event_index: number; text: string }>;
+  /** Every judge call's LLM correlationId (the session id on the ingest
+   *  path), so one session's spend can be summed from the usage log. */
+  correlation_id?: string;
 }
 
 /** One session tag as stored: an opaque name plus optional JSON metadata. */
@@ -160,6 +163,12 @@ export interface InteractionQualityIssue {
   reason_code: string;
   details: string;
 }
+export interface JudgeCall {
+  model: string;
+  reasoning_effort?: string;
+  prompt_version: string;
+  prompt_sha256: string;
+}
 /** Which backend decided an axis and how sure it was. Optional so stored
  *  verdicts written before the Jev path stay readable; `confidence` is Jev's
  *  calibrated probability of the defect for the deciding question. */
@@ -167,6 +176,18 @@ export interface JudgeProvenance {
   confidence?: number;
   backend?: "jev" | "llm" | "code";
   jev_model?: string;
+  /** The deciding LLM call as it ran, so a mixed-model or edited-prompt run is
+   *  visible per row. Absent when no LLM call decided the verdict. */
+  judge_model?: string;
+  reasoning_effort?: string;
+  /** Hash of the unfilled judge template and output schema: the same for every
+   *  call of one judge version, so a prompt edit shows up as a cutover. */
+  prompt_version?: string;
+  /** sha256 of the system prompt and output schema as sent, for exact replay. */
+  prompt_sha256?: string;
+  code_rev?: string;
+  /** Every contributing call, in order, when more than one did. */
+  judge_calls?: JudgeCall[];
   /** Candidate evidence remains separate from the final judge verdict/score. */
   jev?: {
     candidate: "pass" | "fail" | "review" | "unknown";
@@ -313,7 +334,7 @@ export interface SimConversationMetrics {
   low_engagement: CmDetection;
   wrong_number: CmDetection;
   do_not_disturb: CmDetection;
-  user_sentiment: {
+  user_sentiment: JudgeProvenance & {
     sentiment: string;
     reason: string;
     technical_reason: string;
