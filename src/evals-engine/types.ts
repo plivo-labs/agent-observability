@@ -334,8 +334,8 @@ export interface SimConversationMetrics {
   stt: { error_count: number; recovered_count: number; available: boolean };
   /** The caller produced no turn at all (zero `User:` lines with content).
    *  Decided in CODE from the transcript, channel-agnostic — not a telephony
-   *  measure. `available:false` when there was no transcript to judge (an empty
-   *  transcript is undecidable, never a clean "user spoke"). */
+   *  measure. `available:false` when the speech transcript has no agent line
+   *  (nothing for the caller to answer — never a clean "user spoke"). */
   user_never_spoke: CmDetection;
   /** The transfer FACT: a transfer to a human was executed. Decided in CODE
    *  from the platform's `transfer:human` session tag, never inferred from the

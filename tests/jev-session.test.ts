@@ -271,6 +271,18 @@ describe("a text transport never gets a voice-only verdict", () => {
   });
 });
 
+test("a silent call raises only user_never_spoke, even when Jev flags low engagement", async () => {
+  const silent: StoredEvent[] = [
+    { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "What is your order id?" } },
+    { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "Are you still there?" } },
+  ];
+  const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map((k) => [k, k === "c.low_engagement" ? 0.95 : 0.01]))]);
+  const v = await evaluateIngestedSession(config, silent, llm(), "livekit", undefined, undefined, [], jev as any);
+  const conversationFails = buildExternalEvalRows(v).filter((r) => r.tag === null && !r.passed).map((r) => r.judgeName);
+  expect(conversationFails).toEqual(["user_never_spoke"]);
+  expect(v.conversation_metrics.low_engagement.backend).toBe("code");
+});
+
 
 test("custom applicability is independently reviewed and node provenance survives fan-out", async () => {
   const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.endsWith("applicable") ? 0.21 : 0.01]))]);
