@@ -236,6 +236,7 @@ app.post("/observability/recordings/v0", async (c) => {
 
   let sessionId = "";
   let startedAt: Date | null = null;
+  let endedAtHeader: Date | null = null;
   let accountId: string | null = null;
   let transport: string | null = null;
 
@@ -251,6 +252,12 @@ app.post("/observability/recordings/v0", async (c) => {
       const startTime = json.start_time ?? 0;
       if (startTime > 0) {
         startedAt = new Date(startTime * 1000);
+      }
+      // Senders that upload long after the conversation ends (text channels
+      // judged at close) state the real end; others end at upload time.
+      const endTime = Number(json.end_time);
+      if (Number.isFinite(endTime) && endTime > 0) {
+        endedAtHeader = new Date(endTime * 1000);
       }
       accountId = json.room_tags?.account_id ?? null;
       transport = json.transport ?? null;
@@ -328,7 +335,8 @@ app.post("/observability/recordings/v0", async (c) => {
   }
 
   // Calculate duration
-  const endedAt = new Date();
+  const endedAt =
+    endedAtHeader && (!startedAt || endedAtHeader >= startedAt) ? endedAtHeader : new Date();
   let durationMs: number | null = null;
   if (startedAt) {
     durationMs = endedAt.getTime() - startedAt.getTime();

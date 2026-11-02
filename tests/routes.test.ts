@@ -562,6 +562,40 @@ describe("POST /observability/recordings/v0", () => {
     expect(call.transport).toBe("audio_stream");
   });
 
+  test("end_time in the header sets the session end and duration", async () => {
+    const postWithEnd = async (sessionId: string, endTime: unknown) => {
+      const form = new FormData();
+      form.append(
+        "header",
+        new Blob(
+          [JSON.stringify({ session_id: sessionId, start_time: 1700000000, end_time: endTime, transport: "chat" })],
+          { type: "application/json" },
+        ),
+      );
+      const res = await server.fetch(
+        makeRequest("/observability/recordings/v0", {
+          method: "POST",
+          headers: { Authorization: basicAuthHeader() },
+          body: form,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const calls = mockInsertSession.mock.calls as any[];
+      return calls[calls.length - 1][0] as any;
+    };
+
+    const stated = await postWithEnd("sess-ended", 1700000090.5);
+    expect(stated.endedAt).toEqual(new Date(1700000090500));
+    expect(stated.durationMs).toBe(90500);
+
+    // An end before the start (or garbage) falls back to the upload time.
+    for (const bad of [1699999999, "soon"]) {
+      const before = Date.now();
+      const fallback = await postWithEnd(`sess-bad-${bad}`, bad);
+      expect(fallback.endedAt.getTime()).toBeGreaterThanOrEqual(before);
+    }
+  });
+
   test("handles request with no chat history", async () => {
     const form = new FormData();
     form.append("header", new Blob([JSON.stringify({ session_id: "sess-ingest" })], { type: "application/json" }));
