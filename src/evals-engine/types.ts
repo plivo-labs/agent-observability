@@ -304,6 +304,9 @@ export interface CmDetection extends JudgeProvenance {
    *  "not detected" verdict. Always set: real judges set true, the zero
    *  placeholder (zeroConversationMetrics) sets false. */
   available: boolean;
+  /** Set when the judge failed rather than being skipped: an error is an
+   *  unknown verdict, a skip is no verdict at all. */
+  judge_error?: string;
 }
 export interface SimConversationMetrics {
   answered: boolean;
@@ -322,6 +325,7 @@ export interface SimConversationMetrics {
     /** Code-derived pass/fail, emitted once here so consumers (fan-out,
      *  config-service, console) read it instead of re-deriving the rule. */
     passed?: boolean;
+    judge_error?: string;
   };
   silent_call: boolean;
   customer_engaged: boolean;
@@ -331,7 +335,7 @@ export interface SimConversationMetrics {
   /** STT quality axis. `available:false` marks "the judge did not run" (skipped
    *  or errored) so consumers don't read the zero counts as a confident "clean
    *  call". `error_count`/`recovered_count` are only meaningful when available. */
-  stt: { error_count: number; recovered_count: number; available: boolean };
+  stt: { error_count: number; recovered_count: number; available: boolean; judge_error?: string };
   /** The caller produced no turn at all (zero `User:` lines with content).
    *  Decided in CODE from the transcript, channel-agnostic — not a telephony
    *  measure. `available:false` when there was no transcript to judge (an empty

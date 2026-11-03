@@ -28,6 +28,7 @@ import type { ConversationInput, JudgeProvenance, NodeEvalInput } from "../types
 import { runLlmJudge } from "./run-llm-judge.js";
 import { nodePayload } from "./node-judge-payload.js";
 import { classifyErrorDurability } from "../../error-durability.js";
+import { judgeErrorFields, newJudgeTally, type JudgeTally } from "../judge-error.js";
 
 /** What the sweeper hands the engine per mapped custom judge. */
 export interface CustomJudgeSpec {
@@ -54,9 +55,10 @@ export type CustomMetricVerdict = JudgeProvenance & {
   verdict: "pass" | "fail" | "unknown";
   reason: string;
   technical_reason: string;
-  /** False when the judge could not run (deterministic failure) — fan-out
-   *  skips unavailable verdicts, the same contract as CmDetection. */
+  /** False when the judge produced no verdict, the same contract as CmDetection. */
   available: boolean;
+  /** Set on a failed judge, which fans out as unknown instead of being skipped. */
+  judge_error?: string;
   per_node?: CustomMetricNodeVerdict[];
   /** Retain collected signals when node review is unavailable, without inventing per-node verdicts. */
   jev_node_candidates?: Array<JudgeProvenance & { ref: string }>;
@@ -199,6 +201,7 @@ export async function runCustomMetricJudge(
   ctx: ConversationInput,
   refOf: (nodeUuid: string) => string,
   provider?: LlmProvider,
+  tally: JudgeTally = newJudgeTally(),
 ): Promise<CustomMetricVerdict> {
   try {
     if (spec.scope === "conversation") {
@@ -219,6 +222,7 @@ export async function runCustomMetricJudge(
         },
         provider,
       );
+      tally.modelVerdicts++;
       return { judge_name: spec.name, display_name: spec.display_name, scope: spec.scope, ...data, available: true };
     }
     // node scope: judge each judged node independently, roll up for the summary
@@ -227,6 +231,7 @@ export async function runCustomMetricJudge(
     );
     const verdict = rollUpNodeVerdicts(per_node);
     const deciding = per_node.find((n) => n.verdict === verdict);
+    tally.modelVerdicts++;
     return {
       judge_name: spec.name,
       display_name: spec.display_name,
@@ -239,7 +244,8 @@ export async function runCustomMetricJudge(
     };
   } catch (e) {
     if (classifyErrorDurability(e) === "transient") throw e;
-    return unavailable(spec, `custom judge unavailable: ${(e as Error).message ?? e}`);
+    tally.errors.push(e);
+    return { ...unavailable(spec, ""), ...judgeErrorFields(e) };
   }
 }
 
@@ -250,6 +256,7 @@ export function runCustomMetricJudges(
   ctx: ConversationInput,
   refOf: (nodeUuid: string) => string,
   provider?: LlmProvider,
+  tally: JudgeTally = newJudgeTally(),
 ): Promise<CustomMetricVerdict[]> {
-  return Promise.all(specs.map((s) => runCustomMetricJudge(s, ctx, refOf, provider)));
+  return Promise.all(specs.map((s) => runCustomMetricJudge(s, ctx, refOf, provider, tally)));
 }

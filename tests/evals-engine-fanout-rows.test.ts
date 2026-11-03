@@ -92,3 +92,14 @@ describe("buildExternalEvalRows — the transfer fact (human_transfer)", () => {
     expect(names(verdicts())).not.toContain("human_transfer");
   });
 });
+
+describe("buildExternalEvalRows — an axis whose judge failed", () => {
+  test("fans out as unknown with the error as its reason, never as a pass or a fail", () => {
+    const v = verdicts();
+    v.node_evaluations[0].hallucination = { available: false, judge_error: "schema", reason: "judge error: schema", technical_reason: "completeJSON failed" };
+    const row = buildExternalEvalRows(v).find((r) => r.judgeName === "hallucination")!;
+    expect(row.verdictText).toBe("unknown");
+    expect(row.reasoning).toBe("judge error: schema");
+    expect(buildExternalEvalRows(v).find((r) => r.judgeName === "node_loop")!.passed).toBe(true);
+  });
+});

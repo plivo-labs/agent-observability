@@ -130,6 +130,8 @@ describe("custom metric judge", () => {
     const [v] = await runCustomMetricJudges([spec()], ctx(), (u) => u, llm);
     expect(v!.available).toBe(false);
     expect(v!.verdict).toBe("unknown");
+    const rows = buildExternalEvalRows({ node_evaluations: [], conversation_metrics: {} as any, custom_metrics: [v!] });
+    expect(rows).toEqual([expect.objectContaining({ judgeName: v!.judge_name, verdictText: "unknown", reasoning: "judge error: invalid_json" })]);
   });
 
   test("fan-out: pass/fail/unknown rows, node tags, unavailable skipped", () => {
