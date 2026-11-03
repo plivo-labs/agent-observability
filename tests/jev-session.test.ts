@@ -35,15 +35,16 @@ const events: StoredEvent[] = [
 ];
 
 /** Every default judge answers cleanly; the reason writer returns one entry per asked defect. */
+const cleanResponder = (args: any): string => {
+  const system = args.system as string;
+  if (system.includes("calibrated classifier")) {
+    const asked = JSON.parse(args.user as string).items as Array<{ id: string }>;
+    return JSON.stringify({ reasons: asked.map((d) => ({ id: d.id, reason: `why ${d.id}`, technical_reason: `tech ${d.id}` })) });
+  }
+  return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
+};
 function llm() {
-  return new MockLLM([(args: any) => {
-    const system = args.system as string;
-    if (system.includes("calibrated classifier")) {
-      const asked = JSON.parse(args.user as string).items as Array<{ id: string }>;
-      return JSON.stringify({ reasons: asked.map((d) => ({ id: d.id, reason: `why ${d.id}`, technical_reason: `tech ${d.id}` })) });
-    }
-    return defaultJudgeResponder(system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });
-  }]);
+  return new MockLLM([cleanResponder]);
 }
 
 const labelsOf = (provider: InstanceType<typeof MockLLM>) => provider.calls.map((c) => c.jsonSchema?.name ?? "none").sort();
@@ -311,4 +312,40 @@ test("unavailable independent review retains candidates without emitting a pass"
   expect(metric.per_node).toBeUndefined();
   expect(metric.jev_node_candidates?.[0]?.jev?.candidate).toBe("fail");
   expect(buildExternalEvalRows(v).some(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection")).toBe(false);
+});
+
+describe("an LLM adherence fail on policy is checked against the judged node's own agent turns", () => {
+  const twoNodes: AgentConfig = {
+    flow_name: "accounts",
+    global_prompt: "You are an accounts agent.",
+    nodes: [
+      { ref: "node-A", name: "verify", instructions: "Verify the caller. Never read the account PIN aloud." },
+      { ref: "node-B", name: "wrap_up", instructions: "Thank the caller and close. Never read the account PIN aloud." },
+    ],
+  };
+  const twoNodeEvents: StoredEvent[] = [
+    { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "user", content: "What's my PIN?" } },
+    { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "assistant", content: "Your PIN is 4821, keep it safe." } },
+    { type: "conversation_item_added", node_ref: "node-B", item: { type: "message", role: "user", content: "Thanks, that's all." } },
+    { type: "conversation_item_added", node_ref: "node-B", item: { type: "message", role: "assistant", content: "Thanks for calling, goodbye." } },
+  ];
+  const policyFail = JSON.stringify({
+    objective_progress: { achieved: true, score: 1, reason_code: "goal_achieved", reason: "", technical_reason: "" },
+    procedure_compliance: { score: 1, reason_code: "procedure_followed", missed_steps: [], reason: "", technical_reason: "" },
+    interaction_quality: { score: 1, reason_code: "no_quality_issues", issues: [], reason: "", technical_reason: "" },
+    policy_boundary_compliance: {
+      passed: false, score: 0, reason_code: "confidentiality_violation", violated_instruction: "Never read the account PIN aloud.",
+      agent_quote: "Your PIN is 4821, keep it safe.", reason: "Read the PIN aloud.", technical_reason: "",
+    },
+  });
+  const provider = () => new MockLLM([(args: any) => args.jsonSchema?.name === "eval_instruction" ? policyFail : cleanResponder(args)]);
+
+  for (const [label, jev] of [["JEV off", undefined], ["Jev review", new MockJev([{}], 0.97)]] as const) {
+    test(`${label}: the quoting node fails; the node that never said it is unknown`, async () => {
+      const v = await evaluateIngestedSession(twoNodes, twoNodeEvents, provider(), "livekit", undefined, undefined, [], jev as any);
+      const rows = buildExternalEvalRows(v).filter((r) => r.judgeName === "instructions_adherence");
+      expect(Object.fromEntries(rows.map((r) => [r.tag, r.verdictText ?? (r.passed ? "pass" : "fail")]))).toEqual({ "node-A": "fail", "node-B": "unknown" });
+      expect(rows.map((r) => [(r.raw as any).backend, (r.raw as any).jev !== undefined])).toEqual(jev ? [["llm", true], ["llm", true]] : [[undefined, false], [undefined, false]]);
+    });
+  }
 });

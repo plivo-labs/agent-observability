@@ -42,7 +42,16 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
   for (const ne of verdicts.node_evaluations) {
     const tag = ne.ref || null;
     const ia = ne.instructions_adherence;
-    if (ia && !machineAnswered) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia as any });
+    if (ia && !machineAnswered) {
+      rows.push({
+        judgeName: "instructions_adherence",
+        tag,
+        passed: ia.adherence_passed,
+        ...(ia.verdict === "unknown" ? { verdictText: "unknown" } : {}),
+        reasoning: ia.reason,
+        raw: ia as any,
+      });
+    }
     const ii = ne.intent_identification;
     if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii as any });
     const ve = ne.variable_extraction;

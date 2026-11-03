@@ -92,7 +92,7 @@ export async function runInstructionAdherenceJudge(
         objective_progress: { achieved: true, ...sub("No instructions configured on this node — adherence not applicable.") },
         procedure_compliance: { ...sub("No procedure defined."), missed_steps: [] },
         interaction_quality: { ...sub("Not evaluated."), issues: [] },
-        policy_boundary_compliance: { passed: true, ...sub("No policy boundaries defined.") },
+        policy_boundary_compliance: { passed: true, violated_instruction: "", agent_quote: "", ...sub("No policy boundaries defined.") },
         config_conflicts: [],
       } as InstructionAdherenceRaw,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },

@@ -198,12 +198,16 @@ export interface PolicyBoundaryComplianceMetrics {
   passed: boolean;
   score: number;
   reason_code: string;
+  violated_instruction?: string;
+  agent_quote?: string;
   reason: string;
   technical_reason: string;
 }
 export interface InstructionsAdherenceMetrics extends JudgeProvenance {
   /** Code-derived: objective.achieved ∧ procedure.passed ∧ policy.passed. */
   adherence_passed: boolean;
+  /** "unknown": the fail could not be verified, so it counts as neither a pass nor a fail. */
+  verdict?: "unknown";
   /** Code-derived weighted score: .35·obj + .25·proc + .25·inter + .15·policy. */
   score: number;
   reason: string;

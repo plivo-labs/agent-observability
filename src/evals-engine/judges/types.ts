@@ -103,6 +103,8 @@ export const InstructionAdherenceRawZ = z.object({
     passed: z.boolean(),
     score: scoreZ,
     reason_code: reasonZ,
+    violated_instruction: reasonZ,
+    agent_quote: reasonZ,
     reason: reasonZ,
     technical_reason: reasonZ,
   }),
