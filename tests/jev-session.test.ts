@@ -183,6 +183,33 @@ describe("published decisions", () => {
       expect(kinds.find(i => i.id === "n0:node_loop")!.kind).toBe("clean");
     });
   });
+
+  test.each([
+    ["a Jev auto-pass", true],
+    ["an LLM pass", false],
+  ])("runtime text the customer saw fails policy over %s", async (_label, viaJev) => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "instructions_adherence" }, async () => {
+      const leaked = events.map((e, i) =>
+        i === 3 ? { ...e, item: { ...e.item, content: "Thanks, order 42 confirmed. to=functions.handoff_order {}" } } : e);
+      // Tool output, as evidence or as a tool-role message, is not something the customer read.
+      const toolOutput: StoredEvent = { type: "conversation_item_added", node_ref: "node-A",
+        item: { type: "function_call_output", name: "record_order_id", output: "saved [tool call ok] to=functions.x" } };
+      const toolMessage: StoredEvent = { type: "conversation_item_added", node_ref: "node-A",
+        item: { type: "message", role: "tool", content: "<|call|> to=functions.lookup_order" } };
+      const judge = (evs: StoredEvent[]) =>
+        evaluateIngestedSession(config, evs, llm(), "chat", undefined, undefined, [], viaJev ? new MockJev([{}], 0.01) as any : undefined);
+
+      const clean = (await judge([...events.slice(0, 3), toolOutput, toolMessage, events[3]!])).node_evaluations[0]!.instructions_adherence;
+      expect(clean.adherence_passed).toBe(true);
+      expect(clean.backend).toBe(viaJev ? "jev" : undefined);
+
+      const adherence = (await judge(leaked)).node_evaluations[0]!.instructions_adherence;
+      expect(adherence.adherence_passed).toBe(false);
+      expect(adherence.backend).toBe("code");
+      expect(adherence.policy_boundary_compliance?.passed).toBe(false);
+      expect(adherence.reason).toContain('"to=functions.handoff_order"');
+    });
+  });
 });
 
 describe("uncertain and unavailable axes fall to the LLM", () => {
@@ -311,4 +338,31 @@ test("unavailable independent review retains candidates without emitting a pass"
   expect(metric.per_node).toBeUndefined();
   expect(metric.jev_node_candidates?.[0]?.jev?.candidate).toBe("fail");
   expect(buildExternalEvalRows(v).some(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection")).toBe(false);
+});
+
+const { visibleRuntimeText } = await import("../src/evals-engine/visible-runtime-text.js");
+
+describe("runtime text the customer can see", () => {
+  const said = (agent: string) =>
+    visibleRuntimeText({ turns: [{ node_uuid: "n", user: "", agent, intent: "", role: "assistant" }] } as any);
+
+  test.each([
+    ["Done. to=functions.handoff_order {}", "to=functions.handoff_order"],
+    ["Here it is <|im_end|>", "<|im_end|>"],
+    ["ok<|eot_id|>", "<|eot_id|>"],
+    ['<tool_call name="lookup">', '<tool_call name="lookup">'],
+    ["Your order: [tool call follows]", "[tool call follows]"],
+    [`Details: [tool_call ${"x".repeat(90)}]`, `[tool_call ${"x".repeat(90)}]`],
+  ])("finds %p", (agent, found) => {
+    expect(said(agent)).toBe(found);
+  });
+
+  test.each([
+    "Use {{first_name}} in your email template.",
+    "Our functions. include billing and returns.",
+    "Tool calls are free [see pricing].",
+    "Press | then > to continue.",
+  ])("leaves %p alone", (agent) => {
+    expect(said(agent)).toBeUndefined();
+  });
 });

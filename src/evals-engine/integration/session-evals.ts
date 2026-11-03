@@ -25,6 +25,7 @@ import {
 } from "../judges/custom-metric.js";
 import type { JevClient } from "../../jev/types.js";
 import { evaluateSessionJevFirst } from "../jev/session.js";
+import { failVisibleRuntimeText } from "../visible-runtime-text.js";
 import type {
   ConversationInput,
   EvalTurn,
@@ -417,7 +418,7 @@ export function buildSessionEvalInput(
     // line changes (or on user speech), never mid-run — resetting mid-run
     // would re-arm tagging and hide an over-cap (genuinely stuck) run.
     if (!sameAsPrev) idleRepeatCount = 0;
-    const turn: EvalTurn = { node_uuid: ref, user: "", agent: tagged, intent: "", ...(idle ? { idle: true } : {}) };
+    const turn: EvalTurn = { node_uuid: ref, user: "", agent: tagged, intent: "", role, ...(idle ? { idle: true } : {}) };
     lastAgentSpokenNorm = norm;
     lastAgentTurn = turn;
     pushTurn(ref, turn);
@@ -602,7 +603,7 @@ export async function evaluateIngestedSession(
         `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}${stats.layout === "shared" ? " layout=shared" : ""}`,
     );
     return {
-      node_evaluations: result.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" })),
+      node_evaluations: result.node_evaluations.map((ne, i) => ({ ...failVisibleRuntimeText(ne, input.nodes[i]!), ref: nodeRefs[i]?.ref ?? "" })),
       conversation_metrics: result.conversation_metrics,
       ...(result.custom_metrics.length ? { custom_metrics: result.custom_metrics } : {}),
     };
@@ -624,7 +625,7 @@ export async function evaluateIngestedSession(
   ]);
 
   // evaluateSimulation preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
-  const node_evaluations = scored.node_evaluations.map((ne, i) => ({ ...ne, ref: nodeRefs[i]?.ref ?? "" }));
+  const node_evaluations = scored.node_evaluations.map((ne, i) => ({ ...failVisibleRuntimeText(ne, input.nodes[i]!), ref: nodeRefs[i]?.ref ?? "" }));
 
   return {
     node_evaluations,
