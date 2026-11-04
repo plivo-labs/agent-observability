@@ -30,6 +30,8 @@ export interface EvalTurn {
    *  when the turn did not leave the node). Screening nodes surface their chosen
    *  disposition here rather than in `intent`. */
   exit_handle?: string;
+  /** Sender role of an ingested message turn, lower-cased ("assistant", "tool", …). */
+  role?: string;
   /** True for synthetic evidence lines (tool calls, handoffs, system notes)
    *  that are NOT spoken words. The speech-only transcript filters on this
    *  flag instead of re-matching the rendered label strings. */
