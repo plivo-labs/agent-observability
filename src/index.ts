@@ -255,9 +255,10 @@ app.post("/observability/recordings/v0", async (c) => {
       }
       // Senders that upload long after the conversation ends (text channels
       // judged at close) state the real end; others end at upload time.
-      const endTime = Number(json.end_time);
-      if (Number.isFinite(endTime) && endTime > 0) {
-        endedAtHeader = new Date(endTime * 1000);
+      const endTime = json.end_time;
+      const statedEnd = typeof endTime === "number" && endTime > 0 ? new Date(endTime * 1000) : null;
+      if (statedEnd && !Number.isNaN(statedEnd.getTime())) {
+        endedAtHeader = statedEnd;
       }
       accountId = json.room_tags?.account_id ?? null;
       transport = json.transport ?? null;
