@@ -162,16 +162,26 @@ for (const [failing, expected] of [[["callback_time"], "review"], [["appointment
   });
 }
 
-for (const recorded of [false, true]) {
-  test(`a lookup field ${recorded ? "that was recorded allows" : "left unrecorded blocks"} a Jev variable pass`, () => {
+const LISTING_RULES = {
+  lookup: "Extract the listing ID from the lookup result for the confirmed listing.",
+  backend: "Take the listing ID from the backend lookup result.",
+} as const;
+for (const [source, recorded, listingProbability, expected] of [
+  ["lookup", false, 0.02, "review"], ["lookup", true, 0.02, "review"], ["lookup", true, 0.96, "review"],
+  ["backend", true, 0.96, "pass"],
+] as const) {
+  test(`a ${source} field ${recorded ? "recorded" : "left unrecorded"} ${expected === "pass" ? "stays out of" : "blocks"} a Jev variable pass (${listingProbability})`, () => {
     const node = { ...input.nodes[0]!, required_variables: ["listing_id", "order_id"],
-      variable_rules: { listing_id: "Extract the listing ID from the lookup result for the confirmed listing.", order_id: "Record the caller's order ID." },
+      variable_rules: { listing_id: LISTING_RULES[source], order_id: "Record the caller's order ID." },
       extracted_variables: recorded ? { listing_id: "48899", order_id: "42" } : { order_id: "42" } };
     const plan = buildJevPlan({ ...input, nodes: [node] }, { judges: ["variable_extraction"] });
     const results = new Map<string, RequestResult>(plan.requests.map((request) => [request.key, { ok: true, response: {
       model: "test", usage: { input_tokens: 0, output_tokens: 0 },
-      answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, { type: "noul" as const, noul: 0.02 }])),
+      answers: Object.fromEntries(Object.keys(request.questions).map((key) =>
+        [key, { type: "noul" as const, noul: key.endsWith("var.0") ? listingProbability : 0.02 }])),
     } }]));
-    expect(mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]))[0]!.outcome).toBe(recorded ? "pass" : "review");
+    const [decision] = mergeChunkedAxes(gatePlan(plan, results, DEFAULT_GATES, [node]));
+    expect(decision!.ignoredKeys).toHaveLength(1);
+    expect(decision!.outcome).toBe(expected);
   });
 }
