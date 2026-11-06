@@ -25,7 +25,7 @@ export const CUSTOM_JUDGE_NAME_RE = /^metric:[a-z0-9_]+$/;
 import { z } from "zod";
 import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, JudgeProvenance, NodeEvalInput } from "../types.js";
-import { runLlmJudge } from "./run-llm-judge.js";
+import { llmProvenance, runLlmJudge } from "./run-llm-judge.js";
 import { nodePayload } from "./node-judge-payload.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 
@@ -124,19 +124,27 @@ const unavailable = (spec: CustomJudgeSpec, why: string): CustomMetricVerdict =>
   available: false,
 });
 
+type CustomMetricOutcome = Omit<z.infer<typeof CustomMetricRawZ>, "situation_reached" | "unmet_required_criteria">;
+
 async function judgeOnce(
   spec: CustomJudgeSpec,
   input: Record<string, unknown>,
   provider?: LlmProvider,
-): Promise<Omit<z.infer<typeof CustomMetricRawZ>, "situation_reached" | "unmet_required_criteria">> {
-  const { data } = await runLlmJudge({
+  correlationId?: string,
+): Promise<CustomMetricOutcome & JudgeProvenance> {
+  const { data, calls } = await runLlmJudge({
     system: spec.body + spec.output + APPLICABILITY,
     input,
     schema: CustomMetricRawZ,
     jsonSchema: CUSTOM_METRIC_JSON,
     maxTokens: spec.max_tokens ?? DEFAULT_CUSTOM_MAX_TOKENS,
     provider,
+    correlationId,
   });
+  return { ...reconcileApplicability(data), ...llmProvenance(calls) };
+}
+
+function reconcileApplicability(data: z.infer<typeof CustomMetricRawZ>): CustomMetricOutcome {
   const { situation_reached, unmet_required_criteria, ...verdict } = data;
   // Partial success cannot override a requirement the judge itself found unmet.
   // Preserve unknown when evidence is insufficient and applicability when the
@@ -175,6 +183,7 @@ export async function judgeCustomMetricNode(
       ...nodePayload(node, ctx),
     },
     provider,
+    ctx.correlation_id,
   );
   // The SENDER's opaque ref, not the engine uuid — consumers map custom
   // per-node rows back to their nodes exactly like the default node rows.
@@ -218,6 +227,7 @@ export async function runCustomMetricJudge(
             : {}),
         },
         provider,
+        ctx.correlation_id,
       );
       return { judge_name: spec.name, display_name: spec.display_name, scope: spec.scope, ...data, available: true };
     }

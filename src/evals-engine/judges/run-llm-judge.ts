@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import type { ZodType } from "zod";
-import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { completeJSON, systemPromptAsSent, type LlmProvider, type LlmUsage } from "../../llm/index.js";
 import { config } from "../../config.js";
+import type { JudgeCall, JudgeProvenance } from "../types.js";
 
 // AO Eval Engine — the single LLM entry every judge uses. Replaces LiveKit's private `_LLMJudge`:
 // build system+user, call the shared `completeJSON` on the "judge" role (→ JUDGE_MODEL || claude-opus-4-8,
@@ -33,11 +35,29 @@ export interface RunLlmJudgeArgs<T> {
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   /** Test injection. */
   provider?: LlmProvider;
+  correlationId?: string;
+  /** `system` before its per-call slots were filled; omit when it has none. */
+  template?: string;
 }
 
 export interface JudgeResult<T> {
   data: T;
   usage: LlmUsage;
+  calls: JudgeCall[];
+}
+
+/** The first call is the deciding one; a verdict no call decided gets no provenance. */
+export function llmProvenance(calls: readonly JudgeCall[]): JudgeProvenance {
+  const [deciding] = calls;
+  if (!deciding) return {};
+  return {
+    judge_model: deciding.model,
+    ...(deciding.reasoning_effort ? { reasoning_effort: deciding.reasoning_effort } : {}),
+    prompt_version: deciding.prompt_version,
+    prompt_sha256: deciding.prompt_sha256,
+    ...(config.GIT_SHA ? { code_rev: config.GIT_SHA } : {}),
+    ...(calls.length > 1 ? { judge_calls: [...calls] } : {}),
+  };
 }
 
 // Global judge-call semaphore. A session fires 5 judges per node + 7
@@ -74,6 +94,9 @@ function releaseJudgeSlot(): void {
 }
 
 export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeResult<T>> {
+  const judgeSystem = (prompt: string) => prompt + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE;
+  const system = judgeSystem(args.system);
+  const digest = (prompt: string) => createHash("sha256").update(JSON.stringify([systemPromptAsSent(prompt), args.jsonSchema ?? null])).digest("hex");
   await acquireJudgeSlot();
   try {
     const res = await completeJSON({
@@ -84,7 +107,7 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // accounting label — no new field threaded through eight judge call sites.
       // Falls back to the role for a judge that runs without a strict schema.
       label: args.jsonSchema?.name ?? "judge",
-      system: args.system + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE,
+      system,
       prompt: typeof args.input === "string" ? args.input : JSON.stringify(args.input),
       maxTokens: args.maxTokens,
       // Reference-engine parity. `args.maxTokens` is copied verbatim from cx-sqs
@@ -117,8 +140,15 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // 3 total attempts = the reference engine's retry budget (1 call + 2 reprompts).
       maxRetries: 2,
       provider: args.provider,
+      correlationId: args.correlationId,
     });
-    return { data: res.data, usage: res.usage };
+    const call: JudgeCall = {
+      model: res.model,
+      ...(res.reasoningEffort ? { reasoning_effort: res.reasoningEffort } : {}),
+      prompt_version: digest(judgeSystem(args.template ?? args.system)).slice(0, 16),
+      prompt_sha256: digest(system),
+    };
+    return { data: res.data, usage: res.usage, calls: [call] };
   } finally {
     releaseJudgeSlot();
   }

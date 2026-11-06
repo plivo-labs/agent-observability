@@ -42,6 +42,7 @@ import { buildSharedJevPlan } from "./plan-shared.js";
 import { byAxisId, gatePlan, mergeChunkedAxes, type GatedAxis, type RequestResult } from "./gate.js";
 import { attachDetectionProvenance, jevAdherence, jevDetection, jevHallucination, jevIntent, jevNodeLoop, jevVariables, type ReasonMap } from "./merge.js";
 import { writeDecisionReasons, type ReasonRequestAxis } from "../judges/reason-writer.js";
+import { llmProvenance } from "../judges/run-llm-judge.js";
 import { classifyErrorDurability } from "../../error-durability.js";
 
 // Jev answers every gated question first. Published verdicts get their reasons
@@ -279,32 +280,32 @@ export async function evaluateSessionJevFirst(args: {
         (async () => {
           const g = decidedByJev("instructions_adherence");
           if (g) return { ...jevAdherence(g, await reasonsPromise), ...provenance("instructions_adherence") };
-          const { data } = await runInstructionAdherenceJudge(node, input, provider);
-          return { ...deriveInstructionAdherence(data), ...provenance("instructions_adherence") };
+          const { data, calls } = await runInstructionAdherenceJudge(node, input, provider);
+          return { ...deriveInstructionAdherence(data), ...llmProvenance(calls), ...provenance("instructions_adherence") };
         })(),
         (async () => {
           const g = decidedByJev("hallucination");
           if (g) return { ...jevHallucination(g, await reasonsPromise), ...provenance("hallucination") };
-          const { data } = await runHallucinationJudge(node, input, provider);
-          return { ...mapHallucination(data), ...provenance("hallucination") };
+          const { data, calls } = await runHallucinationJudge(node, input, provider);
+          return { ...mapHallucination(data), ...llmProvenance(calls), ...provenance("hallucination") };
         })(),
         (async () => {
           const g = decidedByJev("variable_extraction");
           if (g) return { ...jevVariables(g, node, await reasonsPromise).metrics, ...provenance("variable_extraction") };
-          const { data } = await runVariableExtractionJudge(node, input, provider);
-          return { ...mapVariableExtraction(data, node.required_variables), ...provenance("variable_extraction") };
+          const { data, calls } = await runVariableExtractionJudge(node, input, provider);
+          return { ...mapVariableExtraction(data, node.required_variables), ...llmProvenance(calls), ...provenance("variable_extraction") };
         })(),
         (async () => {
           const g = decidedByJev("node_loop");
           if (g) return { ...jevNodeLoop(g, await reasonsPromise), ...provenance("node_loop") };
-          const { data } = await runLoopJudge(node, input, provider);
-          return { ...mapNodeLoop(data), ...provenance("node_loop") };
+          const { data, calls } = await runLoopJudge(node, input, provider);
+          return { ...mapNodeLoop(data), ...llmProvenance(calls), ...provenance("node_loop") };
         })(),
         (async () => {
           const g = decidedByJev("intent_identification");
           if (g) return { ...jevIntent(g, await reasonsPromise), ...provenance("intent_identification") };
-          const { data } = await runIntentJudge(node, input, provider);
-          return { ...data, ...provenance("intent_identification") };
+          const { data, calls } = await runIntentJudge(node, input, provider);
+          return { ...data, ...llmProvenance(calls), ...provenance("intent_identification") };
         })(),
       ]);
       return {

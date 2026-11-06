@@ -8,6 +8,7 @@ import type {
   LlmResult,
   LlmRole,
   LlmUsage,
+  RawCompletion,
 } from "./types.js";
 import { LlmError } from "./types.js";
 
@@ -152,6 +153,16 @@ const JSON_ONLY_HINT =
   "Respond with ONLY a single JSON object that satisfies the required schema. " +
   "No prose, no explanation, no markdown code fences.";
 
+/** The system prompt exactly as completeJSON sends it. Exported so a caller that
+ *  hashes the prompt hashes what the provider received.
+ *
+ *  noJsonHint sends `system` verbatim (the simulator passes the bare template, mirroring cx-sqs
+ *  which relies on strict json_schema alone). Otherwise append the JSON-only instruction. */
+export function systemPromptAsSent(system: string | undefined, noJsonHint = false): string {
+  if (noJsonHint) return system ?? "";
+  return system ? `${system}\n\n${JSON_ONLY_HINT}` : JSON_ONLY_HINT;
+}
+
 /**
  * Emit one structured accounting line per LLM call.
  *
@@ -238,13 +249,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
   const timeoutMs = opts.timeoutMs ?? config.LLM_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? config.LLM_MAX_RETRIES;
 
-  // noJsonHint sends `system` verbatim (the simulator passes the bare template, mirroring cx-sqs
-  // which relies on strict json_schema alone). Otherwise append the JSON-only instruction.
-  const system = opts.noJsonHint
-    ? (opts.system ?? "")
-    : opts.system
-      ? `${opts.system}\n\n${JSON_ONLY_HINT}`
-      : JSON_ONLY_HINT;
+  const system = systemPromptAsSent(opts.system, opts.noJsonHint);
   let user = opts.prompt;
 
   const usage: LlmUsage = emptyUsage();
@@ -320,7 +325,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
       const hinted = retryAfterMsFromError(lastError);
       await Bun.sleep(hinted ?? Math.min(4000, 400 * 2 ** (attempt - 2)));
     }
-    let raw: { text: string; usage: LlmUsage };
+    let raw: RawCompletion;
     try {
       raw = await provider.complete({
         system,
@@ -390,13 +395,13 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
             `(label=${opts.label ?? opts.role ?? "-"} attempt=${attempt}/${maxRetries + 1})`,
         );
         if (opts.role === "judge") {
-          // Deliberately loud. Verdict rows do not record which model judged them,
-          // so a run that switches mid-way yields a silently mixed verdict set.
-          // schema.ts says keep JUDGE_MODEL_FALLBACK unset; if someone set it
-          // anyway, the consequence must at least be visible in the logs.
+          // Deliberately loud. Each verdict records its judge_model, but a run that
+          // switches mid-way still mixes two measurements. schema.ts says keep
+          // JUDGE_MODEL_FALLBACK unset; if someone set it anyway, the consequence
+          // must be visible in the logs too.
           console.warn(
             `[llm] WARN judge fell back to ${fallbackModel} — verdicts in this run are NOT ` +
-              `model-comparable, and the verdict rows do not record which model produced them`,
+              `model-comparable; each verdict's judge_model says which model produced it`,
           );
         }
         req.model = fallbackModel;
@@ -425,7 +430,7 @@ export async function completeJSON<T>(opts: CompleteJSONOptions<T>): Promise<Llm
     const result = opts.schema.safeParse(parsed.value);
     if (result.success) {
       account(attempt, "ok");
-      return { data: result.data, usage, raw: raw.text, attempts: attempt };
+      return { data: result.data, usage, raw: raw.text, attempts: attempt, model: req.model, reasoningEffort: raw.reasoningEffort };
     }
     lastError = result.error;
     const issues = result.error.issues
