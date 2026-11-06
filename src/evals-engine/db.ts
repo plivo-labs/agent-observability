@@ -13,7 +13,7 @@
 // single place they are maintained.
 import { config } from "../config.js";
 import type { SessionTag } from "./types.js";
-import { sql } from "../db.js";
+import { evalSql as sql } from "./transaction.js";
 import type { CustomJudgeSpec } from "./judges/custom-metric.js";
 import { jsonbParam } from "../jsonb-param.js";
 
