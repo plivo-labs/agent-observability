@@ -44,10 +44,11 @@ export const NodeLoopRawZ = z.object({
 });
 export type NodeLoopRaw = z.infer<typeof NodeLoopRawZ>;
 
-// intent — the LLM returns the two booleans (cx-sqs intent/config.go); `score` is derived (1 iff both false).
+// intent — the LLM returns the two booleans (cx-sqs intent/config.go) and a reason_code; `score` is derived (1 iff both false).
 export const IntentIdentificationRawZ = z.object({
   intent_not_found: z.boolean(),
   intent_wrongly_identified: z.boolean(),
+  reason_code: reasonZ,
   reason: reasonZ,
   technical_reason: reasonZ,
 });

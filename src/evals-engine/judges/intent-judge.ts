@@ -61,11 +61,17 @@ export async function runIntentJudge(
     provider,
   });
   const raw = res.data;
-  const correct = !raw.intent_not_found && !raw.intent_wrongly_identified;
+  // A wrong selection outranks not-found so a contradicting choice is never
+  // read as a catalogue gap. A gap also needs the node to have routed nowhere:
+  // selecting or handing off outside the list is the agent's own error.
+  const wrong = raw.intent_wrongly_identified;
+  const notFound = raw.intent_not_found && !wrong;
+  const gap = notFound && raw.reason_code === "catalogue_gap" && !node.chosen_intent && !node.handed_off;
   const data: IntentIdentificationMetrics = {
-    intent_not_found: raw.intent_not_found,
-    intent_wrongly_identified: raw.intent_wrongly_identified && !raw.intent_not_found,
-    score: correct ? 1.0 : 0.0,
+    intent_not_found: notFound,
+    intent_wrongly_identified: wrong,
+    score: notFound || wrong ? 0.0 : 1.0,
+    reason_code: wrong ? "wrong_intent" : !notFound ? "no_defect" : gap ? "catalogue_gap" : "unlisted_intent",
     reason: raw.reason,
     technical_reason: raw.technical_reason,
   };

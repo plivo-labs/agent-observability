@@ -92,3 +92,26 @@ describe("buildExternalEvalRows — the transfer fact (human_transfer)", () => {
     expect(names(verdicts())).not.toContain("human_transfer");
   });
 });
+
+describe("buildExternalEvalRows — intent identification", () => {
+  test("a Jev missed-intent verdict stays a fail", async () => {
+    const { jevIntent } = await import("../src/evals-engine/jev/merge.js");
+    const axis = {
+      kind: "node", id: "n0:intent_identification", judge: "intent_identification", nodeIndex: 0, requestKey: "n0",
+      questionKeys: ["n0.intent.not_found", "n0.intent.wrong"],
+      intents: [{ key: "n0.intent.not_found", intent: "opt_out" }, { key: "n0.intent.wrong", intent: "" }],
+    } as any;
+    const ii = jevIntent({ axis, outcome: "fail", p: 0.9, firedKeys: ["n0.intent.not_found"], probabilities: {} }, new Map());
+    expect(ii).toMatchObject({ intent_not_found: true, backend: "jev" });
+    const v = verdicts();
+    v.node_evaluations[0].intent_identification = ii;
+    const row = buildExternalEvalRows(v).find((r) => r.judgeName === "intent_identification")!;
+    expect(row.passed).toBe(false);
+    expect(row.verdictText).toBeUndefined();
+
+    v.node_evaluations[0].intent_identification = { ...ii, reason_code: "catalogue_gap" };
+    const labelled = buildExternalEvalRows(v).find((r) => r.judgeName === "intent_identification")!;
+    expect(labelled.passed).toBe(false);
+    expect(labelled.verdictText).toBeUndefined();
+  });
+});

@@ -44,7 +44,20 @@ export function buildExternalEvalRows(verdicts: SessionEvalVerdicts): ExternalEv
     const ia = ne.instructions_adherence;
     if (ia && !machineAnswered) rows.push({ judgeName: "instructions_adherence", tag, passed: ia.adherence_passed, reasoning: ia.reason, raw: ia as any });
     const ii = ne.intent_identification;
-    if (ii) rows.push({ judgeName: "intent_identification", tag, passed: !(ii.intent_not_found || ii.intent_wrongly_identified), reasoning: ii.reason, raw: ii as any });
+    if (ii) {
+      // A need the intent list does not cover is a configuration gap, not an
+      // agent failure. Jev's single not_found question cannot tell a gap from
+      // an unlisted selection, so its verdict stands.
+      const gap = ii.reason_code === "catalogue_gap" && ii.backend !== "jev";
+      rows.push({
+        judgeName: "intent_identification",
+        tag,
+        passed: !gap && !(ii.intent_not_found || ii.intent_wrongly_identified),
+        ...(gap ? { verdictText: "unknown" } : {}),
+        reasoning: gap ? ["Caller's need is not in the intent list", ii.reason].filter(Boolean).join(": ") : ii.reason,
+        raw: ii as any,
+      });
+    }
     const ve = ne.variable_extraction;
     if (ve) rows.push({ judgeName: "variable_extraction", tag, passed: ve.extraction_successful, reasoning: ve.reason, raw: ve as any });
     const ha = ne.hallucination;
