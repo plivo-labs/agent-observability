@@ -223,3 +223,14 @@ describe("envSchema — scenario generation model default", () => {
     expect(c.SIM_EVAL_SCENARIO_GENERATION_MODEL).toBe("gpt-5.5");
   });
 });
+
+test("JEV_AUDIT_RATE defaults off and accepts only fractions from zero through one", () => {
+  for (const value of [undefined, "", " ", "0"]) {
+    expect(envSchema.parse({ JEV_AUDIT_RATE: value }).JEV_AUDIT_RATE).toBe(0);
+  }
+  expect(envSchema.parse({ JEV_AUDIT_RATE: "0.1" }).JEV_AUDIT_RATE).toBe(0.1);
+  expect(envSchema.parse({ JEV_AUDIT_RATE: "1" }).JEV_AUDIT_RATE).toBe(1);
+  for (const value of ["-0.1", "1.1", "NaN", "Infinity", "invalid"]) {
+    expect(envSchema.safeParse({ JEV_AUDIT_RATE: value }).success).toBe(false);
+  }
+});

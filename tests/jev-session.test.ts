@@ -113,7 +113,7 @@ describe("candidates and final decisions", () => {
 });
 
 describe("published decisions", () => {
-  const withSwitches = async <T>(switches: Record<string, string>, body: () => Promise<T>): Promise<T> => {
+  const withSwitches = async <T>(switches: Record<string, string | number>, body: () => Promise<T>): Promise<T> => {
     const saved = Object.fromEntries(Object.keys(switches).map((k) => [k, (testConfig as any)[k]]));
     Object.assign(testConfig, switches);
     try {
@@ -122,6 +122,194 @@ describe("published decisions", () => {
       Object.assign(testConfig, saved);
     }
   };
+
+  test("a sampled node pass keeps its published row and stores a disagreeing LLM audit", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop", JEV_AUDIT_RATE: 1 }, async () => {
+      const provider = new MockLLM([(args) => args.jsonSchema?.name === "eval_loop"
+        ? JSON.stringify({ loop_detected: true, score: 0, reason: "Repeated the same question.", technical_reason: "three repetitions" })
+        : defaultJudgeResponder(args.system)!]);
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      const row = buildExternalEvalRows(v).find(r => r.judgeName === "node_loop")!;
+      expect(row.passed).toBe(true);
+      expect(row.reasoning).toBe("No defect found.");
+      expect(row.raw).toMatchObject({ backend: "jev", confidence: 0.01, jev: { route: "auto_pass" },
+        audit: { backend: "llm", verdict: "fail", reason: "Repeated the same question.", technical_reason: "three repetitions" } });
+      expect(labelsOf(provider).filter(l => l === "eval_loop")).toHaveLength(1);
+    });
+  });
+
+  test("a failed audit leaves the primary row intact and records an unknown audit", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop", JEV_AUDIT_RATE: 1 }, async () => {
+      const provider = new MockLLM([(args) => {
+        if (args.jsonSchema?.name === "eval_loop") throw new Error("audit provider unavailable");
+        return defaultJudgeResponder(args.system)!;
+      }]);
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      const row = buildExternalEvalRows(v).find(r => r.judgeName === "node_loop")!;
+      expect(row.passed).toBe(true);
+      expect(row.reasoning).toBe("No defect found.");
+      expect(row.raw).toMatchObject({ backend: "jev", audit: { verdict: "unknown" } });
+      expect((row.raw.audit as { reason: string }).reason).toContain("audit provider unavailable");
+    });
+  });
+
+  test("a stalled audit times out without losing or later changing the primary row", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop", JEV_AUDIT_RATE: 1, LLM_TIMEOUT_MS: 20 }, async () => {
+      let finish: (text: string) => void = () => {};
+      let auditSignal: AbortSignal | undefined;
+      const provider = new MockLLM([(args) => {
+        if (args.jsonSchema?.name === "eval_loop") {
+          auditSignal = args.signal;
+          return new Promise<string>((resolve) => { finish = resolve; });
+        }
+        return defaultJudgeResponder(args.system)!;
+      }]);
+      const pending = evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const v = await Promise.race([pending, new Promise<never>((_, reject) => {
+          watchdog = setTimeout(() => reject(new Error("audit blocked publication")), 500);
+        })]);
+        const row = buildExternalEvalRows(v).find(r => r.judgeName === "node_loop")!;
+        expect(row.passed).toBe(true);
+        expect(row.raw).toMatchObject({ backend: "jev", audit: { verdict: "unknown" } });
+        expect((row.raw.audit as { reason: string }).reason).toContain("timed out");
+        expect(auditSignal?.aborted).toBe(true);
+        const saved = JSON.stringify(row);
+        finish(JSON.stringify({ loop_detected: true, score: 0, reason: "Late result.", technical_reason: "late" }));
+        await Bun.sleep(5);
+        expect(JSON.stringify(row)).toBe(saved);
+      } finally {
+        clearTimeout(watchdog);
+        finish(defaultJudgeResponder("repeat its own previous messages")!);
+        await pending;
+      }
+    });
+  });
+
+  test("all node auto-passes retain their rows while each full LLM judge audits them", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "all", JEV_AUDIT_RATE: 1 }, async () => {
+      const provider = new MockLLM([(args) => {
+        if (args.jsonSchema?.name === "eval_variable_guarded_review") return JSON.stringify({ reviews: [
+          { variable_name: "order_id", issue_type: "incorrect", defect_confirmed: true, stored_value_supported: false, evidence: "The recorded value differs." },
+        ] });
+        const data = JSON.parse(defaultJudgeResponder(args.system)!);
+        if (args.jsonSchema?.name === "eval_instruction") {
+          data.objective_progress.achieved = false;
+          data.objective_progress.reason = "The objective was missed.";
+        } else if (args.jsonSchema?.name === "eval_hallucination") {
+          data.hallucinated = true;
+          data.unsupported_claim = "The order is free.";
+        } else if (args.jsonSchema?.name === "eval_variable") {
+          data.extraction_successful = false;
+          data.incorrect_variables = ["order_id"];
+        } else if (args.jsonSchema?.name === "eval_intent") data.intent_wrongly_identified = true;
+        else if (args.jsonSchema?.name === "eval_loop") data.loop_detected = true;
+        data.reason = "Independent audit found a defect.";
+        return JSON.stringify(data);
+      }]);
+      const baseline = await evaluateIngestedSession(config, events, llm(), "livekit", undefined, undefined, [], new MockJev([{}], 0.01));
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      const before = buildExternalEvalRows(baseline);
+      const rows = buildExternalEvalRows(v).filter(r => r.tag !== null);
+      expect(rows).toHaveLength(5);
+      for (const row of rows) {
+        const { audit, ...raw } = row.raw;
+        expect(audit).toMatchObject({ backend: "llm", verdict: "fail" });
+        expect((audit as { reason: string }).reason).not.toBe("");
+        expect({ ...row, raw }).toEqual(before.find(r => r.judgeName === row.judgeName)!);
+      }
+      for (const label of ["eval_instruction", "eval_hallucination", "eval_variable", "eval_intent", "eval_loop"]) {
+        expect(labelsOf(provider).filter(l => l === label)).toHaveLength(1);
+      }
+    });
+  });
+
+  test("conversation audits preserve every pass and never change outcome priority or node row selection", async () => {
+    await withSwitches({ JEV_AUDIT_RATE: 1 }, async () => {
+      const provider = new MockLLM([(args) => args.jsonSchema?.name === "eval_detection"
+        ? JSON.stringify({ detected: true, reason: "Audit detected an outcome.", technical_reason: "independent evidence" })
+        : defaultJudgeResponder(args.system)!]);
+      const baseline = await evaluateIngestedSession(config, events, llm(), "livekit", undefined, undefined, [], new MockJev([{}], 0.01));
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      const rows = buildExternalEvalRows(v);
+      const audited = rows.filter(r => r.raw.audit !== undefined);
+      expect(audited.map(r => r.judgeName).sort()).toEqual(["bot_detection", "call_screening", "do_not_disturb", "low_engagement", "voicemail_detection", "wrong_number"]);
+      for (const row of audited) expect(row.raw.audit).toEqual({ backend: "llm", verdict: "fail", reason: "Audit detected an outcome.", technical_reason: "independent evidence" });
+      expect(rows.map(({ raw: { audit, ...raw }, ...row }) => ({ ...row, raw }))).toEqual(buildExternalEvalRows(baseline));
+      expect(v.conversation_metrics.conversation_status).toEqual(baseline.conversation_metrics.conversation_status);
+      expect(labelsOf(provider).filter(l => l === "eval_detection")).toHaveLength(6);
+    });
+  });
+
+  test("an audit remains in raw when conversation rules derive the published outcome", async () => {
+    await withSwitches({ JEV_AUDIT_RATE: 1 }, async () => {
+      const v = await evaluateIngestedSession(config, [events[0]!], llm(), "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      const row = buildExternalEvalRows(v).find(r => r.judgeName === "low_engagement")!;
+      expect(row.passed).toBe(false);
+      expect(row.raw.backend).toBe("code");
+      expect(row.raw.audit).toMatchObject({ backend: "llm", verdict: "pass", reason: "r" });
+    });
+  });
+
+  test("session and node identities select the same audits across retries and Jev layouts", async () => {
+    for (const layout of ["views", "shared"]) {
+      await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop", JEV_AUDIT_RATE: 0.5, JEV_LAYOUT: layout }, async () => {
+        const twoNodes = { ...config, nodes: [config.nodes![0]!, { ...config.nodes![0]!, ref: "node-B" }] };
+        const twoEvents = [...events, ...events.map(e => ({ ...e, node_ref: "node-B" }))];
+        for (const [sessionId, selected] of [["session-0", "node-A"], ["session-1", "node-B"], ["session-0", "node-A"]] as const) {
+          const v = await evaluateIngestedSession(twoNodes, twoEvents, llm(), "livekit", undefined, undefined, [], new MockJev([{}], 0.01), sessionId);
+          const rows = buildExternalEvalRows(v).filter(r => r.judgeName === "node_loop");
+          expect(rows.filter(r => r.raw.audit).map(r => r.tag)).toEqual([selected]);
+          expect(rows.every(r => r.passed && r.raw.backend === "jev")).toBe(true);
+        }
+      });
+    }
+  });
+
+  test("rate zero makes no audit calls and omits audit provenance", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "all", JEV_AUDIT_RATE: 0 }, async () => {
+      const provider = llm();
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      expect(labelsOf(provider)).toEqual(["eval_sentiment", "eval_stt"]);
+      expect(buildExternalEvalRows(v).every(r => r.raw.audit === undefined)).toBe(true);
+    });
+  });
+
+  test("missing session identity makes no audit calls", async () => {
+    await withSwitches({ JEV_NODE_AUTO_PASS: "all", JEV_AUDIT_RATE: 1 }, async () => {
+      const { v, provider } = await run(new MockJev([{}], 0.01));
+      expect(labelsOf(provider)).toEqual(["eval_sentiment", "eval_stt"]);
+      expect(buildExternalEvalRows(v).every(r => r.raw.audit === undefined)).toBe(true);
+    });
+  });
+
+  test("auto-fails and reviewed axes are never audited even at rate one", async () => {
+    await withSwitches({ JEV_AUTO_FAIL: "node_loop", JEV_AUDIT_RATE: 1 }, async () => {
+      const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k.includes("node_loop") ? 0.97 : 0.5]))]);
+      const provider = llm();
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], jev, "session-audit");
+      const rows = buildExternalEvalRows(v);
+      expect(rows.every(r => r.raw.audit === undefined)).toBe(true);
+      expect(rows.find(r => r.judgeName === "node_loop")).toMatchObject({ passed: false, raw: { backend: "jev" } });
+      expect(labelsOf(provider)).not.toContain("eval_loop");
+      expect(labelsOf(provider).filter(l => l === "eval_hallucination")).toHaveLength(1);
+      expect(labelsOf(provider).filter(l => l === "eval_detection")).toHaveLength(6);
+    });
+  });
+
+  test("an unavailable conversation audit is unknown while its primary pass remains available", async () => {
+    await withSwitches({ JEV_AUDIT_RATE: 1 }, async () => {
+      const provider = new MockLLM([(args) => args.jsonSchema?.name === "eval_detection" ? "invalid" : defaultJudgeResponder(args.system)!]);
+      const v = await evaluateIngestedSession(config, events, provider, "livekit", undefined, undefined, [], new MockJev([{}], 0.01), "session-audit");
+      const rows = buildExternalEvalRows(v).filter(r => r.raw.audit !== undefined);
+      expect(rows).toHaveLength(6);
+      for (const row of rows) {
+        expect(row.passed).toBe(true);
+        expect(row.raw).toMatchObject({ available: true, backend: "jev", audit: { verdict: "unknown", technical_reason: "conversation judge unavailable" } });
+      }
+    });
+  });
 
   test("a named node judge's confident pass stands with no LLM judge call", async () => {
     await withSwitches({ JEV_NODE_AUTO_PASS: "node_loop" }, async () => {
