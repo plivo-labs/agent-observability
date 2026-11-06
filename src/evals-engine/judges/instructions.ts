@@ -288,25 +288,25 @@ The overall verdict is the MINIMUM accuracy over the applicable criteria — one
 // ── output-format sections (authored to request the rich fields the console contract needs) ──────────
 
 export const OUT_HALLUCINATION = `Return ONLY a JSON object (score bands: 1.0 every claim grounded | 0.75 minor details not fully traceable, core grounded | 0.5 mix of grounded/ungrounded | 0.25 significant ungrounded | 0.0 entirely ungrounded):
-{"hallucinated": boolean, "unsupported_claim": string (when hallucinated=true, the exact words of the agent's spoken claim that no evidence supports; empty when hallucinated=false), "score": number (0.0-1.0, where 1.0 = fully grounded, no hallucination), "reason": string (concise, user-facing), "technical_reason": string (detailed evidence trace)}`;
+{"technical_reason": string (detailed evidence trace), "unsupported_claim": string (when hallucinated=true, the exact words of the agent's spoken claim that no evidence supports; empty when hallucinated=false), "reason": string (concise, user-facing), "hallucinated": boolean, "score": number (0.0-1.0, where 1.0 = fully grounded, no hallucination)}`;
 
 export const OUT_VARIABLE = `Return ONLY a JSON object. HARD EXCLUSIONS: NEVER put agent-composed summaries or remarks, absent defaults or other rule-produced workflow fields (except a rule-named value under B), backend/platform values, tool/lookup values (except a lookup field under B), unopened-gate variables, a configured yes-when-not-disputed default, or values pending a final recording batch prevented by truncation in missing_variables or incorrect_variables. A caller reply after an interrupted transfer/ending turn with no following agent/tool turn is truncation. missing_variables = ONLY APPLICABLE caller-capture variables whose value the caller EXPLICITLY STATED but the agent did not store, plus the two exceptions under B (a rule-named value for a situation that happened; a lookup field the visible result holds) — never inferred, derived, duplicated or backend values; other workflow/default fields are excluded too. incorrect_variables = applicable caller-capture values that are wrong or contradict the caller under the INCORRECT test above, or a label that plainly contradicts the caller (step 2a) — not config-directed defaults or other agent-authored workflow metadata. Use the exact variable names; empty arrays if none:
-{"extraction_successful": boolean, "score": number (0.0-1.0, where 1.0 = all required variables correctly extracted), "reason": string, "technical_reason": string, "missing_variables": [string], "incorrect_variables": [string]}`;
+{"technical_reason": string, "missing_variables": [string], "incorrect_variables": [string], "reason": string, "extraction_successful": boolean, "score": number (0.0-1.0, where 1.0 = all required variables correctly extracted)}`;
 
 export const OUT_LOOP = `Return ONLY a JSON object:
-{"loop_detected": boolean, "score": number (0.0-1.0, where 1.0 = no unjustified repetition), "reason": string, "technical_reason": string}`;
+{"technical_reason": string, "reason": string, "loop_detected": boolean, "score": number (0.0-1.0, where 1.0 = no unjustified repetition)}`;
 
-export const OUT_INSTRUCTION = `Return ONLY a JSON object with the four sub-metrics and config_conflicts (do NOT return a top-level pass/fail — that is computed by the caller). Use ONLY the reason_code / severity / category values enumerated in the rubric above; score is 0.0-1.0 per the anchors:
+export const OUT_INSTRUCTION = `Return ONLY a JSON object with config_conflicts and the four sub-metrics (do NOT return a top-level pass/fail — that is computed by the caller). Use ONLY the reason_code / severity / category values enumerated in the rubric above; score is 0.0-1.0 per the anchors:
 {
-  "objective_progress": {"achieved": boolean, "score": number (0.0-1.0), "reason_code": string, "reason": string, "technical_reason": string},
-  "procedure_compliance": {"score": number (0.0-1.0), "reason_code": string, "missed_steps": [{"step": string, "severity": "critical"|"minor", "reason_code": string, "details": string}], "reason": string, "technical_reason": string},
-  "interaction_quality": {"score": number (0.0-1.0), "reason_code": string, "issues": [{"category": string, "reason_code": string, "details": string}], "reason": string, "technical_reason": string},
-  "policy_boundary_compliance": {"passed": boolean, "score": number (0.0-1.0), "reason_code": string, "reason": string, "technical_reason": string},
-  "config_conflicts": [{"forbidding_line": string, "permitting_line": string, "behaviour": string}] (empty when no instruction conflict touches what the agent did)
+  "config_conflicts": [{"forbidding_line": string, "permitting_line": string, "behaviour": string}] (empty when no instruction conflict touches what the agent did),
+  "objective_progress": {"technical_reason": string, "reason": string, "reason_code": string, "achieved": boolean, "score": number (0.0-1.0)},
+  "procedure_compliance": {"technical_reason": string, "missed_steps": [{"step": string, "reason_code": string, "details": string, "severity": "critical"|"minor"}], "reason": string, "reason_code": string, "score": number (0.0-1.0)},
+  "interaction_quality": {"technical_reason": string, "issues": [{"category": string, "reason_code": string, "details": string}], "reason": string, "reason_code": string, "score": number (0.0-1.0)},
+  "policy_boundary_compliance": {"technical_reason": string, "reason": string, "reason_code": string, "passed": boolean, "score": number (0.0-1.0)}
 }`;
 
 export const OUT_INTENT = `Return ONLY a JSON object (do NOT return a score — the caller derives it):
-{"intent_not_found": boolean, "intent_wrongly_identified": boolean, "reason": string, "technical_reason": string}`;
+{"technical_reason": string, "reason": string, "intent_not_found": boolean, "intent_wrongly_identified": boolean}`;
 
 const OUT_GOAL = `Return ONLY a JSON object with one entry per goal (use the exact goal_name given):
 {"goals": [{"goal_name": string, "achieved": boolean, "reason": string, "technical_reason": string}]}`;

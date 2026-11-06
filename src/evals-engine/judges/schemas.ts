@@ -18,7 +18,8 @@ const int = { type: "integer" } as const;
 const strArray = { type: "array", items: { type: "string" } } as const;
 const arrayOf = (items: JsonSchema) => ({ type: "array", items });
 
-/** An object schema with EVERY property required + additionalProperties:false (strict-mode requirement). */
+/** An object schema with EVERY property required + additionalProperties:false (strict-mode requirement).
+ *  Key order is decode order under strict json_schema, so reasoning fields go before the verdict they justify. */
 const obj = (properties: Record<string, unknown>): JsonSchema => ({
   type: "object",
   properties,
@@ -32,42 +33,43 @@ const strict = (name: string, schema: JsonSchema) => ({ name, schema, strict: tr
 // ── node judges ────────────────────────────────────────────────────────────────
 export const HALLUCINATION_JSON = strict(
   "eval_hallucination",
-  obj({ hallucinated: bool, unsupported_claim: str, score: num, reason: str, technical_reason: str }),
+  obj({ technical_reason: str, unsupported_claim: str, reason: str, hallucinated: bool, score: num }),
 );
 
 export const NODE_LOOP_JSON = strict(
   "eval_loop",
-  obj({ loop_detected: bool, score: num, reason: str, technical_reason: str }),
+  obj({ technical_reason: str, reason: str, loop_detected: bool, score: num }),
 );
 
 export const VARIABLE_EXTRACTION_JSON = strict(
   "eval_variable",
   obj({
-    extraction_successful: bool,
-    score: num,
-    reason: str,
     technical_reason: str,
     missing_variables: strArray,
     incorrect_variables: strArray,
+    reason: str,
+    extraction_successful: bool,
+    score: num,
   }),
 );
 
 export const INTENT_JSON = strict(
   "eval_intent",
-  obj({ intent_not_found: bool, intent_wrongly_identified: bool, reason: str, technical_reason: str }),
+  obj({ technical_reason: str, reason: str, intent_not_found: bool, intent_wrongly_identified: bool }),
 );
 
 // instruction adherence — the 4 sub-metrics (mirror cx-sqs node/instruction/config.go exactly).
-const MISSED_STEP = obj({ step: str, severity: str, reason_code: str, details: str });
+// config_conflicts leads: the rubric resolves instruction conflicts before any sub-dimension can fail.
+const MISSED_STEP = obj({ step: str, reason_code: str, details: str, severity: str });
 const ISSUE = obj({ category: str, reason_code: str, details: str });
 export const INSTRUCTION_ADHERENCE_JSON = strict(
   "eval_instruction",
   obj({
-    objective_progress: obj({ achieved: bool, score: num, reason_code: str, reason: str, technical_reason: str }),
-    procedure_compliance: obj({ score: num, reason_code: str, missed_steps: arrayOf(MISSED_STEP), reason: str, technical_reason: str }),
-    interaction_quality: obj({ score: num, reason_code: str, issues: arrayOf(ISSUE), reason: str, technical_reason: str }),
-    policy_boundary_compliance: obj({ passed: bool, score: num, reason_code: str, reason: str, technical_reason: str }),
     config_conflicts: arrayOf(obj({ forbidding_line: str, permitting_line: str, behaviour: str })),
+    objective_progress: obj({ technical_reason: str, reason: str, reason_code: str, achieved: bool, score: num }),
+    procedure_compliance: obj({ technical_reason: str, missed_steps: arrayOf(MISSED_STEP), reason: str, reason_code: str, score: num }),
+    interaction_quality: obj({ technical_reason: str, issues: arrayOf(ISSUE), reason: str, reason_code: str, score: num }),
+    policy_boundary_compliance: obj({ technical_reason: str, reason: str, reason_code: str, passed: bool, score: num }),
   }),
 );
 
@@ -99,6 +101,6 @@ export const CRITERIA_JSON = strict(
 // reduce to the same result and the emitted user_sentiment.passed is the
 // single source of truth.
 export const SENTIMENT_VALUES = ["positive", "neutral", "negative", "confused", "not_applicable"] as const;
-export const DETECTION_JSON = strict("eval_detection", obj({ detected: bool, reason: str, technical_reason: str }));
-export const SENTIMENT_JSON = strict("eval_sentiment", obj({ sentiment: { type: "string", enum: SENTIMENT_VALUES }, reason: str, technical_reason: str }));
-export const STT_JSON = strict("eval_stt", obj({ error_count: int, recovered_count: int, reason: str, technical_reason: str }));
+export const DETECTION_JSON = strict("eval_detection", obj({ technical_reason: str, reason: str, detected: bool }));
+export const SENTIMENT_JSON = strict("eval_sentiment", obj({ technical_reason: str, reason: str, sentiment: { type: "string", enum: SENTIMENT_VALUES } }));
+export const STT_JSON = strict("eval_stt", obj({ technical_reason: str, reason: str, error_count: int, recovered_count: int }));
