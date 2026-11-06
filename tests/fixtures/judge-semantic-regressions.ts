@@ -1,11 +1,12 @@
 // Synthetic, non-customer examples. Expected verdicts never enter judge inputs.
-import type { ConversationInput, NodeEvalInput } from "../../src/evals-engine/types.js";
+import type { ConversationInput, EvalTurn, NodeEvalInput } from "../../src/evals-engine/types.js";
+import { renderFullTranscript } from "../../src/evals-engine/conversation-input.js";
 
 export type SemanticCase = {
   id: string;
   expected: "pass" | "fail" | "unknown";
   input: ConversationInput;
-} & ({ kind: "custom"; body: string } | { kind: "variable"; node: NodeEvalInput });
+} & ({ kind: "custom"; body: string } | { kind: "variable" | "hallucination"; node: NodeEvalInput });
 
 const conversation = (transcript: string): ConversationInput => ({
   flow_name: "regression-fixture", global_prompt: "Follow the configured instructions.",
@@ -25,6 +26,17 @@ const variableCase = (id: string, expected: "pass" | "fail", name: string, rule:
   const input = conversation(`${user ? `User: ${user}\n` : ""}Agent: ${agent}`);
   input.nodes = [node];
   return { id, kind: "variable", expected, node, input };
+};
+
+const turn = (node_uuid: string, user: string, agent: string, evidence = false): EvalTurn =>
+  ({ node_uuid, user, agent, intent: "", ...(evidence ? { evidence } : {}) });
+const hallucinationCase = (id: string, expected: SemanticCase["expected"], prompts: Record<string, string>, timeline: EvalTurn[], target: string): SemanticCase => {
+  const nodes: NodeEvalInput[] = Object.entries(prompts).map(([uuid, prompt]) => {
+    const turns = timeline.filter((t) => t.node_uuid === uuid);
+    return { node_uuid: uuid, node_name: uuid, node_prompt: prompt, available_intents: [], chosen_intent: "", required_variables: [], extracted_variables: {}, turns, turn_count: turns.length };
+  });
+  const input: ConversationInput = { ...conversation(renderFullTranscript(timeline)), global_prompt: "You help callers with their phone plan.", nodes, timeline };
+  return { id, kind: "hallucination", expected, node: nodes.find((n) => n.node_uuid === target)!, input };
 };
 
 export const semanticCases: SemanticCase[] = [
@@ -114,4 +126,22 @@ export const semanticCases: SemanticCase[] = [
   variableCase("configured-no-dispute-default", "pass", "remember_form", "Extract yes if the caller remembers or does not dispute. Extract no for a wrong person.", "yes", "Please call this afternoon."),
   variableCase("explicit-negative-answer-not-recorded", "fail", "website_interest", "Extract whether the caller is interested in a website. Use yes, no, or unclear.", undefined, "No, I am not interested in a website. Goodbye."),
   variableCase("unreached-budget-after-decline", "pass", "website_budget", "Extract the caller's website budget if they state one.", undefined, "No, I am not interested in a website. Goodbye."),
+  hallucinationCase("invented-price-repeated-in-same-node", "fail", { confirm: "Confirm the plan the caller chose." }, [
+    turn("confirm", "", "The Premium plan is 79 dollars a month."),
+    turn("confirm", "79?", "Yes, 79 dollars a month for Premium."),
+  ], "confirm"),
+  hallucinationCase("earlier-node-price-restated", "pass", {
+    quote: "Tell the caller the Basic plan costs 49 dollars a month.",
+    confirm: "Confirm the plan the caller chose.",
+  }, [
+    turn("quote", "", "The Basic plan is 49 dollars a month."),
+    turn("quote", "Okay, Basic.", ""),
+    turn("confirm", "", "Great, Basic at 49 dollars a month it is."),
+  ], "confirm"),
+  hallucinationCase("claim-on-empty-tool-result", "unknown", { lookup: "Look up the caller's order with lookup_order and tell them its status." }, [
+    turn("lookup", "Has order 42 shipped?", ""),
+    turn("lookup", "", 'Tool_Call: lookup_order({"order_id":"42"})', true),
+    turn("lookup", "", "Tool_Result: lookup_order -> ", true),
+    turn("lookup", "", "Your order shipped on March 3."),
+  ], "lookup"),
 ];

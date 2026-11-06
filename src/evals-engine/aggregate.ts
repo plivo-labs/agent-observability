@@ -22,7 +22,15 @@ import type {
 export const clamp01 = (n: number): number => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
 
 export function mapHallucination(raw: HallucinationRaw): HallucinationMetrics {
-  return { hallucinated: raw.hallucinated, score: clamp01(raw.score), reason: raw.reason, technical_reason: raw.technical_reason };
+  const claim = (raw.hallucinated || raw.unverifiable) && raw.unsupported_claim?.trim() ? raw.unsupported_claim : undefined;
+  return {
+    hallucinated: raw.hallucinated,
+    ...(raw.unverifiable ? { unverifiable: true } : {}),
+    ...(claim ? { unsupported_claim: claim } : {}),
+    score: clamp01(raw.score),
+    reason: raw.reason,
+    technical_reason: raw.technical_reason,
+  };
 }
 
 export function mapVariableExtraction(raw: VariableExtractionRaw, requiredVariables: string[]): VariableExtractionMetrics {
