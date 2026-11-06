@@ -563,12 +563,12 @@ describe("POST /observability/recordings/v0", () => {
   });
 
   test("end_time in the header sets the session end and duration", async () => {
-    const postWithEnd = async (sessionId: string, endTime: unknown) => {
+    const postWithEnd = async (sessionId: string, endTime: unknown, startTime: number | undefined = 1700000000) => {
       const form = new FormData();
       form.append(
         "header",
         new Blob(
-          [JSON.stringify({ session_id: sessionId, start_time: 1700000000, end_time: endTime, transport: "chat" })],
+          [JSON.stringify({ session_id: sessionId, start_time: startTime, end_time: endTime, transport: "chat" })],
           { type: "application/json" },
         ),
       );
@@ -589,9 +589,15 @@ describe("POST /observability/recordings/v0", () => {
     expect(stated.durationMs).toBe(90500);
 
     // An end before the start (or garbage) falls back to the upload time.
-    for (const bad of [1699999999, "soon"]) {
+    for (const bad of [1699999999, "soon", true, [1700000090], 1e100]) {
       const before = Date.now();
       const fallback = await postWithEnd(`sess-bad-${bad}`, bad);
+      expect(fallback.endedAt.getTime()).toBeGreaterThanOrEqual(before);
+    }
+    // With no start to compare against, a non-number or out-of-range end must not stand.
+    for (const bad of [true, 1e100]) {
+      const before = Date.now();
+      const fallback = await postWithEnd(`sess-nostart-${bad}`, bad, undefined);
       expect(fallback.endedAt.getTime()).toBeGreaterThanOrEqual(before);
     }
   });

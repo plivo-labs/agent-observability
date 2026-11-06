@@ -3,11 +3,12 @@ import type { NodeEvalInput, NodeEvaluation } from "./types.js";
 // Text a model's runtime can leak into a reply. None of it is ever wording a
 // customer should receive, so it fails policy in code: a Jev auto-pass never
 // reaches the adherence rubric. A raw {{placeholder}} is left to the rubric:
-// an agent may be explaining a template.
+// an agent may be explaining a template, and so is a Markdown link label
+// such as [tool calls](url).
 const RUNTIME_TEXT: readonly RegExp[] = [
   /\bto=functions\.[\w.-]+/i,
   /<\|[a-z][a-z0-9_]*\|>/i,
-  /\[\s*tool[ _-]?calls?\b[^\]\n]{0,120}\]/i,
+  /\[\s*tool[ _-]?calls?\b[^\]\n]{0,120}\](?!\()/i,
   /<\/?tool_call\b[^>]*>/i,
 ];
 
