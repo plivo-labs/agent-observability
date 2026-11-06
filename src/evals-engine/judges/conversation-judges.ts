@@ -235,6 +235,12 @@ function isAnswered(ctx: ConversationInput): boolean {
   return /(^|\n)User:\s*\S/.test(ctx.full_transcript);
 }
 
+/** Speech only, so a Tool_Call's arguments never read as agent speech. `??`
+ *  (not `||`): an all-evidence transcript filters to "" and must stay empty. */
+function spokenTranscript(ctx: ConversationInput): string {
+  return ctx.speech_transcript ?? ctx.full_transcript;
+}
+
 /** Voice unless the transport is clearly a text channel. Unknown transport ⇒
  *  voice (the historical default: every ingested session was a voice call). */
 const TEXT_CHANNEL_RE = /chat|sms|whatsapp|messenger|web|text|email|rcs/i;
@@ -272,18 +278,17 @@ const suppressed = (raw: DetectionResult) =>
  *
  * Transcript-only, decided in CODE: a `User:` line with content means the user
  * spoke. Channel-agnostic — unlike voicemail/bot this is not a telephony
- * concept, so it is NOT gated on the transport. An empty transcript is
- * undecidable (no data to read), which is unavailable — NOT a clean "the user
- * spoke". That honours the availability contract: an unavailable axis fans out
- * as nothing, never as a pass.
+ * concept, so it is NOT gated on the transport. Without agent speech (an empty
+ * or events-only transcript) the caller had nothing to answer, so the axis is
+ * unavailable — neither a fire nor a clean "the user spoke". That honours the
+ * availability contract: an unavailable axis fans out as nothing, never as a pass.
  *
  * Distinct from `silent_call` (a boolean gated on the agent having asked a
  * question): this is the plain "zero user turns" signal, emitted as its own axis.
  */
 export function evaluateUserNeverSpoke(ctx: ConversationInput): DetectionResult {
-  const transcript = ctx.full_transcript ?? "";
-  if (!transcript.trim()) {
-    return skippedDetection("empty transcript — user_never_spoke undecidable");
+  if (!/(^|\n)Agent:\s*\S/.test(spokenTranscript(ctx))) {
+    return skippedDetection("no agent speech — user_never_spoke undecidable");
   }
   if (isAnswered(ctx)) {
     return { detected: false, reason: "", technical_reason: "at least one user turn present", available: true };
@@ -435,10 +440,7 @@ export function resolveOutcomes(raws: ConversationDetectionRaws, ctx: Conversati
   // engagement does not apply."
   //
   // Opportunity gate: a one-way announcement gave the caller nothing to respond to.
-  // Read the SPEECH transcript so a Tool_Call's arguments can never trip the gate;
-  // `??` (not `||`) preserves an explicitly empty all-evidence transcript.
-  const speech = ctx.speech_transcript ?? ctx.full_transcript;
-  const agentAsked = /(^|\n)Agent:[^\n]*\?/.test(speech);
+  const agentAsked = /(^|\n)Agent:[^\n]*\?/.test(spokenTranscript(ctx));
   const silentFired = voice && !answered && agentAsked;
   const effectiveLow = silentFired
     ? derivedDetection(
@@ -565,6 +567,9 @@ export function assembleConversationMetrics(args: {
         "machine answered (voicemail / bot / call-screening) — user_never_spoke not applicable",
       )
     : evaluateUserNeverSpoke(ctx);
+  // One silence, one signal: low engagement presupposes caller turns, so once
+  // user_never_spoke fires it owns the call.
+  const lowEngagement = userNeverSpoke.detected ? suppressed(outcomes.low_engagement) : outcomes.low_engagement;
 
   // Transfer axis: the fact is code-derived from the session tag — free, no
   // LLM call.
@@ -572,6 +577,7 @@ export function assembleConversationMetrics(args: {
 
   return {
     ...outcomes,
+    low_engagement: lowEngagement,
     user_never_spoke: det(userNeverSpoke),
     ...transferAxis,
     user_sentiment: {
