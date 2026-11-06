@@ -361,6 +361,7 @@ describe("runtime text the customer can see", () => {
     "Use {{first_name}} in your email template.",
     "Our functions. include billing and returns.",
     "Tool calls are free [see pricing].",
+    "See our [tool calls](https://example.org/docs/tools) guide.",
     "Press | then > to continue.",
   ])("leaves %p alone", (agent) => {
     expect(said(agent)).toBeUndefined();
