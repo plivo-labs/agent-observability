@@ -1,4 +1,5 @@
 import { upsertAgent } from "../agents/upsert.js";
+import { clampAgentConfig } from "./agent-config-clamp.js";
 import {
   applySessionTagMetadata,
   insertLiveKitEvaluation,
@@ -280,39 +281,6 @@ async function handleTag({ log, sessionId, observedAt, result }: OtlpHandlerCtx)
   }
   await persistTag(sessionId, name, metadata, observedAt);
   result.tags += 1;
-}
-
-// Caps on the judging surface one config can demand: each judged node costs
-// ~5 LLM calls, so an unbounded config would let a single ingested session
-// trigger an unbounded provider bill. Oversized configs are clamped (never
-// rejected) and the truncation is logged.
-const MAX_CONFIG_NODES = 150;
-const MAX_NODE_LIST_ITEMS = 100; // intents / variables per node
-const MAX_INSTRUCTIONS_CHARS = 50_000;
-
-function clampAgentConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const nodes = Array.isArray(config.nodes) ? config.nodes : [];
-  let clamped = false;
-  const boundedNodes = nodes.slice(0, MAX_CONFIG_NODES).map((n) => {
-    if (typeof n !== "object" || n === null) return n;
-    const node = { ...(n as Record<string, unknown>) };
-    if (typeof node.instructions === "string" && node.instructions.length > MAX_INSTRUCTIONS_CHARS) {
-      node.instructions = node.instructions.slice(0, MAX_INSTRUCTIONS_CHARS);
-      clamped = true;
-    }
-    for (const key of ["intents", "variables"]) {
-      if (Array.isArray(node[key]) && (node[key] as unknown[]).length > MAX_NODE_LIST_ITEMS) {
-        node[key] = (node[key] as unknown[]).slice(0, MAX_NODE_LIST_ITEMS);
-        clamped = true;
-      }
-    }
-    return node;
-  });
-  if (nodes.length > MAX_CONFIG_NODES) clamped = true;
-  if (clamped) {
-    console.warn(`[otlp] agent config clamped to ${MAX_CONFIG_NODES} nodes / ${MAX_NODE_LIST_ITEMS} intents+variables per node / ${MAX_INSTRUCTIONS_CHARS} instruction chars`);
-  }
-  return { ...config, nodes: boundedNodes };
 }
 
 /** Validate + store an agent config (from either the dedicated record or the
