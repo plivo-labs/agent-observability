@@ -167,6 +167,16 @@ describe("buildSessionEvalInput", () => {
     }
   });
 
+  test("an attachment-only customer message stays in the transcript", () => {
+    const { input } = buildSessionEvalInput(cfg(), [
+      ev("node-A", "assistant", "Please share the invoice."),
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "user", content: null,
+        extra: { chat_attachments: [{ file_url: "https://example.org/i.jpg", mime_type: "image/jpeg" }] } } },
+      ev("node-A", "assistant", "Thanks, saving it now."),
+    ]);
+    expect(input.nodes[0].turns.map((t) => t.user).filter(Boolean)).toEqual(["[image attachment]"]);
+  });
+
   test("system-role messages render as truncated System_Note lines, not agent speech", () => {
     const { input } = buildSessionEvalInput(cfg(), [
       { type: "conversation_item_added", node_ref: "node-A", item: { type: "message", role: "system", content: "x".repeat(700) } },

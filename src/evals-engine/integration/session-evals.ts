@@ -109,6 +109,8 @@ export interface StoredEvent {
      *  speech. Rendered as "[system idle prompt]" so judges treat it as
      *  scaffolding. Absent until the uploader carries it. */
     system_idle?: boolean;
+    /** Sender metadata; chat senders put attachments here (e.g. an image-only message). */
+    extra?: Record<string, unknown>;
   };
 }
 
@@ -181,6 +183,25 @@ function textOf(content: unknown): string {
     return content.map((c) => (typeof c === "string" ? c : textOf((c as { text?: unknown })?.text))).filter(Boolean).join(" ").trim();
   }
   return "";
+}
+
+/** An attachment-only message has no text, so without a label the judges read
+ *  the customer's turn as never sent. Attachments arrive as content parts or as
+ *  arrays in `extra` whose entries carry a MIME type. */
+function attachmentLabel(item: NonNullable<StoredEvent["item"]>): string {
+  const labels: string[] = [];
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const part of value) {
+      if (!isRecord(part)) continue;
+      const mime = part.mime_type ?? part.content_type ?? part.mimeType;
+      if (typeof mime === "string") labels.push(mime.startsWith("image/") ? "[image attachment]" : `[file attachment: ${mime}]`);
+      else if (part.type === "image_content" || part.type === "image") labels.push("[image attachment]");
+    }
+  };
+  collect(item.content);
+  if (isRecord(item.extra)) Object.values(item.extra).forEach(collect);
+  return labels.join(" ");
 }
 
 /** Parse a function_call's arguments into an object when possible. Senders
@@ -352,7 +373,7 @@ export function buildSessionEvalInput(
       pushTurn(ref, { node_uuid: ref, user: "", agent: label ? `Agent_Handoff: ${label}` : "Agent_Handoff", intent: "", evidence: true });
       continue;
     }
-    const text = textOf(item.content);
+    const text = textOf(item.content) || attachmentLabel(item);
     if (!text) continue;
     const role = (item.role ?? "").toLowerCase();
     const isUser = USER_ROLES.has(role);
@@ -603,7 +624,7 @@ export async function evaluateIngestedSession(
         `fallbacks=${JSON.stringify(stats.fallbacks)} jev_ms=${stats.jevMs}${stats.layout === "shared" ? " layout=shared" : ""}`,
     );
     return {
-      node_evaluations: result.node_evaluations.map((ne, i) => ({ ...failVisibleRuntimeText(ne, input.nodes[i]!), ref: nodeRefs[i]?.ref ?? "" })),
+      node_evaluations: result.node_evaluations.map((ne, i) => ({ ...failVisibleRuntimeText(ne, input.nodes[i]!, input), ref: nodeRefs[i]?.ref ?? "" })),
       conversation_metrics: result.conversation_metrics,
       ...(result.custom_metrics.length ? { custom_metrics: result.custom_metrics } : {}),
     };
@@ -625,7 +646,7 @@ export async function evaluateIngestedSession(
   ]);
 
   // evaluateSimulation preserves input.nodes order, so node_evaluations[i] ↔ nodeRefs[i].
-  const node_evaluations = scored.node_evaluations.map((ne, i) => ({ ...failVisibleRuntimeText(ne, input.nodes[i]!), ref: nodeRefs[i]?.ref ?? "" }));
+  const node_evaluations = scored.node_evaluations.map((ne, i) => ({ ...failVisibleRuntimeText(ne, input.nodes[i]!, input), ref: nodeRefs[i]?.ref ?? "" }));
 
   return {
     node_evaluations,
