@@ -1,5 +1,6 @@
 import type { ZodType } from "zod";
 import { completeJSON, type LlmProvider, type LlmUsage } from "../../llm/index.js";
+import { currentDeadlineSignal } from "../../deadline.js";
 import { config } from "../../config.js";
 
 // AO Eval Engine — the single LLM entry every judge uses. Replaces LiveKit's private `_LLMJudge`:
@@ -33,6 +34,7 @@ export interface RunLlmJudgeArgs<T> {
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   /** Test injection. */
   provider?: LlmProvider;
+  signal?: AbortSignal;
 }
 
 export interface JudgeResult<T> {
@@ -53,7 +55,8 @@ const MAX_CONCURRENT_JUDGE_CALLS = config.EVAL_MAX_CONCURRENT_JUDGE_CALLS ?? 10;
 let activeJudgeCalls = 0;
 const judgeWaiters: Array<() => void> = [];
 
-async function acquireJudgeSlot(): Promise<void> {
+async function acquireJudgeSlot(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   if (activeJudgeCalls < MAX_CONCURRENT_JUDGE_CALLS) {
     activeJudgeCalls++;
     return;
@@ -61,21 +64,36 @@ async function acquireJudgeSlot(): Promise<void> {
   // The releaser hands its slot to the waiter directly (counter untouched on
   // both sides), so the count never dips in a window where a fresh acquire
   // could slip in and push concurrency above the cap.
-  await new Promise<void>((resolve) => judgeWaiters.push(resolve));
+  await new Promise<void>((resolve, reject) => {
+    const grant = () => {
+      signal?.removeEventListener("abort", cancel);
+      resolve();
+    };
+    const cancel = () => {
+      const index = judgeWaiters.indexOf(grant);
+      if (index !== -1) judgeWaiters.splice(index, 1);
+      reject(signal?.reason);
+    };
+    judgeWaiters.push(grant);
+    signal?.addEventListener("abort", cancel, { once: true });
+  });
 }
 
 function releaseJudgeSlot(): void {
   const next = judgeWaiters.shift();
   if (next) {
-    next(); // slot handed over atomically — no decrement/re-increment window
+    next();
     return;
   }
   activeJudgeCalls--;
 }
 
 export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeResult<T>> {
-  await acquireJudgeSlot();
+  const deadline = currentDeadlineSignal();
+  const signal = args.signal && deadline ? AbortSignal.any([args.signal, deadline]) : args.signal ?? deadline;
+  await acquireJudgeSlot(signal);
   try {
+    signal?.throwIfAborted();
     const res = await completeJSON({
       schema: args.schema,
       role: "judge",
@@ -117,6 +135,7 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // 3 total attempts = the reference engine's retry budget (1 call + 2 reprompts).
       maxRetries: 2,
       provider: args.provider,
+      signal,
     });
     return { data: res.data, usage: res.usage };
   } finally {
