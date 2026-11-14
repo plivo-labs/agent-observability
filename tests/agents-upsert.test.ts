@@ -31,6 +31,15 @@ mock.module("../src/db.js", () => ({
   // imports a db export this mock omits, newer bun fails the import with
   // "Export named ... not found" instead of falling through to the real one.
   drainStagedRawReportPatches: mock(() => Promise.resolve()),
+  insertSession: mock(() => Promise.resolve()),
+  applyStoredSessionTags: mock(() => Promise.resolve()),
+  upsertSessionTag: mock(() => Promise.resolve()),
+  insertLiveKitEvaluation: mock(() => Promise.resolve()),
+  upsertSessionOutcome: mock(() => Promise.resolve()),
+  applySessionTagMetadata: mock(() => Promise.resolve()),
+  mergeSessionRawReport: mock(() => Promise.resolve()),
+  upsertSessionAgentConfig: mock(() => Promise.resolve()),
+  tableExists: mock(() => Promise.resolve(true)),
 }));
 
 // Import after mocks are wired.
