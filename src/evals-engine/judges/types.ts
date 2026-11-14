@@ -17,6 +17,7 @@ const reasonZ = z.string().default("");
 
 export const HallucinationRawZ = z.object({
   hallucinated: z.boolean(),
+  unverifiable: z.boolean().optional(),
   unsupported_claim: z.string().optional(),
   score: scoreZ,
   reason: reasonZ,
@@ -182,6 +183,8 @@ const NodeEvaluationZ = z.object({
   }),
   hallucination: z.object({
     hallucinated: z.boolean(),
+    unverifiable: z.boolean().optional(),
+    unsupported_claim: z.string().optional(),
     score: z.number(),
     reason: z.string(),
     technical_reason: z.string(),

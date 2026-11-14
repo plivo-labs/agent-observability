@@ -20,6 +20,12 @@ const TRANSCRIPT_DATA_FENCE =
 const OUTPUT_LANGUAGE_DIRECTIVE =
   "\n\nOUTPUT LANGUAGE: write every reasoning field (reason, technical_reason, and any other free-text field) in English, even when the conversation transcript is in another language. This is a strict requirement.";
 
+// A quote is checked against the transcript; translated, it is words nobody said.
+const outputLanguageDirective = (verbatimFields: readonly string[] = []): string =>
+  verbatimFields.length === 0
+    ? OUTPUT_LANGUAGE_DIRECTIVE
+    : `${OUTPUT_LANGUAGE_DIRECTIVE} Exception: copy ${verbatimFields.join(", ")} verbatim in the language and script spoken in the transcript; never translate it.`;
+
 export interface RunLlmJudgeArgs<T> {
   /** System prompt: SDK criteria body + our JSON output section (from instructions.ts). */
   system: string;
@@ -31,6 +37,8 @@ export interface RunLlmJudgeArgs<T> {
   maxTokens: number;
   /** Strict structured-output schema (reference-engine parity) — forces the gateway to return exact JSON. */
   jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
+  /** Output fields that quote the transcript, exempt from the English-only output directive. */
+  verbatimFields?: readonly string[];
   /** Test injection. */
   provider?: LlmProvider;
 }
@@ -84,7 +92,7 @@ export async function runLlmJudge<T>(args: RunLlmJudgeArgs<T>): Promise<JudgeRes
       // accounting label — no new field threaded through eight judge call sites.
       // Falls back to the role for a judge that runs without a strict schema.
       label: args.jsonSchema?.name ?? "judge",
-      system: args.system + TRANSCRIPT_DATA_FENCE + OUTPUT_LANGUAGE_DIRECTIVE,
+      system: args.system + TRANSCRIPT_DATA_FENCE + outputLanguageDirective(args.verbatimFields),
       prompt: typeof args.input === "string" ? args.input : JSON.stringify(args.input),
       maxTokens: args.maxTokens,
       // Reference-engine parity. `args.maxTokens` is copied verbatim from cx-sqs
