@@ -295,11 +295,12 @@ export const openaiProvider: LlmProvider = {
   async complete(args: ProviderCompleteArgs): Promise<RawCompletion> {
     // Per-call override wins over the global mode; the simulator forces "chat" to mirror cx-sqs.
     const mode = args.apiMode ?? config.OPENAI_API_MODE;
-    if (mode === "responses") {
-      // Streaming only on the Responses path (the writer asks for it); the Chat path
-      // ignores `stream` and stays non-streaming.
-      return args.stream ? completeViaResponsesStream(args) : completeViaResponses(args);
-    }
-    return completeViaChat(args);
+    // Streaming only on the Responses path (the writer asks for it); the Chat path
+    // ignores `stream` and stays non-streaming.
+    const raw = await (mode === "responses"
+      ? args.stream ? completeViaResponsesStream(args) : completeViaResponses(args)
+      : completeViaChat(args));
+    // Every path above sends the effort whenever one is set.
+    return args.reasoningEffort ? { ...raw, reasoningEffort: args.reasoningEffort } : raw;
   },
 };

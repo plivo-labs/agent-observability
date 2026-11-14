@@ -128,3 +128,23 @@ test("a failed session freezes partial usage and prevents overlapping later case
   expect(report.usage.llmCalls).toBe(0);
   expect(report.notRunSessions).toEqual(["two"]);
 });
+
+test("versions name the prompt version and every judge model behind the scored rows", () => {
+  const rows = [
+    { judgeName: "node_loop", tag: "A", passed: true, reasoning: "", raw: { judge_model: "model-a", prompt_version: "v1", prompt_sha256: "rendered-1" } },
+    { judgeName: "node_loop", tag: "B", passed: true, reasoning: "", raw: { judge_model: "model-a", prompt_version: "v1", prompt_sha256: "rendered-2" } },
+    { judgeName: "variable_extraction", tag: "A", passed: false, reasoning: "", raw: {
+      judge_model: "model-a", prompt_version: "v2",
+      judge_calls: [{ model: "model-a", prompt_version: "v2", prompt_sha256: "x" }, { model: "model-b", prompt_version: "v3", prompt_sha256: "y" }],
+    } },
+    { judgeName: "voicemail_detection", tag: null, passed: true, reasoning: "", raw: { backend: "jev", jev_model: "jev-1", jev: { policy_version: "p1" } } },
+  ];
+  const run = { schemaVersion: 1 as const, datasetFingerprint: fingerprint(dataset), revision: "test", settings: {}, startedAt: "test",
+    cases: [{ id: "one", status: "completed" as const, durationMs: 1, usage: { jevRequests: 0, llmCalls: 0, jevInputTokens: 0, jevOutputTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 }, rows }],
+  };
+  expect(summarizeValidation(dataset, run).versions).toEqual([
+    { judge: "node_loop", judgeModels: ["model-a"], promptVersion: "v1" },
+    { judge: "variable_extraction", judgeModels: ["model-a", "model-b"], promptVersion: "v2" },
+    { model: "jev-1", policy: "p1", judge: "voicemail_detection" },
+  ]);
+});

@@ -1,8 +1,8 @@
-import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import type { LlmProvider } from "../../llm/index.js";
 import type { ConversationInput, NodeEvalInput, IntentIdentificationMetrics } from "../types.js";
 import { IntentIdentificationRawZ } from "./types.js";
-import { systemForIntent } from "./instructions.js";
-import { runLlmJudge } from "./run-llm-judge.js";
+import { intentTemplate, systemForIntent } from "./instructions.js";
+import { runLlmJudge, type JudgeResult } from "./run-llm-judge.js";
 import { scopedNodeEvidence } from "../node-evidence.js";
 import { INTENT_JSON } from "./schemas.js";
 
@@ -31,7 +31,7 @@ export async function runIntentJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: IntentIdentificationMetrics; usage: LlmUsage }> {
+): Promise<JudgeResult<IntentIdentificationMetrics>> {
   // No intents configured on the node → there is nothing to identify against;
   // running the judge would force intent_not_found=true for every valid user
   // request (rule 1 has an empty list to match). Neutral pass, no LLM call.
@@ -45,10 +45,12 @@ export async function runIntentJudge(
         technical_reason: "skipped: empty available_intents",
       },
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      calls: [],
     };
   }
   const res = await runLlmJudge({
     system: systemForIntent(renderIntents(node.available_intents), node.chosen_intent || "(none)"),
+    template: intentTemplate(),
     input: {
       global_prompt: ctx.global_prompt,
       node_name: node.node_name,
@@ -59,6 +61,7 @@ export async function runIntentJudge(
     jsonSchema: INTENT_JSON,
     maxTokens: 1500,
     provider,
+    correlationId: ctx.correlation_id,
   });
   const raw = res.data;
   const correct = !raw.intent_not_found && !raw.intent_wrongly_identified;
@@ -69,5 +72,5 @@ export async function runIntentJudge(
     reason: raw.reason,
     technical_reason: raw.technical_reason,
   };
-  return { data, usage: res.usage };
+  return { data, usage: res.usage, calls: res.calls };
 }

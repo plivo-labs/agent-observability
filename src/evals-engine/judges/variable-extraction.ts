@@ -1,12 +1,12 @@
 import { finalBatchContext, finalBatchCoversVariable, lookupBackedVariable, outOfScopeVariableKind, type FinalBatchContext } from "./variable-guards.js";
-import type { LlmProvider, LlmUsage } from "../../llm/index.js";
+import type { LlmProvider } from "../../llm/index.js";
 import { sumUsage } from "../../llm/usage.js";
 import { z } from "zod";
 import type { ConversationInput, NodeEvalInput } from "../types.js";
-import { systemForVariableExtraction } from "./instructions.js";
+import { systemForVariableExtraction, variableExtractionTemplate } from "./instructions.js";
 import { nodePayload } from "./node-judge-payload.js";
 import { promptSub } from "./judge-prompts.js";
-import { runLlmJudge } from "./run-llm-judge.js";
+import { runLlmJudge, type JudgeResult } from "./run-llm-judge.js";
 import { VARIABLE_CONTRACT } from "../judge-contracts.js";
 import { NODE_EVIDENCE_SCOPE, scopedNodeEvidence } from "../node-evidence.js";
 import { VARIABLE_EXTRACTION_JSON } from "./schemas.js";
@@ -120,6 +120,7 @@ async function runGuardedReview(
   input: Record<string, unknown>,
   maxTokens: number,
   provider?: LlmProvider,
+  correlationId?: string,
 ) {
   return runLlmJudge({
     system: `${system}\n${NODE_EVIDENCE_SCOPE}\n${VARIABLE_CONTRACT}`,
@@ -128,6 +129,7 @@ async function runGuardedReview(
     jsonSchema: GUARDED_REVIEW_JSON,
     maxTokens,
     provider,
+    correlationId,
   });
 }
 
@@ -186,7 +188,7 @@ export async function runVariableExtractionJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: VariableExtractionRaw; usage: LlmUsage }> {
+): Promise<JudgeResult<VariableExtractionRaw>> {
   if (node.required_variables.length === 0) {
     return {
       data: {
@@ -198,6 +200,7 @@ export async function runVariableExtractionJudge(
         incorrect_variables: [],
       } as VariableExtractionRaw,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      calls: [],
     };
   }
 
@@ -219,11 +222,13 @@ export async function runVariableExtractionJudge(
   const batch = finalBatchContext(node);
   const result = await runLlmJudge({
     system: systemForVariableExtraction(expected, actual),
+    template: variableExtractionTemplate(),
     input: variablePayload(node, ctx, batch),
     schema: VariableExtractionRawZ,
     jsonSchema: VARIABLE_EXTRACTION_JSON,
     maxTokens: 3000,
     provider,
+    correlationId: ctx.correlation_id,
   });
 
   const rejected = new Set<VariableIssueKey>([
@@ -291,6 +296,7 @@ export async function runVariableExtractionJudge(
           { ...scopedNodeEvidence(node, ctx), variable_sources: node.variable_sources },
           600,
           provider,
+          ctx.correlation_id,
         ).catch(() => undefined)
       : undefined,
     focusedCandidates.length
@@ -305,6 +311,7 @@ export async function runVariableExtractionJudge(
           },
           1000,
           provider,
+          ctx.correlation_id,
         ).catch(() => undefined)
       : undefined,
   ]);
@@ -318,6 +325,7 @@ export async function runVariableExtractionJudge(
     // merge this replaces silently dropped reasoningTokens, so a guarded review's
     // invisible spend vanished from the judge's own total.
     result.usage = sumUsage([result.usage, review.result.usage]).usage;
+    result.calls = [...result.calls, ...review.result.calls];
     const candidateKeys = new Set(
       review.candidates.map((candidate) => `${candidate.issue_type}:${candidate.variable_name}`),
     );

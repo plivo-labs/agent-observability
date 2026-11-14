@@ -107,6 +107,7 @@ export async function writeDecisionReasons(input: ReasonWriterInput): Promise<Re
     jsonSchema: REASON_JSON,
     maxTokens: Math.min(REASON_MAX_TOKENS, Math.max(REASON_MIN_TOKENS, axes.length * REASON_TOKENS_PER_ITEM)),
     provider,
+    correlationId: ctx.correlation_id,
   });
   const asked = new Set(axes.map((a) => a.id));
   const reasons = new Map<string, { reason: string; technical_reason: string }>();
