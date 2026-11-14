@@ -150,6 +150,20 @@ describe("published decisions", () => {
     });
   });
 
+  test("confident wrong_number and do_not_disturb fails both stand and both fan out", async () => {
+    await withSwitches({ JEV_AUTO_FAIL: "wrong_number,do_not_disturb" }, async () => {
+      const jev = new MockJev([(req) => Object.fromEntries(Object.keys(req.questions).map(k => [k, k === "c.wrong_number" || k === "c.do_not_disturb" ? 0.97 : 0.01]))]);
+      const { v } = await run(jev);
+      const cm = v.conversation_metrics;
+      expect(cm.wrong_number.detected).toBe(true);
+      expect(cm.wrong_number.backend).toBe("jev");
+      expect(cm.do_not_disturb.detected).toBe(true);
+      expect(cm.do_not_disturb.backend).toBe("jev");
+      const failing = buildExternalEvalRows(v).filter(r => !r.passed).map(r => r.judgeName);
+      expect(failing).toEqual(expect.arrayContaining(["wrong_number", "do_not_disturb"]));
+    });
+  });
+
   const failingWriter = (message: string) => new MockLLM([(args: any) => {
     if (args.jsonSchema?.name === "eval_jev_reason") throw new Error(message);
     return defaultJudgeResponder(args.system) ?? JSON.stringify({ detected: false, reason: "r", technical_reason: "t" });

@@ -251,34 +251,39 @@ describe("evaluateConversationMetrics — anti-over-fire logic", () => {
     expect(cm.conversation_status.status).toBe("voicemail_detected");
   });
 
-  test("mutual exclusivity: call_screening/voicemail suppresses wrong_number + do_not_disturb (no co-fire)", () => {
-    // Regression: the top-priority voicemail/screening branch must clear EVERY
-    // lower detection. It previously cleared only bot + low_engagement, so
-    // call_screening + wrong_number both stayed detected and the sweeper fanned
-    // two separate failing alert rows off a single call.
-    const cm = resolveOutcomes(
-      raws({
-        screening: detection(true),
-        wrongNumber: detection(true),
-        doNotDisturb: detection(true),
-        lowEngagement: detection(true),
-      }),
-      ctx(),
-    );
-    expect(cm.call_screening.detected).toBe(true);
-    expect(cm.wrong_number.detected).toBe(false); // superseded
-    expect(cm.do_not_disturb.detected).toBe(false); // superseded
-    expect(cm.low_engagement.detected).toBe(false); // superseded
-    expect(cm.customer_engaged).toBe(false);
-  });
+  const MACHINE_OUTCOMES = [
+    ["screening", "call_screening"],
+    ["voicemail", "voicemail_detected"],
+    ["bot", "bot_detected"],
+  ] as const;
+  for (const [raw, metric] of MACHINE_OUTCOMES) {
+    test(`mutual exclusivity: ${metric} suppresses wrong_number + do_not_disturb (no co-fire)`, () => {
+      // A machine outcome must clear EVERY human-side detection, or the sweeper
+      // fans two separate failing alert rows off a single call.
+      const cm = resolveOutcomes(
+        raws({
+          [raw]: detection(true),
+          wrongNumber: detection(true),
+          doNotDisturb: detection(true),
+          lowEngagement: detection(true),
+        }),
+        ctx(),
+      );
+      expect(cm[metric].detected).toBe(true);
+      expect(cm.wrong_number.detected).toBe(false);
+      expect(cm.do_not_disturb.detected).toBe(false);
+      expect(cm.low_engagement.detected).toBe(false);
+      expect(cm.customer_engaged).toBe(false);
+    });
+  }
 
-  test("wrong_number outranks do_not_disturb + low_engagement", () => {
+  test("wrong_number and do_not_disturb both stand; low_engagement is still suppressed", () => {
     const cm = resolveOutcomes(
       raws({ wrongNumber: detection(true), doNotDisturb: detection(true), lowEngagement: detection(true) }),
       ctx(),
     );
     expect(cm.wrong_number.detected).toBe(true);
-    expect(cm.do_not_disturb.detected).toBe(false);
+    expect(cm.do_not_disturb.detected).toBe(true);
     expect(cm.low_engagement.detected).toBe(false);
     expect(cm.customer_engaged).toBe(false);
   });
