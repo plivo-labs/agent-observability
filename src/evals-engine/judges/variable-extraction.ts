@@ -2,7 +2,7 @@ import { finalBatchContext, finalBatchCoversVariable, lookupBackedVariable, outO
 import type { LlmProvider, LlmUsage } from "../../llm/index.js";
 import { sumUsage } from "../../llm/usage.js";
 import { z } from "zod";
-import type { ConversationInput, NodeEvalInput } from "../types.js";
+import type { AxisSkip, ConversationInput, NodeEvalInput } from "../types.js";
 import { systemForVariableExtraction } from "./instructions.js";
 import { nodePayload } from "./node-judge-payload.js";
 import { promptSub } from "./judge-prompts.js";
@@ -186,17 +186,26 @@ export async function runVariableExtractionJudge(
   node: NodeEvalInput,
   ctx: ConversationInput,
   provider?: LlmProvider,
-): Promise<{ data: VariableExtractionRaw; usage: LlmUsage }> {
-  if (node.required_variables.length === 0) {
+): Promise<{ data: VariableExtractionRaw & AxisSkip; usage: LlmUsage }> {
+  if (node.config_missing || node.required_variables.length === 0) {
     return {
       data: {
         extraction_successful: true,
         score: 1.0,
-        reason: "No variables declared on this node — extraction not applicable.",
-        technical_reason: "skipped: node declares no required_variables",
+        ...(node.config_missing
+          ? {
+              not_judged: true,
+              reason: "This node is missing from the agent config — extraction not judged.",
+              technical_reason: "skipped: node ref missing from the agent config",
+            }
+          : {
+              not_applicable: true,
+              reason: "No variables declared on this node — extraction not applicable.",
+              technical_reason: "skipped: node declares no required_variables",
+            }),
         missing_variables: [],
         incorrect_variables: [],
-      } as VariableExtractionRaw,
+      },
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     };
   }

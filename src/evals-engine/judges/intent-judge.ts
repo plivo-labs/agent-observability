@@ -34,15 +34,24 @@ export async function runIntentJudge(
 ): Promise<{ data: IntentIdentificationMetrics; usage: LlmUsage }> {
   // No intents configured on the node → there is nothing to identify against;
   // running the judge would force intent_not_found=true for every valid user
-  // request (rule 1 has an empty list to match). Neutral pass, no LLM call.
-  if (!Array.isArray(node.available_intents) || node.available_intents.length === 0) {
+  // request (rule 1 has an empty list to match). Skipped without a verdict, no LLM call.
+  if (node.config_missing || !Array.isArray(node.available_intents) || node.available_intents.length === 0) {
     return {
       data: {
         intent_not_found: false,
         intent_wrongly_identified: false,
         score: 1.0,
-        reason: "No intents configured on this node — intent identification not applicable.",
-        technical_reason: "skipped: empty available_intents",
+        ...(node.config_missing
+          ? {
+              not_judged: true,
+              reason: "This node is missing from the agent config — intent identification not judged.",
+              technical_reason: "skipped: node ref missing from the agent config",
+            }
+          : {
+              not_applicable: true,
+              reason: "No intents configured on this node — intent identification not applicable.",
+              technical_reason: "skipped: empty available_intents",
+            }),
       },
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     };

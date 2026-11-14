@@ -143,6 +143,7 @@ describe("LLM node judges (MockLLM)", () => {
       llm,
     );
     expect(llm.calls).toHaveLength(0);
+    expect(data.not_applicable).toBe(true);
     expect(data.extraction_successful).toBe(true);
     expect(data.score).toBe(1);
     expect(data.reason).toBe("No variables declared on this node — extraction not applicable.");

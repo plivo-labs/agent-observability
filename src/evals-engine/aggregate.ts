@@ -5,6 +5,7 @@ import type {
   InstructionAdherenceRaw,
 } from "./judges/types.js";
 import type {
+  AxisSkip,
   HallucinationMetrics,
   VariableExtractionMetrics,
   NodeLoopMetrics,
@@ -25,8 +26,14 @@ export function mapHallucination(raw: HallucinationRaw): HallucinationMetrics {
   return { hallucinated: raw.hallucinated, score: clamp01(raw.score), reason: raw.reason, technical_reason: raw.technical_reason };
 }
 
-export function mapVariableExtraction(raw: VariableExtractionRaw, requiredVariables: string[]): VariableExtractionMetrics {
+const skipMarker = (raw: AxisSkip): AxisSkip => ({
+  ...(raw.not_applicable ? { not_applicable: true } : {}),
+  ...(raw.not_judged ? { not_judged: true } : {}),
+});
+
+export function mapVariableExtraction(raw: VariableExtractionRaw & AxisSkip, requiredVariables: string[]): VariableExtractionMetrics {
   return {
+    ...skipMarker(raw),
     extraction_successful: raw.extraction_successful,
     score: clamp01(raw.score),
     reason: raw.reason,
@@ -42,7 +49,7 @@ export function mapNodeLoop(raw: NodeLoopRaw): NodeLoopMetrics {
   return { loop_detected: raw.loop_detected, score: clamp01(raw.score), reason: raw.reason, technical_reason: raw.technical_reason };
 }
 
-export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): InstructionsAdherenceMetrics {
+export function deriveInstructionAdherence(raw: InstructionAdherenceRaw & AxisSkip): InstructionsAdherenceMetrics {
   const objective = { ...raw.objective_progress, score: clamp01(raw.objective_progress.score) };
   // Case-insensitive: a model emitting "Critical" must not silently convert a
   // failed procedure into a pass.
@@ -82,6 +89,7 @@ export function deriveInstructionAdherence(raw: InstructionAdherenceRaw): Instru
     .join(" | ");
 
   return {
+    ...skipMarker(raw),
     adherence_passed,
     score,
     reason,
