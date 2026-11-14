@@ -235,6 +235,8 @@ export const envSchema = z.object({
   // Node judges whose confident Jev PASS is published without an LLM call:
   // "off", "all", or a comma-separated list.
   JEV_NODE_AUTO_PASS: z.preprocess(unsetIfBlank, z.string().default("off")),
+  // Opt-in auditing measures missed defects without changing published verdicts.
+  JEV_AUDIT_RATE: z.preprocess(unsetIfBlank, z.coerce.number().min(0).max(1).default(0)),
   // Judges whose confident Jev FAIL stands, with the reason written by one
   // batched LLM call instead of a full re-judge: "off", "all", or a list.
   JEV_AUTO_FAIL: z.preprocess(unsetIfBlank, z.string().default("off")),

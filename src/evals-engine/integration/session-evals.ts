@@ -585,6 +585,7 @@ export async function evaluateIngestedSession(
   /** When present, Jev answers gated judges first and LLM judges run where the
    *  gate and decision policy require review. Absent ⇒ LLM-only. */
   jev?: JevClient,
+  sessionId?: string,
 ): Promise<SessionEvalVerdicts> {
   const { input, nodeRefs } = prebuilt ?? buildSessionEvalInput(config, events);
   if (transport) input.transport = transport;
@@ -616,7 +617,7 @@ export async function evaluateIngestedSession(
   };
 
   if (jev) {
-    const result = await evaluateSessionJevFirst({ input, refOf, jev, provider, customJudges: budgeted });
+    const result = await evaluateSessionJevFirst({ input, refOf, jev, provider, customJudges: budgeted, sessionId });
     const { stats } = result;
     console.log(
       `[jev] judged nodes=${input.nodes.length} requests=${stats.requests} axes=${stats.axesTotal} ` +

@@ -214,7 +214,7 @@ export function attachDetectionProvenance(
     const current = out[key] as CmDetection | undefined;
     if (!current || typeof current.detected !== "boolean") continue;
     const overruled = current.technical_reason === SUPERSEDED || current.technical_reason.startsWith(CODE_DERIVED);
-    (out[key] as CmDetection) = overruled ? { ...current, ...(p.jev ? { jev: p.jev, jev_model: p.jev_model } : {}), backend: "code" } : { ...current, ...p };
+    (out[key] as CmDetection) = overruled ? { ...current, ...(p.jev ? { jev: p.jev, jev_model: p.jev_model } : {}), ...(p.audit ? { audit: p.audit } : {}), backend: "code" } : { ...current, ...p };
   }
   return out;
 }
