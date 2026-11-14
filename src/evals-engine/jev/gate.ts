@@ -108,10 +108,10 @@ export function gatePlan(
     // question was judged by nobody.
     const complete = applicableAnswers.length === required.length && !(axis.kind === "node" && axis.truncated);
     if (outcome === "pass" && !complete) outcome = "review";
-    // Jev sees lookup results clipped, so an unrecorded lookup field goes to the
-    // LLM, which gets the full result.
+    // Jev sees lookup results clipped, so it can neither confirm a recorded
+    // lookup value nor spot a missing one; the LLM gets the full result.
     if (outcome === "pass" && axis.kind === "node" && axis.judge === "variable_extraction" &&
-        axis.variables?.some((r) => !r.recorded && lookupBackedVariable(nodes[axis.nodeIndex]?.variable_rules?.[r.variable]))) outcome = "review";
+        axis.variables?.some((r) => lookupBackedVariable(nodes[axis.nodeIndex]?.variable_rules?.[r.variable]))) outcome = "review";
     // Jev reads platform idle reminders as the agent repeating itself; the
     // LLM loop judge, which strips them, decides those nodes.
     if (outcome === "fail" && axis.kind === "node" && axis.judge === "node_loop" &&
