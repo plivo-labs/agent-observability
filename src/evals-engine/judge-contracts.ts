@@ -6,7 +6,8 @@ export const INTENT_CONTRACT =
   "Intent identification measures catalog coverage and selection correctness, not tool execution. " +
   `System intents (${SYSTEM_INTENTS.join(", ")}) never fail. ` +
   "A missing chosen_intent or absent handoff tool alone is not a defect. " +
-  "With no recorded selection, not_found requires a clear caller need absent from the entire available intent list; " +
+  "With no recorded selection, not_found requires a clear caller need absent from the entire available intent list that the agent did not serve within this node; " +
+  "intents are the node's exits, so a request the agent answered or carried out here needs no intent; " +
   "wrongly_identified requires positive evidence of a contradictory intent selection. With no user input and no selection evidence, neither fails. " +
   "A selected non-system intent outside the list is not_found, not wrongly_identified. " +
   "A selected listed intent is wrongly_identified only when its required conversational prerequisite was not delivered or the caller's request contradicts it. " +

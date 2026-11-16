@@ -340,7 +340,7 @@ test("unavailable independent review retains candidates without emitting a pass"
   expect(buildExternalEvalRows(v).some(r => r.judgeName === spec.name || r.judgeName === "voicemail_detection")).toBe(false);
 });
 
-const { visibleRuntimeText } = await import("../src/evals-engine/visible-runtime-text.js");
+const { visibleRuntimeText, strayScriptText } = await import("../src/evals-engine/visible-runtime-text.js");
 
 describe("runtime text the customer can see", () => {
   const said = (agent: string) =>
@@ -365,5 +365,36 @@ describe("runtime text the customer can see", () => {
     "Press | then > to continue.",
   ])("leaves %p alone", (agent) => {
     expect(said(agent)).toBeUndefined();
+  });
+});
+
+describe("stray script fragments the customer can see", () => {
+  const conversation = (agent: string[], opts: { prompt?: string; user?: string } = {}) => {
+    const turns = [
+      { node_uuid: "n", user: opts.user ?? "Can you add my order to the sheet?", agent: "", intent: "", role: "user" },
+      ...agent.map((a) => ({ node_uuid: "n", user: "", agent: a, intent: "", role: "assistant" })),
+    ];
+    const node = { node_uuid: "n", node_prompt: opts.prompt ?? "Be brief.", turns } as any;
+    return strayScriptText(node, { global_prompt: "", nodes: [node], timeline: turns } as any);
+  };
+
+  test.each([
+    ["I'll record the order details now.】【。", "】【。"],
+    ["Could you share your full name? конс?", "конс?"],
+    ["Merci pour le numéro de téléphone.ئو", "ئو"],
+  ])("finds the fragment in %p", (agent, fragment) => {
+    expect(conversation([agent])).toContain(fragment);
+  });
+
+  test("a script the instructions use is the conversation's language", () => {
+    expect(conversation(["नमस्ते! How can I help?"], { prompt: "Greet with नमस्ते." })).toBeUndefined();
+  });
+
+  test("a script the customer wrote in is the conversation's language", () => {
+    expect(conversation(["Спасибо, записал."], { user: "Привет, запишите заказ" })).toBeUndefined();
+  });
+
+  test("a language the agent speaks at length is not a fragment", () => {
+    expect(conversation(["आपका ऑर्डर दर्ज कर लिया गया है, धन्यवाद।", "क्या मैं और कुछ मदद कर सकता हूँ?"])).toBeUndefined();
   });
 });
