@@ -46,6 +46,9 @@ function recordingScheduleExcerpt(node: NodeEvalInput): string {
 }
 
 export function finalBatchContext(node: NodeEvalInput): FinalBatchContext {
+  // Prompt text alone can look like a batch schedule on nodes that record as
+  // they go; the recorder evidence decides.
+  if (node.records_during_call) return { cutoffConfirmed: false, recordingSchedule: "", schedulesCompleteBatch: false };
   const recordingSchedule = recordingScheduleExcerpt(node);
   const chronological = node.turns.filter((turn) => !turn.idle && (turn.user || turn.agent));
   const last = chronological.at(-1);

@@ -472,6 +472,8 @@ export function buildSessionEvalInput(
     const nodeToolCalls = toolCallsByRef.get(ref) ?? [];
     const exit = allTurns.findLastIndex(turn => turn.node_uuid === ref);
     const { values: extractedVariables, sources: variableSources } = deriveExtractedVariables(def, allToolCalls, exit);
+    const lastCallerTurn = allTurns.findLastIndex(turn => turn.node_uuid === ref && !!turn.user && !turn.evidence && !turn.idle);
+    const recordsDuringCall = Object.values(variableSources).some(s => s.node_uuid === ref && s.event_index < lastCallerTurn);
     const chosenIntent = deriveChosenIntent(def, nodeToolCalls);
     const intentTools = deriveIntentTools(def);
     nodes.push({
@@ -485,6 +487,7 @@ export function buildSessionEvalInput(
       ...(Object.keys(rules).length ? { variable_rules: rules } : {}),
       extracted_variables: extractedVariables,
       variable_sources: variableSources,
+      ...(recordsDuringCall ? { records_during_call: true } : {}),
       turns,
       turn_count: turns.length,
     });
@@ -493,6 +496,8 @@ export function buildSessionEvalInput(
     const echoedRef = ref.startsWith(SYNTHETIC_REF) ? "" : ref;
     nodeRefs.push({ ref: echoedRef, name: typeof def.name === "string" ? def.name : echoedRef });
   }
+  // One session runs on one runtime: a node that recorded nothing still has no end batch.
+  if (nodes.some(n => n.records_during_call)) for (const n of nodes) n.records_during_call = true;
 
   // Per-session spend ceiling on the NODE-JUDGING surface only. Each judged
   // node costs ~5 LLM calls; the kick/semaphore/sweep caps bound the rate but

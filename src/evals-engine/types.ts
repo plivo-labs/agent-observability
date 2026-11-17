@@ -66,6 +66,10 @@ export interface NodeEvalInput {
   /** Ingest recorder evidence; absent on legacy/simulation inputs. Unconfirmed
    * attempts are not proof of successful persistence. */
   variable_sources?: Record<string, { node_uuid: string; event_index: number; status: "succeeded" | "unconfirmed" }>;
+  /** Some node in this session wrote a variable before the caller's last turn
+   *  on it, so the runtime records values as they are given and has no
+   *  end-of-node recording batch. */
+  records_during_call?: boolean;
   /** Turns that ran at this node, in order. */
   turns: EvalTurn[];
   /** Number of turns at this node. */
