@@ -133,6 +133,35 @@ describe("buildSessionEvalInput", () => {
     expect(agentTurns).toContain('Tool_Call: record_patient_name({"value":"Alex"})');
   });
 
+  test("a value written before the caller's last turn marks every node of the session as recording during the call", () => {
+    const config: AgentConfig = {
+      nodes: [
+        { ref: "node-A", name: "Intake", variables: [{ name: "patient_name", tool: "record_patient_name" }] },
+        { ref: "node-B", name: "Booking", variables: [{ name: "visit_day", tool: "record_visit_day" }] },
+      ],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "I am Alex"),
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "record_patient_name", arguments: '{"value": "Alex"}' } },
+      ev("node-A", "assistant", "Thanks Alex, what brings you in?"),
+      ev("node-A", "user", "A cleaning"),
+      ev("node-B", "user", "Tuesday works"),
+    ]);
+    expect(input.nodes.map((n) => n.records_during_call)).toEqual([true, true]);
+  });
+
+  test("a value written only after the caller's last turn leaves the end-of-node batch in place", () => {
+    const config: AgentConfig = {
+      nodes: [{ ref: "node-A", name: "Intake", variables: [{ name: "patient_name", tool: "record_patient_name" }] }],
+    };
+    const { input } = buildSessionEvalInput(config, [
+      ev("node-A", "user", "I am Alex"),
+      ev("node-A", "assistant", "Thanks, transferring you now."),
+      { type: "conversation_item_added", node_ref: "node-A", item: { type: "function_call", name: "record_patient_name", arguments: '{"value": "Alex"}' } },
+    ]);
+    expect(input.nodes[0].records_during_call).toBeUndefined();
+  });
+
   test("derives chosen_intent from the intent's declared tool; handoffs render as evidence", () => {
     const config: AgentConfig = {
       nodes: [{

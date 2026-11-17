@@ -108,7 +108,9 @@ function variablePayload(
       "CALL ENDED EARLY: if the transcript simply STOPS before the agent ever asked for a value — the caller hung up or the call was cut off mid-flow — " +
       "that value is UNREACHABLE, not missing. A value recorded WRONGLY still fails however the call ended. " +
       "Absent workflow defaults and backend or platform values are not caller extraction; the exceptions are a value the rule names for a situation that happened and a field the rule takes from a visible lookup or tool result. " +
-      (batch.cutoffConfirmed
+      (node.records_during_call
+        ? RECORDS_DURING_CALL_RULE
+        : batch.cutoffConfirmed
         ? "FINAL RECORDING BATCH CUTOFF CONFIRMED from structured turn order: do not mark a pending final-batch variable missing unless its own rule required earlier recording."
         : "If an interrupted ending/transfer is followed by the caller and no later agent/tool turn, the configured final recording batch had no opportunity to run."),
   };
@@ -170,6 +172,13 @@ export const CONFIG_DEFAULT_REVIEW_SYSTEM =
   "The variable's recording rule is authoritative. An unanswered question, missing identity confirmation, silence, a busy/callback request, or model uncertainty is NOT an exception. " +
   "Set defect_confirmed=true only when the caller's words satisfy an exception written in the rule and the stored value violates that exception. Otherwise set it false. " +
   "Return one review per candidate with issue_type=incorrect and cite caller evidence.";
+
+export const RECORDS_DURING_CALL_RULE =
+  "RECORDED DURING THE CALL: the recorder evidence shows this node saving values as the caller gives them, so it has NO final recording batch; this overrides any final-batch or truncation guidance. " +
+  "Never excuse an unsaved value as pending, batched or cut off once the agent spoke again after the caller gave it; only a value from the caller's last turn on this node, with no agent turn after it, may count as cut off. " +
+  "A tool result saying a value was not collected or hit a configuration error means it was NOT recorded. " +
+  "A stored value must match the caller's latest correction or new choice; a value the caller corrected or replaced is incorrect. " +
+  "When a variable's rule asks for the caller's request, needs or answers and the caller gave several, a value that drops one of them is incorrect.";
 
 export const FOCUSED_DEFECT_REVIEW_SYSTEM =
   "Verify ONLY the proposed variable defects against the exact recording rule and caller transcript. " +
@@ -283,6 +292,13 @@ export async function runVariableExtractionJudge(
       })),
   ];
 
+  // On a node that records during the call the focused review cleared real
+  // omissions as pending a final batch, but still filters format nitpicks on
+  // stored values; only incorrect-value candidates go to it.
+  const reviewedCandidates = node.records_during_call
+    ? focusedCandidates.filter((candidate) => candidate.issue_type === "incorrect")
+    : focusedCandidates;
+
   const [defaultReview, focusedReview] = await Promise.all([
     defaultCandidates.length
       ? runGuardedReview(
@@ -293,10 +309,11 @@ export async function runVariableExtractionJudge(
           provider,
         ).catch(() => undefined)
       : undefined,
-    focusedCandidates.length
+    reviewedCandidates.length
       ? runGuardedReview(
-          promptSub("variable_extraction", "review_focused_defect", FOCUSED_DEFECT_REVIEW_SYSTEM),
-          focusedCandidates,
+          promptSub("variable_extraction", "review_focused_defect", FOCUSED_DEFECT_REVIEW_SYSTEM) +
+            (node.records_during_call ? `\n${RECORDS_DURING_CALL_RULE}` : ""),
+          reviewedCandidates,
           {
             ...scopedNodeEvidence(node, ctx),
             variable_sources: node.variable_sources,
@@ -311,7 +328,7 @@ export async function runVariableExtractionJudge(
 
   for (const review of [
     { result: defaultReview, candidates: defaultCandidates, requireValueSupport: false, note: "Cleared by focused config-default review" },
-    { result: focusedReview, candidates: focusedCandidates, requireValueSupport: true, note: "Cleared by focused defect review" },
+    { result: focusedReview, candidates: reviewedCandidates, requireValueSupport: true, note: "Cleared by focused defect review" },
   ]) {
     if (!review.result) continue;
     // sumUsage (llm/usage.ts) is the one place usage arithmetic lives. The local

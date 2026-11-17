@@ -172,6 +172,49 @@ describe("LLM node judges (MockLLM)", () => {
     expect(Object.keys(sent).at(-1)).toBe("variable_judge_contract");
   });
 
+  test("variable extraction: a node that records during the call gets no final-batch excuse", async () => {
+    const { RECORDS_DURING_CALL_RULE } = await import("../src/evals-engine/judges/variable-extraction.js");
+    const recording = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
+    await runVariableExtractionJudge(node({ records_during_call: true }), ctx(), recording);
+    const sent = JSON.parse(recording.calls[0]!.user);
+    expect(sent.variable_judge_contract).toContain(RECORDS_DURING_CALL_RULE);
+    expect(sent.variable_judge_contract).not.toContain("final recording batch had no opportunity to run");
+    expect(sent.variable_recording_schedule).toBe("");
+
+    const batched = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
+    await runVariableExtractionJudge(node(), ctx(), batched);
+    expect(JSON.parse(batched.calls[0]!.user).variable_judge_contract).toContain("final recording batch had no opportunity to run");
+  });
+
+  test("variable extraction: a missing value on a node that records during the call is not sent to the focused review", async () => {
+    const llm = new MockLLM([
+      JSON.stringify({ extraction_successful: false, score: 0.4, reason: "order id not stored", missing_variables: ["order_id"], incorrect_variables: [] }),
+      JSON.stringify({ reviews: [{ variable_name: "order_id", issue_type: "missing", defect_confirmed: false, evidence: "pending final batch" }] }),
+    ]);
+    const { data } = await runVariableExtractionJudge(node({ records_during_call: true, extracted_variables: {} }), ctx(), llm);
+    expect(llm.calls).toHaveLength(1);
+    expect(data.missing_variables).toEqual(["order_id"]);
+  });
+
+  test("variable extraction: an incorrect value on a node that records during the call is still reviewed, with the rule", async () => {
+    const { RECORDS_DURING_CALL_RULE } = await import("../src/evals-engine/judges/variable-extraction.js");
+    const llm = new MockLLM([
+      JSON.stringify({ extraction_successful: false, score: 0.4, reason: "phone format", missing_variables: [], incorrect_variables: ["order_id"] }),
+      JSON.stringify({ reviews: [{ variable_name: "order_id", issue_type: "incorrect", defect_confirmed: false, stored_value_supported: true, evidence: "caller said 42" }] }),
+    ]);
+    const { data } = await runVariableExtractionJudge(node({ records_during_call: true }), ctx(), llm);
+    expect(llm.calls[1]!.system).toContain(RECORDS_DURING_CALL_RULE);
+    expect(data.incorrect_variables).toEqual([]);
+  });
+
+  test("final-batch context is empty for a node that records during the call", async () => {
+    const { finalBatchContext } = await import("../src/evals-engine/judges/variable-guards.js");
+    const prompt = "Record all collected details before the transfer.";
+    expect(finalBatchContext(node({ node_prompt: prompt, records_during_call: true })))
+      .toEqual({ cutoffConfirmed: false, recordingSchedule: "", schedulesCompleteBatch: false });
+    expect(finalBatchContext(node({ node_prompt: prompt })).recordingSchedule).toContain("before the transfer");
+  });
+
   test("variable extraction: configured defaults are labelled for the judge", async () => {
     const llm = new MockLLM([JSON.stringify({ extraction_successful: true, score: 1, reason: "ok" })]);
     await runVariableExtractionJudge(
